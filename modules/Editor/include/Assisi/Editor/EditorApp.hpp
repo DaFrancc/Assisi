@@ -665,11 +665,13 @@ class EditorApp : public Assisi::App::Application
     /// @brief Reads _assetBrowserDir into the cached dirs/images/meshes/materials
     /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
-    /// @brief The right-click menu on the last tile drawn: "Use as", with the kinds
-    /// that read @p vpath's format and the one its sidecar names marked, and
-    /// "Extract animations" on a model used as a mesh. Nothing when only one kind
-    /// reads the format, or in a restricted viewer.
+    /// @brief The right-click menu on the last non-model tile drawn: "Use as".
+    /// Nothing when only one kind reads @p vpath's format, or in a restricted viewer.
     void DrawAssetMenu(const std::string &vpath);
+    /// @brief The "Use as" items inside an open menu: the kinds that read
+    /// @p vpath's format, the one its sidecar names marked. None when only one
+    /// kind reads it.
+    void DrawUseAsItems(const std::string &vpath);
     /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
     /// rest of it, then reindex and forget what the store loaded.
     void UseFileAs(const std::string &vpath, const std::string &kindName);
@@ -679,7 +681,7 @@ class EditorApp : public Assisi::App::Application
 
     // --- Collision models (EditorColliderBlueprint.cpp) ---
     /// @brief The right-click menu on the last model tile drawn: "Make collider
-    /// blueprint". Nothing in a restricted viewer.
+    /// blueprint", "Extract animations" and "Use as". Nothing in a restricted viewer.
     void DrawModelActionsMenu(const std::string &vpath);
     /// @brief What collision the model at @p vpath carries and whether it can be
     /// broken into a blueprint, read on first ask and kept until the browser
