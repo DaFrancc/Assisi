@@ -70,6 +70,7 @@ pics/
 
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
+assets/quaternius/
 
 # Compiled shaders, which the build writes beside the GLSL they come from. The
 # asset tree is the only one, so build outputs land in it rather than in a staged
