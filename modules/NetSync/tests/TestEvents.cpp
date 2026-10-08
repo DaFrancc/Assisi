@@ -27,6 +27,7 @@
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -64,7 +65,7 @@ private:
 /// One server and as many clients as a recipient question needs.
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
 
     ReplicationServer server;
@@ -80,7 +81,7 @@ struct Harness
 
     std::vector<Peer> peers;
 
-    explicit Harness(ReplicationConfig config = {}) : server(transport, serverScene, nullptr, config)
+    explicit Harness(ReplicationConfig config = {}) : server(*transport, serverScene, nullptr, config)
     {
         HandlerLog::Instance().Clear();
     }
@@ -88,11 +89,11 @@ struct Harness
     std::size_t AddPeer()
     {
         Peer peer;
-        const auto pair = transport.CreateLoopbackPair();
+        const auto pair = transport->CreateLoopbackPair();
         peer.serverSide = pair.first;
         peer.clientSide = pair.second;
         peer.scene      = std::make_unique<ECS::Scene>();
-        peer.client     = std::make_unique<ReplicationClient>(transport, *peer.scene, peer.clientSide);
+        peer.client     = std::make_unique<ReplicationClient>(*transport, *peer.scene, peer.clientSide);
         peer.client->SetContentSetHash(0);
         peers.push_back(std::move(peer));
         server.SetContentSetHash(0);
@@ -103,7 +104,7 @@ struct Harness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)

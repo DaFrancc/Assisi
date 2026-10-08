@@ -30,6 +30,7 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 using namespace Assisi;
 using namespace Assisi::NetSync;
@@ -41,7 +42,7 @@ namespace
 /// side learns its content set, and when.
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -53,8 +54,8 @@ struct Harness
     std::uint64_t tick = 0;
 
     Harness()
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr),
+        client(*transport, clientScene, pair.second)
     {
     }
 
@@ -63,7 +64,7 @@ struct Harness
         for (int32_t i = 0; i < steps; ++i)
         {
             std::vector<Net::NetEvent> events;
-            transport.Poll(events);
+            transport->Poll(events);
             for (const Net::NetEvent &event : events)
             {
                 if (event.type != Net::NetEvent::Type::Message)

@@ -30,6 +30,7 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -97,7 +98,7 @@ public:
 /// One server, one client, and a record of every byte the server sent.
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -122,8 +123,8 @@ struct Harness
     bool dropClientMessages = false;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr, config),
+        client(*transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -135,7 +136,7 @@ struct Harness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -381,15 +382,15 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     // says yes for the whole exit window and for as long as the despawn keeps
     // being resent. Walking the live set there rather than the filtered one
     // would ship a falling box the connection cannot see every snapshot.
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
     Physics::PhysicsWorld clientPhysics{clientScene, Assisi::Physics::NoCollisionAssets()};
 
-    const auto pair = transport.CreateLoopbackPair();
-    ReplicationServer server(transport, serverScene, &serverPhysics);
-    ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
+    const auto pair = transport->CreateLoopbackPair();
+    ReplicationServer server(*transport, serverScene, &serverPhysics);
+    ReplicationClient client(*transport, clientScene, pair.second, &clientPhysics);
     server.SetContentSetHash(0);
     client.SetContentSetHash(0);
     server.AddConnection(pair.first);
@@ -405,7 +406,7 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
                                         for (std::uint32_t i = 0; i < times; ++i)
                                         {
                                             std::vector<Net::NetEvent> events;
-                                            transport.Poll(events);
+                                            transport->Poll(events);
                                             for (const Net::NetEvent &event : events)
                                             {
                                                 if (event.type != Net::NetEvent::Type::Message)

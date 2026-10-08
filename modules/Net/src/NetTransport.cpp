@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <expected>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -123,6 +125,36 @@ struct NetTransport::Impl
     {
         static std::vector<Impl *> instances;
         return instances;
+    }
+
+    /// Takes one reference on the GNS library, initialising it for the first.
+    /// A failed init takes no reference and registers nothing, so the next
+    /// Create() tries the init again.
+    static std::expected<void, NetTransportError> AcquireLibrary()
+    {
+        const std::lock_guard<std::mutex> lock(g_libraryMutex);
+        if (g_libraryRefs == 0)
+        {
+            SteamNetworkingErrMsg errMsg{};
+            if (!GameNetworkingSockets_Init(nullptr, errMsg))
+            {
+                Core::Log::Error("Net: GameNetworkingSockets_Init failed: {}", static_cast<const char *>(errMsg));
+                return std::unexpected(NetTransportError::LibraryInitFailed);
+            }
+            SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(&StatusChangedCallback);
+        }
+        ++g_libraryRefs;
+        return {};
+    }
+
+    /// Drops the reference AcquireLibrary took, shutting GNS down with the last.
+    static void ReleaseLibrary()
+    {
+        const std::lock_guard<std::mutex> lock(g_libraryMutex);
+        if (--g_libraryRefs == 0)
+        {
+            GameNetworkingSockets_Kill();
+        }
     }
 
     /// True if this instance is the one that should handle @p info.
@@ -279,26 +311,38 @@ void NetTransport::Impl::OnStatusChanged(const SteamNetConnectionStatusChangedCa
 
 // ---------------------------------------------------------------------------
 
-NetTransport::NetTransport() : _impl(std::make_unique<Impl>())
+std::string_view ToString(NetTransportError error) noexcept
 {
+    switch (error)
     {
-        const std::lock_guard<std::mutex> lock(g_libraryMutex);
-        if (g_libraryRefs == 0)
-        {
-            SteamNetworkingErrMsg errMsg{};
-            if (!GameNetworkingSockets_Init(nullptr, errMsg))
-            {
-                // Nothing can work after this; fail loudly rather than hand back
-                // an object whose every method silently returns false.
-                ASSISI_ASSERT(false, "GameNetworkingSockets_Init failed");
-                Core::Log::Error("Net: GameNetworkingSockets_Init failed: {}", static_cast<const char *>(errMsg));
-            }
-            SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
-                &Impl::StatusChangedCallback);
-        }
-        ++g_libraryRefs;
+    case NetTransportError::LibraryInitFailed:
+        return "the networking library failed to initialise";
+    case NetTransportError::PollGroupFailed:
+        return "the networking library could not create a poll group";
+    }
+    return "unknown error";
+}
+
+std::expected<std::unique_ptr<NetTransport>, NetTransportError> NetTransport::Create()
+{
+    if (const std::expected<void, NetTransportError> acquired = Impl::AcquireLibrary(); !acquired)
+    {
+        return std::unexpected(acquired.error());
     }
 
+    // Not make_unique: the constructor is private. From here the destructor owns
+    // the library reference, so every return below releases it.
+    std::unique_ptr<NetTransport> transport(new NetTransport());
+    if (transport->_impl->pollGroup == k_HSteamNetPollGroup_Invalid)
+    {
+        Core::Log::Error("Net: CreatePollGroup failed.");
+        return std::unexpected(NetTransportError::PollGroupFailed);
+    }
+    return transport;
+}
+
+NetTransport::NetTransport() : _impl(std::make_unique<Impl>())
+{
     _impl->sockets   = SteamNetworkingSockets();
     _impl->pollGroup = _impl->sockets->CreatePollGroup();
     Impl::Instances().push_back(_impl.get());
@@ -319,9 +363,7 @@ NetTransport::~NetTransport()
     std::vector<Impl *> &instances = Impl::Instances();
     instances.erase(std::remove(instances.begin(), instances.end(), _impl.get()), instances.end());
 
-    const std::lock_guard<std::mutex> lock(g_libraryMutex);
-    if (--g_libraryRefs == 0)
-        GameNetworkingSockets_Kill();
+    Impl::ReleaseLibrary();
 }
 
 bool NetTransport::Listen(std::uint16_t port)

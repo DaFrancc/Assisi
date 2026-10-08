@@ -22,6 +22,7 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -36,7 +37,7 @@ namespace
 /// One server, one client, and a Distance provider whose tuning the test names.
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -55,8 +56,8 @@ struct Harness
     }
 
     explicit Harness(RelevancyConfig relevancy)
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, With(relevancy)),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr, With(relevancy)),
+        client(*transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -68,7 +69,7 @@ struct Harness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)

@@ -23,6 +23,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <functional>
 #include <memory>
@@ -147,6 +148,16 @@ struct SimulatedConditions
     std::int32_t recvJitterMs    = 0;   ///< Max extra random delay on receive.
 };
 
+/// @brief Why NetTransport::Create failed.
+enum class NetTransportError : std::uint8_t
+{
+    LibraryInitFailed, ///< GameNetworkingSockets would not initialise; the log carries its reason.
+    PollGroupFailed,   ///< The library refused to create the transport's poll group.
+};
+
+/// @brief A short human-readable name for a NetTransportError (for logs).
+[[nodiscard]] std::string_view ToString(NetTransportError error) noexcept;
+
 /// @brief One transport endpoint: a server's listen socket, a client's outbound
 /// connection, or both halves of an in-process loopback pair.
 ///
@@ -159,9 +170,12 @@ struct SimulatedConditions
 class NetTransport
 {
 public:
-    /// Initializes the GNS library on first construction (refcounted across
-    /// instances, mirroring how PhysicsWorld owns Jolt's globals).
-    NetTransport();
+    /// @brief The only way to get a transport. Initializes the GNS library on
+    /// the first live transport (refcounted across instances, mirroring how
+    /// PhysicsWorld owns Jolt's globals), so a transport that exists always sits
+    /// on an initialised library with a live poll group.
+    [[nodiscard]] static std::expected<std::unique_ptr<NetTransport>, NetTransportError> Create();
+
     ~NetTransport();
 
     NetTransport(const NetTransport &)            = delete;
@@ -254,6 +268,9 @@ public:
 
 private:
     struct Impl;
+
+    NetTransport();
+
     std::unique_ptr<Impl> _impl;
 };
 

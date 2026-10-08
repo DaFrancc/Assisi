@@ -28,6 +28,7 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -51,7 +52,7 @@ constexpr float kFixedStep = 1.f / 60.f;
 /// agreement by corrections.
 struct PhysicsHarness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
@@ -65,8 +66,8 @@ struct PhysicsHarness
     std::uint64_t tick = 0;
 
     explicit PhysicsHarness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, &serverPhysics, config),
-        client(transport, clientScene, pair.second, &clientPhysics)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, &serverPhysics, config),
+        client(*transport, clientScene, pair.second, &clientPhysics)
     {
         // Neither hello goes out until each side knows its content set; these
         // tests are about bodies, so both take the empty set's hash.
@@ -80,7 +81,7 @@ struct PhysicsHarness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -614,7 +615,7 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     // in-process socket pair shares buffers and bypasses the packet layer, so
     // simulated lag and loss would not apply and the test would quietly prove
     // nothing.
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics{serverScene, Assisi::Physics::NoCollisionAssets()};
@@ -627,9 +628,9 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     conditions.recvLagMs       = 75;
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
-    const auto pair = transport.CreateLoopbackPair(true);
-    ReplicationServer server(transport, serverScene, &serverPhysics, ReplicationConfig{});
-    ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
+    const auto pair = transport->CreateLoopbackPair(true);
+    ReplicationServer server(*transport, serverScene, &serverPhysics, ReplicationConfig{});
+    ReplicationClient client(*transport, clientScene, pair.second, &clientPhysics);
     server.SetContentSetHash(0);
     client.SetContentSetHash(0);
     server.AddConnection(pair.first);
@@ -649,7 +650,7 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     for (int32_t step = 0; step < 260; ++step)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)

@@ -6,7 +6,9 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
 
+#include <expected>
 #include <format>
+#include <memory>
 #include <utility>
 
 namespace Assisi::NetSync
@@ -33,16 +35,30 @@ NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, Replic
 
 NetSession::~NetSession() { Disconnect(); }
 
-void NetSession::EnsureTransport()
+bool NetSession::EnsureTransport()
 {
-    if (!_transport)
-        _transport = std::make_unique<Net::NetTransport>();
+    if (_transport)
+    {
+        return true;
+    }
+    std::expected<std::unique_ptr<Net::NetTransport>, Net::NetTransportError> created = Net::NetTransport::Create();
+    if (!created)
+    {
+        _lastError = std::format("could not start networking: {}", Net::ToString(created.error()));
+        Core::Log::Error("NetSession: {}", _lastError);
+        return false;
+    }
+    _transport = std::move(*created);
+    return true;
 }
 
 bool NetSession::Host(std::uint16_t port, LevelIdentity level)
 {
     Disconnect();
-    EnsureTransport();
+    if (!EnsureTransport())
+    {
+        return false;
+    }
 
     if (!_transport->Listen(port))
     {
@@ -68,7 +84,10 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
 bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHandshake)
 {
     Disconnect();
-    EnsureTransport();
+    if (!EnsureTransport())
+    {
+        return false;
+    }
 
     _connection = _transport->Connect(address, port);
     if (_connection == Net::InvalidConnection)
