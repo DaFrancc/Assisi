@@ -47,6 +47,16 @@ struct LocalOnly
     AFIELD() int32_t value = 0;
 };
 
+/// @brief Replicable with nothing to send: only its presence crosses the wire.
+///
+/// The shape of a component whose state every machine computes for itself,
+/// like a skinned mesh's pose. The field is local and must arrive as its default.
+ACOMP(replicable)
+struct PresenceOnly
+{
+    AFIELD(transient) int32_t localState = 0;
+};
+
 /// @brief Messages covering every cell of the AMSG grammar, so each combination
 /// of direction, reliability, and independence has something to be true about.
 ///

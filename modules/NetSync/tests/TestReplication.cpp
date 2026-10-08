@@ -365,6 +365,27 @@ TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire
     CHECK(harness.client.SnapshotsRejected() == 0);
 }
 
+TEST_CASE("a replicable component with only transient fields arrives by presence alone")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::PresenceOnly>(entity, Test::PresenceOnly{7});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Test::PresenceOnly>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<Test::PresenceOnly>(mirror)->localState == 0);
+
+    // Removing it is presence too, so the mirror follows.
+    (void)harness.serverScene.Remove<Test::PresenceOnly>(entity);
+    harness.Step(12);
+    CHECK(harness.clientScene.Get<Test::PresenceOnly>(mirror) == nullptr);
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
 TEST_CASE("a norep field holds its client-side default while its siblings update")
 {
     Harness harness;

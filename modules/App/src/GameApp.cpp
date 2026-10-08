@@ -20,6 +20,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <algorithm>
@@ -530,6 +531,8 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
     // behind whatever it is attached to.
+    // Poses first: what follows a joint is placed from where the joint is this frame.
+    Runtime::EvaluateScenePoses(_world->scene);
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
     ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
 

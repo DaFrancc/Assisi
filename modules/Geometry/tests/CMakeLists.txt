@@ -7,6 +7,7 @@ add_executable(Assisi-Geometry-Tests
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
   TestSkinImport.cpp
+  TestPose.cpp
   TestMeshValidate.cpp
   TestMaterialChannels.cpp
   TestMaterialFile.cpp

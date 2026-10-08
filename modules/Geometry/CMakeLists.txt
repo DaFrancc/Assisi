@@ -16,6 +16,7 @@ target_sources(Assisi-Geometry
     "src/CollisionData.cpp"
     "src/CookedMesh.cpp"
     "src/MeshValidate.cpp"
+    "src/Pose.cpp"
     "src/MaterialFile.cpp"
 )
 
