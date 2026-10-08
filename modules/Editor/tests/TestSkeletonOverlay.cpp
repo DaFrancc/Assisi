@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -26,9 +27,11 @@ using Assisi::Geometry::Skeleton;
 namespace
 {
 
-/// Vertices per line segment, and segments per joint cross (one along each axis).
+/// Vertices per line segment, segments per joint cross (one along each axis), and
+/// segments per bone diamond (four to the ring, four around it, four to the tip).
 constexpr std::size_t kVerticesPerLine = 2;
 constexpr std::size_t kLinesPerCross = 3;
+constexpr std::size_t kLinesPerBone = 12;
 
 constexpr glm::vec4 kColor{0.2f, 0.6f, 1.f, 1.f};
 
@@ -47,23 +50,6 @@ std::vector<glm::mat4> ForkedJoints()
 {
     return {glm::mat4(1.f), glm::translate(glm::mat4(1.f), glm::vec3(0.f, 1.f, 0.f)),
             glm::translate(glm::mat4(1.f), glm::vec3(1.f, 0.f, 0.f))};
-}
-
-bool HasSegment(const std::vector<LineVertex> &lines, glm::vec3 a, glm::vec3 b)
-{
-    constexpr float kTolerance = 1e-5f;
-    for (std::size_t i = 0; i + 1 < lines.size(); i += kVerticesPerLine)
-    {
-        const glm::vec3 p = lines[i].position;
-        const glm::vec3 q = lines[i + 1].position;
-        const bool forward = glm::distance(p, a) < kTolerance && glm::distance(q, b) < kTolerance;
-        const bool backward = glm::distance(p, b) < kTolerance && glm::distance(q, a) < kTolerance;
-        if (forward || backward)
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 /// A camera at (0, 0, 5) looking down -Z at the origin, onto a 1000×1000 view.
@@ -87,23 +73,92 @@ constexpr glm::vec2 kCentre{500.f, 500.f};
 
 } // namespace
 
-TEST_CASE("Skeleton overlay: one line per bone, between joint and parent, placed by the entity")
+TEST_CASE("Skeleton overlay: each bone is a diamond, widest near its parent and pointed at its child")
 {
-    const Skeleton skeleton = ForkedSkeleton();
-    const std::vector<glm::mat4> joints = ForkedJoints();
+    Skeleton skeleton;
+    skeleton.Names = {"root", "up"};
+    skeleton.Parents = {kNoParent, 0};
+    skeleton.RestLocal.resize(2);
+    skeleton.InverseBind.resize(2, glm::mat4(1.f));
+    const std::vector<glm::mat4> joints{glm::mat4(1.f), glm::translate(glm::mat4(1.f), glm::vec3(0.f, 1.f, 0.f))};
     const glm::mat4 world = glm::translate(glm::mat4(1.f), glm::vec3(10.f, 0.f, 0.f));
 
     std::vector<LineVertex> lines;
     AppendSkeletonLines(lines, skeleton, joints, world, kColor);
 
-    CHECK(HasSegment(lines, {10.f, 0.f, 0.f}, {10.f, 1.f, 0.f}));
-    CHECK(HasSegment(lines, {10.f, 0.f, 0.f}, {11.f, 0.f, 0.f}));
-    // Two bones, plus a cross at each of the three joints.
-    const std::size_t bones = 2;
-    CHECK(lines.size() == (bones + skeleton.JointCount() * kLinesPerCross) * kVerticesPerLine);
+    const glm::vec3 parent{10.f, 0.f, 0.f};
+    const glm::vec3 child{10.f, 1.f, 0.f};
+    REQUIRE(lines.size() == (kLinesPerBone + skeleton.JointCount() * kLinesPerCross) * kVerticesPerLine);
+
+    // The bone's segments are the ones longer than a joint cross's arms. Every
+    // point of them that is not one of the bone's two ends is on the ring of four
+    // corners: off the bone's axis, and nearer the parent than the child.
+    constexpr float kCrossSpan = 2.f * Assisi::Editor::kJointMarkerHalfSize;
+    uint32_t boneSegments = 0;
+    uint32_t parentEnds = 0;
+    uint32_t childEnds = 0;
+    for (std::size_t i = 0; i + 1 < lines.size(); i += kVerticesPerLine)
+    {
+        if (glm::distance(lines[i].position, lines[i + 1].position) <= kCrossSpan + 1e-5f)
+        {
+            continue;
+        }
+        ++boneSegments;
+        for (std::size_t end = i; end < i + kVerticesPerLine; ++end)
+        {
+            const glm::vec3 point = lines[end].position;
+            if (glm::distance(point, parent) < 1e-5f)
+            {
+                ++parentEnds;
+                continue;
+            }
+            if (glm::distance(point, child) < 1e-5f)
+            {
+                ++childEnds;
+                continue;
+            }
+            CAPTURE(end);
+            CHECK(glm::distance(point, parent) < glm::distance(point, child));
+            CHECK(glm::length(glm::vec2(point.x - 10.f, point.z)) > 0.f);
+        }
+    }
+    CHECK(boneSegments == kLinesPerBone);
+    // Four edges run from the parent to the ring, and four from the ring to the child.
+    CHECK(parentEnds == 4);
+    CHECK(childEnds == 4);
     for (const LineVertex &vertex : lines)
     {
         CHECK(vertex.color == kColor);
+    }
+}
+
+TEST_CASE("Skeleton overlay: every bone of a branching skeleton is drawn")
+{
+    const Skeleton skeleton = ForkedSkeleton();
+    std::vector<LineVertex> lines;
+    AppendSkeletonLines(lines, skeleton, ForkedJoints(), glm::mat4(1.f), kColor);
+
+    const std::size_t bones = 2;
+    CHECK(lines.size() == (bones * kLinesPerBone + skeleton.JointCount() * kLinesPerCross) * kVerticesPerLine);
+}
+
+TEST_CASE("Skeleton overlay: a bone of zero length draws no diamond")
+{
+    // Its direction is undefined, so there is no ring to build around it.
+    Skeleton skeleton;
+    skeleton.Names = {"root", "same"};
+    skeleton.Parents = {kNoParent, 0};
+    skeleton.RestLocal.resize(2);
+    skeleton.InverseBind.resize(2, glm::mat4(1.f));
+    const std::vector<glm::mat4> joints{glm::mat4(1.f), glm::mat4(1.f)};
+
+    std::vector<LineVertex> lines;
+    AppendSkeletonLines(lines, skeleton, joints, glm::mat4(1.f), kColor);
+
+    CHECK(lines.size() == skeleton.JointCount() * kLinesPerCross * kVerticesPerLine);
+    for (const LineVertex &vertex : lines)
+    {
+        CHECK(std::isfinite(vertex.position.x));
     }
 }
 

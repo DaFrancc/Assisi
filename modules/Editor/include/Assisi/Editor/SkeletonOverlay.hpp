@@ -27,8 +27,9 @@ inline constexpr float kJointMarkerHalfSize = 0.015f;
 /// @brief How near the cursor must be to a joint to name it, in pixels.
 inline constexpr float kJointHoverPixels = 8.f;
 
-/// @brief Appends a line from each joint to its parent, and a small cross at
-///        every joint, placed by @p world.
+/// @brief Appends a diamond for each bone — widest near the parent joint,
+///        pointed at the child — and a small cross at every joint, placed by
+///        @p world. A bone of zero length draws no diamond.
 ///
 /// @p jointModel holds each joint's transform in the mesh's model space, one per
 /// joint of @p skeleton.
