@@ -10,8 +10,10 @@
 /// model space, once per frame.
 
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -41,5 +43,29 @@ void SkinningPalette(const Skeleton &skeleton, std::span<const glm::mat4> model,
 
 /// @brief The index of the joint named @p name, or kNoJoint.
 [[nodiscard]] int32_t FindJoint(const Skeleton &skeleton, std::string_view name);
+
+/// @brief A box that holds nothing: extending it by a point gives that point.
+inline constexpr Aabb kEmptyAabb{.min = glm::vec3(std::numeric_limits<float>::max()),
+                                 .max = glm::vec3(std::numeric_limits<float>::lowest())};
+
+/// @brief Whether @p box holds nothing.
+[[nodiscard]] bool IsEmpty(const Aabb &box);
+
+/// @brief One box per joint of @p jointCount, around the vertices of
+///        @p vertices that joint has any weight on. Empty for a joint with none.
+[[nodiscard]] std::vector<Aabb> FitJointBounds(std::span<const Vertex> vertices, std::span<const VertexSkin> skin,
+                                               uint32_t jointCount);
+
+/// @brief A box around every vertex of a mesh skinned by @p palette, from its
+///        joints' bind-pose boxes.
+///
+/// A skinned vertex is a weighted average of where each of its joints moves it,
+/// and each of those points lies in that joint's moved box, so the average lies
+/// in the box around them all. Conservative, never tight. Empty when every
+/// joint box is.
+[[nodiscard]] Aabb PosedBounds(std::span<const Aabb> jointBounds, std::span<const glm::mat4> palette);
+
+/// @brief The smallest sphere around @p box.
+[[nodiscard]] BoundingSphere SphereAround(const Aabb &box);
 
 } // namespace Assisi::Geometry

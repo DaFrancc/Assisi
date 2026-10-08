@@ -20,11 +20,18 @@ namespace
 /// pipeline reads it any other way.
 constexpr std::size_t kIndicesPerTriangle = 3;
 
+/// Whether @p point lies in @p box, edges included. Exact: the box was fit
+/// from these very positions, so a point on its face compares equal.
+bool BoxHolds(const Aabb &box, const glm::vec3 &point)
+{
+    return glm::all(glm::greaterThanEqual(point, box.min)) && glm::all(glm::lessThanEqual(point, box.max));
+}
+
 std::expected<void, MeshValidationError> ValidateSkeleton(const Skeleton &skeleton)
 {
     const std::size_t jointCount = skeleton.Names.size();
     if (skeleton.Parents.size() != jointCount || skeleton.RestLocal.size() != jointCount ||
-        skeleton.InverseBind.size() != jointCount)
+        skeleton.InverseBind.size() != jointCount || skeleton.JointBounds.size() != jointCount)
     {
         return std::unexpected(MeshValidationError::SkeletonTablesMismatch);
     }
@@ -72,8 +79,9 @@ std::expected<void, MeshValidationError> ValidateSkin(const MeshData &mesh)
     }
 
     const uint32_t jointCount = mesh.Skeleton.JointCount();
-    for (const VertexSkin &skin : mesh.Skin)
+    for (std::size_t vertex = 0; vertex < mesh.Skin.size(); ++vertex)
     {
+        const VertexSkin &skin = mesh.Skin[vertex];
         float sum = 0.f;
         for (int32_t slot = 0; slot < static_cast<int32_t>(kMaxInfluences); ++slot)
         {
@@ -84,6 +92,11 @@ std::expected<void, MeshValidationError> ValidateSkin(const MeshData &mesh)
             if (skin.Joints[slot] >= jointCount)
             {
                 return std::unexpected(MeshValidationError::JointOutOfRange);
+            }
+            if (skin.Weights[slot] > 0.f &&
+                !BoxHolds(mesh.Skeleton.JointBounds[skin.Joints[slot]], mesh.Vertices[vertex].Position))
+            {
+                return std::unexpected(MeshValidationError::JointBoundsMissVertex);
             }
             sum += skin.Weights[slot];
         }
@@ -139,6 +152,8 @@ std::string_view ToString(MeshValidationError error) noexcept
         return "has a vertex whose weights are negative or do not sum to one";
     case MeshValidationError::DuplicateJointName:
         return "has two joints with the same name";
+    case MeshValidationError::JointBoundsMissVertex:
+        return "has a joint whose bounds leave out a vertex it moves";
     default:
         ASSISI_ASSERT(false, "ToString reached a MeshValidationError with no description");
         Core::Log::Error("MeshValidate: no description for this error");

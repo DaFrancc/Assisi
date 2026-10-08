@@ -16,6 +16,7 @@
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Geometry/CookedMesh.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Geometry/Pose.hpp>
 
 using namespace Assisi;
 
@@ -86,6 +87,7 @@ Geometry::MeshData SkinnedQuad()
                                                               .Scale       = {1.f, f, 1.f}});
         skeleton.InverseBind.push_back(glm::translate(glm::mat4(1.f), glm::vec3(-f, 0.f, f)));
     }
+    skeleton.JointBounds = Geometry::FitJointBounds(mesh.Vertices, mesh.Skin, skeleton.JointCount());
     return mesh;
 }
 
@@ -193,6 +195,12 @@ TEST_CASE("A cooked skinned mesh reads back with its skin and skeleton")
         CHECK(skeleton.RestLocal[i].Scale == source.Skeleton.RestLocal[i].Scale);
     }
     CHECK(skeleton.InverseBind == source.Skeleton.InverseBind);
+    REQUIRE(skeleton.JointBounds.size() == source.Skeleton.JointBounds.size());
+    for (std::size_t i = 0; i < skeleton.JointBounds.size(); ++i)
+    {
+        CHECK(skeleton.JointBounds[i].min == source.Skeleton.JointBounds[i].min);
+        CHECK(skeleton.JointBounds[i].max == source.Skeleton.JointBounds[i].max);
+    }
 }
 
 TEST_CASE("A static mesh reads back with no skin and no skeleton")

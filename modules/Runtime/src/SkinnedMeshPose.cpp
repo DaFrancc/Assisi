@@ -46,22 +46,31 @@ void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
     }
     Geometry::JointModelTransforms(*skeleton, skinned.pose, skinned.jointModel);
     Geometry::SkinningPalette(*skeleton, skinned.jointModel, skinned.palette);
+
+    // Culled by where the pose puts it: the bind pose's bounds would cull a
+    // raised arm the moment the body left the screen.
+    if (skinned.posed.Id() != 0 && skeleton->JointBounds.size() == skeleton->JointCount())
+    {
+        const Geometry::Aabb bounds = Geometry::PosedBounds(skeleton->JointBounds, skinned.palette);
+        if (!Geometry::IsEmpty(bounds))
+        {
+            skinned.posed.SetLocalBounds(Geometry::SphereAround(bounds), bounds);
+        }
+    }
 }
 
 void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache)
 {
     for (auto [entity, skinned, renderer] : scene.Query<Mut<SkinnedMesh>, MeshRenderer>())
     {
-        EvaluateSkinnedMesh(skinned, renderer);
-        if (skinned.boundMeshId == kUnboundMesh)
-        {
-            continue;
-        }
+        // Kept first, so the copy evaluation fits the bounds of is this frame's.
         // A mesh with a skeleton but no weights draws as it is.
-        if (!cache.KeepPosedInstance(*renderer.meshBuffer, skinned.posed))
+        if (BindSkinnedMesh(skinned, renderer) != nullptr &&
+            !cache.KeepPosedInstance(*renderer.meshBuffer, skinned.posed))
         {
             skinned.posed = Render::MeshBuffer{};
         }
+        EvaluateSkinnedMesh(skinned, renderer);
     }
     cache.EndSkinFrame();
 }

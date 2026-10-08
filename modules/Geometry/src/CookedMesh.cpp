@@ -39,8 +39,9 @@ constexpr std::size_t kJointIndexBytes     = sizeof(std::uint16_t);
 constexpr std::size_t kSkinRecordBytes     = kMaxInfluences * (kJointIndexBytes + kFloatBytes);
 constexpr std::size_t kMatrixFloats        = 16;
 constexpr std::size_t kTransformFloats     = 10; ///< Rotation 4, translation 3, scale 3.
+constexpr std::size_t kBoxFloats           = 6;  ///< A joint's bounds: min, then max.
 constexpr std::size_t kMinJointBytes       = kMinVarIntBytes + sizeof(std::int32_t) +
-                                             (kTransformFloats + kMatrixFloats) * kFloatBytes;
+                                             (kTransformFloats + kMatrixFloats + kBoxFloats) * kFloatBytes;
 
 /// The longest joint name a cooked mesh carries.
 constexpr std::size_t kMaxJointNameBytes   = 256;
@@ -139,6 +140,8 @@ void WriteSkin(Core::BitWriter &writer, const MeshData &mesh)
         WriteVec3(writer, rest.Translation);
         WriteVec3(writer, rest.Scale);
         WriteMatrix(writer, skeleton.InverseBind[joint]);
+        WriteVec3(writer, skeleton.JointBounds[joint].min);
+        WriteVec3(writer, skeleton.JointBounds[joint].max);
     }
     if (!skeleton.Empty())
     {
@@ -174,6 +177,7 @@ bool ReadSkin(Core::BitReader &reader, MeshData &mesh)
     skeleton.Parents.resize(count);
     skeleton.RestLocal.resize(count);
     skeleton.InverseBind.resize(count);
+    skeleton.JointBounds.resize(count);
     for (std::uint32_t joint = 0; joint < count; ++joint)
     {
         JointTransform &rest = skeleton.RestLocal[joint];
@@ -186,6 +190,8 @@ bool ReadSkin(Core::BitReader &reader, MeshData &mesh)
         rest.Translation = ReadVec3(reader);
         rest.Scale = ReadVec3(reader);
         skeleton.InverseBind[joint] = ReadMatrix(reader);
+        skeleton.JointBounds[joint].min = ReadVec3(reader);
+        skeleton.JointBounds[joint].max = ReadVec3(reader);
     }
     if (count != 0)
     {

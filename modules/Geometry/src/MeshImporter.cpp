@@ -2,6 +2,7 @@
 #include <Assisi/Geometry/MeshImporter.hpp>
 
 #include <Assisi/Geometry/DefaultMeshes.hpp> // ComputeTangents (fallback when a primitive lacks TANGENT)
+#include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -1287,6 +1288,8 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     if (!skeleton.skeleton.Empty())
     {
         merged.Skeleton = std::move(skeleton.skeleton);
+        // Positions are final here: tangents below never move a vertex.
+        merged.Skeleton.JointBounds = FitJointBounds(merged.Vertices, merged.Skin, merged.Skeleton.JointCount());
     }
     if (skinNotes.droppedInfluences)
     {

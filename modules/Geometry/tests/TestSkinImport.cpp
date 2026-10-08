@@ -20,6 +20,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
+#include <Assisi/Geometry/MeshValidate.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 #include "LogCapture.hpp"
@@ -300,6 +301,11 @@ TEST_CASE("ImportMesh: a skinned mesh keeps its skeleton and stays in bind space
     CHECK(mesh.Skin[1].Joints.x == 1);
     CHECK(mesh.Skin[2].Weights.x == doctest::Approx(0.5f));
     CHECK(mesh.Skin[2].Weights.y == doctest::Approx(0.5f));
+
+    // Every joint has bounds around what it moves, which is what lets a pose
+    // be culled without the vertices.
+    CHECK(mesh.Skeleton.JointBounds.size() == 2);
+    CHECK(Assisi::Geometry::ValidateMesh(mesh).has_value());
 
     fs::remove_all(root);
 }

@@ -52,4 +52,59 @@ int32_t FindJoint(const Skeleton &skeleton, std::string_view name)
     return kNoJoint;
 }
 
+bool IsEmpty(const Aabb &box)
+{
+    return glm::any(glm::greaterThan(box.min, box.max));
+}
+
+namespace
+{
+
+void Extend(Aabb &box, const Aabb &by)
+{
+    box.min = glm::min(box.min, by.min);
+    box.max = glm::max(box.max, by.max);
+}
+
+} // namespace
+
+std::vector<Aabb> FitJointBounds(std::span<const Vertex> vertices, std::span<const VertexSkin> skin,
+                                 uint32_t jointCount)
+{
+    ASSISI_ASSERT(skin.size() == vertices.size(), "one skin record per vertex");
+    std::vector<Aabb> bounds(jointCount, kEmptyAabb);
+    for (std::size_t vertex = 0; vertex < vertices.size(); ++vertex)
+    {
+        const glm::vec3 &position = vertices[vertex].Position;
+        for (int32_t slot = 0; slot < static_cast<int32_t>(kMaxInfluences); ++slot)
+        {
+            const uint32_t joint = skin[vertex].Joints[slot];
+            if (skin[vertex].Weights[slot] > 0.f && joint < jointCount)
+            {
+                Extend(bounds[joint], Aabb{.min = position, .max = position});
+            }
+        }
+    }
+    return bounds;
+}
+
+Aabb PosedBounds(std::span<const Aabb> jointBounds, std::span<const glm::mat4> palette)
+{
+    ASSISI_ASSERT(jointBounds.size() == palette.size(), "one box and one matrix per joint");
+    Aabb posed = kEmptyAabb;
+    for (std::size_t joint = 0; joint < jointBounds.size(); ++joint)
+    {
+        if (!IsEmpty(jointBounds[joint]))
+        {
+            Extend(posed, TransformedAabb(jointBounds[joint], palette[joint]));
+        }
+    }
+    return posed;
+}
+
+BoundingSphere SphereAround(const Aabb &box)
+{
+    return BoundingSphere{.center = 0.5f * (box.min + box.max), .radius = 0.5f * glm::length(box.max - box.min)};
+}
+
 } // namespace Assisi::Geometry
