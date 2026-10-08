@@ -20,10 +20,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <Assisi/App/BlueprintReplication.hpp>
@@ -91,9 +95,18 @@ nlohmann::json CarFile()
                                                {{"name", "wheel_r"}, {"components", right}}})}};
 }
 
+/// A transport for the fixture, or a failed test saying why there is none.
+std::unique_ptr<Net::NetTransport> MakeTransport()
+{
+    std::expected<std::unique_ptr<Net::NetTransport>, Net::NetTransportError> created = Net::NetTransport::Create();
+    REQUIRE_MESSAGE(created.has_value(), "NetTransport::Create failed: ",
+                    created.has_value() ? std::string_view{} : Net::ToString(created.error()));
+    return std::move(*created);
+}
+
 struct Fixture
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = MakeTransport();
 
     // The worlds a test that does not care where its worlds come from gets:
     // standalone, so `manager` is null — a shape the engine has to keep working
@@ -109,8 +122,8 @@ struct Fixture
     std::uint64_t tick = 0;
 
     Fixture()
-        : host(ownHost), guest(ownGuest), pair(transport.CreateLoopbackPair()), server(transport, host.scene),
-        client(transport, guest.scene, pair.second)
+        : host(ownHost), guest(ownGuest), pair(transport->CreateLoopbackPair()), server(*transport, host.scene),
+        client(*transport, guest.scene, pair.second)
     {
     }
 
@@ -119,8 +132,8 @@ struct Fixture
     /// a delegating constructor would have to name `ownHost` as an argument
     /// before the delegated-to constructor has created it.
     Fixture(App::World &hostWorld, App::World &guestWorld)
-        : host(hostWorld), guest(guestWorld), pair(transport.CreateLoopbackPair()), server(transport, host.scene),
-        client(transport, guest.scene, pair.second)
+        : host(hostWorld), guest(guestWorld), pair(transport->CreateLoopbackPair()), server(*transport, host.scene),
+        client(*transport, guest.scene, pair.second)
     {
     }
 
@@ -138,7 +151,7 @@ struct Fixture
         for (int i = 0; i < times; ++i)
         {
             std::vector<Net::NetEvent> events;
-            transport.Poll(events);
+            transport->Poll(events);
             for (const Net::NetEvent &event : events)
             {
                 if (event.type != Net::NetEvent::Type::Message)

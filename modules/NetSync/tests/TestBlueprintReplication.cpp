@@ -39,6 +39,7 @@
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 using namespace Assisi;
 using namespace Assisi::NetSync;
@@ -92,7 +93,7 @@ private:
 
 struct Fixture
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene scene;
     ECS::Scene clientScene;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
@@ -100,7 +101,7 @@ struct Fixture
     ReplicationClient client;
     FakeInstances *instances = nullptr;
 
-    Fixture() : pair(transport.CreateLoopbackPair()), server(transport, scene), client(transport, clientScene, pair.second)
+    Fixture() : pair(transport->CreateLoopbackPair()), server(*transport, scene), client(*transport, clientScene, pair.second)
     {
         auto owned = std::make_unique<FakeInstances>();
         instances  = owned.get();
@@ -136,7 +137,7 @@ struct Fixture
     void Poll()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -315,9 +316,9 @@ TEST_CASE("Blueprint replication: an instance the provider cannot describe repli
 
 TEST_CASE("Blueprint replication: with no provider installed, nothing blocks")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene scene;
-    ReplicationServer server{transport, scene};
+    ReplicationServer server{*transport, scene};
 
     const ECS::Entity entity = scene.Create();
     (void)scene.Add(entity, ECS::Transform{});
@@ -356,13 +357,13 @@ TEST_CASE("Blueprint replication: a member index outside the block is refused, n
 
 TEST_CASE("Blueprint replication: the record survives a round trip and is idempotent")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
@@ -391,7 +392,7 @@ TEST_CASE("Blueprint replication: the record survives a round trip and is idempo
     for (int step = 0; step < 8; ++step)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -464,13 +465,13 @@ private:
 
 TEST_CASE("Blueprint replication: the client expands a record into bound members")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     auto ownedInfo = std::make_unique<FakeInstances>();
     ownedInfo->Add(ECS::InstanceId{1}, 3);
@@ -498,7 +499,7 @@ TEST_CASE("Blueprint replication: the client expands a record into bound members
     for (int i = 0; i < 10; ++i)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -527,13 +528,13 @@ TEST_CASE("Blueprint replication: the client expands a record into bound members
 
 TEST_CASE("Blueprint replication: a replicated tag names the client's instance, not the server's")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     // A server-side id chosen to be nothing the client would produce, so a tag
     // that crossed untranslated is visible rather than coincidentally right.
@@ -564,7 +565,7 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
     for (int i = 0; i < 12; ++i)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -593,13 +594,13 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
 
 TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     auto ownedInfo = std::make_unique<FakeInstances>();
     ownedInfo->Add(ECS::InstanceId{1}, 3);
@@ -629,7 +630,7 @@ TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
     for (int i = 0; i < 6; ++i)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -660,7 +661,7 @@ struct InstanceSession
     /// right.
     static constexpr ECS::InstanceId kServerInstance{7};
 
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
@@ -669,8 +670,8 @@ struct InstanceSession
     std::uint64_t tick = 1;
 
     InstanceSession()
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene),
+        client(*transport, clientScene, pair.second)
     {
         auto ownedInfo = std::make_unique<FakeInstances>();
         ownedInfo->Add(kServerInstance, 2);
@@ -701,7 +702,7 @@ struct InstanceSession
         for (std::uint32_t i = 0; i < times; ++i)
         {
             std::vector<Net::NetEvent> events;
-            transport.Poll(events);
+            transport->Poll(events);
             for (const Net::NetEvent &event : events)
             {
                 if (event.type != Net::NetEvent::Type::Message)
@@ -904,13 +905,13 @@ TEST_CASE("Blueprint replication: a dead member is not resurrected by its siblin
 
 TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
@@ -938,7 +939,7 @@ TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
                           for (int i = 0; i < times; ++i)
                           {
                               std::vector<Net::NetEvent> events;
-                              transport.Poll(events);
+                              transport->Poll(events);
                               for (const Net::NetEvent &event : events)
                               {
                                   if (event.type != Net::NetEvent::Type::Message)
@@ -972,13 +973,13 @@ TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
 
 TEST_CASE("Blueprint replication: a retired record collapses the instance the expander built")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
-    ReplicationServer server{transport, serverScene};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
@@ -1020,7 +1021,7 @@ TEST_CASE("Blueprint replication: a retired record collapses the instance the ex
                           for (int i = 0; i < times; ++i)
                           {
                               std::vector<Net::NetEvent> events;
-                              transport.Poll(events);
+                              transport->Poll(events);
                               for (const Net::NetEvent &event : events)
                               {
                                   if (event.type != Net::NetEvent::Type::Message)
@@ -1534,10 +1535,10 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
     // the budget, a join carrying more fresh instances than it allows produces
     // one oversized packet per snapshot until it is acked, with the entity loop
     // starved behind a section that has already spent everything.
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
-    const auto pair = transport.CreateLoopbackPair();
+    const auto pair = transport->CreateLoopbackPair();
 
     // Small enough that twenty records cannot possibly share one snapshot with
     // sixty entity blocks: a record is ~52 bytes, so the section alone wants
@@ -1545,8 +1546,8 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
     ReplicationConfig config;
     config.maxSnapshotBytes = 300;
 
-    ReplicationServer server{transport, serverScene, nullptr, config};
-    ReplicationClient client{transport, clientScene, pair.second};
+    ReplicationServer server{*transport, serverScene, nullptr, config};
+    ReplicationClient client{*transport, clientScene, pair.second};
 
     constexpr std::uint32_t kInstances = 20;
     constexpr std::uint32_t kMembers   = 3;
@@ -1582,7 +1583,7 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
     for (int step = 0; step < 60; ++step)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)

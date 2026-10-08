@@ -23,6 +23,7 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -40,7 +41,7 @@ namespace
 /// them.
 struct ControlHarness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
 
     ReplicationServer server;
@@ -58,17 +59,17 @@ struct ControlHarness
 
     std::vector<Peer> peers;
 
-    ControlHarness() : server(transport, serverScene) {}
+    ControlHarness() : server(*transport, serverScene) {}
 
     /// Connect one more client and register it with the server.
     std::size_t AddPeer()
     {
         Peer peer;
-        const auto pair = transport.CreateLoopbackPair();
+        const auto pair = transport->CreateLoopbackPair();
         peer.serverSide = pair.first;
         peer.clientSide = pair.second;
         peer.scene      = std::make_unique<ECS::Scene>();
-        peer.client     = std::make_unique<ReplicationClient>(transport, *peer.scene, peer.clientSide);
+        peer.client     = std::make_unique<ReplicationClient>(*transport, *peer.scene, peer.clientSide);
         peer.client->SetContentSetHash(0);
         peers.push_back(std::move(peer));
 
@@ -88,7 +89,7 @@ struct ControlHarness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -334,7 +335,7 @@ TEST_CASE("a disconnect despawns what its client owned, and only that")
 
 TEST_CASE("a level file's authored control is stripped when the session starts")
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene scene;
 
     // What a level saved mid-session would contain: a claim on an id from a
@@ -344,7 +345,7 @@ TEST_CASE("a level file's authored control is stripped when the session starts")
     REQUIRE(scene.Get<ControlledBy>(loaded) != nullptr);
 
     // Hosting is what starts a session.
-    ReplicationServer server(transport, scene);
+    ReplicationServer server(*transport, scene);
 
     // Left alone, client 7 would eventually connect and silently inherit an
     // entity nobody gave them.

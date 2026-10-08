@@ -16,9 +16,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 using namespace Assisi::Net;
@@ -27,6 +30,15 @@ namespace
 {
 
 using Clock = std::chrono::steady_clock;
+
+/// A transport for a test, or a failed test saying why there is none.
+std::unique_ptr<NetTransport> MakeTransport()
+{
+    std::expected<std::unique_ptr<NetTransport>, NetTransportError> created = NetTransport::Create();
+    REQUIRE_MESSAGE(created.has_value(), "NetTransport::Create failed: ",
+                    created.has_value() ? std::string_view{} : ToString(created.error()));
+    return std::move(*created);
+}
 
 std::vector<std::byte> Bytes(std::string_view text)
 {
@@ -117,9 +129,14 @@ std::uint16_t ListenOnFreePort(NetTransport &server)
 
 } // namespace
 
+// Create() is the only way in, so no transport exists over a library that
+// failed to initialise.
+static_assert(!std::is_default_constructible_v<NetTransport>);
+
 TEST_CASE("loopback pair delivers reliable and unreliable messages on both lanes")
 {
-    NetTransport transport;
+    std::unique_ptr<NetTransport> owned = MakeTransport();
+    NetTransport &transport = *owned;
 
     const auto [host, client] = transport.CreateLoopbackPair();
     REQUIRE(host != InvalidConnection);
@@ -157,7 +174,8 @@ TEST_CASE("loopback pair delivers reliable and unreliable messages on both lanes
 
 TEST_CASE("loopback pair reports a close to the other end")
 {
-    NetTransport transport;
+    std::unique_ptr<NetTransport> owned = MakeTransport();
+    NetTransport &transport = *owned;
 
     const auto [host, client] = transport.CreateLoopbackPair();
     REQUIRE(host != InvalidConnection);
@@ -180,8 +198,10 @@ TEST_CASE("loopback pair reports a close to the other end")
 
 TEST_CASE("client connects to a listen socket over real UDP and echoes both send modes")
 {
-    NetTransport server;
-    NetTransport client;
+    std::unique_ptr<NetTransport> ownedServer = MakeTransport();
+    std::unique_ptr<NetTransport> ownedClient = MakeTransport();
+    NetTransport &server = *ownedServer;
+    NetTransport &client = *ownedClient;
 
     const std::uint16_t port = ListenOnFreePort(server);
     REQUIRE_MESSAGE(port != 0, "could not bind any port in 27100-27139: ", server.LastError());
@@ -242,7 +262,8 @@ TEST_CASE("network-loopback pair under simulated lag and loss still converges")
     // The soak fixture every later stage reuses. Note the mode: the default
     // in-process socket pair bypasses the packet layer entirely and would ignore
     // these settings, so this must be the bUseNetworkLoopback=true variant.
-    NetTransport transport;
+    std::unique_ptr<NetTransport> owned = MakeTransport();
+    NetTransport &transport = *owned;
 
     SimulatedConditions conditions;
     conditions.sendLossPercent = 5.f;

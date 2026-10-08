@@ -27,6 +27,7 @@
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -45,7 +46,7 @@ namespace
 /// the shipping path rather than a test-only one.
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -64,8 +65,8 @@ struct Harness
     /// it may answer — the editor's join. Off by default, which is every other
     /// case here.
     explicit Harness(ReplicationConfig config = {}, bool deferHandshake = false, LevelIdentity level = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr, config),
+        client(*transport, clientScene, pair.second)
     {
         client.SetDeferHandshake(deferHandshake);
         server.SetLevelIdentity(std::move(level));
@@ -97,7 +98,7 @@ struct Harness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -577,15 +578,15 @@ TEST_CASE("a late-joining client converges on a world already in motion")
     // the empty one, which is the same code path as any other delta — that
     // unification is the reason late join needs no special message.
     ECS::Scene lateScene;
-    const auto latePair = harness.transport.CreateLoopbackPair();
-    ReplicationClient lateClient(harness.transport, lateScene, latePair.second);
+    const auto latePair = harness.transport->CreateLoopbackPair();
+    ReplicationClient lateClient(*harness.transport, lateScene, latePair.second);
     lateClient.SetContentSetHash(0);
     harness.server.AddConnection(latePair.first);
 
     for (std::uint32_t i = 0; i < 20; ++i)
     {
         std::vector<Net::NetEvent> events;
-        harness.transport.Poll(events);
+        harness.transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -1115,7 +1116,7 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     // The transport comes first: these are global GNS config values, and there
     // is nothing to configure until the library has been initialized by at
     // least one live NetTransport.
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -1126,9 +1127,9 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     conditions.recvLagMs       = 75;
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
-    const auto pair = transport.CreateLoopbackPair(true);
-    ReplicationServer server(transport, serverScene, /*physics=*/ nullptr, ReplicationConfig{});
-    ReplicationClient client(transport, clientScene, pair.second);
+    const auto pair = transport->CreateLoopbackPair(true);
+    ReplicationServer server(*transport, serverScene, /*physics=*/ nullptr, ReplicationConfig{});
+    ReplicationClient client(*transport, clientScene, pair.second);
     server.SetContentSetHash(0);
     client.SetContentSetHash(0);
     server.AddConnection(pair.first);
@@ -1143,7 +1144,7 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     for (int32_t step = 0; step < 240; ++step)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
@@ -1171,7 +1172,7 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     for (int32_t step = 0; step < 60; ++step)
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)

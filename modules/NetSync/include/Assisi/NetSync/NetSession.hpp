@@ -299,7 +299,9 @@ public:
     [[nodiscard]] ReplicationClient *Client() { return _client.get(); }
 
 private:
-    void EnsureTransport();
+    /// Creates the transport if there is none. False, with `_lastError` set,
+    /// when networking cannot start.
+    [[nodiscard]] bool EnsureTransport();
 
     ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;

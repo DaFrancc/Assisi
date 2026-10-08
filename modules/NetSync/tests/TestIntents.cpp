@@ -28,6 +28,7 @@
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
+#include <Assisi/NetSync/TestTransport.hpp>
 
 #include <cstdint>
 #include <vector>
@@ -41,7 +42,7 @@ namespace
 
 struct Harness
 {
-    Net::NetTransport transport;
+    std::unique_ptr<Net::NetTransport> transport = Assisi::NetSync::Test::MakeTransport();
     ECS::Scene serverScene;
     ECS::Scene clientScene;
 
@@ -53,8 +54,8 @@ struct Harness
     std::uint64_t tick = 0;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
-        client(transport, clientScene, pair.second)
+        : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr, config),
+        client(*transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -67,7 +68,7 @@ struct Harness
     void Step()
     {
         std::vector<Net::NetEvent> events;
-        transport.Poll(events);
+        transport->Poll(events);
         for (const Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
