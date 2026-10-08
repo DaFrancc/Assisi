@@ -425,6 +425,12 @@ private:
     void SyncUiInputMode();
     [[nodiscard]] bool ShouldClose() const;
 
+    /// The refresh interval frame times snap to, or 0 when they do not snap:
+    /// the display's under VSync, the cap's under a frame rate limit, none when
+    /// unlimited, headless, or snapping is off. @p refreshHz is the display's
+    /// rate, 0 when unknown.
+    [[nodiscard]] double SnapIntervalSeconds(int32_t refreshHz) const;
+
     /// Declared first so the capture runtime is up before anything else exists —
     /// in particular before _jobs spawns its workers, which register themselves
     /// with it — and so it is torn down last. Inert and empty unless built with

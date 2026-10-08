@@ -87,6 +87,17 @@ struct OptionsConfig
     /// Any positive value is the FPS cap the frame pacer targets.
     std::int16_t fpsLimit = -1;
 
+    /// @brief Whether the player chose to snap frame times to the display's
+    /// refresh, or nullopt to follow the game's choice.
+    std::optional<FrameSnap> frameSnap;
+
+    /// @brief The frame snapping to run with: the player's choice when they
+    /// made one, the game's otherwise.
+    [[nodiscard]] FrameSnap FrameSnapping(const AppConfig &config) const
+    {
+        return frameSnap ? *frameSnap : config.frameSnap;
+    }
+
     /// @brief The tap interval to run with: the player's when @p config lets
     /// players choose and they have, the game's standard otherwise.
     [[nodiscard]] double MultiTapSeconds(const AppConfig &config) const

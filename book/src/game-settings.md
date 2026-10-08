@@ -36,6 +36,7 @@ The main settings file:
 | `keepLogs` | How many old log files to keep. `0` keeps only the current one. |
 | `keepDumps` | How many old crash reports to keep. |
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
+| `frameSnap` | `"Snapped"` (default): a frame that took almost exactly one, two or more display refreshes counts as exactly that, so at a steady frame rate the same number of `FixedUpdate` steps runs every frame. `"Unsnapped"`: the frame's measured time is used as it is. The player can override this. |
 | `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [Lengths](ui-layout.md#lengths). |
 
 Any setting you leave out keeps its default.
@@ -65,8 +66,10 @@ single-player game. See [Multiplayer basics](multiplayer.md).
 The player's settings are saved in `options.json`, next to the executable:
 
 - Window size.
-- Graphics: anti-aliasing mode, VSync, frame rate limit. The editor's **F11**
-  window edits these.
+- Graphics: anti-aliasing mode, VSync, frame rate limit, frame snapping. The
+  editor's **F11** window edits these. Frame snapping is `frameSync.snap` in
+  `options.json`: `"game"` follows your `frameSnap`, and `"snapped"` or
+  `"unsnapped"` overrides it.
 - Rebound keys.
 - Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 

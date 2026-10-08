@@ -95,6 +95,7 @@ void EditorApp::DrawOptionsWindow()
     const bool applyDisplay = _options->Draw({.input = GetInput(),
                                               .renderer = _sceneRenderer,
                                               .options = GetOptions(),
+                                              .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
                                               .fps = GetFps(),
                                               .cpuFrameMs = GetCpuFrameMs(),

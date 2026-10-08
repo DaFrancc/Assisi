@@ -86,11 +86,11 @@ void WindowContext::InstallCallbacks()
 namespace
 {
 
-static_assert(static_cast<int>(KeyAction::Release) == GLFW_RELEASE);
-static_assert(static_cast<int>(KeyAction::Press) == GLFW_PRESS);
-static_assert(static_cast<int>(KeyAction::Repeat) == GLFW_REPEAT);
+static_assert(static_cast<int32_t>(KeyAction::Release) == GLFW_RELEASE);
+static_assert(static_cast<int32_t>(KeyAction::Press) == GLFW_PRESS);
+static_assert(static_cast<int32_t>(KeyAction::Repeat) == GLFW_REPEAT);
 
-Modifiers DecodeModifiers(int mods)
+Modifiers DecodeModifiers(int32_t mods)
 {
     return Modifiers{.shift = (mods & GLFW_MOD_SHIFT) != 0,
                      .control = (mods & GLFW_MOD_CONTROL) != 0,
@@ -107,7 +107,7 @@ WindowContext *Owner(GLFWwindow *window)
 
 } // namespace
 
-void WindowContext::KeyTrampoline(GLFWwindow *window, int key, int scancode, int action, int mods)
+void WindowContext::KeyTrampoline(GLFWwindow *window, int32_t key, int32_t scancode, int32_t action, int32_t mods)
 {
     WindowContext *self = Owner(window);
     if (self == nullptr || key == GLFW_KEY_UNKNOWN)
@@ -125,7 +125,7 @@ void WindowContext::KeyTrampoline(GLFWwindow *window, int key, int scancode, int
     }
 }
 
-void WindowContext::CharacterTrampoline(GLFWwindow *window, unsigned int codepoint)
+void WindowContext::CharacterTrampoline(GLFWwindow *window, uint32_t codepoint)
 {
     if (WindowContext *self = Owner(window))
     {
@@ -136,7 +136,7 @@ void WindowContext::CharacterTrampoline(GLFWwindow *window, unsigned int codepoi
     }
 }
 
-void WindowContext::MouseButtonTrampoline(GLFWwindow *window, int button, int action, int mods)
+void WindowContext::MouseButtonTrampoline(GLFWwindow *window, int32_t button, int32_t action, int32_t mods)
 {
     if (WindowContext *self = Owner(window))
     {
@@ -237,7 +237,7 @@ void WindowContext::SetClipboardText(std::string_view text) const
     glfwSetClipboardString(_nativeWindowHandle, terminated.c_str());
 }
 
-void WindowContext::FramebufferSizeTrampoline(GLFWwindow *window, int width, int height)
+void WindowContext::FramebufferSizeTrampoline(GLFWwindow *window, int32_t width, int32_t height)
 {
     if (auto *self = static_cast<WindowContext *>(glfwGetWindowUserPointer(window)))
     {
@@ -264,7 +264,7 @@ void WindowContext::WindowRefreshTrampoline(GLFWwindow *window)
     }
 }
 
-void WindowContext::OnFramebufferSize(std::function<void(int, int)> callback)
+void WindowContext::OnFramebufferSize(std::function<void(int32_t, int32_t)> callback)
 {
     _framebufferSizeCallbacks.push_back(std::move(callback));
 }
@@ -409,8 +409,8 @@ void WindowContext::SetTitle(const std::string &title) const
 
 WindowSize WindowContext::GetWindowSize() const
 {
-    int windowWidth = 0;
-    int windowHeight = 0;
+    int32_t windowWidth = 0;
+    int32_t windowHeight = 0;
 
     if (_nativeWindowHandle != nullptr)
     {
@@ -425,8 +425,8 @@ WindowSize WindowContext::GetWindowSize() const
 
 WindowSize WindowContext::GetFramebufferSize() const
 {
-    int framebufferWidth = 0;
-    int framebufferHeight = 0;
+    int32_t framebufferWidth = 0;
+    int32_t framebufferHeight = 0;
 
     if (_nativeWindowHandle != nullptr)
     {
@@ -437,5 +437,62 @@ WindowSize WindowContext::GetFramebufferSize() const
     result.Width = framebufferWidth;
     result.Height = framebufferHeight;
     return result;
+}
+
+namespace
+{
+/// The monitor whose area holds @p window's centre, or the primary one.
+GLFWmonitor *MonitorHolding(GLFWwindow *window)
+{
+    int32_t windowX = 0;
+    int32_t windowY = 0;
+    int32_t windowWidth = 0;
+    int32_t windowHeight = 0;
+    glfwGetWindowPos(window, &windowX, &windowY);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    const int32_t centreX = windowX + windowWidth / 2;
+    const int32_t centreY = windowY + windowHeight / 2;
+
+    int32_t count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    for (int32_t index = 0; index < count; ++index)
+    {
+        const GLFWvidmode *mode = glfwGetVideoMode(monitors[index]);
+        if (mode == nullptr)
+        {
+            continue;
+        }
+        int32_t monitorX = 0;
+        int32_t monitorY = 0;
+        glfwGetMonitorPos(monitors[index], &monitorX, &monitorY);
+        if (centreX >= monitorX && centreX < monitorX + mode->width && centreY >= monitorY &&
+            centreY < monitorY + mode->height)
+        {
+            return monitors[index];
+        }
+    }
+    return glfwGetPrimaryMonitor();
+}
+} // namespace
+
+int32_t WindowContext::RefreshRateHz() const
+{
+    if (_nativeWindowHandle == nullptr)
+    {
+        return 0;
+    }
+
+    GLFWmonitor *monitor = glfwGetWindowMonitor(_nativeWindowHandle);
+    if (monitor == nullptr)
+    {
+        monitor = MonitorHolding(_nativeWindowHandle);
+    }
+    if (monitor == nullptr)
+    {
+        return 0;
+    }
+
+    const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+    return mode != nullptr ? static_cast<int32_t>(mode->refreshRate) : 0;
 }
 } /* namespace Assisi::Window */

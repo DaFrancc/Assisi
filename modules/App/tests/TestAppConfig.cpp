@@ -49,6 +49,16 @@ TEST_CASE("AppConfig: the simulate-from policy is read, and defaults to Begin")
     CHECK(cfg.simulateFrom == SimulateFrom::Loaded);
 }
 
+TEST_CASE("AppConfig: frame snapping is read, and defaults to Snapped")
+{
+    CHECK(AppConfig{}.frameSnap == FrameSnap::Snapped);
+
+    const AppConfig cfg =
+        AppConfig::FromJsonText(R"({ "version": 1, "type": "AppConfig", "frameSnap": "Unsnapped" })");
+
+    CHECK(cfg.frameSnap == FrameSnap::Unsnapped);
+}
+
 TEST_CASE("AppConfig: an enum reads by name as well as by number")
 {
     // A config is hand-edited, and "Loaded" says what 1 does not.

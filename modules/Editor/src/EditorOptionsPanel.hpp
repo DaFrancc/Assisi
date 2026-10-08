@@ -43,6 +43,8 @@ public:
         Window::InputContext &input;
         Runtime::SceneRenderer &renderer;
         App::OptionsConfig &options;
+        /// What the options fall back to where the player has not chosen.
+        const App::AppConfig &config;
         bool &showEditorOverlays;
 
         int32_t fps;

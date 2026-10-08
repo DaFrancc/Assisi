@@ -168,7 +168,10 @@ The `SystemContext` your system receives holds everything it can reach:
 
 `FixedUpdate` can run zero, one or several times in a frame, depending on how
 fast the game is running. Use it for physics-related code so it behaves the same
-at any frame rate.
+at any frame rate. A frame that took almost exactly one display refresh counts
+as exactly one, so at 60 frames per second on a 60 Hz display `FixedUpdate`
+runs once every frame, never zero times one frame and twice the next. See
+`frameSnap` in [Game settings](game-settings.md).
 
 A `Transform` you write in `FixedUpdate` or `PostFixedUpdate` is drawn smoothly
 anyway. The engine draws it between its pose before the step and its pose after
