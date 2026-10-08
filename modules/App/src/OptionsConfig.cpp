@@ -123,6 +123,30 @@ static const char *ShadowFormatToString(Render::ShadowMapFormat format)
     return format == Render::ShadowMapFormat::D16 ? "d16" : "d32";
 }
 
+/// @brief The player's frame snapping, or nullopt for "game" and anything else
+/// the file might hold, which defers to the game's choice.
+static std::optional<FrameSnap> FrameSnapFromString(const std::string &str)
+{
+    if (str == "snapped")
+    {
+        return FrameSnap::Snapped;
+    }
+    if (str == "unsnapped")
+    {
+        return FrameSnap::Unsnapped;
+    }
+    return std::nullopt;
+}
+
+static const char *FrameSnapToString(std::optional<FrameSnap> snap)
+{
+    if (!snap)
+    {
+        return "game";
+    }
+    return *snap == FrameSnap::Unsnapped ? "unsnapped" : "snapped";
+}
+
 /// @brief Reads @p key into @p field when the object has it, and leaves the
 /// default when it does not.
 ///
@@ -333,6 +357,10 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
                     cfg.fpsLimit = static_cast<std::int16_t>(limit);
                 }
             }
+            if (fs.contains("snap"))
+            {
+                cfg.frameSnap = FrameSnapFromString(fs.at("snap").get<std::string>());
+            }
         }
     }
     catch (const nlohmann::json::exception &e)
@@ -475,6 +503,10 @@ nlohmann::json FullJson(const OptionsConfig &options)
 
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;
+
+    // Written even when unset, as "game", so the file lists the setting for a
+    // player to find.
+    json["frameSync"]["snap"] = FrameSnapToString(options.frameSnap);
 
     // Guarded because there is nothing to write when the player has chosen no
     // size. Absence is the meaning here: no size stored is what lets the game's

@@ -22,8 +22,10 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -33,11 +35,46 @@ namespace Assisi::Editor
 {
 
 using Assisi::App::Application;
+using Assisi::App::FrameSnap;
 using Assisi::App::FrameSyncMode;
 using Assisi::App::OptionsConfig;
 
 namespace
 {
+/// The rows of the Frame Snap combo: the game's choice, then the two a player
+/// can pin.
+enum class FrameSnapRow : int32_t
+{
+    Game,
+    Snapped,
+    Unsnapped,
+    Count_
+};
+
+/// The row showing @p snap, the player's choice or nullopt for the game's.
+FrameSnapRow RowOf(std::optional<FrameSnap> snap)
+{
+    if (!snap)
+    {
+        return FrameSnapRow::Game;
+    }
+    return *snap == FrameSnap::Unsnapped ? FrameSnapRow::Unsnapped : FrameSnapRow::Snapped;
+}
+
+/// The player's choice @p row stands for.
+std::optional<FrameSnap> ChoiceOf(FrameSnapRow row)
+{
+    switch (row)
+    {
+    case FrameSnapRow::Snapped:
+        return FrameSnap::Snapped;
+    case FrameSnapRow::Unsnapped:
+        return FrameSnap::Unsnapped;
+    default:
+        return std::nullopt;
+    }
+}
+
 /// Who holds which rectangle of the local-light atlas, and how long each one's
 /// still layer has stood.
 ///
@@ -1266,6 +1303,19 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         if (!capFieldEnabled)
         {
             ImGui::EndDisabled();
+        }
+
+        // The first row names what the game chose, so following it is not a
+        // guess.
+        const char *const gameRow = frame.config.frameSnap == FrameSnap::Unsnapped ? "Game default (unsnapped)"
+                                                                                   : "Game default (snapped)";
+        const std::array<const char *, static_cast<size_t>(FrameSnapRow::Count_)> snapRows = {gameRow, "Snapped",
+                                                                                              "Unsnapped"};
+        int snapIndex = static_cast<int>(RowOf(options.frameSnap));
+        if (ImGui::Combo("Frame Snap", &snapIndex, snapRows.data(), static_cast<int>(snapRows.size())))
+        {
+            options.frameSnap = ChoiceOf(static_cast<FrameSnapRow>(snapIndex));
+            options.SaveToJson();
         }
     }
     ImGui::End();

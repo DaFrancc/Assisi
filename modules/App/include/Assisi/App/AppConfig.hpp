@@ -44,6 +44,25 @@ enum class SimulateFrom : std::uint8_t
     Count_
 };
 
+/// @brief Whether a frame's measured time is snapped to the display's refresh
+/// before it is turned into fixed steps.
+AENUM()
+enum class FrameSnap : std::uint8_t
+{
+    /// A frame that lasted close to a whole number of refreshes counts as
+    /// exactly that many, so a steady frame rate runs a steady number of fixed
+    /// steps a frame. What is shaved off is paid back, so the game clock keeps
+    /// to real time.
+    Snapped,
+
+    /// The measured time goes to the fixed steps as it is. The step count
+    /// follows the clock's wobble: at 60 fps on 60 Hz physics, now and then a
+    /// frame runs no step and the next runs two.
+    Unsnapped,
+
+    Count_
+};
+
 /// @brief The game config document, as it sits on disk.
 ///
 /// Ordered widest field first so the struct carries no interior padding; the
@@ -115,6 +134,10 @@ struct AppConfig
     /// Only the clock waits. Both one-shot phases run either way, so the logic
     /// that takes the screen down belongs in a Loaded system whichever this says.
     AFIELD() SimulateFrom simulateFrom = SimulateFrom::Begin;
+
+    /// @brief Whether frame times snap to the display's refresh, unless the
+    /// player's options say otherwise.
+    AFIELD() FrameSnap frameSnap = FrameSnap::Snapped;
 
     /// @brief Whether a player's own tap interval, from their options, replaces
     /// multiTapSeconds. Off holds every player to the standard.

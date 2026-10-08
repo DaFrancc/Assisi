@@ -129,6 +129,14 @@ class WindowContext
     /// GetWindowSize(), as they differ on HiDPI / Retina screens.
     [[nodiscard]] WindowSize GetFramebufferSize() const;
 
+    /// @brief The refresh rate of the display the window is on, in whole Hz, or
+    /// 0 when it is not known.
+    ///
+    /// A windowed window is on the display that holds its centre, or the
+    /// primary one where the platform does not report window positions.
+    /// Asks the display server each call, so not one to call every frame.
+    [[nodiscard]] int32_t RefreshRateHz() const;
+
     // -------------------------------------------------------------------------
     // Event subscription — see the class @warning about subscriber lifetimes.
     // Subscribers are invoked in registration order.

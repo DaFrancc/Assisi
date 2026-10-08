@@ -438,4 +438,61 @@ WindowSize WindowContext::GetFramebufferSize() const
     result.Height = framebufferHeight;
     return result;
 }
+
+namespace
+{
+/// The monitor whose area holds @p window's centre, or the primary one.
+GLFWmonitor *MonitorHolding(GLFWwindow *window)
+{
+    int32_t windowX = 0;
+    int32_t windowY = 0;
+    int32_t windowWidth = 0;
+    int32_t windowHeight = 0;
+    glfwGetWindowPos(window, &windowX, &windowY);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    const int32_t centreX = windowX + windowWidth / 2;
+    const int32_t centreY = windowY + windowHeight / 2;
+
+    int32_t count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    for (int32_t index = 0; index < count; ++index)
+    {
+        const GLFWvidmode *mode = glfwGetVideoMode(monitors[index]);
+        if (mode == nullptr)
+        {
+            continue;
+        }
+        int32_t monitorX = 0;
+        int32_t monitorY = 0;
+        glfwGetMonitorPos(monitors[index], &monitorX, &monitorY);
+        if (centreX >= monitorX && centreX < monitorX + mode->width && centreY >= monitorY &&
+            centreY < monitorY + mode->height)
+        {
+            return monitors[index];
+        }
+    }
+    return glfwGetPrimaryMonitor();
+}
+} // namespace
+
+int32_t WindowContext::RefreshRateHz() const
+{
+    if (_nativeWindowHandle == nullptr)
+    {
+        return 0;
+    }
+
+    GLFWmonitor *monitor = glfwGetWindowMonitor(_nativeWindowHandle);
+    if (monitor == nullptr)
+    {
+        monitor = MonitorHolding(_nativeWindowHandle);
+    }
+    if (monitor == nullptr)
+    {
+        return 0;
+    }
+
+    const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+    return mode != nullptr ? static_cast<int32_t>(mode->refreshRate) : 0;
+}
 } /* namespace Assisi::Window */

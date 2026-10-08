@@ -11,6 +11,7 @@
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
+#include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Diagnostics.hpp>
@@ -442,6 +443,19 @@ bool Application::ShouldClose() const
     return _closeRequested || (_window && _window->ShouldClose());
 }
 
+double Application::SnapIntervalSeconds(int32_t refreshHz) const
+{
+    if (_headless || _options.FrameSnapping(_config) == FrameSnap::Unsnapped)
+    {
+        return 0.0;
+    }
+    if (_options.frameSync == FrameSyncMode::VSync)
+    {
+        return refreshHz > 0 ? 1.0 / static_cast<double>(refreshHz) : 0.0;
+    }
+    return _options.fpsLimit > 0 ? 1.0 / static_cast<double>(_options.fpsLimit) : 0.0;
+}
+
 void Application::SetPerfCapture(const PerfCaptureConfig &config)
 {
     _perfCapture = std::make_unique<PerfCapture>(config);
@@ -595,7 +609,12 @@ void Application::Run()
 
     Clock::time_point prevTime = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
-    double accumulator = 0.0;
+    FrameTimeSnapper snapper;
+    FixedStepClock fixedClock(physicsStep, _config.maxFixedStepsPerFrame);
+
+    // Read again with the frame stats, not every frame: the query is a round
+    // trip to the display server on some platforms.
+    int32_t refreshHz = _headless ? 0 : _window->RefreshRateHz();
 
     double fpsAccum = 0.0;
     int32_t fpsFrameCount = 0;
@@ -734,34 +753,26 @@ void Application::Run()
             // what matters is the total the frame paid, and N nested identical
             // slices would bury it.
             ASSISI_PROFILE_SCOPE("fixed-update");
-            accumulator += SimulationSeconds(dt);
-            uint32_t steps = 0;
-            while (accumulator >= physicsStep && steps < _config.maxFixedStepsPerFrame)
+
+            // Snapped before the hook, which a benchmark uses to replace the
+            // frame's time with its own run clock's.
+            const double snapped = snapper.Snap(dt, SnapIntervalSeconds(refreshHz));
+            const uint32_t steps = fixedClock.Advance(SimulationSeconds(snapped));
+            for (uint32_t step = 0; step < steps; ++step)
             {
                 // The network clock. Incremented with the step, before the hook,
                 // so OnFixedUpdate and every system it runs sees the tick they
                 // are simulating rather than the one they just finished.
                 ++_simTick;
                 OnFixedUpdate(static_cast<float>(physicsStep));
-                accumulator -= physicsStep;
-                ++steps;
-            }
-
-            // Past the cap the time is dropped rather than carried: carried, it
-            // would be owed again next frame, which runs the cap again, and the
-            // game would never get back to running one step a frame.
-            if (accumulator >= physicsStep)
-            {
-                accumulator = std::fmod(accumulator, physicsStep);
             }
         }
         const Clock::time_point fixedEnd = Clock::now();
 
-        // What's left in the accumulator is how far we are into the *next*
-        // physics step — the blend factor OnRender uses to interpolate
-        // physics-driven state between the last two fixed steps. The while loop
-        // above guarantees accumulator < physicsStep, so this stays in [0, 1).
-        _interpolationAlpha = static_cast<float>(accumulator / physicsStep);
+        // How far we are into the *next* physics step — the blend factor
+        // OnRender uses to interpolate physics-driven state between the last
+        // two fixed steps.
+        _interpolationAlpha = static_cast<float>(fixedClock.Alpha());
 
         // Run work marshalled back to the main thread (Jobs().RunOnMain) at this
         // safe point — before OnUpdate's systems run and before any render command
@@ -941,6 +952,12 @@ void Application::Run()
             cpuMsAccum = 0.0;
             gpuMsAccum = 0.0;
             fpsFrameCount = 0;
+
+            // The window may have moved to another display since.
+            if (!_headless)
+            {
+                refreshHz = _window->RefreshRateHz();
+            }
         }
     }
 

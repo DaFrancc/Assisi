@@ -314,6 +314,27 @@ TEST_CASE("A chosen tap interval survives a write and a read, and is used only w
     CHECK(read.MultiTapSeconds(game) == game.multiTapSeconds);
 }
 
+TEST_CASE("A chosen frame snapping survives a write and a read, and an unchosen one follows the game")
+{
+    // Unchosen is still written, as "game", so the file shows the setting.
+    CHECK(nlohmann::json::parse(OptionsConfig{}.ToJsonText())["frameSync"]["snap"] == "game");
+    CHECK_FALSE(OptionsConfig::FromJsonText(OptionsConfig{}.ToJsonText()).frameSnap.has_value());
+
+    OptionsConfig written;
+    written.frameSnap = FrameSnap::Unsnapped;
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    REQUIRE(read.frameSnap.has_value());
+    CHECK(*read.frameSnap == FrameSnap::Unsnapped);
+
+    AppConfig game;
+    CHECK(read.FrameSnapping(game) == FrameSnap::Unsnapped);
+    CHECK(OptionsConfig{}.FrameSnapping(game) == FrameSnap::Snapped);
+
+    game.frameSnap = FrameSnap::Unsnapped;
+    CHECK(OptionsConfig::FromJsonText(R"({ "frameSync": { "snap": "snapped" } })").FrameSnapping(game) ==
+          FrameSnap::Snapped);
+}
+
 TEST_CASE("Loading writes a missing or incomplete options.json back with every setting, and leaves a broken one")
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-options-complete";
