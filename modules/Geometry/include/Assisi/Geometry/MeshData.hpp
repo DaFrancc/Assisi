@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include <Assisi/Geometry/Bounds.hpp>
@@ -34,6 +35,57 @@ struct Vertex
     glm::vec2 TextureCoordinates{0.0f, 0.0f};
     /// @brief Tangent vector in object space. xyz = tangent direction, w = bitangent handedness (+1 or -1).
     glm::vec4 Tangent{1.0f, 0.0f, 0.0f, 1.0f};
+};
+
+/// @brief The most joints one vertex follows. Content that binds a vertex to
+///        more keeps its largest weights and is renormalized.
+inline constexpr uint32_t kMaxInfluences = 4;
+
+/// @brief Parent index of a joint that has no parent joint.
+inline constexpr int32_t kNoParent = -1;
+
+/// @brief How far a vertex's weights may sum from one and still count as
+///        normalized; float accumulation over four terms drifts by about this.
+inline constexpr float kWeightSumTolerance = 1e-4f;
+
+/// @brief Which joints move one vertex, and how much each does.
+///
+/// Parallel to MeshData::Vertices. Laid out as the skinning compute pass reads
+/// it, so the array uploads as is. A joint whose weight is zero is unused, and
+/// names joint 0.
+struct VertexSkin
+{
+    glm::vec4 Weights{1.0f, 0.0f, 0.0f, 0.0f}; ///< Each at least zero; together they sum to one.
+    glm::uvec4 Joints{0u, 0u, 0u, 0u};        ///< Indices into the mesh's Skeleton.
+};
+static_assert(sizeof(VertexSkin) == 32, "VertexSkin is read by the GPU at this size");
+
+/// @brief A joint's transform relative to its parent.
+struct JointTransform
+{
+    glm::quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 Translation{0.0f, 0.0f, 0.0f};
+    glm::vec3 Scale{1.0f, 1.0f, 1.0f};
+};
+
+/// @brief The joints a skinned mesh is bound to, as parallel tables.
+///
+/// Joints are ordered so every parent comes before its children
+/// (`Parents[i] < i`, or kNoParent), which lets a pose be built in one forward
+/// pass. A root joint's model-space transform is `RootTransform` times its own
+/// rest transform: the nodes above the skeleton stay out of the joint, so an
+/// animation that drives the root replaces only the root's own transform.
+/// Joints are identified by name, which is how clips find them.
+struct Skeleton
+{
+    glm::mat4 RootTransform{1.0f};          ///< Model-space transform of the root joints' parent.
+    std::vector<std::string> Names;         ///< Unique.
+    std::vector<int32_t> Parents;           ///< Index of each joint's parent, or kNoParent.
+    std::vector<JointTransform> RestLocal;  ///< Each joint's rest transform relative to its parent.
+    std::vector<glm::mat4> InverseBind;     ///< Model space to each joint's space at bind time.
+
+    [[nodiscard]] uint32_t JointCount() const { return static_cast<uint32_t>(Names.size()); }
+    [[nodiscard]] bool Empty() const { return Names.empty(); }
 };
 
 /// @brief One drawable index range of a mesh: everything that shares a
@@ -110,6 +162,11 @@ struct MeshData
     std::vector<SubMesh>      SubMeshes; ///< May be empty — see degenerate rule above.
     std::vector<LodRange>     Lods;      ///< [0] = LOD0. May be empty alongside SubMeshes.
     std::vector<MaterialData> Materials; ///< Material slot table (import defaults).
+
+    /// Empty for a static mesh. For a skinned one, one entry per vertex, and
+    /// the vertices are in bind space rather than baked into the scene.
+    std::vector<VertexSkin> Skin;
+    Geometry::Skeleton Skeleton; ///< Empty exactly when Skin is.
 
     /// The collision the model authored as prefixed nodes, which are not part
     /// of the geometry above.

@@ -63,6 +63,32 @@ Geometry::MeshData TwoLodQuad()
     return mesh;
 }
 
+/// TwoLodQuad bound to a three-joint skeleton, with values no default holds.
+Geometry::MeshData SkinnedQuad()
+{
+    Geometry::MeshData mesh = TwoLodQuad();
+    for (std::uint32_t i = 0; i < mesh.Vertices.size(); ++i)
+    {
+        const float f = static_cast<float>(i) * 0.125f;
+        mesh.Skin.push_back(Geometry::VertexSkin{.Weights = {0.5f - f, 0.25f, 0.25f + f, 0.f},
+                                                 .Joints  = {i % 3u, 1u, 2u, 0u}});
+    }
+
+    Geometry::Skeleton &skeleton = mesh.Skeleton;
+    skeleton.RootTransform = glm::translate(glm::mat4(1.f), glm::vec3(1.f, 2.f, 3.f));
+    skeleton.Names = {"root", "spine", "head"};
+    skeleton.Parents = {Geometry::kNoParent, 0, 1};
+    for (std::uint32_t joint = 0; joint < 3; ++joint)
+    {
+        const float f = static_cast<float>(joint) + 0.5f;
+        skeleton.RestLocal.push_back(Geometry::JointTransform{.Rotation    = glm::normalize(glm::quat(1.f, f, 0.f, 0.f)),
+                                                              .Translation = {f, -f, f * 2.f},
+                                                              .Scale       = {1.f, f, 1.f}});
+        skeleton.InverseBind.push_back(glm::translate(glm::mat4(1.f), glm::vec3(-f, 0.f, f)));
+    }
+    return mesh;
+}
+
 const std::vector<Core::AssetId> kSlots{Core::DerivedAssetId("materials/a.amat"),
                                         Core::DerivedAssetId("materials/b.amat")};
 
@@ -138,6 +164,66 @@ TEST_CASE("A truncated mesh blob is refused rather than half-read")
         const std::span<const std::byte> cut{bytes.data(), length};
         CHECK_FALSE(Geometry::ReadCookedMesh(cut).has_value());
     }
+}
+
+TEST_CASE("A cooked skinned mesh reads back with its skin and skeleton")
+{
+    const Geometry::MeshData source = SkinnedQuad();
+
+    const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> read = Geometry::ReadCookedMesh(Cook(source));
+    REQUIRE(read.has_value());
+    const Geometry::MeshData &mesh = read->mesh;
+
+    REQUIRE(mesh.Skin.size() == source.Skin.size());
+    for (std::size_t i = 0; i < mesh.Skin.size(); ++i)
+    {
+        CHECK(mesh.Skin[i].Weights == source.Skin[i].Weights);
+        CHECK(mesh.Skin[i].Joints == source.Skin[i].Joints);
+    }
+
+    const Geometry::Skeleton &skeleton = mesh.Skeleton;
+    CHECK(skeleton.RootTransform == source.Skeleton.RootTransform);
+    CHECK(skeleton.Names == source.Skeleton.Names);
+    CHECK(skeleton.Parents == source.Skeleton.Parents);
+    REQUIRE(skeleton.RestLocal.size() == source.Skeleton.RestLocal.size());
+    for (std::size_t i = 0; i < skeleton.RestLocal.size(); ++i)
+    {
+        CHECK(skeleton.RestLocal[i].Rotation == source.Skeleton.RestLocal[i].Rotation);
+        CHECK(skeleton.RestLocal[i].Translation == source.Skeleton.RestLocal[i].Translation);
+        CHECK(skeleton.RestLocal[i].Scale == source.Skeleton.RestLocal[i].Scale);
+    }
+    CHECK(skeleton.InverseBind == source.Skeleton.InverseBind);
+}
+
+TEST_CASE("A static mesh reads back with no skin and no skeleton")
+{
+    const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> read =
+        Geometry::ReadCookedMesh(Cook(TwoLodQuad()));
+    REQUIRE(read.has_value());
+    CHECK(read->mesh.Skin.empty());
+    CHECK(read->mesh.Skeleton.Empty());
+}
+
+TEST_CASE("A truncated skinned mesh blob is refused rather than half-read")
+{
+    const std::vector<std::byte> bytes = Cook(SkinnedQuad());
+    for (std::size_t length = 0; length < bytes.size(); ++length)
+    {
+        CAPTURE(length);
+        const std::span<const std::byte> cut{bytes.data(), length};
+        CHECK_FALSE(Geometry::ReadCookedMesh(cut).has_value());
+    }
+}
+
+TEST_CASE("A skinned mesh blob whose skin names a missing joint is refused")
+{
+    Geometry::MeshData broken = SkinnedQuad();
+    broken.Skin[0].Joints.x = 7;
+
+    const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> read =
+        Geometry::ReadCookedMesh(Cook(broken));
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == Geometry::CookedMeshError::Invalid);
 }
 
 TEST_CASE("A blob of another kind is not read as a mesh")

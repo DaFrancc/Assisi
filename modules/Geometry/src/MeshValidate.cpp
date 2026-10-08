@@ -5,7 +5,11 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <cmath>
 #include <cstddef>
+#include <string>
+#include <string_view>
+#include <unordered_set>
 
 namespace Assisi::Geometry
 {
@@ -15,6 +19,82 @@ namespace
 /// Indices per triangle. The index array is a triangle list and nothing in the
 /// pipeline reads it any other way.
 constexpr std::size_t kIndicesPerTriangle = 3;
+
+std::expected<void, MeshValidationError> ValidateSkeleton(const Skeleton &skeleton)
+{
+    const std::size_t jointCount = skeleton.Names.size();
+    if (skeleton.Parents.size() != jointCount || skeleton.RestLocal.size() != jointCount ||
+        skeleton.InverseBind.size() != jointCount)
+    {
+        return std::unexpected(MeshValidationError::SkeletonTablesMismatch);
+    }
+    for (std::size_t joint = 0; joint < jointCount; ++joint)
+    {
+        const int32_t parent = skeleton.Parents[joint];
+        if (parent != kNoParent && (parent < 0 || static_cast<std::size_t>(parent) >= joint))
+        {
+            return std::unexpected(MeshValidationError::JointOrder);
+        }
+    }
+
+    std::unordered_set<std::string_view> names;
+    for (const std::string &name : skeleton.Names)
+    {
+        if (!names.insert(name).second)
+        {
+            return std::unexpected(MeshValidationError::DuplicateJointName);
+        }
+    }
+    return {};
+}
+
+std::expected<void, MeshValidationError> ValidateSkin(const MeshData &mesh)
+{
+    if (mesh.Skin.empty() && mesh.Skeleton.Empty())
+    {
+        return {};
+    }
+    if (mesh.Skeleton.Empty())
+    {
+        return std::unexpected(MeshValidationError::SkinWithoutSkeleton);
+    }
+    if (mesh.Skin.empty())
+    {
+        return std::unexpected(MeshValidationError::SkeletonWithoutSkin);
+    }
+    if (mesh.Skin.size() != mesh.Vertices.size())
+    {
+        return std::unexpected(MeshValidationError::SkinSizeMismatch);
+    }
+    if (const std::expected<void, MeshValidationError> skeleton = ValidateSkeleton(mesh.Skeleton); !skeleton)
+    {
+        return skeleton;
+    }
+
+    const uint32_t jointCount = mesh.Skeleton.JointCount();
+    for (const VertexSkin &skin : mesh.Skin)
+    {
+        float sum = 0.f;
+        for (int32_t slot = 0; slot < static_cast<int32_t>(kMaxInfluences); ++slot)
+        {
+            if (skin.Weights[slot] < 0.f)
+            {
+                return std::unexpected(MeshValidationError::WeightsNotNormalized);
+            }
+            if (skin.Joints[slot] >= jointCount)
+            {
+                return std::unexpected(MeshValidationError::JointOutOfRange);
+            }
+            sum += skin.Weights[slot];
+        }
+        if (std::abs(sum - 1.f) > kWeightSumTolerance)
+        {
+            return std::unexpected(MeshValidationError::WeightsNotNormalized);
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 std::string_view ToString(MeshValidationError error) noexcept
@@ -43,6 +123,22 @@ std::string_view ToString(MeshValidationError error) noexcept
         return "has LODs that do not tile the submesh array in order";
     case MeshValidationError::LodThresholdNotDescending:
         return "has authored LOD screen sizes that do not fall across the chain";
+    case MeshValidationError::SkinSizeMismatch:
+        return "has a skin array that is not one entry per vertex";
+    case MeshValidationError::SkinWithoutSkeleton:
+        return "has skinned vertices but no skeleton";
+    case MeshValidationError::SkeletonWithoutSkin:
+        return "has a skeleton but no skinned vertices";
+    case MeshValidationError::SkeletonTablesMismatch:
+        return "has skeleton tables of different lengths";
+    case MeshValidationError::JointOrder:
+        return "has a joint whose parent does not come before it";
+    case MeshValidationError::JointOutOfRange:
+        return "has a vertex naming a joint the skeleton does not have";
+    case MeshValidationError::WeightsNotNormalized:
+        return "has a vertex whose weights are negative or do not sum to one";
+    case MeshValidationError::DuplicateJointName:
+        return "has two joints with the same name";
     default:
         ASSISI_ASSERT(false, "ToString reached a MeshValidationError with no description");
         Core::Log::Error("MeshValidate: no description for this error");
@@ -151,7 +247,7 @@ std::expected<void, MeshValidationError> ValidateMesh(const MeshData &mesh)
         haveAuthored      = true;
     }
 
-    return {};
+    return ValidateSkin(mesh);
 }
 
 } // namespace Assisi::Geometry

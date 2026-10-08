@@ -33,6 +33,18 @@ constexpr std::size_t kMinPieceBytes       = kPieceFloats * kFloatBytes + kPiece
 /// The longest piece name a cooked mesh carries: a node name and a part number.
 constexpr std::size_t kMaxPieceNameBytes   = 256;
 
+/// A skin record: four 16-bit joint indices and four float weights. The importer
+/// refuses a skeleton with more joints than 16 bits can name.
+constexpr std::size_t kJointIndexBytes     = sizeof(std::uint16_t);
+constexpr std::size_t kSkinRecordBytes     = kMaxInfluences * (kJointIndexBytes + kFloatBytes);
+constexpr std::size_t kMatrixFloats        = 16;
+constexpr std::size_t kTransformFloats     = 10; ///< Rotation 4, translation 3, scale 3.
+constexpr std::size_t kMinJointBytes       = kMinVarIntBytes + sizeof(std::int32_t) +
+                                             (kTransformFloats + kMatrixFloats) * kFloatBytes;
+
+/// The longest joint name a cooked mesh carries.
+constexpr std::size_t kMaxJointNameBytes   = 256;
+
 void WriteVec3(Core::BitWriter &writer, const glm::vec3 &value)
 {
     writer.WriteFloat(value.x);
@@ -75,6 +87,111 @@ bool ReadCount(Core::BitReader &reader, std::size_t recordBytes, std::uint32_t &
     }
     const std::size_t bytesLeft = reader.BitsRemaining() / kBitsPerByte;
     return static_cast<std::size_t>(count) <= bytesLeft / recordBytes;
+}
+
+void WriteMatrix(Core::BitWriter &writer, const glm::mat4 &matrix)
+{
+    for (int32_t column = 0; column < 4; ++column)
+    {
+        for (int32_t row = 0; row < 4; ++row)
+        {
+            writer.WriteFloat(matrix[column][row]);
+        }
+    }
+}
+
+glm::mat4 ReadMatrix(Core::BitReader &reader)
+{
+    glm::mat4 matrix{1.f};
+    for (int32_t column = 0; column < 4; ++column)
+    {
+        for (int32_t row = 0; row < 4; ++row)
+        {
+            matrix[column][row] = reader.ReadFloat();
+        }
+    }
+    return matrix;
+}
+
+void WriteSkin(Core::BitWriter &writer, const MeshData &mesh)
+{
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh.Skin.size()));
+    for (const VertexSkin &skin : mesh.Skin)
+    {
+        for (int32_t slot = 0; slot < static_cast<int32_t>(kMaxInfluences); ++slot)
+        {
+            writer.WriteUInt16(static_cast<std::uint16_t>(skin.Joints[slot]));
+            writer.WriteFloat(skin.Weights[slot]);
+        }
+    }
+
+    const Skeleton &skeleton = mesh.Skeleton;
+    writer.WriteVarUInt32(skeleton.JointCount());
+    for (std::uint32_t joint = 0; joint < skeleton.JointCount(); ++joint)
+    {
+        const JointTransform &rest = skeleton.RestLocal[joint];
+        writer.WriteString(skeleton.Names[joint]);
+        writer.WriteInt32(skeleton.Parents[joint]);
+        writer.WriteFloat(rest.Rotation.w);
+        writer.WriteFloat(rest.Rotation.x);
+        writer.WriteFloat(rest.Rotation.y);
+        writer.WriteFloat(rest.Rotation.z);
+        WriteVec3(writer, rest.Translation);
+        WriteVec3(writer, rest.Scale);
+        WriteMatrix(writer, skeleton.InverseBind[joint]);
+    }
+    if (!skeleton.Empty())
+    {
+        WriteMatrix(writer, skeleton.RootTransform);
+    }
+}
+
+/// Reads what WriteSkin wrote. Whether the tables agree with each other and with
+/// the vertices is ValidateMesh's to decide.
+bool ReadSkin(Core::BitReader &reader, MeshData &mesh)
+{
+    std::uint32_t count = 0;
+    if (!ReadCount(reader, kSkinRecordBytes, count))
+    {
+        return false;
+    }
+    mesh.Skin.resize(count);
+    for (VertexSkin &skin : mesh.Skin)
+    {
+        for (int32_t slot = 0; slot < static_cast<int32_t>(kMaxInfluences); ++slot)
+        {
+            skin.Joints[slot]  = reader.ReadUInt16();
+            skin.Weights[slot] = reader.ReadFloat();
+        }
+    }
+
+    if (reader.Failed() || !ReadCount(reader, kMinJointBytes, count))
+    {
+        return false;
+    }
+    Skeleton &skeleton = mesh.Skeleton;
+    skeleton.Names.resize(count);
+    skeleton.Parents.resize(count);
+    skeleton.RestLocal.resize(count);
+    skeleton.InverseBind.resize(count);
+    for (std::uint32_t joint = 0; joint < count; ++joint)
+    {
+        JointTransform &rest = skeleton.RestLocal[joint];
+        skeleton.Names[joint] = reader.ReadString(kMaxJointNameBytes);
+        skeleton.Parents[joint] = reader.ReadInt32();
+        rest.Rotation.w = reader.ReadFloat();
+        rest.Rotation.x = reader.ReadFloat();
+        rest.Rotation.y = reader.ReadFloat();
+        rest.Rotation.z = reader.ReadFloat();
+        rest.Translation = ReadVec3(reader);
+        rest.Scale = ReadVec3(reader);
+        skeleton.InverseBind[joint] = ReadMatrix(reader);
+    }
+    if (count != 0)
+    {
+        skeleton.RootTransform = ReadMatrix(reader);
+    }
+    return !reader.Failed();
 }
 
 void WriteCollision(Core::BitWriter &writer, const CollisionData &collision)
@@ -181,6 +298,7 @@ void WriteCookedMesh(Core::BitWriter &writer, const MeshData &mesh, std::span<co
         writer.WriteFloat(vertex.Tangent.z);
         writer.WriteFloat(vertex.Tangent.w);
     }
+    WriteSkin(writer, mesh);
 
     writer.WriteVarUInt32(static_cast<std::uint32_t>(mesh.Indices.size()));
     for (const std::uint32_t index : mesh.Indices)
@@ -260,8 +378,12 @@ std::expected<CookedMesh, CookedMeshError> ReadCookedMesh(std::span<const std::b
         vertex.Tangent.z            = reader.ReadFloat();
         vertex.Tangent.w            = reader.ReadFloat();
     }
+    if (reader.Failed() || !ReadSkin(reader, mesh))
+    {
+        return std::unexpected(CookedMeshError::Truncated);
+    }
 
-    if (reader.Failed() || !ReadCount(reader, kMinVarIntBytes, count))
+    if (!ReadCount(reader, kMinVarIntBytes, count))
     {
         return std::unexpected(CookedMeshError::Truncated);
     }

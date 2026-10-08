@@ -29,7 +29,7 @@ namespace Assisi::Geometry
 /// @brief Version of the mesh payload's layout, separate from the blob envelope's.
 ///
 /// Part of the mesh cooker's cache key, so bumping it re-cooks every mesh.
-inline constexpr std::uint8_t kMeshPayloadVersion = 2;
+inline constexpr std::uint8_t kMeshPayloadVersion = 3;
 
 /// @brief A cooked mesh, read back.
 struct CookedMesh

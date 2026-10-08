@@ -39,6 +39,14 @@ enum class MeshValidationError : std::uint8_t
     EmptyLod,             ///< A LOD covers no submeshes, so that level draws nothing.
     LodsNotContiguous,    ///< The LOD ranges do not tile the submesh array in order.
     LodThresholdNotDescending, ///< An authored screen-size threshold does not fall across the chain.
+    SkinSizeMismatch,     ///< The skin array is neither empty nor one entry per vertex.
+    SkinWithoutSkeleton,  ///< Vertices carry skin data but there are no joints.
+    SkeletonWithoutSkin,  ///< There are joints but no vertex is bound to them.
+    SkeletonTablesMismatch, ///< The skeleton's tables differ in length.
+    JointOrder,           ///< A joint's parent does not come before it.
+    JointOutOfRange,      ///< A vertex names a joint the skeleton does not have.
+    WeightsNotNormalized, ///< A vertex's weights are negative or do not sum to one.
+    DuplicateJointName,   ///< Two joints share a name.
 };
 
 /// @brief A short human-readable description, for the line a cook failure prints.
