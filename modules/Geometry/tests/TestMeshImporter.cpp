@@ -46,9 +46,11 @@ constexpr std::string_view kTriangleGltf = R"({
   ]
 })";
 
+constexpr uint16_t kTriangleIndices[3] = {0, 1, 2};
+
 // Writes kTriangleGltf and its external buffer into a fresh temp asset root and
 // points AssetSystem at it. Returns the root so the caller can clean it up.
-fs::path WriteTriangleAssets()
+fs::path WriteTriangleAssets(const uint16_t (&indices)[3] = kTriangleIndices)
 {
     const fs::path root = fs::temp_directory_path() / "assisi_geometry_test";
     fs::remove_all(root);
@@ -60,7 +62,6 @@ fs::path WriteTriangleAssets()
     }
     {
         const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-        const uint16_t indices[3]   = {0, 1, 2};
         std::ofstream bin(root / "triangle.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
@@ -122,6 +123,18 @@ TEST_CASE("ImportMesh: rejects unsupported extensions")
     const std::expected<MeshData, MeshImportError> result = ImportMesh("model.fbx");
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == MeshImportError::UnsupportedFormat);
+}
+
+TEST_CASE("ImportMesh: refuses an index that names no vertex of its primitive")
+{
+    const uint16_t indices[3] = {0, 1, 3}; // the triangle has three vertices, 0..2
+    const fs::path root = WriteTriangleAssets(indices);
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("triangle.gltf");
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == MeshImportError::IndexOutOfRange);
+
+    fs::remove_all(root);
 }
 
 TEST_CASE("ImportMesh: reports a read failure for a missing glTF")
