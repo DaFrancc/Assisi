@@ -208,6 +208,8 @@ Things to know about layers:
 
 - **A layer's animation keeps playing at weight 0**, so turning a layer back on
   doesn't restart it.
+- **Moving a layer up or down the list doesn't restart it.** Its animation
+  carries on where it was; only the order it applies in changes.
 - **Changing a layer's animation fades over that layer's own `fade`**, the same
   way the base fades.
 - **A mask joint the model lacks is logged once.** A `maskRoot` it lacks makes

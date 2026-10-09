@@ -309,6 +309,47 @@ void Add(const LayerState &state, Pose pose)
     }
 }
 
+bool Belongs(const LayerState &state, const AnimationLayer &layer)
+{
+    return state.layerAnimation == layer.animation && state.layerMode == layer.mode;
+}
+
+bool Aligned(const AnimationPlayer &player)
+{
+    if (player.layerStates.size() != player.layers.size())
+    {
+        return false;
+    }
+    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    {
+        if (!Belongs(player.layerStates[layer], player.layers[layer]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Moves into each place @p placed has not filled the first state of @p old
+/// not yet @p taken that @p fits it.
+template <typename Fits>
+void Place(AnimationPlayer &player, std::vector<LayerState> &old, std::vector<uint8_t> &taken,
+           std::vector<uint8_t> &placed, Fits fits)
+{
+    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    {
+        for (std::size_t candidate = 0; candidate < old.size() && placed[layer] == 0; ++candidate)
+        {
+            if (taken[candidate] == 0 && fits(layer, candidate))
+            {
+                player.layerStates[layer] = std::move(old[candidate]);
+                taken[candidate] = 1;
+                placed[layer] = 1;
+            }
+        }
+    }
+}
+
 /// Puts back, as the base left them last frame, the joints any layer's mask
 /// took then. The states are last frame's, read before the layers run again.
 void RestoreUnderLayers(const AnimationPlayer &player, Pose pose)
@@ -364,6 +405,33 @@ bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &an
         player.underLayers.assign(skinned.pose.begin(), skinned.pose.end());
     }
     return rebound;
+}
+
+void MatchLayerStates(AnimationPlayer &player)
+{
+    if (Aligned(player))
+    {
+        return;
+    }
+    std::vector<LayerState> old = std::move(player.layerStates);
+    player.layerStates.clear();
+    player.layerStates.resize(player.layers.size());
+    std::vector<uint8_t> taken(old.size(), 0);
+    std::vector<uint8_t> placed(player.layers.size(), 0);
+    // Where it was, then where its layer moved to, then, for a layer that
+    // changed, the state at its own place.
+    Place(player, old, taken, placed, [&](std::size_t layer, std::size_t candidate) {
+            return layer == candidate && Belongs(old[candidate], player.layers[layer]);
+        });
+    Place(player, old, taken, placed, [&](std::size_t layer, std::size_t candidate) {
+            return Belongs(old[candidate], player.layers[layer]);
+        });
+    Place(player, old, taken, placed, [](std::size_t layer, std::size_t candidate) { return layer == candidate; });
+    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    {
+        player.layerStates[layer].layerAnimation = player.layers[layer].animation;
+        player.layerStates[layer].layerMode = player.layers[layer].mode;
+    }
 }
 
 MaskResult BuildJointMask(const Geometry::Skeleton &skeleton, Core::InternedString root,

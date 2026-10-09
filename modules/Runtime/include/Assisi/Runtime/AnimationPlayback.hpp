@@ -84,6 +84,15 @@ struct MaskResult
 MaskResult BuildJointMask(const Geometry::Skeleton &skeleton, Core::InternedString root,
                           std::span<const Core::InternedString> exclusions, std::vector<uint8_t> &out);
 
+/// @brief Gives each of @p player's layers its state, before they play.
+///
+/// A state follows its layer when the list is reordered or a layer removed,
+/// found by its animation and mode, so moving a row neither restarts nor fades
+/// anything. A layer whose animation or mode changed in place keeps the state
+/// at its place, so it fades from what it was playing; a new layer starts a
+/// fresh one.
+void MatchLayerStates(AnimationPlayer &player);
+
 /// @brief Plays @p layer's animation for @p dt seconds and combines it with
 ///        @p skinned's pose inside its mask, by its weight.
 ///

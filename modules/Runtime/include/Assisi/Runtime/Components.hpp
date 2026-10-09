@@ -189,12 +189,16 @@ struct LayerState
     std::vector<Geometry::JointTransform> mixedReference;
     std::vector<uint8_t> mask; ///< Per joint, whether the mask takes it.
     std::vector<Core::InternedString> maskExclusions; ///< The exclusions `mask` was built from.
+    /// The animation of the layer this state plays for, by which it follows
+    /// that layer when the list is reordered.
+    Core::AssetId layerAnimation;
     Geometry::CrossFade weightChange;
     Core::InternedString maskRoot; ///< The root `mask` was built from.
     uint32_t maskMeshId = kUnboundMesh; ///< The mesh `mask` was built for.
     float weight = 0.f;     ///< Where the weight is now.
     float fromWeight = 0.f; ///< Where it was when it began moving to `toWeight`.
     float toWeight = 0.f;
+    LayerMode layerMode = LayerMode::Override; ///< The mode of the layer this state plays for.
     bool started = false;          ///< Whether the weight has been set from the layer yet.
     bool rootMissing = false;      ///< The mask's root names no joint of the mesh.
     bool exclusionMissing = false; ///< An exclusion names no joint of the mesh.

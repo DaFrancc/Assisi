@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <map>
+#include <utility>
 #include <memory>
 #include <vector>
 
@@ -94,6 +95,7 @@ constexpr uint8_t kRun = 1;
 constexpr uint8_t kAim = 2;
 constexpr uint8_t kAimHigh = 3;
 constexpr uint8_t kFlinch = 4;
+constexpr uint8_t kKick = 5;
 
 /// The legs run, and the finger moves from 7 to 9, which no layer keys.
 std::shared_ptr<const AnimationClip> Run()
@@ -113,13 +115,19 @@ std::shared_ptr<const AnimationClip> Flinch()
     return Clip({Moving("hand", {1.f, 2.f, 1.f}), Moving("knee", {5.f, 6.f, 5.f})});
 }
 
+/// The knee kicking out from 0 to 4.
+std::shared_ptr<const AnimationClip> Kick()
+{
+    return Clip({Moving("knee", {0.f, 4.f})});
+}
+
 struct Rig
 {
     Skeleton skeleton = Body();
     Runtime::SkinnedMesh skinned;
     Runtime::AnimationPlayer player;
     std::map<uint8_t, std::vector<std::shared_ptr<const AnimationClip>>> clips{
-        {kRun, {Run()}}, {kAim, {Aim(3.f)}}, {kAimHigh, {Aim(5.f)}}, {kFlinch, {Flinch()}}};
+        {kRun, {Run()}}, {kAim, {Aim(3.f)}}, {kAimHigh, {Aim(5.f)}}, {kFlinch, {Flinch()}}, {kKick, {Kick()}}};
 
     Rig()
     {
@@ -147,7 +155,7 @@ struct Rig
     void Advance(float dt)
     {
         (void)Runtime::AdvanceAnimationPlayer(player, Resolved(player.animation), skeleton, dt, skinned);
-        player.layerStates.resize(player.layers.size());
+        Runtime::MatchLayerStates(player);
         for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
         {
             Runtime::AdvanceAnimationLayer(player.layers[layer], player.layerStates[layer],
@@ -308,4 +316,32 @@ TEST_CASE("Animation layers: at weight 0 a layer's timeline still runs, and a ma
     missing.Advance(0.f);
     CHECK(missing.X(Spine) == doctest::Approx(0.f));
     CHECK(missing.player.layerStates[0].rootMissing);
+}
+
+TEST_CASE("Animation layers: reordering the list moves each layer's playback with it")
+{
+    Rig rig;
+    // Masks that don't overlap, so the order changes nothing on screen.
+    AnimationLayer &aim = rig.Add(kAim, LayerMode::Override, "spine");
+    AnimationLayer &kick = rig.Add(kKick, LayerMode::Override, "knee");
+    aim.fade = 0.5f;
+    kick.fade = 0.5f;
+    rig.Advance(0.f);
+    rig.Advance(1.f);
+    REQUIRE(rig.X(Knee) == doctest::Approx(2.f));
+    REQUIRE(rig.X(Spine) == doctest::Approx(3.f));
+
+    std::swap(rig.player.layers[0], rig.player.layers[1]);
+    rig.Advance(0.f);
+    CHECK(rig.X(Knee) == doctest::Approx(2.f));
+    CHECK(rig.X(Spine) == doctest::Approx(3.f));
+    CHECK_FALSE(rig.player.layerStates[0].track.fading);
+    CHECK(rig.player.layerStates[0].track.current.Phase == doctest::Approx(0.5f));
+
+    // A layer removed takes its playback with it; the one left keeps its own.
+    rig.player.layers.erase(rig.player.layers.begin());
+    rig.Advance(0.f);
+    REQUIRE(rig.player.layerStates.size() == 1);
+    CHECK_FALSE(rig.player.layerStates[0].track.fading);
+    CHECK(rig.X(Spine) == doctest::Approx(3.f));
 }

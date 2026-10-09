@@ -129,7 +129,7 @@ std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &ass
 void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayer &player, const Geometry::Skeleton &skeleton,
                    float dt, Runtime::SkinnedMesh &skinned)
 {
-    player.layerStates.resize(player.layers.size());
+    Runtime::MatchLayerStates(player);
     for (std::size_t index = 0; index < player.layers.size(); ++index)
     {
         const Runtime::AnimationLayer &layer = player.layers[index];
