@@ -201,8 +201,10 @@ layer's `weight` to 0 until the character is hit.
 - **An additive layer adds how far its animation has moved since its first
   frame.** A flinch recorded from a standing pose works as it is: standing
   adds nothing, and only the jolt is added.
-- **Order matters.** A flinch above the aim layer moves the aiming arms; below
-  it, the aim replaces the flinch on the upper body.
+- **Order matters: put override layers above additive ones.** A flinch below
+  the aim layer jolts the aiming arms. Above it, the aim replaces the flinch on
+  the joints its clip moves, but joints it doesn't move, often the hands and
+  fingers, keep the jolt while their parents aim, so they come out of line.
 
 Things to know about layers:
 
