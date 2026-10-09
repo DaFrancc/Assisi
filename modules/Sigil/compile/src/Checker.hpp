@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Assisi::Sigil::Compile::Detail
@@ -70,9 +71,14 @@ struct Checker
     std::vector<ImportRecord> imports{};
     /// The core functions, then the vocabulary's; Program::functions in names.
     std::vector<FunctionSpec> functions{};
+    /// Names whose declaration was refused. Using one says nothing more: the
+    /// refusal already explained it.
+    std::unordered_set<std::string> refused{};
 };
 
-void Fail(Checker &checker, SourceLocation where, std::string message);
+/// @brief Reports an error at @p where, with @p help on how to fix it when
+///        there's more to say than the message holds.
+void Fail(Checker &checker, SourceLocation where, std::string message, std::string help = {});
 void Warn(Checker &checker, SourceLocation where, std::string message);
 
 /// @brief Whether @p name is a reserved word, which can't name anything,

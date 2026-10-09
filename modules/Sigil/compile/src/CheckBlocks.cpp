@@ -99,7 +99,8 @@ std::optional<Argument> CheckArgument(Checker &checker, const Syntax::Expr &synt
     {
         if (syntax.kind != Syntax::ExprKind::Name)
         {
-            Fail(checker, syntax.where, "expected the name of a state here");
+            Fail(checker, syntax.where, "expected the name of a state here",
+                 "write a state's name on its own, without quotes");
             return std::nullopt;
         }
         const std::optional<uint32_t> state = ResolveState(
@@ -117,8 +118,8 @@ std::optional<Argument> CheckArgument(Checker &checker, const Syntax::Expr &synt
     }
     if (ReadsWhenOnly(checker, value))
     {
-        Fail(checker, syntax.where,
-             "this reads a trigger or a when-only function, so it can only decide transitions, in a \"when\"");
+        Fail(checker, syntax.where, "this reads a trigger, which can only decide transitions",
+             "a trigger, or a let or function that reads one, only belongs in a transition's \"when\"");
         return std::nullopt;
     }
     if (spec.type == TypeNames::kNumeric)
@@ -276,49 +277,17 @@ std::optional<std::vector<bool>> SourceSet(Checker &checker, const Syntax::Trans
     return set;
 }
 
-std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transition &syntax, StateList states,
-                                          std::string_view owner)
+/// Checks a transition's condition and clauses into @p transition.
+void CheckTransitionBody(Checker &checker, const Syntax::Transition &syntax, StateList states,
+                         Transition &transition)
 {
-    const std::optional<uint32_t> target = ResolveState(checker, syntax.target, states, owner);
-    if (!target.has_value())
-    {
-        return std::nullopt;
-    }
-    const std::optional<std::vector<bool>> set = SourceSet(checker, syntax, states, *target, owner);
-    if (!set.has_value())
-    {
-        return std::nullopt;
-    }
-    Transition transition;
-    transition.where = syntax.first.where;
-    transition.target = *target;
-    for (std::size_t i = 0; i < set->size(); ++i)
-    {
-        if ((*set)[i])
-        {
-            transition.sources.push_back(static_cast<uint32_t>(i));
-        }
-    }
-    if (transition.sources.empty())
-    {
-        Fail(checker, syntax.first.where, "this transition leaves from no state");
-        return std::nullopt;
-    }
-    const bool restarts = std::ranges::find(transition.sources, *target) != transition.sources.end();
-    if (restarts && transition.sources.size() > 1)
-    {
-        Fail(checker, syntax.first.where,
-             std::format("the states this leaves from include \"{}\", the state it goes to; write \"{} -> {}\" on its "
-                         "own to restart it",
-                         syntax.target.name, syntax.target.name, syntax.target.name));
-        return std::nullopt;
-    }
     transition.condition = CheckExpression(checker, syntax.condition, ExprMode::Formula);
     const TypeKind conditionKind = transition.condition.type.kind;
     if (conditionKind != TypeKind::Bool && conditionKind != TypeKind::Trigger && conditionKind != TypeKind::Error)
     {
         Fail(checker, syntax.condition.where,
-             std::format("a transition's condition must be a bool, got {}", TypeName(checker, transition.condition.type)));
+             std::format("a transition's condition must be a bool, got {}", TypeName(checker, transition.condition.type)),
+             "compare it to something, like speed > 1.0");
     }
     CollectTriggers(checker, transition.condition, transition.triggersRead);
     const Placement placement{.kind = {}, .transition = true};
@@ -331,12 +300,56 @@ std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transi
         }
     }
     CheckCardinality(checker, transition.clauses, placement, syntax.target);
+}
+
+std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transition &syntax, StateList states,
+                                          std::string_view owner)
+{
+    Transition transition;
+    transition.where = syntax.first.where;
+    // The condition and clauses are checked whatever is wrong with the states,
+    // so their own mistakes are reported in the same compile.
+    CheckTransitionBody(checker, syntax, states, transition);
+    const std::optional<uint32_t> target = ResolveState(checker, syntax.target, states, owner);
+    if (!target.has_value())
+    {
+        return std::nullopt;
+    }
+    const std::optional<std::vector<bool>> set = SourceSet(checker, syntax, states, *target, owner);
+    if (!set.has_value())
+    {
+        return std::nullopt;
+    }
+    transition.target = *target;
+    for (std::size_t i = 0; i < set->size(); ++i)
+    {
+        if ((*set)[i])
+        {
+            transition.sources.push_back(static_cast<uint32_t>(i));
+        }
+    }
+    if (transition.sources.empty())
+    {
+        Fail(checker, syntax.first.where, "this transition leaves from no state",
+             "removing states left none for it to leave from");
+        return std::nullopt;
+    }
+    const bool restarts = std::ranges::find(transition.sources, *target) != transition.sources.end();
+    if (restarts && transition.sources.size() > 1)
+    {
+        Fail(checker, syntax.first.where,
+             std::format("this transition goes to \"{}\", so it can't also leave from \"{}\"", syntax.target.name,
+                         syntax.target.name),
+             std::format("to restart \"{}\" while it's playing, write \"{} -> {}\" as a transition of its own",
+                         syntax.target.name, syntax.target.name, syntax.target.name));
+        return std::nullopt;
+    }
     return transition;
 }
 
 /// Every state is reached from the first, through transitions and clauses
-/// that name states.
-void CheckReachable(Checker &checker, const Block &block, std::span<const Edge> edges, std::string_view owner)
+/// that name states. @p kind is the block's kind, for the message.
+void CheckReachable(Checker &checker, const Block &block, std::span<const Edge> edges, std::string_view kind)
 {
     if (block.children.empty())
     {
@@ -363,8 +376,9 @@ void CheckReachable(Checker &checker, const Block &block, std::span<const Edge> 
         if (!reached[i])
         {
             Fail(checker, block.children[i].where,
-                 std::format("\"{}\" can never be reached from \"{}\", the first state of {}", block.children[i].name,
-                             block.children.front().name, owner));
+                 std::format("\"{}\" is unreachable from the \"{}\" {}", block.children[i].name, block.name, kind),
+                 std::format("no transition or clause leads to it from \"{}\", where the {} starts",
+                             block.children.front().name, kind));
         }
     }
 }
@@ -402,7 +416,8 @@ void CheckChildren(Checker &checker, const Syntax::Block &syntax, const BlockKin
         const BlockKind &childSpec = checker.vocabulary.blocks[*childKind];
         if (checker.program.library)
         {
-            Fail(checker, child.kind.where, "a library can only hold imports, enums and consts, not blocks");
+            Fail(checker, child.kind.where, "a library can only hold imports, enums and consts, not blocks",
+                 "remove \"sigiltype library;\" to make this an ordinary file");
             continue;
         }
         if (!Allowed(kind, childSpec))
@@ -477,7 +492,7 @@ Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind 
     }
     if (kind != nullptr && kind->holdsStates)
     {
-        CheckReachable(checker, block, edges, owner);
+        CheckReachable(checker, block, edges, kind->name);
     }
     return block;
 }

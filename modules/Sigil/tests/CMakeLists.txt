@@ -2,6 +2,7 @@ add_executable(Assisi-Sigil-Tests
   main.cpp
   SigilTesting.hpp
   TestChecker.cpp
+  TestDiagnostics.cpp
   TestGraph.cpp
   TestImports.cpp
   TestLexer.cpp

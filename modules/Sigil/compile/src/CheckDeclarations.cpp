@@ -17,6 +17,7 @@ namespace
 {
 
 constexpr std::string_view kLibraryHolds = "a library can only hold imports, enums and consts";
+constexpr std::string_view kNotALibrary = "remove \"sigiltype library;\" to make this an ordinary file";
 
 bool IsVocabularyWord(const Vocabulary &vocabulary, std::string_view word)
 {
@@ -90,7 +91,7 @@ void DeclareParam(Checker &checker, const Syntax::ParamDecl &declaration)
 {
     if (checker.program.library)
     {
-        Fail(checker, declaration.name.where, std::format("{}, not params", kLibraryHolds));
+        Fail(checker, declaration.name.where, std::format("{}, not params", kLibraryHolds), std::string{kNotALibrary});
         return;
     }
     const std::optional<Type> type = ResolveType(checker, declaration.type);
@@ -151,9 +152,8 @@ void DeclareLet(Checker &checker, const Syntax::ValueDecl &declaration, Expr val
 {
     if (!LetCanHold(value.type))
     {
-        Fail(checker, declaration.value.where,
-             std::format("a let can't hold {}; make \"{}\" a const", TypeName(checker, value.type),
-                         declaration.name.name));
+        Fail(checker, declaration.value.where, std::format("a let can't hold {}", TypeName(checker, value.type)),
+             std::format("only consts hold strings; make \"{}\" a const", declaration.name.name));
         value.type = Type{};
     }
     const Symbol symbol{.where = declaration.name.where,
@@ -175,7 +175,7 @@ void DeclareValue(Checker &checker, const Syntax::ValueDecl &declaration)
     checker.declaredLater.erase(declaration.name.name);
     if (checker.program.library && !declaration.isConst)
     {
-        Fail(checker, declaration.name.where, std::format("{}, not lets", kLibraryHolds));
+        Fail(checker, declaration.name.where, std::format("{}, not lets", kLibraryHolds), std::string{kNotALibrary});
         return;
     }
     const ExprMode mode = declaration.isConst ? ExprMode::Constant : ExprMode::Formula;
@@ -213,10 +213,13 @@ uint32_t PlaceEnum(Checker &checker, const Enum &enumeration)
 
 } // namespace
 
-void Fail(Checker &checker, SourceLocation where, std::string message)
+void Fail(Checker &checker, SourceLocation where, std::string message, std::string help)
 {
-    checker.diagnostics.push_back(
-        Diagnostic{.message = std::move(message), .file = checker.file, .where = where, .severity = Severity::Error});
+    checker.diagnostics.push_back(Diagnostic{.message = std::move(message),
+                                             .help = std::move(help),
+                                             .file = checker.file,
+                                             .where = where,
+                                             .severity = Severity::Error});
 }
 
 void Warn(Checker &checker, SourceLocation where, std::string message)
@@ -229,14 +232,16 @@ bool IsReserved(Checker &checker, const Syntax::Named &name)
 {
     if (Syntax::IsCoreWord(name.name))
     {
-        Fail(checker, name.where, std::format("\"{}\" is a reserved word, so it can't be a name", name.name));
+        Fail(checker, name.where, std::format("\"{}\" is a reserved word, so it can't be a name", name.name),
+             "pick another name");
         return true;
     }
     if (IsVocabularyWord(checker.vocabulary, name.name))
     {
         Fail(checker, name.where,
              std::format("\"{}\" is a word of the {} vocabulary, so it can't be a name", name.name,
-                         checker.vocabulary.name));
+                         checker.vocabulary.name),
+             "pick another name");
         return true;
     }
     return false;
@@ -246,13 +251,14 @@ bool Declare(Checker &checker, const Syntax::Named &name, Symbol symbol)
 {
     if (IsReserved(checker, name))
     {
+        checker.refused.insert(name.name);
         return false;
     }
     const std::unordered_map<std::string, Symbol>::const_iterator existing = checker.symbols.find(name.name);
     if (existing != checker.symbols.end())
     {
-        Fail(checker, name.where,
-             std::format("\"{}\" is already {}", name.name, Origin(checker, existing->second)));
+        Fail(checker, name.where, std::format("\"{}\" is already {}", name.name, Origin(checker, existing->second)),
+             "two things in one file can't share a name; rename one of them");
         return false;
     }
     checker.symbols.emplace(name.name, symbol);
@@ -410,7 +416,9 @@ void CheckDeclarations(Checker &checker, const Syntax::File &file)
 
 void WarnUnused(Checker &checker)
 {
-    if (checker.program.library)
+    // A file with errors has parts that were never checked, so what they use
+    // was never counted and the warnings would be wrong.
+    if (checker.program.library || HasErrors(checker.diagnostics))
     {
         return;
     }

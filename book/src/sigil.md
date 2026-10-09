@@ -294,13 +294,25 @@ let moving = speed > walk_speed;
 
 ## What the cook checks
 
-The cook refuses a file with a mistake in it, and says where, as
-`file:line:column`, with what it expected. For a misspelt name it suggests the
-closest one:
+The cook refuses a file with a mistake in it. For each mistake it says where, as
+`file:line:column`, and what's wrong, then shows the line with a `^` under the
+spot. A misspelt name gets the closest real one suggested, and when there's more
+to say about the fix, a `help:` line follows:
 
 ```
-characters/knight.sgl:14:18: unknown state "fal" — did you mean "fall"?
+characters/knight.sgl:14:18: error: unknown state "fal" — did you mean "fall"?
+ 14 |     walk -> fal when !grounded;
+    |             ^
+
+characters/knight.sgl:16:5: error: this transition goes to "flinch", so it can't also leave from "flinch"
+ 16 |     any + flinch -> flinch when hit;
+    |     ^
+  help: to restart "flinch" while it's playing, write "flinch -> flinch" as a transition of its own
 ```
+
+Mistakes are listed from the top of the file down. One mistake isn't reported
+again at every place it shows up later: a name the cook refused once is left
+alone after that.
 
 Among other things, it refuses:
 
@@ -313,4 +325,6 @@ Among other things, it refuses:
 - a trigger used outside a `when`.
 
 It also warns, without refusing the file, about a param, const, let, enum or
-import that nothing uses. Libraries don't get these warnings.
+import that nothing uses. Libraries don't get these warnings, and neither does a
+file with mistakes in it, because a part the cook couldn't check may be what
+uses them.

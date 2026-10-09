@@ -137,12 +137,17 @@ void MarkUsed(Checker &checker, Symbol &symbol)
 
 void ReportUnknown(Checker &checker, const Syntax::Expr &syntax)
 {
+    if (checker.refused.contains(syntax.text))
+    {
+        return;
+    }
     const std::unordered_map<std::string, SourceLocation>::const_iterator later =
         checker.declaredLater.find(syntax.text);
     if (later != checker.declaredLater.end())
     {
         Fail(checker, syntax.where,
-             std::format("\"{}\" is used before it is declared, on line {}", syntax.text, later->second.line));
+             std::format("\"{}\" is used before it is declared, on line {}", syntax.text, later->second.line),
+             "move the declaration above this line");
         return;
     }
     const std::vector<std::string_view> names = SymbolNames(checker);
@@ -163,9 +168,10 @@ Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
     if (mode == ExprMode::Constant && readsFrame)
     {
         Fail(checker, syntax.where,
-             std::format("a const can only use numbers, strings, enum values and other consts, and \"{}\" is a {}; "
-                         "make this a let",
-                         syntax.text, symbol.kind == SymbolKind::Param ? "param" : "let"));
+             std::format("a const can't use \"{}\", which is a {}", syntax.text,
+                         symbol.kind == SymbolKind::Param ? "param" : "let"),
+             "a const is worked out once, when the file cooks, so it can only use numbers, strings, enum values "
+             "and other consts; to use this, make it a let");
         return Failed(syntax.where);
     }
     Expr expr;
@@ -185,13 +191,13 @@ Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
         return Literal(checker.program.consts[symbol.index].value, checker.program.consts[symbol.index].type,
                        syntax.where);
     case SymbolKind::Enum:
-        Fail(checker, syntax.where,
-             std::format("\"{}\" is an enum, which is a type; write one of its values, like {}.{}", syntax.text,
-                         syntax.text, checker.program.enums[symbol.index].values.front()));
+        Fail(checker, syntax.where, std::format("\"{}\" is an enum, which is a type, not a value", syntax.text),
+             std::format("write one of its values, like {}.{}", syntax.text,
+                         checker.program.enums[symbol.index].values.front()));
         return Failed(syntax.where);
     default:
-        Fail(checker, syntax.where,
-             std::format("\"{}\" is a function; call it as {}(...)", syntax.text, syntax.text));
+        Fail(checker, syntax.where, std::format("\"{}\" is a function, not a value", syntax.text),
+             std::format("call it: {}(...)", syntax.text));
         return Failed(syntax.where);
     }
 }
@@ -380,9 +386,9 @@ Expr CheckCall(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
     }
     if (mode == ExprMode::Constant && index >= CoreFunctions().size())
     {
-        Fail(checker, syntax.where,
-             std::format("a const can only call abs, min, max and clamp; {} is worked out while the game runs, so "
-                         "make this a let",
+        Fail(checker, syntax.where, std::format("a const can't call {}()", syntax.text),
+             std::format("{}() is only known while the game runs, and a const is worked out when the file cooks; "
+                         "make this a let, or use only abs, min, max and clamp",
                          syntax.text));
         return Failed(syntax.where);
     }

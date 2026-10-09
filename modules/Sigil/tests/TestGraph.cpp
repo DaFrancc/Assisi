@@ -45,9 +45,9 @@ TEST_CASE("Graph: a state nothing leads to from the first is refused")
     const Diagnostics errors =
         Errors(CompileRobot(WithHeader("machine m {\n    node a { }\n    node b { }\n    node c { }\n"
                                        "    a -> b when p;\n}\n")));
-    CHECK_MESSAGE(HasError(errors, 6, "\"c\" can never be reached from \"a\", the first state of machine \"m\""),
-                  Dump(errors));
-    CHECK_FALSE(HasError(errors, 5, "never be reached"));
+    CHECK_MESSAGE(HasError(errors, 6, "\"c\" is unreachable from the \"m\" machine"), Dump(errors));
+    CHECK(HasError(errors, 6, "no transition or clause leads to it from \"a\", where the machine starts"));
+    CHECK_FALSE(HasError(errors, 5, "unreachable"));
 
     // A clause naming a state leads to it as well.
     const Program reached =
@@ -59,7 +59,7 @@ TEST_CASE("Graph: states nested in a state are checked the same way")
 {
     const Diagnostics errors = Errors(CompileRobot(
         WithHeader("machine m {\n    node outer {\n        node in1 { }\n        node in2 { }\n    }\n}\n")));
-    CHECK(HasError(errors, 6, "\"in2\" can never be reached from \"in1\", the first state of node \"outer\""));
+    CHECK(HasError(errors, 6, "\"in2\" is unreachable from the \"outer\" node"));
 }
 
 TEST_CASE("Graph: a transition can name a state written below it")
@@ -86,7 +86,10 @@ TEST_CASE("Graph: any is every other state, and + and - change the set in order"
 TEST_CASE("Graph: a source set is refused when it doesn't make sense")
 {
     const std::string states = "machine m {\n    node a { }\n    node b { }\n    a -> b when p;\n";
-    CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any + b -> b when p;\n}\n"))), 7, "restart"));
+    CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any + b -> b when p;\n}\n"))), 7,
+                   "this transition goes to \"b\", so it can't also leave from \"b\""));
+    CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any + b -> b when p;\n}\n"))), 7,
+                   "write \"b -> b\" as a transition of its own"));
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    a + b -> b when p;\n}\n"))), 7, "restart"));
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any - c -> b when p;\n}\n"))), 7,
                    "unknown state \"c\""));

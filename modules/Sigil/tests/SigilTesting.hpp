@@ -113,13 +113,15 @@ inline std::string Dump(std::span<const Diagnostic> diagnostics)
     return text;
 }
 
-/// Whether an error on @p line of @p file says @p says.
+/// Whether an error on @p line of @p file says @p says, in its message or its help.
 inline bool HasError(std::span<const Diagnostic> diagnostics, uint32_t line, std::string_view says,
                      std::string_view file = "main.sgl")
 {
     return std::ranges::any_of(diagnostics, [&](const Diagnostic &diagnostic) {
+        const bool said =
+            diagnostic.message.find(says) != std::string::npos || diagnostic.help.find(says) != std::string::npos;
         return diagnostic.severity == Severity::Error && diagnostic.where.line == line && diagnostic.file == file &&
-               diagnostic.message.find(says) != std::string::npos;
+               said;
     });
 }
 

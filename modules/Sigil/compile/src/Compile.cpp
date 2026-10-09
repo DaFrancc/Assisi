@@ -8,7 +8,9 @@
 #include <Assisi/Sigil/Compile/Suggest.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <format>
+#include <tuple>
 #include <utility>
 #include <variant>
 
@@ -60,7 +62,9 @@ void ImportLibrary(Detail::Checker &checker, const Syntax::Import &import, Impor
 {
     if (std::ranges::find(context.chain, import.path) != context.chain.end())
     {
-        Detail::Fail(checker, import.where, std::format("these files import each other: {}", Chain(context.chain, import.path)));
+        Detail::Fail(checker, import.where, "these files import each other",
+                     std::format("{}; move what they share into a library neither imports",
+                                 Chain(context.chain, import.path)));
         return;
     }
     if (context.chain.size() >= kMaxImportDepth)
@@ -92,9 +96,8 @@ void ImportLibrary(Detail::Checker &checker, const Syntax::Import &import, Impor
     }
     if (!library->library)
     {
-        Detail::Fail(checker, import.where,
-                     std::format("\"{}\" isn't a library; only files marked \"sigiltype library;\" can be imported",
-                                 import.path));
+        Detail::Fail(checker, import.where, std::format("\"{}\" isn't a library", import.path),
+                     "only files marked \"sigiltype library;\" can be imported, and they hold only enums and consts");
         return;
     }
     Detail::MergeLibrary(checker, *library, import);
@@ -177,7 +180,7 @@ std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_
     return std::move(checker.program);
 }
 
-std::expected<Program, Diagnostics> CompileFile(std::string_view source, std::string_view file,
+std::expected<Program, Diagnostics> CompileText(std::string_view source, std::string_view file,
                                                 ImportContext &context)
 {
     const std::expected<std::vector<Token>, Diagnostics> tokens = Lex(source, file);
@@ -191,6 +194,68 @@ std::expected<Program, Diagnostics> CompileFile(std::string_view source, std::st
         return std::unexpected(syntax.error());
     }
     return Check(*syntax, file, context);
+}
+
+/// Gives each diagnostic about @p file the text of the line it points at.
+void AttachExcerpts(Diagnostics &diagnostics, std::string_view source, std::string_view file)
+{
+    std::vector<std::string_view> lines;
+    std::size_t start = 0;
+    while (start <= source.size())
+    {
+        const std::size_t end = std::min(source.find('\n', start), source.size());
+        std::string_view line = source.substr(start, end - start);
+        if (line.ends_with('\r'))
+        {
+            line.remove_suffix(1);
+        }
+        lines.push_back(line);
+        start = end + 1;
+    }
+    for (Diagnostic &diagnostic : diagnostics)
+    {
+        if (diagnostic.file == file && diagnostic.excerpt.empty() && diagnostic.where.line - 1 < lines.size())
+        {
+            diagnostic.excerpt = std::string{lines[diagnostic.where.line - 1]};
+        }
+    }
+}
+
+using Place = std::tuple<std::size_t, uint32_t, uint32_t>;
+
+/// Where @p diagnostic sits for reading order: its file's place in @p files,
+/// then its line and column.
+Place PlaceOf(std::span<const std::string> files, const Diagnostic &diagnostic)
+{
+    const std::size_t file = static_cast<std::size_t>(std::ranges::find(files, diagnostic.file) - files.begin());
+    return Place{file, diagnostic.where.line, diagnostic.where.column};
+}
+
+/// Puts @p diagnostics in the order a reader goes through the files: each
+/// file's top to bottom, the files in the order they were first reported.
+void SortByPlace(Diagnostics &diagnostics)
+{
+    std::vector<std::string> files;
+    for (const Diagnostic &diagnostic : diagnostics)
+    {
+        if (std::ranges::find(files, diagnostic.file) == files.end())
+        {
+            files.push_back(diagnostic.file);
+        }
+    }
+    std::ranges::stable_sort(diagnostics, [&files](const Diagnostic &a, const Diagnostic &b) {
+        return PlaceOf(files, a) < PlaceOf(files, b);
+    });
+}
+
+std::expected<Program, Diagnostics> CompileFile(std::string_view source, std::string_view file,
+                                                ImportContext &context)
+{
+    std::expected<Program, Diagnostics> result = CompileText(source, file, context);
+    Diagnostics &diagnostics = result ? result->warnings : result.error();
+    AttachExcerpts(diagnostics, source, file);
+    SortByPlace(diagnostics);
+    return result;
 }
 
 } // namespace

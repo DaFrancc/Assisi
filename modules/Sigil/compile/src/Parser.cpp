@@ -93,9 +93,10 @@ class Parser
     [[nodiscard]] bool At(TokenKind kind) const { return Peek().kind == kind; }
     [[nodiscard]] bool AtWord(std::string_view word) const { return At(TokenKind::Name) && Peek().text == word; }
 
-    void Fail(SourceLocation where, std::string message)
+    void Fail(SourceLocation where, std::string message, std::string help = {})
     {
-        _errors.push_back(Diagnostic{.message = std::move(message), .file = std::string{_file}, .where = where});
+        _errors.push_back(Diagnostic{
+            .message = std::move(message), .help = std::move(help), .file = std::string{_file}, .where = where});
     }
 
     /// What the next token is, for "found ..." in a message.
@@ -272,7 +273,7 @@ class Parser
         into.blocks.push_back(std::move(block));
         if (At(TokenKind::Semicolon))
         {
-            Fail(Peek().where, "a block ends at its '}'; remove this ';'");
+            Fail(Peek().where, "a block ends at its '}', with no ';' after it", "remove this ';'");
             Next();
         }
         return true;
@@ -319,8 +320,9 @@ class Parser
         if (!AtWord("when"))
         {
             Fail(Peek().where,
-                 std::format("expected \"when\" and a condition after \"-> {}\", found {}; every transition needs one",
-                             transition.target.name, Found()));
+                 std::format("expected \"when\" after \"-> {}\", found {}", transition.target.name, Found()),
+                 std::format("every transition needs a condition, like \"-> {} when speed > 1.0;\"",
+                             transition.target.name));
             return false;
         }
         Next();
@@ -415,7 +417,7 @@ class Parser
         file.declarations.emplace_back(std::move(declaration));
         if (At(TokenKind::Semicolon))
         {
-            Fail(Peek().where, "an enum ends at its '}'; remove this ';'");
+            Fail(Peek().where, "an enum ends at its '}', with no ';' after it", "remove this ';'");
             Next();
         }
         return true;

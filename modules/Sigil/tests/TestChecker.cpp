@@ -68,8 +68,9 @@ TEST_CASE("Checker: consts and lets must be declared before they're used")
 
 TEST_CASE("Checker: a const can only use what the cook knows")
 {
-    CHECK(HasError(Errors(CompileRobot("use robot;\nparam p: float;\nconst c = p * 2.0;\n")), 3, "make this a let"));
-    CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = battery();\n")), 2, "make this a let"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nparam p: float;\nconst c = p * 2.0;\n")), 3,
+                   "a const can't use \"p\", which is a param"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = battery();\n")), 2, "a const can't call battery()"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = 1 / 0;\n")), 2, "divides by zero"));
 }
 
