@@ -30,6 +30,7 @@ add_executable(Assisi-Runtime-Tests
   TestPerfScenes.cpp
   TestFrustum.cpp
   TestSceneSerializer.cpp
+  TestAnimationLayers.cpp
   TestAnimationPlayback.cpp
   TestSkinnedMesh.cpp
   TestLifecycle.cpp

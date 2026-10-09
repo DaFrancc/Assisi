@@ -47,13 +47,13 @@ std::string MissingJoints(const Geometry::AnimationClip &clip, const Geometry::C
     return missing;
 }
 
-void WarnMissingJoints(Runtime::AnimationPlayer &player)
+void WarnMissingJoints(Runtime::AnimationTrack &track)
 {
-    if (player.warned)
+    if (track.warned)
     {
         return;
     }
-    for (const Geometry::BlendSource &source : player.current.Sources)
+    for (const Geometry::BlendSource &source : track.current.Sources)
     {
         const std::string missing = MissingJoints(*source.Clip, source.Binding);
         if (!missing.empty())
@@ -62,47 +62,88 @@ void WarnMissingJoints(Runtime::AnimationPlayer &player)
                             source.Clip->Name, missing);
         }
     }
-    player.warned = true;
+    track.warned = true;
 }
 
-/// Fills player.resolved with @p space's clips, one per point; false while any
-/// has not loaded.
-bool ResolveSpaceClips(Core::AssetStore &assets, const Geometry::BlendSpace &space, Runtime::AnimationPlayer &player)
+void WarnMissingMaskJoints(const Runtime::AnimationLayer &layer, Runtime::LayerState &state, std::size_t index)
 {
-    player.resolved.resize(space.Points.size());
+    if (state.maskWarned || (!state.rootMissing && !state.exclusionMissing))
+    {
+        return;
+    }
+    if (state.rootMissing)
+    {
+        Core::Log::Warn("Animation: layer {}'s mask starts at joint '{}', which the mesh does not have, so it moves "
+                        "nothing.",
+                        index, layer.maskRoot.View());
+    }
+    if (state.exclusionMissing)
+    {
+        Core::Log::Warn("Animation: layer {}'s mask leaves out joints the mesh does not have, which it skips.", index);
+    }
+    state.maskWarned = true;
+}
+
+/// Fills track.resolved with @p space's clips, one per point; false while any
+/// has not loaded.
+bool ResolveSpaceClips(Core::AssetStore &assets, const Geometry::BlendSpace &space, Runtime::AnimationTrack &track)
+{
+    track.resolved.resize(space.Points.size());
     bool loaded = true;
     for (std::size_t point = 0; point < space.Points.size(); ++point)
     {
         // Every point asks, so each clip's load starts on the first frame.
-        player.resolved[point] = assets.Resolve<Geometry::AnimationClip>(space.Points[point].Clip);
-        loaded = loaded && player.resolved[point] != nullptr;
+        track.resolved[point] = assets.Resolve<Geometry::AnimationClip>(space.Points[point].Clip);
+        loaded = loaded && track.resolved[point] != nullptr;
     }
     return loaded;
 }
 
-/// What @p player's animation resolves to this frame, its clips held in
-/// player.resolved; nothing while it or any of its clips is loading.
-std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &assets, Runtime::AnimationPlayer &player)
+/// What @p animation resolves to this frame, its clips held in
+/// track.resolved; nothing while it or any of its clips is loading.
+std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &assets, Core::AssetId animation,
+                                                           Runtime::AnimationTrack &track)
 {
-    if (player.animation.IsNil())
+    if (animation.IsNil())
     {
-        player.resolved.clear();
+        track.resolved.clear();
         return Runtime::ResolvedAnimation{};
     }
-    const ClipOrSpace found = assets.ResolveOneOf<Geometry::AnimationClip, Geometry::BlendSpace>(player.animation);
+    const ClipOrSpace found = assets.ResolveOneOf<Geometry::AnimationClip, Geometry::BlendSpace>(animation);
     if (const std::shared_ptr<const Geometry::AnimationClip> *clip = std::get_if<1>(&found))
     {
-        player.resolved.assign(1, *clip);
-        return Runtime::ResolvedAnimation{.space = nullptr, .clips = player.resolved};
+        track.resolved.assign(1, *clip);
+        return Runtime::ResolvedAnimation{.space = nullptr, .clips = track.resolved};
     }
     if (const std::shared_ptr<const Geometry::BlendSpace> *space = std::get_if<2>(&found))
     {
-        if (ResolveSpaceClips(assets, **space, player))
+        if (ResolveSpaceClips(assets, **space, track))
         {
-            return Runtime::ResolvedAnimation{.space = *space, .clips = player.resolved};
+            return Runtime::ResolvedAnimation{.space = *space, .clips = track.resolved};
         }
     }
     return std::nullopt;
+}
+
+/// Plays each of @p player's layers over the pose its base wrote, in order.
+void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayer &player, const Geometry::Skeleton &skeleton,
+                   float dt, Runtime::SkinnedMesh &skinned)
+{
+    Runtime::MatchLayerStates(player);
+    for (std::size_t index = 0; index < player.layers.size(); ++index)
+    {
+        const Runtime::AnimationLayer &layer = player.layers[index];
+        Runtime::LayerState &state = player.layerStates[index];
+        const std::optional<Runtime::ResolvedAnimation> animation =
+            ResolveAnimation(assets, layer.animation, state.track);
+        if (!animation.has_value())
+        {
+            continue;
+        }
+        Runtime::AdvanceAnimationLayer(layer, state, *animation, skeleton, dt, skinned);
+        WarnMissingJoints(state.track);
+        WarnMissingMaskJoints(layer, state, index);
+    }
 }
 
 } // namespace
@@ -120,12 +161,14 @@ void AnimationPlayerSystem(SystemContext &ctx)
         {
             continue;
         }
-        const std::optional<Runtime::ResolvedAnimation> animation = ResolveAnimation(*ctx.assets, player);
-        if (animation.has_value() &&
-            Runtime::AdvanceAnimationPlayer(player, *animation, renderer.meshBuffer->Skeleton(), ctx.dt, skinned))
+        const Geometry::Skeleton &skeleton = renderer.meshBuffer->Skeleton();
+        const std::optional<Runtime::ResolvedAnimation> animation =
+            ResolveAnimation(*ctx.assets, player.animation, player.track);
+        if (animation.has_value() && Runtime::AdvanceAnimationPlayer(player, *animation, skeleton, ctx.dt, skinned))
         {
-            WarnMissingJoints(player);
+            WarnMissingJoints(player.track);
         }
+        AdvanceLayers(*ctx.assets, player, skeleton, ctx.dt, skinned);
     }
 }
 

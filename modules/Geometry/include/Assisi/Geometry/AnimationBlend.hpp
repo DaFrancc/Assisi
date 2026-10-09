@@ -72,10 +72,22 @@ void AdvancePhase(ClipBlend &blend, float dt, bool loop);
 /// and -q are one rotation and their plain sum is nothing.
 void SampleBlend(ClipBlend &blend, const Skeleton &skeleton, std::span<JointTransform> out);
 
+/// @brief Writes @p blend at @p phase into @p out, as SampleBlend does at its
+///        own phase, which it leaves as it was.
+void SampleBlendAt(ClipBlend &blend, float phase, const Skeleton &skeleton, std::span<JointTransform> out);
+
 /// @brief Writes into @p out the mix of @p from and @p to, @p weight of the
 ///        way from one to the other, for every joint.
 void MixPoses(std::span<const JointTransform> from, std::span<const JointTransform> to, float weight,
               std::span<JointTransform> out);
+
+/// @brief One joint of MixPoses: @p weight of the way from @p from to @p to.
+[[nodiscard]] JointTransform MixJoint(const JointTransform &from, const JointTransform &to, float weight);
+
+/// @brief Adds to @p below @p weight of the change from @p reference to
+///        @p sample: the turn between them applied before below's own, in its
+///        parent's frame, the move added, and the scale multiplied.
+void AddJoint(JointTransform &below, const JointTransform &sample, const JointTransform &reference, float weight);
 
 /// @brief How far a fade has got.
 struct CrossFade

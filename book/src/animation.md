@@ -63,6 +63,7 @@ engine wants one clip per file, so you take them out first:
 | `speed` | 1 plays at the speed the clip was made at, 2 twice as fast, a negative number backwards. |
 | `loop` | On, the clip starts again from the top when it ends. Off, it stops on its last frame. |
 | `fade` | Seconds to fade over when `animation` changes, 0.15 unless you change it. 0 switches at once. |
+| `layers` | Other animations played on top (see [Layers](#layers)). |
 
 Things to know about clips:
 
@@ -158,6 +159,65 @@ Things to know about blend spaces:
   plays the run as it is.
 - **The cook refuses a space that can't play**: one with no points, a point with
   no clip, or two points at the same position.
+
+## Layers
+
+A character often does two things at once: runs with its legs while its arms
+aim, or flinches when hit whatever else it's doing. **Layers** play other
+animations on top of the player's own, which is called the **base**.
+
+`AnimationPlayer` has a `layers` list. In the inspector, open it and click
+**+ Add** for each layer. Each one has the base's settings (`animation`,
+`parameter`, `speed`, `loop`, `fade`) and these:
+
+| Setting | What it does |
+|---|---|
+| `mode` | `Override` replaces the pose below with the layer's; `Additive` adds the layer's movement on top. |
+| `maskRoot` | The joint the layer works on, with every joint below it. Empty means the whole skeleton. |
+| `exclusions` | Joints left out of the mask, each with every joint below it. |
+| `weight` | How much the layer counts, from 0 (off) to 1 (fully on). |
+| `weightFade` | Seconds the weight takes to reach a new value; 0 changes it at once. |
+| `weightSlide` | `Duration`: every change takes `weightFade` seconds. `Speed`: the weight moves 1 every `weightFade` seconds, so a small change is quick. |
+
+Layers apply in the order of the list, each on top of the result so far.
+
+### Example: run, aim and flinch
+
+1. Set the player's `animation` to a run.
+2. Add a layer with an aim clip, `mode` `Override` and `maskRoot` the first
+   joint of the spine, such as `spine_01`. To keep the head looking where the
+   run looks, add the neck to `exclusions`.
+3. Add a second layer with a flinch clip and `mode` `Additive`, with `maskRoot`
+   left empty.
+
+The legs run, the upper body aims, and the flinch jolts both. Set the flinch
+layer's `weight` to 0 until the character is hit.
+
+### Override and additive
+
+- **An override layer only replaces what its animation moves.** A joint in the
+  mask that its clip has no keys for keeps what the layers below give it, so
+  an aim clip that doesn't move the fingers leaves them to the run.
+- **An additive layer adds how far its animation has moved since its first
+  frame.** A flinch recorded from a standing pose works as it is: standing
+  adds nothing, and only the jolt is added.
+- **Order matters: put override layers above additive ones.** A flinch below
+  the aim layer jolts the aiming arms. Above it, the aim replaces the flinch on
+  the joints its clip moves, but joints it doesn't move, often the hands and
+  fingers, keep the jolt while their parents aim, so they come out of line.
+
+Things to know about layers:
+
+- **A layer's animation keeps playing at weight 0**, so turning a layer back on
+  doesn't restart it.
+- **Moving a layer up or down the list doesn't restart it.** Its animation
+  carries on where it was; only the order it applies in changes.
+- **Changing a layer's animation fades over that layer's own `fade`**, the same
+  way the base fades.
+- **A mask joint the model lacks is logged once.** A `maskRoot` it lacks makes
+  the layer move nothing; an exclusion it lacks is skipped.
+- **Joints a layer's mask takes are written every Update.** Code that adjusts
+  one of them runs after, in PostUpdate, as for joints the base clip moves.
 
 ## Example: turning a joint from code
 

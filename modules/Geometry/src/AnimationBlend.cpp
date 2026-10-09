@@ -5,6 +5,7 @@
 #include <Assisi/Geometry/Pose.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <optional>
@@ -18,6 +19,25 @@ namespace
 /// A weight sum below this has no point to share it among: the parameter is
 /// past every point at once, which only rounding produces.
 constexpr float kNoWeight = 1e-6f;
+
+/// A reference scale smaller than this along an axis is taken as no scale
+/// there, which no change can be measured from.
+constexpr float kNoScale = 1e-6f;
+
+/// What @p reference is multiplied by to give @p sample, per axis; 1 along an
+/// axis the reference has no scale on.
+glm::vec3 ScaleChange(glm::vec3 sample, glm::vec3 reference)
+{
+    glm::vec3 change{1.f};
+    for (glm::length_t axis = 0; axis < glm::vec3::length(); ++axis)
+    {
+        if (std::abs(reference[axis]) > kNoScale)
+        {
+            change[axis] = sample[axis] / reference[axis];
+        }
+    }
+    return change;
+}
 
 /// How much point @p self counts for at @p parameter: 1 at the point, falling
 /// along the line towards each other point to 0 there, the least over all of them.
@@ -241,16 +261,38 @@ void SampleBlend(ClipBlend &blend, const Skeleton &skeleton, std::span<JointTran
     }
 }
 
+void SampleBlendAt(ClipBlend &blend, float phase, const Skeleton &skeleton, std::span<JointTransform> out)
+{
+    const float own = blend.Phase;
+    blend.Phase = phase;
+    SampleBlend(blend, skeleton, out);
+    blend.Phase = own;
+}
+
 void MixPoses(std::span<const JointTransform> from, std::span<const JointTransform> to, float weight,
               std::span<JointTransform> out)
 {
     ASSISI_ASSERT(from.size() == out.size() && to.size() == out.size(), "three poses of one skeleton");
     for (std::size_t joint = 0; joint < out.size(); ++joint)
     {
-        out[joint].Rotation = glm::normalize(glm::slerp(from[joint].Rotation, to[joint].Rotation, weight));
-        out[joint].Translation = glm::mix(from[joint].Translation, to[joint].Translation, weight);
-        out[joint].Scale = glm::mix(from[joint].Scale, to[joint].Scale, weight);
+        out[joint] = MixJoint(from[joint], to[joint], weight);
     }
+}
+
+JointTransform MixJoint(const JointTransform &from, const JointTransform &to, float weight)
+{
+    return JointTransform{.Rotation = glm::normalize(glm::slerp(from.Rotation, to.Rotation, weight)),
+                          .Translation = glm::mix(from.Translation, to.Translation, weight),
+                          .Scale = glm::mix(from.Scale, to.Scale, weight)};
+}
+
+void AddJoint(JointTransform &below, const JointTransform &sample, const JointTransform &reference, float weight)
+{
+    const glm::quat turn = sample.Rotation * glm::inverse(reference.Rotation);
+    const glm::quat none{1.f, 0.f, 0.f, 0.f};
+    below.Rotation = glm::normalize(glm::slerp(none, turn, weight) * below.Rotation);
+    below.Translation += weight * (sample.Translation - reference.Translation);
+    below.Scale *= glm::mix(glm::vec3(1.f), ScaleChange(sample.Scale, reference.Scale), weight);
 }
 
 float CrossFade::Weight() const
