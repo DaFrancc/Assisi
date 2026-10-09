@@ -822,6 +822,16 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
         case FieldType::Array:
             edited = EditListField(fp, field, pool);
             break;
+        case FieldType::AssetId:
+        {
+            // Typed as its path. The browse button picks for a component's own
+            // field, and a struct's field isn't one.
+            const std::string inputId = "##" + field.name;
+            edited = AssetIdPathField(inputId.c_str(), *static_cast<Assisi::Core::AssetId *>(fp));
+            ImGui::SameLine();
+            ImGui::TextUnformatted(field.name.c_str());
+            break;
+        }
         default:
             edited = EditFieldValue(fp, field, ResolveFieldBounds(field, spec.fields, object));
             break;

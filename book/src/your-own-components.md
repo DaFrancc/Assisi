@@ -162,7 +162,8 @@ struct Flicker
 - In a level file it's saved as an object of its own fields:
   `"brightness": { "low": 0.2, "high": 0.9 }`.
 - In the editor it shows as a section you can open, and so does each struct
-  in a list.
+  in a list. An asset field inside a struct is typed as its path; the **...**
+  browse button is only on a component's own asset fields.
 - The struct must be in the **same header** as the component, or in a header it
   includes.
 - `ASTRUCT()` takes no options. Inside the struct, `AFIELD(min = ..., max = ...)`
