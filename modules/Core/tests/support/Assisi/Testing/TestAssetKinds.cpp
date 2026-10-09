@@ -31,6 +31,12 @@ std::expected<TestBytes, Core::AssetError> Load(std::span<const std::byte> paylo
     return TestBytes{.bytes = {payload.begin(), payload.end()}};
 }
 
+std::expected<TestCount, Core::AssetError> LoadCount(std::span<const std::byte> payload)
+{
+    TestKindLoads().fetch_add(1);
+    return TestCount{.bytes = payload.size()};
+}
+
 std::expected<void, Core::AssetError> Finish(TestBytes &loaded)
 {
     if (!loaded.bytes.empty() && loaded.bytes.front() == kFailFinish)
@@ -71,8 +77,15 @@ bool RegisterRaw()
         {Core::AssetFormat{.extension = ".traw", .preferred = true}, Core::AssetFormat{.extension = ".png"}}, Load));
 }
 
+bool RegisterCount()
+{
+    return Core::AssetKindRegistry::Instance().Register(Core::MakeAssetKind<TestCount>(
+        "test byte count", {Core::AssetFormat{.extension = ".tcount", .preferred = true}}, LoadCount));
+}
+
 [[maybe_unused]] const bool kReversedRegistered = RegisterReversed();
 [[maybe_unused]] const bool kRawRegistered = RegisterRaw();
+[[maybe_unused]] const bool kCountRegistered = RegisterCount();
 
 } // namespace
 

@@ -3,7 +3,8 @@
 /// @file TestAssetStore.cpp
 /// @brief Assets of a registered kind load by id in the background, from a
 /// package or from source files cooked on demand; one that fails is not loaded
-/// again; and one asked for as the wrong type is never loaded as it.
+/// again; one asked for as the wrong type is never loaded as it; and one asked
+/// for as any of several types comes back as the one its kind loads.
 
 #include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetProvider.hpp>
@@ -23,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 using namespace Assisi;
@@ -138,6 +140,7 @@ struct NotLoadedByAnyKind
 
 const Core::AssetId kPresent = Core::DerivedAssetId("things/present.traw");
 const Core::AssetId kMissing = Core::DerivedAssetId("things/missing.traw");
+const Core::AssetId kCounted = Core::DerivedAssetId("things/counted.tcount");
 
 } // namespace
 
@@ -232,6 +235,53 @@ TEST_CASE("An asset loaded as one type is not handed out as another")
     Finish(jobs, store);
     REQUIRE(store.Resolve<Testing::TestBytes>(kPresent) != nullptr);
     CHECK(store.Resolve<NotLoadedByAnyKind>(kPresent) == nullptr);
+}
+
+TEST_CASE("An asset asked for as one of several types resolves as the one its kind loads")
+{
+    using BytesOrCount = std::variant<std::monostate, std::shared_ptr<const Testing::TestBytes>,
+                                      std::shared_ptr<const Testing::TestCount>>;
+    Core::JobSystem jobs(kWorkers);
+    MemoryProvider package;
+    package.Add(kPresent, Blob(Testing::kRawKind, "hello"));
+    package.Add(kCounted, Blob(Testing::kCountKind, "four"));
+    Core::AssetStore store;
+    store.Initialize(jobs, package);
+
+    CHECK(std::holds_alternative<std::monostate>(store.ResolveOneOf<Testing::TestBytes, Testing::TestCount>(kPresent)));
+    (void)store.ResolveOneOf<Testing::TestBytes, Testing::TestCount>(kCounted);
+    Finish(jobs, store);
+
+    const BytesOrCount bytes = store.ResolveOneOf<Testing::TestBytes, Testing::TestCount>(kPresent);
+    const BytesOrCount count = store.ResolveOneOf<Testing::TestBytes, Testing::TestCount>(kCounted);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const Testing::TestBytes>>(bytes));
+    REQUIRE(std::holds_alternative<std::shared_ptr<const Testing::TestCount>>(count));
+    CHECK(std::get<std::shared_ptr<const Testing::TestBytes>>(bytes)->bytes == Bytes("hello"));
+    CHECK(std::get<std::shared_ptr<const Testing::TestCount>>(count)->bytes == 4);
+
+    // The same value through Resolve as its own type, and nothing as the other.
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == std::get<std::shared_ptr<const Testing::TestBytes>>(bytes));
+    CHECK(store.Resolve<Testing::TestCount>(kPresent) == nullptr);
+    CHECK(package.Opens() == 2);
+}
+
+TEST_CASE("An asset asked for as one of several types its kind loads none of is never loaded")
+{
+    Core::JobSystem jobs(kWorkers);
+    MemoryProvider package;
+    package.Add(kPresent, Blob(Testing::kRawKind, "hello"));
+    Core::AssetStore store;
+    store.Initialize(jobs, package);
+
+    const std::uint32_t loadsBefore = Testing::TestKindLoads().load();
+    for (std::uint32_t i = 0; i < kRepeatedResolves; ++i)
+    {
+        CHECK(std::holds_alternative<std::monostate>(
+                  store.ResolveOneOf<Testing::TestCount, NotLoadedByAnyKind>(kPresent)));
+        Finish(jobs, store);
+    }
+    CHECK(Testing::TestKindLoads().load() == loadsBefore);
+    CHECK(package.Opens() == 1);
 }
 
 TEST_CASE("A blob of a kind nothing in this build loads stays null and is opened once")

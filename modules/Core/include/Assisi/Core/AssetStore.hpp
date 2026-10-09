@@ -13,9 +13,12 @@
 
 #include <Assisi/Core/AssetId.hpp>
 
+#include <array>
 #include <memory>
+#include <span>
 #include <typeindex>
 #include <typeinfo>
+#include <variant>
 
 namespace Assisi::Core
 {
@@ -54,8 +57,28 @@ class AssetStore
     /// and is not loaded again.
     template <typename T> [[nodiscard]] std::shared_ptr<const T> Resolve(AssetId id)
     {
+        const std::array<std::type_index, 1> accepted{std::type_index(typeid(T))};
         // Sound because ResolveErased only returns a value whose kind loads a T.
-        return std::static_pointer_cast<const T>(ResolveErased(id, typeid(T)));
+        return std::static_pointer_cast<const T>(ResolveErased(id, accepted).value);
+    }
+
+    /// @brief The loaded asset for @p id as whichever of @p T its kind loads, or
+    ///        the empty alternative while it loads, when @p id is nil, or when it
+    ///        failed or loads as none of them.
+    ///
+    /// For a field that may name assets of several kinds: the asset's kind
+    /// decides which alternative holds it. Otherwise as Resolve.
+    template <typename... T>
+    [[nodiscard]] std::variant<std::monostate, std::shared_ptr<const T>...> ResolveOneOf(AssetId id)
+    {
+        static_assert(sizeof...(T) > 1, "one type is Resolve");
+        const std::array<std::type_index, sizeof...(T)> accepted{std::type_index(typeid(T))...};
+        const ErasedAsset found = ResolveErased(id, accepted);
+        std::variant<std::monostate, std::shared_ptr<const T>...> result;
+        ((found.type == std::type_index(typeid(T)) ? (void)(result = std::static_pointer_cast<const T>(found.value))
+                                                   : (void)0),
+         ...);
+        return result;
     }
 
     /// @brief Whether any asset is still being read or loaded.
@@ -68,7 +91,16 @@ class AssetStore
   private:
     struct State;
 
-    [[nodiscard]] std::shared_ptr<const void> ResolveErased(AssetId id, std::type_index wanted);
+    /// A resolved value and the type its kind loads it as; null and void while
+    /// there is none.
+    struct ErasedAsset
+    {
+        std::shared_ptr<const void> value;
+        std::type_index type = typeid(void);
+    };
+
+    /// @p accepted is every type the caller can take the asset as.
+    [[nodiscard]] ErasedAsset ResolveErased(AssetId id, std::span<const std::type_index> accepted);
 
     /// Replaced whole by Clear(). A load's publish holds a weak reference to the
     /// state it started in, so one that lands after a Clear finds it gone.
