@@ -73,4 +73,23 @@ Core::Reflect::FieldMeta ElementFieldMeta(const Core::Reflect::FieldMeta &list, 
     return element;
 }
 
+std::byte *ResolveFieldPath(std::byte *object, std::span<const FieldStep> path)
+{
+    std::byte *at = object;
+    for (const FieldStep &step : path)
+    {
+        at += step.offset;
+        if (step.list == nullptr)
+        {
+            continue;
+        }
+        if (step.row >= step.list->size(at))
+        {
+            return nullptr;
+        }
+        at = step.list->at(at, step.row);
+    }
+    return at;
+}
+
 } // namespace Assisi::Editor

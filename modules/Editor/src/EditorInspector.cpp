@@ -799,6 +799,7 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
         const bool greyed = chrome.Greyed();
 
         void *fp = static_cast<char *>(object) + field.offset;
+        _inspectorPath.push_back(Assisi::Editor::FieldStep{.offset = field.offset});
         ImGui::PushID(field.name.c_str());
         if (greyed)
         {
@@ -823,15 +824,8 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
             edited = EditListField(fp, field, pool);
             break;
         case FieldType::AssetId:
-        {
-            // Typed as its path. The browse button picks for a component's own
-            // field, and a struct's field isn't one.
-            const std::string inputId = "##" + field.name;
-            edited = AssetIdPathField(inputId.c_str(), *static_cast<Assisi::Core::AssetId *>(fp));
-            ImGui::SameLine();
-            ImGui::TextUnformatted(field.name.c_str());
+            edited = EditNestedAssetId(fp, field);
             break;
-        }
         default:
             edited = EditFieldValue(fp, field, ResolveFieldBounds(field, spec.fields, object));
             break;
@@ -849,8 +843,37 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
         }
         anyFieldEdited |= edited || settled;
         ImGui::PopID();
+        _inspectorPath.pop_back();
     }
     return anyFieldEdited;
+}
+
+bool EditorApp::EditNestedAssetId(void *fp, const Assisi::Core::Reflect::FieldMeta &field)
+{
+    // The same [ input ][…] label layout as a component's own asset field. The
+    // browser is pinned by the path to this field, since a row's address moves.
+    const std::string inputId = "##" + field.name;
+    const float browseWidth = ImGui::GetFrameHeight();
+    if (_inspectorMeta != nullptr)
+    {
+        ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - browseWidth - ImGui::GetStyle().ItemSpacing.x);
+    }
+    const bool edited = AssetIdPathField(inputId.c_str(), *static_cast<Assisi::Core::AssetId *>(fp));
+    if (_inspectorMeta != nullptr)
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("...", ImVec2(browseWidth, 0.f)))
+        {
+            OpenAssetBrowserForPath(*_inspectorMeta);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Browse assets");
+        }
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(field.name.c_str());
+    return edited;
 }
 
 namespace
@@ -927,7 +950,9 @@ bool EditorApp::EditListField(void *fp, const Assisi::Core::Reflect::FieldMeta &
         {
             clicked = RowButtons(row, count, clicked);
         }
+        _inspectorPath.push_back(Assisi::Editor::FieldStep{.offset = 0, .list = &ops, .row = row});
         edited |= EditListRow(ops.at(list, row), Assisi::Editor::ElementFieldMeta(field, row), pool);
+        _inspectorPath.pop_back();
         ImGui::PopID();
     }
     if (resizable && ImGui::SmallButton("+ Add"))
@@ -1023,6 +1048,8 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         const bool greyed = chrome.Greyed();
 
         void *fp = static_cast<char *>(mut) + field.offset;
+        _inspectorMeta = &meta;
+        _inspectorPath.assign(1, Assisi::Editor::FieldStep{.offset = field.offset});
         ImGui::PushID(field.name.c_str());
         if (greyed)
         {
@@ -1272,6 +1299,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         anyFieldEdited |= edited || settled;
         ImGui::PopID();
     }
+
+    _inspectorMeta = nullptr;
+    _inspectorPath.clear();
 
     if (!anyEditable)
         ImGui::TextDisabled("(runtime-only)");

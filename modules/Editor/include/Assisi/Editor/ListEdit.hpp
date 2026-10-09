@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace Assisi::Editor
 {
@@ -45,5 +46,22 @@ bool ApplyListEdit(const Core::Reflect::ContainerOps &ops, std::byte *container,
 ///        The struct and enum descriptions carry over, since they describe the
 ///        innermost element whatever the depth.
 [[nodiscard]] Core::Reflect::FieldMeta ElementFieldMeta(const Core::Reflect::FieldMeta &list, std::size_t row);
+
+/// @brief One step from an object to a field inside it: the bytes from the
+///        object to the field, then, when the field is a list, the row.
+struct FieldStep
+{
+    std::size_t offset = 0;
+    const Core::Reflect::ContainerOps *list = nullptr; ///< The field's list, or null when it is no list.
+    std::size_t row = 0;
+};
+
+/// @brief The address @p path leads to from @p object, or null when a row it
+///        names is past its list's end.
+///
+/// How something that keeps a field in view across frames, such as the asset
+/// browser, finds it again: a list's rows move when it grows, so an address
+/// kept from when the path was taken may no longer be the field's.
+[[nodiscard]] std::byte *ResolveFieldPath(std::byte *object, std::span<const FieldStep> path);
 
 } // namespace Assisi::Editor

@@ -148,6 +148,37 @@ TEST_CASE("ListEdit: a row of a list of lists is a list, and its rows are the in
     CHECK(verse.structSpec != nullptr);
 }
 
+TEST_CASE("ListEdit: a path through lists and structs finds its field again, and refuses a row that's gone")
+{
+    ECS::Poem poem;
+    poem.verses = {MakeVerse(poem, "one"), MakeVerse(poem, "two")};
+    poem.verses[1].rest.resize(2);
+
+    const FieldMeta *rest = nullptr;
+    for (const FieldMeta &field : VersesField().structSpec->fields)
+    {
+        if (field.name == "rest")
+        {
+            rest = &field;
+        }
+    }
+    REQUIRE(rest != nullptr);
+    const std::array<Editor::FieldStep, 2> path{
+        Editor::FieldStep{.offset = VersesField().offset, .list = VersesField().container->ops, .row = 1},
+        Editor::FieldStep{.offset = rest->offset, .list = rest->container->ops, .row = 1}};
+    std::byte *bytes = reinterpret_cast<std::byte *>(&poem);
+    CHECK(Editor::ResolveFieldPath(bytes, path) == reinterpret_cast<std::byte *>(&poem.verses[1].rest[1]));
+
+    // The list grew and moved: the path still finds the row, wherever it went.
+    poem.verses.resize(64);
+    CHECK(Editor::ResolveFieldPath(bytes, path) == reinterpret_cast<std::byte *>(&poem.verses[1].rest[1]));
+
+    poem.verses[1].rest.resize(1);
+    CHECK(Editor::ResolveFieldPath(bytes, path) == nullptr);
+    poem.verses.resize(1);
+    CHECK(Editor::ResolveFieldPath(bytes, path) == nullptr);
+}
+
 TEST_CASE("ListEdit: each add, remove and move undoes in one step, and the list saves and loads")
 {
     ECS::Scene scene;

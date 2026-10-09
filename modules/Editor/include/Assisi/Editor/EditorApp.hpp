@@ -58,6 +58,7 @@
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
+#include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Editor/SourceAssets.hpp>
@@ -655,6 +656,11 @@ class EditorApp : public Assisi::App::Application
     /// component in a pool, so the target is the panel itself — see
     /// AssetBrowserTarget.
     void OpenAssetBrowserForMaterialField(std::size_t fieldOffset);
+
+    /// @brief Opens the asset browser for the asset field the inspector is
+    /// drawing inside a struct or a list row of @p meta, by its path from the
+    /// component, which finds it again however the lists move meanwhile.
+    void OpenAssetBrowserForPath(const Assisi::Core::Reflect::ComponentMeta &meta);
     /// @brief Resolves @p vpath to an AssetId, writes it into the pinned browser
     /// target field, and closes.
     void SelectAsset(std::string_view vpath);
@@ -822,6 +828,11 @@ class EditorApp : public Assisi::App::Application
     /// @brief Draw one row of a list, described by @p element (see
     /// ListEdit's ElementFieldMeta), and return whether it changed.
     bool EditListRow(std::byte *row, const Assisi::Core::Reflect::FieldMeta &element, Assisi::Core::StringPool *pool);
+
+    /// @brief Draw an asset field inside a struct or a list row as its path,
+    /// with a browse button while a component is being drawn, and return
+    /// whether it changed.
+    bool EditNestedAssetId(void *fp, const Assisi::Core::Reflect::FieldMeta &field);
 
     /// @brief Draw a PooledString at @p fp as the text it names in @p pool, and
     /// return whether it changed. Without a pool, only the handle can be shown.
@@ -2028,6 +2039,14 @@ class EditorApp : public Assisi::App::Application
     /// @brief -1 when the target field is a scalar asset field; >= 0 when it is
     /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot).
     int32_t _assetBrowserVectorSlot = -1;
+    /// @brief The way from the component to the target field when it sits in
+    /// a list row or a struct; empty for a component's own field, which
+    /// `_assetBrowserFieldOffset` names.
+    std::vector<Assisi::Editor::FieldStep> _assetBrowserPath;
+    /// @brief While the inspector draws a component's fields: that component,
+    /// and the way from it to the field being drawn.
+    const Assisi::Core::Reflect::ComponentMeta *_inspectorMeta = nullptr;
+    std::vector<Assisi::Editor::FieldStep> _inspectorPath;
     /// @brief Which material a MaterialField pick was armed for. The browser
     /// stays open across frames, and the panel can be pointed at a different
     /// `.amat` in between — without this, the pick would land at the same field
