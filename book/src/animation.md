@@ -96,6 +96,8 @@ while it fades out, so a walk doesn't freeze halfway through a step.
 - **A fade runs in real seconds.** `speed` doesn't make it faster or slower, so a
   fade still finishes while `speed` is 0.
 - **Joints the new animation doesn't move fade back to the rest pose.**
+- **Clearing `animation` returns the character to its rest pose**, over `fade`
+  seconds like any other change. After that the pose is yours to set from code.
 
 ## Blend spaces
 

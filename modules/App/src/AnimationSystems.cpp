@@ -84,6 +84,11 @@ bool ResolveSpaceClips(Core::AssetStore &assets, const Geometry::BlendSpace &spa
 /// player.resolved; nothing while it or any of its clips is loading.
 std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &assets, Runtime::AnimationPlayer &player)
 {
+    if (player.animation.IsNil())
+    {
+        player.resolved.clear();
+        return Runtime::ResolvedAnimation{};
+    }
     const ClipOrSpace found = assets.ResolveOneOf<Geometry::AnimationClip, Geometry::BlendSpace>(player.animation);
     if (const std::shared_ptr<const Geometry::AnimationClip> *clip = std::get_if<1>(&found))
     {
@@ -111,7 +116,7 @@ void AnimationPlayerSystem(SystemContext &ctx)
     for (auto [entity, player, skinned, renderer] :
          ctx.world.scene.Query<Mut<Runtime::AnimationPlayer>, Mut<Runtime::SkinnedMesh>, Runtime::MeshRenderer>())
     {
-        if (player.animation.IsNil() || Runtime::BindSkinnedMesh(skinned, renderer) == nullptr)
+        if (Runtime::BindSkinnedMesh(skinned, renderer) == nullptr)
         {
             continue;
         }

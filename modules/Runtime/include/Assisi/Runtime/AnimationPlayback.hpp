@@ -17,8 +17,8 @@
 namespace Assisi::Runtime
 {
 
-/// @brief What a player's `animation` resolved to: one clip, or a blend space
-///        and the clip of each of its points, in order.
+/// @brief What a player's `animation` resolved to: one clip, a blend space and
+///        the clip of each of its points in order, or no clips when it is nil.
 struct ResolvedAnimation
 {
     std::shared_ptr<const Geometry::BlendSpace> space; ///< Null for a clip on its own.
@@ -31,7 +31,8 @@ struct ResolvedAnimation
 /// changed since last time: matches the clips' tracks to @p skeleton and starts
 /// from the top when it is a different animation. A different animation fades
 /// in over the player's `fade` from the pose as it is; anything else puts the
-/// pose back to rest. Returns whether it rebound, which is when the caller
+/// pose back to rest. A nil animation is one that moves nothing, so clearing it
+/// returns the pose to rest and then leaves it to code. Returns whether it rebound, which is when the caller
 /// reports missing joints. Does nothing while @p skinned is not sized for
 /// @p skeleton.
 bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &animation,

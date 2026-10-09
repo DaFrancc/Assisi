@@ -133,6 +133,14 @@ struct Rig
         player.animation = ClipId(id);
     }
 
+    /// Plays nothing from now on, as when `animation` is cleared.
+    void Stop()
+    {
+        clips.clear();
+        space = nullptr;
+        player.animation = Core::AssetId{};
+    }
+
     bool Advance(float dt)
     {
         const Runtime::ResolvedAnimation animation{.space = space, .clips = clips};
@@ -326,4 +334,50 @@ TEST_CASE("Animation playback: with no fade a new animation cuts straight to its
     (void)rig.Advance(kFrame);
     CHECK(rig.Knee() == doctest::Approx(10.f));
     CHECK_FALSE(rig.player.fading);
+}
+
+TEST_CASE("Animation playback: clearing the animation puts the pose back to rest")
+{
+    Rig rig;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(kFrame);
+    REQUIRE(rig.Knee() == doctest::Approx(10.f));
+
+    rig.Stop();
+    (void)rig.Advance(kFrame);
+    CHECK(rig.Knee() == doctest::Approx(0.f));
+
+    // Nothing plays, so the pose is the code's to set.
+    rig.skinned.pose[1].Translation.x = 3.f;
+    (void)rig.Advance(kFrame);
+    CHECK(rig.Knee() == doctest::Approx(3.f));
+}
+
+TEST_CASE("Animation playback: clearing the animation with a fade eases back to rest")
+{
+    Rig rig;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(kFrame);
+    rig.player.fade = 1.f;
+
+    rig.Stop();
+    (void)rig.Advance(2.f * kFrame);
+    CHECK(rig.Knee() == doctest::Approx(5.f));
+    (void)rig.Advance(2.f * kFrame);
+    CHECK(rig.Knee() == doctest::Approx(0.f));
+    CHECK_FALSE(rig.player.fading);
+}
+
+TEST_CASE("Animation playback: an animation set after none fades in from the pose as it is")
+{
+    Rig rig;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(kFrame);
+    rig.Stop();
+    (void)rig.Advance(kFrame);
+
+    rig.player.fade = 1.f;
+    rig.Play(KneeHeld(8.f, 1.f), 3);
+    (void)rig.Advance(2.f * kFrame);
+    CHECK(rig.Knee() == doctest::Approx(4.f));
 }

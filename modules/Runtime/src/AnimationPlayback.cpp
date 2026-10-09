@@ -98,8 +98,7 @@ void Rebind(AnimationPlayer &player, const ResolvedAnimation &animation, const G
 {
     const bool changed = player.animation != player.boundAnimation;
     // Fading needs a pose to fade from that is this mesh's.
-    const bool fades = changed && player.fade > 0.f && !player.current.Sources.empty() &&
-                       skinned.boundMeshId == player.boundMeshId;
+    const bool fades = changed && player.fade > 0.f && skinned.boundMeshId == player.boundMeshId;
     if (fades)
     {
         StartFade(player, skeleton, skinned.pose);
@@ -146,8 +145,10 @@ void Fade(AnimationPlayer &player, const Geometry::Skeleton &skeleton, float ste
 bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &animation,
                             const Geometry::Skeleton &skeleton, float dt, SkinnedMesh &skinned)
 {
-    if (animation.clips.empty() || std::ranges::contains(animation.clips, nullptr) ||
-        skinned.boundMeshId == kUnboundMesh || skinned.pose.size() != skeleton.JointCount())
+    // No animation is no clips; an animation with none has not loaded yet.
+    const bool loaded = player.animation.IsNil() || !animation.clips.empty();
+    if (!loaded || std::ranges::contains(animation.clips, nullptr) || skinned.boundMeshId == kUnboundMesh ||
+        skinned.pose.size() != skeleton.JointCount())
     {
         return false;
     }
