@@ -161,8 +161,8 @@ struct Flicker
   array. It can hold other structs.
 - In a level file it's saved as an object of its own fields:
   `"brightness": { "low": 0.2, "high": 0.9 }`.
-- In the editor it shows as a section you can open. A struct inside a list
-  shows as text and can't be edited yet.
+- In the editor it shows as a section you can open, and so does each struct
+  in a list.
 - The struct must be in the **same header** as the component, or in a header it
   includes.
 - `ASTRUCT()` takes no options. Inside the struct, `AFIELD(min = ..., max = ...)`
@@ -191,6 +191,21 @@ the field and asks for `std::array<float, 3>`, which saves and loads the same
 way. A project that needs C arrays can allow them by configuring with
 `-DASSISI_FORBID_C_ARRAYS=OFF`. Even then, a `std::vector` or map of C arrays
 is refused, because C++ can't store one.
+
+### Lists in the editor
+
+In the inspector, a list shows its name and how many rows it has; open it to
+see the rows. Each row is edited the way a field of its type is, and a row
+that is a struct opens to show its fields.
+
+- **+ Add** puts a new row at the end, with the defaults your struct gives its
+  fields. A struct row you add opens by itself.
+- The arrows beside a row move it up or down, and **x** removes it.
+- Each click is one step in the undo history, and so is each edit inside a
+  row.
+- A `std::array` edits its rows the same way but has no add, remove or move
+  buttons, because its length is fixed.
+- A map shows what it holds but can't be edited in the inspector yet.
 
 ## Options
 

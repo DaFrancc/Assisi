@@ -13,6 +13,7 @@ add_executable(Assisi-Editor-Tests
   TestInspectorFieldChrome.cpp
   TestInstanceGesture.cpp
   TestInstanceHistory.cpp
+  TestListEdit.cpp
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
   TestSkeletonOverlay.cpp
@@ -23,6 +24,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/ListEdit.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SkeletonOverlay.cpp"
@@ -67,6 +69,8 @@ target_link_libraries(Assisi-Editor-Tests
     imgui::imgui
     # Components with requires/excludes rules, shared with the Runtime suite.
     Assisi-Runtime-TestComponents
+    # Poem, a component holding lists of structs, for the list edits.
+    Assisi-ECS-TestComponents
 )
 
 # EditHistory walks ComponentRegistry, populated by the static initializers
@@ -78,6 +82,7 @@ target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
+  $<TARGET_OBJECTS:Assisi-ECS-TestComponents-Generated>
 )
 
 add_test(NAME Editor COMMAND Assisi-Editor-Tests)

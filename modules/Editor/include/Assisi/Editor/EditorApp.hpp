@@ -813,6 +813,16 @@ class EditorApp : public Assisi::App::Application
     /// name. @p pool is the nearest StringPool above the struct, or null.
     bool EditStructFields(void *object, const Assisi::Core::Reflect::StructSpec &spec, Assisi::Core::StringPool *pool);
 
+    /// @brief Draw the list or array at @p fp as rows, each edited as a field
+    /// of the element's type would be, with buttons to add, remove and move
+    /// rows where its length can change, and return whether it changed.
+    /// @p pool is the nearest StringPool above it, or null.
+    bool EditListField(void *fp, const Assisi::Core::Reflect::FieldMeta &field, Assisi::Core::StringPool *pool);
+
+    /// @brief Draw one row of a list, described by @p element (see
+    /// ListEdit's ElementFieldMeta), and return whether it changed.
+    bool EditListRow(std::byte *row, const Assisi::Core::Reflect::FieldMeta &element, Assisi::Core::StringPool *pool);
+
     /// @brief Draw a PooledString at @p fp as the text it names in @p pool, and
     /// return whether it changed. Without a pool, only the handle can be shown.
     bool EditPooledString(void *fp, const Assisi::Core::Reflect::FieldMeta &field, Assisi::Core::StringPool *pool);

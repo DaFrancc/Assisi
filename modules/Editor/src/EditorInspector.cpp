@@ -28,6 +28,7 @@
 #include <Assisi/Core/StringPool.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
+#include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -53,6 +54,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -639,11 +641,9 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
         }
         break;
     }
-    // Shown, not editable. Editing one in place needs a list widget with per-row
-    // identity, add and remove, and a nested list for a nested element — and
-    // nothing authors a container by hand yet. A field that simply vanished from
-    // the inspector would read as a bug, so it reads as what it holds. A struct
-    // inside one reads as its fields.
+    // Shown, not editable: a map, and a list drawn by a caller with no
+    // EditListField of its own to reach for. A field that simply vanished
+    // would read as a bug, so it reads as what it holds.
     case FieldType::Vector:
     case FieldType::Map:
     case FieldType::Array:
@@ -818,6 +818,10 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
         case FieldType::PooledString:
             edited = EditPooledString(fp, field, pool);
             break;
+        case FieldType::Vector:
+        case FieldType::Array:
+            edited = EditListField(fp, field, pool);
+            break;
         default:
             edited = EditFieldValue(fp, field, ResolveFieldBounds(field, spec.fields, object));
             break;
@@ -837,6 +841,126 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
         ImGui::PopID();
     }
     return anyFieldEdited;
+}
+
+namespace
+{
+
+/// The up, down and remove buttons at the start of row @p row of @p count,
+/// giving what was clicked, or @p clicked as it was when nothing was.
+Assisi::Editor::ListEdit RowButtons(std::size_t row, std::size_t count, Assisi::Editor::ListEdit clicked)
+{
+    using Assisi::Editor::ListEdit;
+    using Assisi::Editor::ListEditKind;
+
+    ImGui::BeginDisabled(row == 0);
+    if (ImGui::ArrowButton("##up", ImGuiDir_Up))
+    {
+        clicked = ListEdit{.row = row, .kind = ListEditKind::MoveUp};
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(row + 1 >= count);
+    if (ImGui::ArrowButton("##down", ImGuiDir_Down))
+    {
+        clicked = ListEdit{.row = row, .kind = ListEditKind::MoveDown};
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("x"))
+    {
+        clicked = ListEdit{.row = row, .kind = ListEditKind::Remove};
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Remove this row");
+    }
+    ImGui::SameLine();
+    return clicked;
+}
+
+/// Opens row @p row's tree node, which is drawn inside PushID(row), from the
+/// next frame on, so a struct row just added shows its fields.
+void OpenRow(std::size_t row, const Assisi::Core::Reflect::FieldMeta &element)
+{
+    ImGui::PushID(static_cast<int>(row));
+    ImGui::GetStateStorage()->SetInt(ImGui::GetID(element.name.c_str()), 1);
+    ImGui::PopID();
+}
+
+} // namespace
+
+bool EditorApp::EditListField(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
+                              Assisi::Core::StringPool *pool)
+{
+    using namespace Assisi::Core::Reflect;
+    using Assisi::Editor::ListEdit;
+    using Assisi::Editor::ListEditKind;
+
+    const ContainerOps &ops = *field.container->ops;
+    std::byte *list = static_cast<std::byte *>(fp);
+    const std::size_t count = ops.size(list);
+    // The count is shown but kept out of the ID, so the node stays open as rows come and go.
+    const std::string label = std::format("{} ({})###{}", field.name, count, field.name);
+    if (!ImGui::TreeNode(label.c_str()))
+    {
+        return false;
+    }
+
+    const bool resizable = ops.pushDefault != nullptr;
+    bool edited = false;
+    ListEdit clicked;
+    for (std::size_t row = 0; row < count; ++row)
+    {
+        ImGui::PushID(static_cast<int>(row));
+        if (resizable)
+        {
+            clicked = RowButtons(row, count, clicked);
+        }
+        edited |= EditListRow(ops.at(list, row), Assisi::Editor::ElementFieldMeta(field, row), pool);
+        ImGui::PopID();
+    }
+    if (resizable && ImGui::SmallButton("+ Add"))
+    {
+        clicked = ListEdit{.row = count, .kind = ListEditKind::Add};
+    }
+
+    // Only now, with no row's address still in use, may the list's storage move.
+    const bool applied = Assisi::Editor::ApplyListEdit(ops, list, clicked);
+    if (applied && clicked.kind == ListEditKind::Add && field.container->elementType == FieldType::Struct)
+    {
+        OpenRow(count, Assisi::Editor::ElementFieldMeta(field, count));
+    }
+    ImGui::TreePop();
+    return edited || applied;
+}
+
+bool EditorApp::EditListRow(std::byte *row, const Assisi::Core::Reflect::FieldMeta &element,
+                            Assisi::Core::StringPool *pool)
+{
+    using Assisi::Core::Reflect::FieldType;
+
+    if (element.container != nullptr)
+    {
+        return EditListField(row, element, pool);
+    }
+    switch (element.type)
+    {
+    case FieldType::Struct:
+    {
+        if (element.structSpec == nullptr || !ImGui::TreeNode(element.name.c_str()))
+        {
+            return false;
+        }
+        const bool edited = EditStructFields(row, *element.structSpec, pool);
+        ImGui::TreePop();
+        return edited;
+    }
+    case FieldType::PooledString:
+        return EditPooledString(row, element, pool);
+    default:
+        return EditFieldValue(row, element, {});
+    }
 }
 
 bool EditorApp::EditPooledString(void *fp, const Assisi::Core::Reflect::FieldMeta &field,
@@ -1066,6 +1190,10 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         }
         case FieldType::PooledString:
             edited = EditPooledString(fp, field, FindStringPool(mut, meta.fields));
+            break;
+        case FieldType::Vector:
+        case FieldType::Array:
+            edited = EditListField(fp, field, FindStringPool(mut, meta.fields));
             break;
         case FieldType::Struct:
             // Its fields beneath it, each edited as one on the component would

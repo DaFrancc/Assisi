@@ -15,6 +15,7 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/EditorApp.hpp"
     "include/Assisi/Editor/EditorChiaraPanel.hpp"
     "include/Assisi/Editor/InspectorFieldChrome.hpp"
+    "include/Assisi/Editor/ListEdit.hpp"
     "include/Assisi/Editor/Overlay/IconPass.hpp"
     "include/Assisi/Editor/Overlay/LinePass.hpp"
     "include/Assisi/Editor/Overlay/OutlinePass.hpp"
@@ -53,6 +54,7 @@ target_sources(Assisi-Editor
     "src/EditorWorlds.cpp"
     "src/GizmoDrag.cpp"
     "src/InspectorFieldChrome.cpp"
+    "src/ListEdit.cpp"
     "src/InstanceGesture.cpp"
     # The overlay draw passes. They live here rather than in Render because a
     # game draws none of them: a selection outline, an entity icon and a
