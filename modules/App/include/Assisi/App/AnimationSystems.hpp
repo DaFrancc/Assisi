@@ -11,12 +11,14 @@ namespace Assisi::App
 
 struct SystemContext;
 
-/// @brief Plays every AnimationPlayer's clip on its SkinnedMesh for the frame.
+/// @brief Plays every AnimationPlayer's clip or blend space on its SkinnedMesh
+///        for the frame.
 ///
-/// Update, so clips play only while the world simulates, and code that adjusts
-/// joints on top of a clip runs after it, in PostUpdate. A player whose mesh or
-/// clip has not loaded yet waits. One whose clip names joints its mesh lacks
-/// plays the rest and warns once, until its clip or mesh changes.
+/// Update, so animations play only while the world simulates, and code that
+/// adjusts joints on top runs after, in PostUpdate. A player whose mesh, clip,
+/// space or any of the space's clips has not loaded yet waits. One whose clips
+/// name joints its mesh lacks plays the rest and warns once, until its
+/// animation or mesh changes.
 ASYSTEM(Update, name = "AnimationPlayers") void AnimationPlayerSystem(SystemContext &ctx);
 
 } // namespace Assisi::App

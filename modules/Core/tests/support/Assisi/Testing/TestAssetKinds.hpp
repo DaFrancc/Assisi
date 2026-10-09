@@ -26,6 +26,16 @@ struct TestBytes
     bool finished = false;
 };
 
+/// @brief What the count kind loads into: a type of its own, for tests of an
+///        asset that may be of either kind.
+struct TestCount
+{
+    std::size_t bytes = 0;
+};
+
+/// @brief `.tcount`: no cook step; loads its payload's length.
+inline constexpr Core::AssetKindId kCountKind{"test byte count"};
+
 /// @brief `.tbytes`: cooked by reversing its bytes, and finished on the main
 ///        thread. A source that starts with 'X' fails the cook, and a payload
 ///        that starts with 'F' fails the finish.
@@ -41,7 +51,7 @@ inline constexpr std::string_view kEmptyPayloadDetail = "the payload is empty";
 inline constexpr std::string_view kCookRefusedDetail = "the source asks the cook to fail";
 inline constexpr std::string_view kFinishRefusedDetail = "the payload asks the finish to fail";
 
-/// @brief How many times either kind's load has run, for tests that check a
+/// @brief How many times a test kind's load has run, for tests that check a
 ///        load did or did not happen.
 std::atomic<std::uint32_t> &TestKindLoads();
 

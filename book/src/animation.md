@@ -49,18 +49,20 @@ engine wants one clip per file, so you take them out first:
    `<model>_animations`: `UAL1.glb`'s walk becomes
    `UAL1_animations/Walk_Loop.glb`. These are ordinary glTF files that open in
    Blender.
-3. Give your character entity an `AnimationPlayer`, and set its `clip` to one of
-   those files.
+3. Give your character entity an `AnimationPlayer`, and set its `animation` to
+   one of those files.
 4. Add the `AnimationPlayers` system to the level. It is what plays them.
 5. Press Play. The clip plays while the game runs, not while you edit.
 
-`AnimationPlayer` has three settings:
+`AnimationPlayer` has these settings:
 
 | Setting | What it does |
 |---|---|
-| `clip` | The clip file to play. |
+| `animation` | The clip file to play, or a blend space (see [Blend spaces](#blend-spaces)). |
+| `parameter` | Where in a blend space to play. A clip ignores it. |
 | `speed` | 1 plays at the speed the clip was made at, 2 twice as fast, a negative number backwards. |
 | `loop` | On, the clip starts again from the top when it ends. Off, it stops on its last frame. |
+| `fade` | Seconds to fade over when `animation` changes, 0.15 unless you change it. 0 switches at once. |
 
 Things to know about clips:
 
@@ -78,6 +80,84 @@ Things to know about clips:
   animations of blend shapes (morph targets), are left out when you extract, with
   a warning naming them. Re-export with linear keys, which Blender does by
   default, and leave blend shapes out.
+
+## Fading from one animation to another
+
+Switching straight from a walk to a jump makes the character jump into the new
+pose in a single frame. A **cross-fade** hides that: for a moment both play, and
+the pose slides from one to the other.
+
+Change `animation` from your code, and the player's `fade` sets how long the
+slide takes: 0.15 seconds unless you change it. The old animation keeps moving
+while it fades out, so a walk doesn't freeze halfway through a step.
+
+- **Changing again during a fade is safe.** The new fade starts from the pose on
+  screen at that moment, so nothing jumps.
+- **A fade runs in real seconds.** `speed` doesn't make it faster or slower, so a
+  fade still finishes while `speed` is 0.
+- **Joints the new animation doesn't move fade back to the rest pose.**
+- **Clearing `animation` returns the character to its rest pose**, over `fade`
+  seconds like any other change. After that the pose is yours to set from code.
+
+## Blend spaces
+
+A **blend space** mixes several clips at once, chosen by a number your code sets.
+Picture idle, walk and run placed along a line by speed:
+
+```
+idle      walk           run
+ 0 ------- 2 ------------ 6   speed
+```
+
+At speed 2 the character walks; at 4 it is half walking and half running, which
+looks like a jog. Raise the speed smoothly and it eases from standing to walking
+to running.
+
+The clips in a space share one timeline, measured from the start of a cycle to
+its end rather than in seconds, so a walk and a run of different lengths put the
+same foot down at the same moment and the feet don't slide while they mix. The
+cost is that a clip plays a little faster or slower than it was made while it is
+mixed with a longer or shorter one.
+
+A blend space is a file of its own, ending in `.ablnd`, that lists each clip and
+where it sits. There is no editor for it yet, so you write it by hand. Create
+`assets/characters/Locomotion.ablnd`:
+
+```json
+{
+  "version": 1,
+  "type": "BlendSpace",
+  "Points": [
+    { "Clip": { "guid": "<Idle_Loop.glb's guid>" }, "Position": [0, 0] },
+    { "Clip": { "guid": "<Walk_Loop.glb's guid>" }, "Position": [2, 0] },
+    { "Clip": { "guid": "<Jog_Fwd_Loop.glb's guid>" }, "Position": [6, 0] }
+  ]
+}
+```
+
+Each clip's guid is the `guid` line in its `.aast` sidecar file, next to the
+clip. Then set the player's `animation` to the space, and each frame write the
+character's speed into the first number of `parameter`:
+
+```cpp
+player.parameter.x = glm::length(velocity);
+```
+
+A space can also spread clips over a flat area, using both numbers of
+`Position` and `parameter`. A strafing character puts a run forward at `[0, 1]`,
+backward at `[0, -1]`, left at `[-1, 0]` and right at `[1, 0]`, and sets
+`parameter` to its velocity in its own facing: moving forward and right at once
+mixes the forward and right runs into a diagonal.
+
+Things to know about blend spaces:
+
+- **One space serves every character on the same skeleton.**
+- **A space waits for all its clips.** Nothing plays until every clip it lists
+  has loaded.
+- **Past the last point, the last point plays.** A speed of 9 in the space above
+  plays the run as it is.
+- **The cook refuses a space that can't play**: one with no points, a point with
+  no clip, or two points at the same position.
 
 ## Example: turning a joint from code
 

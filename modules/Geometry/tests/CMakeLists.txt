@@ -1,7 +1,9 @@
 add_executable(Assisi-Geometry-Tests
   main.cpp
+  TestAnimationBlend.cpp
   TestAnimationExtract.cpp
   TestAnimationSampling.cpp
+  TestBlendSpaceFile.cpp
   TestBounds.cpp
   TestCollisionImport.cpp
   TestCookedMesh.cpp

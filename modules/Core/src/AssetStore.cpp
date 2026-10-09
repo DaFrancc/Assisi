@@ -8,6 +8,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <algorithm>
 #include <expected>
 #include <format>
 #include <span>
@@ -32,9 +33,14 @@ struct Loaded
 
 using LoadResult = std::expected<Loaded, AssetError>;
 
-/// Worker side: read the blob, find its kind, check it loads what was asked
-/// for, and load it. Touches no store state.
-LoadResult ReadAndLoad(const AssetProvider &provider, AssetId id, std::type_index wanted)
+bool Accepts(std::span<const std::type_index> accepted, std::type_index type)
+{
+    return std::ranges::find(accepted, type) != accepted.end();
+}
+
+/// Worker side: read the blob, find its kind, check it loads as one of the
+/// types asked for, and load it. Touches no store state.
+LoadResult ReadAndLoad(const AssetProvider &provider, AssetId id, std::span<const std::type_index> accepted)
 {
     const std::expected<std::vector<std::byte>, AssetError> bytes = provider.Open(id);
     if (!bytes)
@@ -54,7 +60,7 @@ LoadResult ReadAndLoad(const AssetProvider &provider, AssetId id, std::type_inde
         return std::unexpected(
             AssetError{AssetErrorCode::UnsupportedEncoding, "nothing in this build loads the asset's kind"});
     }
-    if (kind->valueType != wanted)
+    if (!Accepts(accepted, kind->valueType))
     {
         return std::unexpected(AssetErrorCode::WrongType);
     }
@@ -98,37 +104,40 @@ void AssetStore::Initialize(JobSystem &jobs, const AssetProvider &provider)
     _provider = &provider;
 }
 
-std::shared_ptr<const void> AssetStore::ResolveErased(AssetId id, std::type_index wanted)
+AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const std::type_index> accepted)
 {
     if (id.IsNil() || _jobs == nullptr)
     {
-        return nullptr;
+        return {};
     }
 
     State &state = *_state;
     const std::unordered_map<AssetId, std::shared_ptr<const void>>::const_iterator found = state.resident.find(id);
     if (found != state.resident.end())
     {
-        if (state.residentType.at(id) != wanted)
+        const std::type_index type = state.residentType.at(id);
+        if (!Accepts(accepted, type))
         {
             if (state.failed.insert(id).second)
             {
                 Log::Warn("AssetStore: asset {} was asked for as a type it does not load as.", id.ToString());
             }
-            return nullptr;
+            return {};
         }
-        return found->second;
+        return ErasedAsset{.value = found->second, .type = type};
     }
     if (state.loading.contains(id) || state.failed.contains(id))
     {
-        return nullptr;
+        return {};
     }
 
     state.loading.insert(id);
     const std::weak_ptr<State> startedIn = _state;
-    _jobs->Run(Pool::Worker, [provider = _provider, id, wanted] { return ReadAndLoad(*provider, id, wanted); })
+    // A copy: the caller's types live only as long as its call.
+    const std::vector<std::type_index> types{accepted.begin(), accepted.end()};
+    _jobs->Run(Pool::Worker, [provider = _provider, id, types] { return ReadAndLoad(*provider, id, types); })
         .Then(Pool::Main,
-              [startedIn, id, wanted](LoadResult result)
+              [startedIn, id](LoadResult result)
               {
                   const std::shared_ptr<State> live = startedIn.lock();
                   if (live == nullptr)
@@ -153,9 +162,9 @@ std::shared_ptr<const void> AssetStore::ResolveErased(AssetId id, std::type_inde
                       return;
                   }
                   live->resident.emplace(id, std::move(result->value));
-                  live->residentType.emplace(id, wanted);
+                  live->residentType.emplace(id, result->kind->valueType);
               });
-    return nullptr;
+    return {};
 }
 
 bool AssetStore::HasPendingLoads() const
