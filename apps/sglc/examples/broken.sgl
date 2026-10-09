@@ -1,0 +1,17 @@
+// The same arm with mistakes in it, to see what sglc says about them.
+use robot;
+import "shared/modes.sgl";
+
+param mode: Mode;
+param bump: trigger;
+
+let tired = batery() < 0.2;
+
+machine arm {
+    node rest { emit "bepe"; }
+    node reach { cost 1.5; }
+    node grab { }
+
+    rest -> reach when mode == Mode.bsuy && !tired;
+    any + rest -> rest when bump;
+}

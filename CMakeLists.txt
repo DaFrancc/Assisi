@@ -1346,6 +1346,7 @@ add_subdirectory(apps/game)
 # level may name a component this project declares rather than the engine.
 add_subdirectory(apps/cook)
 add_subdirectory(apps/pack)
+add_subdirectory(apps/sglc)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

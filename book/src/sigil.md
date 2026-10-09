@@ -59,6 +59,44 @@ Read it top to bottom:
 - Each line with `->` is a transition: "from this state, go to that one
   when this condition is true".
 
+## Try it: check a file with sglc
+
+`sglc` is the Sigil compiler on its own, as a command-line tool. It reads `.sgl`
+files and prints what's wrong with them, without running the game or the cook.
+Until the animation system arrives, it only knows a small made-up vocabulary
+called `robot`, which is enough to try every part of the language on this page.
+
+### Step 1: build it
+
+`make gd` builds it with everything else. The tool ends up at
+`out/build/gcc-debug/apps/sglc/sglc`.
+
+### Step 2: check the example
+
+```
+out/build/gcc-debug/apps/sglc/sglc --root apps/sglc/examples apps/sglc/examples/arm.sgl
+```
+
+It prints `arm.sgl: compiles, 0 warnings`. `--root` is the folder that `import`
+paths start from, like the `assets/` folder for the cook.
+
+### Step 3: see the errors
+
+Run it on `apps/sglc/examples/broken.sgl`, the same file with mistakes in it. Each
+mistake is listed with the line it's on and a `^` under the spot. In a terminal
+the output is in color; add `--color=never` to turn that off, or
+`--color=always` to keep it when piping to a file.
+
+`sglc` exits with 0 when every file compiles, 1 when any has errors, and 2 when
+it couldn't read a file or the command was wrong, so a script can use it as a
+check.
+
+The `robot` vocabulary has machines (`machine`) holding nodes (`node`), which can
+hold nodes of their own. A node can `emit "beep";` (or `"boop"`, `"whirr"`),
+`goto` another node, and have a `cost` in whole numbers; a machine has a `speed`;
+a transition can wait `after` some seconds. Its functions are `battery()` and
+`tick()`, and `tick()` counts as a trigger.
+
 ## How a file is laid out
 
 - **The first statement is `use <system>;`,** naming the system the file is for.
