@@ -40,9 +40,9 @@ layer base {
     state jump_start { play jump_clip; then fall; }
     state fall { play fall_clip; }
 
-    walk -> jump_start when jump && grounded { fade 0.05; }
-    any - jump_start -> fall when !grounded { fade 0.15; }
-    fall -> walk when grounded { fade 0.1; }
+    walk -> jump_start when jump && grounded { fade 0.05; };
+    any - jump_start -> fall when !grounded { fade 0.15; };
+    fall -> walk when grounded { fade 0.1; };
 }
 ```
 
@@ -63,9 +63,10 @@ Read it top to bottom:
 
 - **The first statement is `use <system>;`,** naming the system the file is for.
   Comments may come before it.
-- **Every statement ends with `;`.** Blocks, the parts in `{ ... }`, end with
-  `}` and need no `;` after it. Line breaks don't matter, so a long statement
-  can be split over several lines.
+- **Every statement ends with `;`,** transitions included, even when they end
+  in braces. Blocks like `state walk { ... }` end with `}` and need no `;` after
+  it. Line breaks don't matter, so a long statement can be split over several
+  lines.
 - **Comments** are `//` to the end of the line, or anything between `/*` and
   `*/`.
 - **Names** are made of letters, digits and `_`, and don't start with a digit.
@@ -210,20 +211,19 @@ A transition says: from these states, go to that state when this condition is
 true.
 
 ```
-walk -> jump_start when jump && grounded { fade 0.05; }
+walk -> jump_start when jump && grounded { fade 0.05; };
 ```
 
 - **`when` and a condition are always required.** The condition must be a
   `bool`.
 - **Clauses go in braces after the condition,** each ending with `;`, just like
-  clauses in a block. A transition with clauses ends at its `}`; one without
-  ends with `;`:
+  clauses in a block. The transition still ends with `;`, after the `}`:
   ```
   fall -> walk when grounded;
   any - jump_start -> fall when !grounded {
       fade 0.15;
       interrupt;
-  }
+  };
   ```
 - **The first true transition wins.** Transitions are checked in the order
   they're written, so put the one that matters most first.
@@ -243,7 +243,7 @@ walk -> jump_start when jump && grounded { fade 0.05; }
 transition only restarts a state when you write that state on both sides:
 
 ```
-flinch -> flinch when hit { fade 0.05; }   // hit again during a flinch: start it over
+flinch -> flinch when hit { fade 0.05; };   // hit again during a flinch: start it over
 ```
 
 ## Triggers
