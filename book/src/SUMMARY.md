@@ -39,6 +39,7 @@
     - [The character controller](physics-character.md)
 - [Audio](audio.md)
 - [Animation](animation.md)
+- [Sigil](sigil.md)
 - [Levels and blueprints](levels-and-blueprints.md)
 
 # Shipping
