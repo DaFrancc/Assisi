@@ -158,7 +158,7 @@ struct AnimationPlayer
     AFIELD() glm::vec2 parameter{0.f, 0.f};         ///< Where a blend space plays; a clip ignores it.
     AFIELD(transient) Geometry::CrossFade crossFade;
     AFIELD() float speed = 1.f;                     ///< 1 plays at the speed it was authored; negative plays backwards.
-    AFIELD(min = 0) float fade = 0.f;               ///< Seconds a change of `animation` fades over; 0 cuts.
+    AFIELD(min = 0) float fade = 0.15f;             ///< Seconds a change of `animation` fades over; 0 cuts.
     AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
     AFIELD() bool loop = true;
     AFIELD(transient) bool fading = false;

@@ -123,6 +123,8 @@ struct Rig
     {
         (void)Runtime::BindPose(skinned, skeleton, kMesh);
         player.animation = ClipId(1);
+        // Changes cut unless a test asks for a fade, so each test reads one animation at a time.
+        player.fade = 0.f;
     }
 
     /// Plays @p clip from now on, as another animation.

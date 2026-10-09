@@ -62,7 +62,7 @@ engine wants one clip per file, so you take them out first:
 | `parameter` | Where in a blend space to play. A clip ignores it. |
 | `speed` | 1 plays at the speed the clip was made at, 2 twice as fast, a negative number backwards. |
 | `loop` | On, the clip starts again from the top when it ends. Off, it stops on its last frame. |
-| `fade` | Seconds to fade over when `animation` changes. 0 switches at once. |
+| `fade` | Seconds to fade over when `animation` changes, 0.15 unless you change it. 0 switches at once. |
 
 Things to know about clips:
 
@@ -87,8 +87,8 @@ Switching straight from a walk to a jump makes the character jump into the new
 pose in a single frame. A **cross-fade** hides that: for a moment both play, and
 the pose slides from one to the other.
 
-Set the player's `fade` to how long the slide should take, for example `0.2`
-seconds, and change `animation` from your code. The old animation keeps moving
+Change `animation` from your code, and the player's `fade` sets how long the
+slide takes: 0.15 seconds unless you change it. The old animation keeps moving
 while it fades out, so a walk doesn't freeze halfway through a step.
 
 - **Changing again during a fade is safe.** The new fade starts from the pose on
