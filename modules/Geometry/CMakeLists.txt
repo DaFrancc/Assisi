@@ -15,10 +15,14 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/AnimationClip.hpp"
     "include/Assisi/Geometry/AnimationFile.hpp"
     "include/Assisi/Geometry/AnimationSampling.hpp"
+    "include/Assisi/Geometry/AnimationBlend.hpp"
+    "include/Assisi/Geometry/BlendSpace.hpp"
   PRIVATE
+    "src/AnimationBlend.cpp"
     "src/AnimationPayload.cpp"
     "src/AnimationPayload.hpp"
     "src/AnimationSampling.cpp"
+    "src/BlendSpace.cpp"
     "src/CollisionData.cpp"
     "src/CookedMesh.cpp"
     "src/MeshValidate.cpp"
@@ -78,22 +82,24 @@ target_link_libraries(Assisi-GeometryImport
 
 add_library(Assisi::GeometryImport ALIAS Assisi-GeometryImport)
 
-# The animation kind loads in every build; cooking a clip file parses glTF, so
-# its step links the import library a shipped game never does.
+# The animation and blend space kinds load in every build; cooking a clip file
+# parses glTF, so the cook steps link the import library a shipped game never does.
 assisi_asset_kind(
   TARGET      Assisi-Geometry
-  LOAD        src/AnimationKind.cpp
-  COOK        src/AnimationCook.cpp
+  LOAD        src/AnimationKind.cpp src/BlendSpaceKind.cpp
+  COOK        src/AnimationCook.cpp src/BlendSpaceCook.cpp
   COOK_TARGET Assisi-GeometryImport
 )
 
-# MaterialData is an AASSET: reflectgen emits its AssetTypeRegistry registration
-# (serialize/deserialize for .amat). The generated OBJECT library inherits
-# Geometry's include paths (and Core -> nlohmann_json) transitively.
+# MaterialData and BlendSpace are AASSETs: reflectgen emits their
+# AssetTypeRegistry registrations (serialize/deserialize for .amat and .ablnd).
+# The generated OBJECT library inherits Geometry's include paths (and Core ->
+# nlohmann_json) transitively.
 assisi_reflect(
   TARGET Assisi-Geometry
   HEADERS
     include/Assisi/Geometry/MaterialData.hpp
+    include/Assisi/Geometry/BlendSpace.hpp
 )
 
 if (ASSISI_BUILD_TESTS)

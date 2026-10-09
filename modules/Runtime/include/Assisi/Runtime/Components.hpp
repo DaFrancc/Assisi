@@ -25,6 +25,7 @@
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Geometry/AnimationBlend.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Geometry/AnimationSampling.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
@@ -32,6 +33,11 @@
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
+
+namespace Assisi::Geometry
+{
+struct BlendSpace; // Held only by pointer here.
+} // namespace Assisi::Geometry
 
 namespace Assisi::Runtime
 {
@@ -114,31 +120,48 @@ struct SkinnedMesh
     AFIELD(transient) bool poseChanged = false;
 };
 
-/// @brief Plays an animation clip on its entity's SkinnedMesh.
+/// @brief Plays an animation on its entity's SkinnedMesh: a clip, or a blend
+///        space that mixes clips by `parameter`.
 ///
-/// `clip` is an animation asset: a clip file Extract animations wrote, or any
-/// `.glb` holding one animation. Each Update the player moves `time` on by the
-/// frame's time times `speed`, wrapping it when `loop` is set and holding the
-/// last frame when not, and writes the clip's joints into the pose.
+/// `animation` is a clip file Extract animations wrote (or any `.glb` holding
+/// one animation), or a `.ablnd` blend space. Each Update the player moves on
+/// by the frame's time times `speed`, wrapping when `loop` is set and holding
+/// the last frame when not, and writes the joints its clips move into the pose.
+/// The clips of a space share one timeline, so they stay in step whatever
+/// their lengths.
 ///
-/// The pose goes back to rest only when the clip or the mesh changes, so a joint
-/// the clip does not move keeps whatever code writes to it. One it does move is
-/// written every Update, so code that adjusts it on top of the clip runs after,
+/// Changing `animation` fades from the pose as it is to the new animation over
+/// `fade` seconds, the outgoing animation still playing as it fades; a change
+/// during a fade starts from the pose that fade had reached, so nothing jumps.
+/// A fade takes its seconds as they pass, whatever `speed` is.
+///
+/// The pose goes back to rest only when the animation or the mesh changes, so a
+/// joint the animation does not move keeps whatever code writes to it. One it
+/// does move is written every Update, so code that adjusts it on top runs after,
 /// in PostUpdate.
 ///
-/// Replicable: a remote copy plays the same clip at the same speed. Its time is
-/// its own, so two machines can be a moment apart in the cycle.
+/// Replicable: a remote copy plays the same animation at the same speed and
+/// parameter. Its timeline is its own, so two machines can be a moment apart.
 ACOMP(replicable, requires = {SkinnedMesh})
 struct AnimationPlayer
 {
-    AFIELD(transient) std::shared_ptr<const Geometry::AnimationClip> loaded; ///< The clip as last resolved.
-    AFIELD(transient) Geometry::ClipBinding binding; ///< `loaded`'s tracks matched to the mesh's joints.
-    AFIELD() Core::AssetId clip;
-    AFIELD(transient) Core::AssetId boundClip; ///< The `clip` that `binding` and `time` belong to.
-    AFIELD() float speed = 1.f;                ///< 1 plays at the speed it was authored; negative plays backwards.
-    AFIELD(transient) float time = 0.f;        ///< Seconds into the clip.
-    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The mesh `binding` was made for.
+    AFIELD(transient) Geometry::ClipBlend current;  ///< What `animation` plays.
+    AFIELD(transient) Geometry::ClipBlend outgoing; ///< What is fading out; no sources once frozen.
+    /// What the system resolved `animation` to this frame: one clip, or one per point.
+    AFIELD(transient) std::vector<std::shared_ptr<const Geometry::AnimationClip>> resolved;
+    AFIELD(transient) std::vector<glm::vec2> positions; ///< Each point's position; empty for a clip.
+    AFIELD(transient) std::vector<Geometry::JointTransform> fromPose; ///< The side a fade leaves.
+    AFIELD(transient) std::vector<Geometry::JointTransform> toPose;   ///< The side a fade reaches.
+    AFIELD(transient) std::shared_ptr<const Geometry::BlendSpace> space; ///< The space `current` plays, or null.
+    AFIELD() Core::AssetId animation;
+    AFIELD(transient) Core::AssetId boundAnimation; ///< The `animation` that `current` belongs to.
+    AFIELD() glm::vec2 parameter{0.f, 0.f};         ///< Where a blend space plays; a clip ignores it.
+    AFIELD(transient) Geometry::CrossFade crossFade;
+    AFIELD() float speed = 1.f;                     ///< 1 plays at the speed it was authored; negative plays backwards.
+    AFIELD(min = 0) float fade = 0.f;               ///< Seconds a change of `animation` fades over; 0 cuts.
+    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
     AFIELD() bool loop = true;
+    AFIELD(transient) bool fading = false;
     AFIELD(transient) bool warned = false; ///< Whether this binding's missing joints were reported.
 };
 
