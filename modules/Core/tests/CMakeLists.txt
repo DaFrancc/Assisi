@@ -36,6 +36,7 @@ add_executable(Assisi-Core-Tests
   TestBitStream.cpp
   TestComponentRegistry.cpp
   TestContainerCodec.cpp
+  TestContainerOps.cpp
   TestContainerJson.cpp
   TestContentHash.cpp
   TestCookedBlob.cpp

@@ -57,10 +57,10 @@ using ContainerReadKeyFn = bool (*)(void *context, std::byte *key);
 
 /// @brief The operations a container supports, erased of its concrete type.
 ///
-/// Every pointer takes the container's own address as raw bytes. `pushDefault`
-/// is null for a map and an array, `insert` is null for everything but a map,
-/// and `at` is null for a map; nothing else is ever null on a spec that names a
-/// real container.
+/// Every pointer takes the container's own address as raw bytes. `pushDefault`,
+/// `erase` and `move` are null for a map and an array, `insert` is null for
+/// everything but a map, and `at` is null for a map; nothing else is ever null
+/// on a spec that names a real container.
 struct ContainerOps
 {
     /// Entry count.
@@ -87,6 +87,13 @@ struct ContainerOps
     /// The element at @p index, which the caller keeps below `size`. How an
     /// array is filled, since its length is fixed and nothing can be pushed.
     std::byte *(*at)(std::byte *container, std::size_t index);
+
+    /// Removes the element at @p index, below `size`, closing the gap. Vector only.
+    void (*erase)(std::byte *container, std::size_t index);
+
+    /// Moves the element at @p from to @p to, both below `size`, shifting the
+    /// ones between by one. Vector only.
+    void (*move)(std::byte *container, std::size_t from, std::size_t to);
 };
 
 /// @brief What a container field holds, and — when its element is itself a
@@ -284,10 +291,37 @@ template <typename T, typename A> struct ContainerAccess<std::vector<T, A>>
         return reinterpret_cast<std::byte *>(&(*reinterpret_cast<Container *>(container))[index]);
     }
 
+    static void Erase(std::byte *container, std::size_t index)
+    {
+        Container &values = *reinterpret_cast<Container *>(container);
+        values.erase(values.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    static void Move(std::byte *container, std::size_t from, std::size_t to)
+    {
+        Container &values = *reinterpret_cast<Container *>(container);
+        const typename Container::iterator source = values.begin() + static_cast<std::ptrdiff_t>(from);
+        const typename Container::iterator target = values.begin() + static_cast<std::ptrdiff_t>(to);
+        if (from < to)
+        {
+            std::rotate(source, source + 1, target + 1);
+        }
+        else
+        {
+            std::rotate(target, source, source + 1);
+        }
+    }
+
     static const ContainerOps *Ops()
     {
-        static constexpr ContainerOps ops{
-            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = &PushDefault, .insert = nullptr, .at = &At};
+        static constexpr ContainerOps ops{.size = &Size,
+                                          .clear = &Clear,
+                                          .visit = &Visit,
+                                          .pushDefault = &PushDefault,
+                                          .insert = nullptr,
+                                          .at = &At,
+                                          .erase = &Erase,
+                                          .move = &Move};
         return &ops;
     }
 
@@ -344,7 +378,8 @@ template <typename C, typename T, std::size_t N> struct FixedArrayAccess
     static const ContainerOps *Ops()
     {
         static constexpr ContainerOps ops{
-            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = nullptr, .at = &At};
+            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = nullptr, .at = &At,
+            .erase = nullptr, .move = nullptr};
         return &ops;
     }
 
@@ -422,7 +457,8 @@ template <typename M> struct MapAccess
     static const ContainerOps *Ops()
     {
         static constexpr ContainerOps ops{
-            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = &Insert, .at = nullptr};
+            .size = &Size, .clear = &Clear, .visit = &Visit, .pushDefault = nullptr, .insert = &Insert, .at = nullptr,
+            .erase = nullptr, .move = nullptr};
         return &ops;
     }
 

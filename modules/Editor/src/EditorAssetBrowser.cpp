@@ -346,6 +346,7 @@ void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &
     _assetBrowserMeta        = &meta;
     _assetBrowserFieldOffset = fieldOffset;
     _assetBrowserVectorSlot  = -1; // a scalar AssetId field, not an element of a vector
+    _assetBrowserPath.clear();
     _assetBrowserDir.clear(); // every open starts at the asset root
     _assetBrowserDirty = true;
 }
@@ -356,6 +357,12 @@ void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMe
     OpenAssetBrowserFor(meta, fieldOffset);
     _assetBrowserVectorSlot = slot;
     _assetBrowserFilter     = AssetBrowserFilter::Materials;
+}
+
+void EditorApp::OpenAssetBrowserForPath(const Assisi::Core::Reflect::ComponentMeta &meta)
+{
+    OpenAssetBrowserFor(meta, 0);
+    _assetBrowserPath = _inspectorPath;
 }
 
 void EditorApp::SelectAsset(std::string_view vpath)
@@ -409,7 +416,17 @@ void EditorApp::SelectAsset(std::string_view vpath)
             // The browser picks a file path, but the field stores an AssetId, so
             // translate through the database — nil when the path has no sidecar.
             const Assisi::Core::AssetId id = _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{});
-            if (_assetBrowserVectorSlot < 0)
+            if (!_assetBrowserPath.empty())
+            {
+                // Found again by its path: a list row may have moved or gone since.
+                std::byte *found = Assisi::Editor::ResolveFieldPath(
+                    reinterpret_cast<std::byte *>(const_cast<void *>(ptr)), _assetBrowserPath);
+                if (found != nullptr)
+                {
+                    *reinterpret_cast<Assisi::Core::AssetId *>(found) = id;
+                }
+            }
+            else if (_assetBrowserVectorSlot < 0)
             {
                 *reinterpret_cast<Assisi::Core::AssetId *>(fieldPtr) = id;
             }
