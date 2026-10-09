@@ -33,7 +33,10 @@ std::string WithHeader(std::string_view body)
 TEST_CASE("Graph: two states of one name in one block are refused; in two blocks they're fine")
 {
     const Diagnostics errors = Errors(CompileRobot(WithHeader("machine m {\n    node a { }\n    node a { }\n}\n")));
-    CHECK_MESSAGE(HasError(errors, 5, "there is already a node \"a\" here, on line 4"), Dump(errors));
+    CHECK_MESSAGE(HasError(errors, 5, "there are two nodes called \"a\" here"), Dump(errors));
+    REQUIRE(errors.size() == 1);
+    REQUIRE(errors[0].related.size() == 1);
+    CHECK(errors[0].related[0].span.where.line == 4);
 
     const Program program = Compiled(WithHeader("machine m { node a { } }\nmachine n { node a { } }\n"
                                                 "machine o { node x { } node y { } x -> y when p; }\n"));
@@ -46,7 +49,7 @@ TEST_CASE("Graph: a state nothing leads to from the first is refused")
         Errors(CompileRobot(WithHeader("machine m {\n    node a { }\n    node b { }\n    node c { }\n"
                                        "    a -> b when p;\n}\n")));
     CHECK_MESSAGE(HasError(errors, 6, "\"c\" is unreachable from the \"m\" machine"), Dump(errors));
-    CHECK(HasError(errors, 6, "no transition or clause leads to it from \"a\", where the machine starts"));
+    CHECK(HasError(errors, 6, "the machine starts here"));
     CHECK_FALSE(HasError(errors, 5, "unreachable"));
 
     // A clause naming a state leads to it as well.

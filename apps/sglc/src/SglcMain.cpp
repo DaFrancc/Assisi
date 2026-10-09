@@ -127,9 +127,28 @@ std::expected<std::string, std::string> ReadText(const std::filesystem::path &pa
     return text.str();
 }
 
+/// @p text in bold @p color when styling.
+std::string Paint(std::string_view text, std::string_view color, Style style)
+{
+    if (style == Style::Plain)
+    {
+        return std::string{text};
+    }
+    return std::string{color} + std::string{text} + "\x1b[0m";
+}
+
+/// "1 error", "2 warnings".
+std::string Count(std::size_t count, std::string_view what)
+{
+    return std::to_string(count) + " " + std::string{what} + (count == 1 ? "" : "s");
+}
+
 /// Prints @p diagnostics and a line saying how @p file went. False if it has errors.
 bool Report(const std::string &file, const std::expected<Program, Diagnostics> &result, Style style)
 {
+    constexpr std::string_view kRed = "\x1b[1;31m";
+    constexpr std::string_view kYellow = "\x1b[1;33m";
+    constexpr std::string_view kGreen = "\x1b[1;32m";
     const Diagnostics &diagnostics = result ? result->warnings : result.error();
     std::size_t errors = 0;
     for (const Diagnostic &diagnostic : diagnostics)
@@ -138,14 +157,21 @@ bool Report(const std::string &file, const std::expected<Program, Diagnostics> &
         std::fputs((Format(diagnostic, style) + "\n").c_str(), stdout);
     }
     const std::size_t warnings = diagnostics.size() - errors;
-    if (result)
+    if (!result)
     {
-        std::printf("%s: compiles, %zu warning%s\n", file.c_str(), warnings, warnings == 1 ? "" : "s");
+        const std::string also = warnings == 0 ? "" : "; " + Count(warnings, "warning") + " emitted";
+        std::printf("%s could not compile \"%s\" due to %s%s\n", Paint("error:", kRed, style).c_str(), file.c_str(),
+                    Count(errors, "error").c_str(), also.c_str());
+        return false;
+    }
+    if (warnings > 0)
+    {
+        std::printf("%s \"%s\" compiled with %s\n", Paint("warning:", kYellow, style).c_str(), file.c_str(),
+                    Count(warnings, "warning").c_str());
         return true;
     }
-    std::printf("%s: %zu error%s, %zu warning%s\n", file.c_str(), errors, errors == 1 ? "" : "s", warnings,
-                warnings == 1 ? "" : "s");
-    return false;
+    std::printf("%s \"%s\"\n", Paint("Compiled", kGreen, style).c_str(), file.c_str());
+    return true;
 }
 
 } // namespace

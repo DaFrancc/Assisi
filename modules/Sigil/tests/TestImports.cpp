@@ -52,7 +52,7 @@ TEST_CASE("Imports: only a library's own names arrive, not those it imports")
 TEST_CASE("Imports: an imported name can't be declared again")
 {
     CHECK(HasError(Errors(CompileRobot("use robot;\nimport \"movement.sgl\";\nconst top = 1;\n", kLibraries)), 3,
-                   "\"top\" is already imported from \"movement.sgl\""));
+                   "imported from \"movement.sgl\" here"));
 }
 
 TEST_CASE("Imports: an import that can't be used is refused where it is written")
@@ -60,7 +60,7 @@ TEST_CASE("Imports: an import that can't be used is refused where it is written"
     CHECK(HasError(Errors(CompileRobot("use robot;\nimport \"character.sgl\";\n", kLibraries)), 2,
                    "isn't a library"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nimport \"missing.sgl\";\n", kLibraries)), 2,
-                   "can't read \"missing.sgl\": no such file"));
+                   "no such file"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nimport \"other.sgl\";\n", kLibraries)), 2,
                    "written for the other vocabulary, not robot"));
 }
@@ -84,5 +84,5 @@ TEST_CASE("Imports: an import nothing uses is a warning")
         CompileRobot("use robot;\nimport \"movement.sgl\";\n", kLibraries);
     REQUIRE_MESSAGE(program.has_value(), Dump(Errors(program)));
     REQUIRE(program->warnings.size() == 1);
-    CHECK(program->warnings[0].message == "nothing from \"movement.sgl\" is used");
+    CHECK(program->warnings[0].message == "unused import \"movement.sgl\"");
 }

@@ -79,7 +79,8 @@ struct Expr
 {
     std::vector<Expr> operands;
     Constant literal;
-    SourceLocation where;
+    /// The source the expression was written as.
+    Span span;
     Type type;
     uint32_t index = 0;
     ExprKind kind = ExprKind::Literal;

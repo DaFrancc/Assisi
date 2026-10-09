@@ -3,7 +3,7 @@
 
 /// @file Diagnostic.hpp
 /// @brief What the compiler says about a file: errors that stop it, and
-///        warnings that don't, each pointing at a place in the source.
+///        warnings that don't, each pointing at the stretch of source it's about.
 
 #include <cstdint>
 #include <span>
@@ -21,11 +21,28 @@ struct SourceLocation
     uint32_t column = 1;
 };
 
+/// @brief A stretch of one line: where it starts and how many characters it covers.
+struct Span
+{
+    SourceLocation where{};
+    uint32_t length = 1;
+};
+
 enum class Severity : uint8_t
 {
     Error,   ///< The file does not compile.
     Warning, ///< The file compiles; something in it is probably a mistake.
     Count_,
+};
+
+/// @brief Another place in the same file that explains the diagnostic, such as
+///        where a name was first declared.
+struct Related
+{
+    std::string label;
+    /// The text of the line `span` is on, filled in by the compile.
+    std::string excerpt{};
+    Span span{};
 };
 
 /// @brief One thing the compiler says. Each member has an initializer, so a
@@ -35,13 +52,18 @@ struct Diagnostic
 {
     /// What is wrong, in one short line.
     std::string message;
-    /// How to put it right, when there's more to say than fits the message.
+    /// A few words under the place itself.
+    std::string label{};
+    /// How to put it right, when there's more to say than fits the label.
     std::string help{};
     /// The file `where` is in: the one compiled, or a library it imports.
     std::string file{};
     /// The text of the line `where` is on, filled in by the compile.
     std::string excerpt{};
+    std::vector<Related> related{};
     SourceLocation where{};
+    /// How many characters from `where` the diagnostic is about.
+    uint32_t length = 1;
     Severity severity = Severity::Error;
 };
 
@@ -54,9 +76,9 @@ enum class Style : uint8_t
     Count_,
 };
 
-/// @brief @p diagnostic for a person to read: `file:line:column: error:
-///        message`, then the source line with a caret under the place, then the
-///        help, each on a line of its own and the last ending in a newline.
+/// @brief @p diagnostic for a person to read: the message, then `--> file:line:
+///        column`, then each line it's about with the place underlined and
+///        labelled, then the help. Ends with a newline.
 [[nodiscard]] std::string Format(const Diagnostic &diagnostic, Style style = Style::Plain);
 
 /// @brief Whether any of @p diagnostics is an error.

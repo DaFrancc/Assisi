@@ -65,6 +65,12 @@ std::optional<uint32_t> FindState(StateList states, std::string_view name)
     return std::nullopt;
 }
 
+/// The span of state @p state's name.
+Span StateSpan(const Block &state)
+{
+    return Span{.where = state.where, .length = static_cast<uint32_t>(std::max<std::size_t>(state.name.size(), 1))};
+}
+
 /// The state @p name names among @p states, or nothing, reported against @p owner.
 std::optional<uint32_t> ResolveState(Checker &checker, const Syntax::Named &name, StateList states,
                                      std::string_view owner)
@@ -72,8 +78,9 @@ std::optional<uint32_t> ResolveState(Checker &checker, const Syntax::Named &name
     const std::optional<uint32_t> found = FindState(states, name.name);
     if (!found.has_value())
     {
-        Fail(checker, name.where,
-             std::format("unknown state \"{}\" in {}{}", name.name, owner, DidYouMean(StateNames(states), name.name)));
+        const std::optional<std::string_view> closest = ClosestName(StateNames(states), name.name);
+        Fail(checker, name.Extent(), std::format("unknown state \"{}\" in {}", name.name, owner),
+             closest.has_value() ? std::format("did you mean \"{}\"?", *closest) : std::string{"no such state here"});
     }
     return found;
 }
@@ -92,19 +99,40 @@ std::string PlacementName(Placement placement)
     return placement.transition ? std::string{"a transition"} : std::format("a {}", placement.kind);
 }
 
+/// Where @p spec may be written, for the help when it's written elsewhere.
+std::string AllowedPlaces(const ClauseSpec &spec)
+{
+    std::vector<std::string> places;
+    for (const std::string &block : spec.blocks)
+    {
+        places.push_back(std::format("a {}", block));
+    }
+    if (spec.onTransition)
+    {
+        places.emplace_back("a transition's braces");
+    }
+    std::string text;
+    for (std::size_t i = 0; i < places.size(); ++i)
+    {
+        text += i == 0 ? "" : (i + 1 == places.size() ? " or " : ", ");
+        text += places[i];
+    }
+    return text.empty() ? std::string{"nowhere"} : text;
+}
+
 std::optional<Argument> CheckArgument(Checker &checker, const Syntax::Expr &syntax, const ArgumentSpec &spec,
-                                      StateList states)
+                                      const Syntax::Named &word, StateList states)
 {
     if (spec.kind == ArgumentKind::State)
     {
         if (syntax.kind != Syntax::ExprKind::Name)
         {
-            Fail(checker, syntax.where, "expected the name of a state here",
-                 "write a state's name on its own, without quotes");
+            Diagnostic &error = Fail(checker, syntax.extent, "expected the name of a state", "not a state's name");
+            error.help = std::format("\"{}\" names a state: write its name on its own, without quotes", word.name);
             return std::nullopt;
         }
         const std::optional<uint32_t> state = ResolveState(
-            checker, Syntax::Named{.name = syntax.text, .where = syntax.where}, states, "this block");
+            checker, Syntax::Named{.name = syntax.text, .where = syntax.extent.where}, states, "this block");
         if (!state.has_value())
         {
             return std::nullopt;
@@ -118,21 +146,29 @@ std::optional<Argument> CheckArgument(Checker &checker, const Syntax::Expr &synt
     }
     if (ReadsWhenOnly(checker, value))
     {
-        Fail(checker, syntax.where, "this reads a trigger, which can only decide transitions",
-             "a trigger, or a let or function that reads one, only belongs in a transition's \"when\"");
+        Diagnostic &error =
+            Fail(checker, value.span, "a trigger can only decide transitions", "this reads a trigger");
+        Relate(error, word.Extent(), std::format("used as a value of \"{}\"", word.name));
+        error.help = "a trigger, or a let or function that reads one, only belongs in a transition's \"when\"";
         return std::nullopt;
     }
     if (spec.type == TypeNames::kNumeric)
     {
         if (value.type.kind != TypeKind::Int && value.type.kind != TypeKind::Float)
         {
-            Fail(checker, syntax.where, std::format("expected a number, got {}", TypeName(checker, value.type)));
+            Diagnostic &error = Fail(checker, value.span, "mismatched types",
+                                     std::format("expected a number, found {}", TypeName(checker, value.type)));
+            Relate(error, word.Extent(), std::format("\"{}\" takes a number", word.name));
             return std::nullopt;
         }
         return Argument{.value = std::move(value), .state = -1};
     }
-    const std::optional<Type> wanted = ResolveType(checker, Syntax::Named{.name = spec.type, .where = syntax.where});
-    value = Coerce(checker, std::move(value), wanted.value_or(Type{}));
+    const std::optional<Type> wanted =
+        ResolveType(checker, Syntax::Named{.name = spec.type, .where = syntax.extent.where});
+    const std::string_view article = spec.type.starts_with('i') || spec.type.starts_with('a') ? "an" : "a";
+    const Reason because{.span = word.Extent(),
+                         .label = std::format("\"{}\" takes {} {}", word.name, article, spec.type)};
+    value = Coerce(checker, std::move(value), wanted.value_or(Type{}), because);
     if (value.type.kind == TypeKind::Error)
     {
         return std::nullopt;
@@ -153,28 +189,33 @@ std::optional<Clause> CheckClause(Checker &checker, const Syntax::Clause &syntax
         {
             words.push_back(candidate.word);
         }
-        Fail(checker, syntax.word.where,
-             std::format("unknown clause \"{}\"{}", syntax.word.name, DidYouMean(words, syntax.word.name)));
+        const std::optional<std::string_view> closest = ClosestName(words, syntax.word.name);
+        Fail(checker, syntax.word.Extent(), std::format("unknown clause \"{}\"", syntax.word.name),
+             closest.has_value() ? std::format("did you mean \"{}\"?", *closest)
+                                 : std::format("the {} vocabulary has no such clause", checker.vocabulary.name));
         return std::nullopt;
     }
     if (!PlacedHere(*spec, placement))
     {
-        Fail(checker, syntax.word.where,
-             std::format("\"{}\" can't go in {}", syntax.word.name, PlacementName(placement)));
+        Diagnostic &error = Fail(checker, syntax.word.Extent(),
+                                 std::format("\"{}\" can't go in {}", syntax.word.name, PlacementName(placement)),
+                                 "not allowed here");
+        error.help = std::format("\"{}\" goes in {}", syntax.word.name, AllowedPlaces(*spec));
         return std::nullopt;
     }
     if (syntax.arguments.size() != spec->arguments.size())
     {
-        Fail(checker, syntax.word.where,
+        Fail(checker, syntax.word.Extent(),
              std::format("\"{}\" takes {} values, got {}", syntax.word.name, spec->arguments.size(),
-                         syntax.arguments.size()));
+                         syntax.arguments.size()),
+             std::format("expected {} values", spec->arguments.size()));
         return std::nullopt;
     }
-    Clause clause{.arguments = {}, .where = syntax.word.where,
-                  .spec = static_cast<uint32_t>(spec - specs.begin())};
+    Clause clause{.arguments = {}, .where = syntax.word.where, .spec = static_cast<uint32_t>(spec - specs.begin())};
     for (std::size_t i = 0; i < syntax.arguments.size(); ++i)
     {
-        std::optional<Argument> argument = CheckArgument(checker, syntax.arguments[i], spec->arguments[i], states);
+        std::optional<Argument> argument =
+            CheckArgument(checker, syntax.arguments[i], spec->arguments[i], syntax.word, states);
         if (!argument.has_value())
         {
             return std::nullopt;
@@ -185,28 +226,39 @@ std::optional<Clause> CheckClause(Checker &checker, const Syntax::Clause &syntax
 }
 
 /// Each clause is written no more often than its spec allows, and a clause
-/// that must be written once is, in what @p owner names.
+/// that must be written once is, in the block or transition @p owner names.
 void CheckCardinality(Checker &checker, std::span<const Clause> clauses, Placement placement,
                       const Syntax::Named &owner)
 {
     const std::vector<ClauseSpec> &specs = checker.vocabulary.clauses;
-    std::vector<uint32_t> counts(specs.size(), 0);
+    std::vector<const Clause *> first(specs.size(), nullptr);
     for (const Clause &clause : clauses)
     {
         const ClauseSpec &spec = specs[clause.spec];
-        ++counts[clause.spec];
-        if (counts[clause.spec] == 2 && spec.cardinality != Cardinality::Any)
+        const Span span{.where = clause.where, .length = static_cast<uint32_t>(spec.word.size())};
+        if (first[clause.spec] == nullptr)
         {
-            Fail(checker, clause.where,
-                 std::format("\"{}\" can only be written once in {}", spec.word, PlacementName(placement)));
+            first[clause.spec] = &clause;
+            continue;
+        }
+        if (spec.cardinality != Cardinality::Any)
+        {
+            Diagnostic &error =
+                Fail(checker, span, std::format("\"{}\" is written twice in {}", spec.word, PlacementName(placement)),
+                     "written again here");
+            Relate(error, Span{.where = first[clause.spec]->where, .length = span.length}, "first written here");
+            error.help = std::format("{} takes one \"{}\"", PlacementName(placement), spec.word);
         }
     }
     for (std::size_t i = 0; i < specs.size(); ++i)
     {
-        if (specs[i].cardinality == Cardinality::ExactlyOnce && counts[i] == 0 && PlacedHere(specs[i], placement))
+        if (specs[i].cardinality == Cardinality::ExactlyOnce && first[i] == nullptr && PlacedHere(specs[i], placement))
         {
-            Fail(checker, owner.where, std::format("{} \"{}\" needs a \"{}\" clause", placement.kind, owner.name,
-                                                   specs[i].word));
+            Diagnostic &error = Fail(checker, owner.Extent(),
+                                     std::format("{} \"{}\" has no \"{}\" clause", placement.kind, owner.name,
+                                                 specs[i].word),
+                                     std::format("needs a \"{}\" clause", specs[i].word));
+            error.help = std::format("every {} needs exactly one \"{}\"", placement.kind, specs[i].word);
         }
     }
 }
@@ -267,9 +319,12 @@ std::optional<std::vector<bool>> SourceSet(Checker &checker, const Syntax::Trans
         }
         if (step.remove != set[*state])
         {
-            Fail(checker, step.state.where,
-                 step.remove ? std::format("\"{}\" isn't in the set it's removed from", step.state.name)
-                             : std::format("\"{}\" is already in the set", step.state.name));
+            Diagnostic &error =
+                Fail(checker, step.state.Extent(),
+                     step.remove ? std::format("\"{}\" isn't in the set it's removed from", step.state.name)
+                                 : std::format("\"{}\" is already in the set", step.state.name),
+                     step.remove ? "removed here" : "added again here");
+            Relate(error, syntax.first.Extent(), "the set starts here");
             return std::nullopt;
         }
         set[*state] = !step.remove;
@@ -278,16 +333,15 @@ std::optional<std::vector<bool>> SourceSet(Checker &checker, const Syntax::Trans
 }
 
 /// Checks a transition's condition and clauses into @p transition.
-void CheckTransitionBody(Checker &checker, const Syntax::Transition &syntax, StateList states,
-                         Transition &transition)
+void CheckTransitionBody(Checker &checker, const Syntax::Transition &syntax, StateList states, Transition &transition)
 {
     transition.condition = CheckExpression(checker, syntax.condition, ExprMode::Formula);
     const TypeKind conditionKind = transition.condition.type.kind;
     if (conditionKind != TypeKind::Bool && conditionKind != TypeKind::Trigger && conditionKind != TypeKind::Error)
     {
-        Fail(checker, syntax.condition.where,
-             std::format("a transition's condition must be a bool, got {}", TypeName(checker, transition.condition.type)),
-             "compare it to something, like speed > 1.0");
+        Diagnostic &error = Fail(checker, transition.condition.span, "a condition must be a bool",
+                                 std::format("this is {}", TypeName(checker, transition.condition.type)));
+        error.help = "compare it to something, like speed > 1.0";
     }
     CollectTriggers(checker, transition.condition, transition.triggersRead);
     const Placement placement{.kind = {}, .transition = true};
@@ -300,6 +354,16 @@ void CheckTransitionBody(Checker &checker, const Syntax::Transition &syntax, Sta
         }
     }
     CheckCardinality(checker, transition.clauses, placement, syntax.target);
+}
+
+/// The source part of a transition, `first + a - b`, for pointing at.
+Span SourcesSpan(const Syntax::Transition &syntax)
+{
+    const Syntax::Named &last = syntax.steps.empty() ? syntax.first : syntax.steps.back().state;
+    const bool oneLine = last.where.line == syntax.first.where.line;
+    const uint32_t end = last.where.column + static_cast<uint32_t>(last.name.size());
+    return Span{.where = syntax.first.where,
+                .length = oneLine ? end - syntax.first.where.column : syntax.first.Extent().length};
 }
 
 std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transition &syntax, StateList states,
@@ -330,18 +394,21 @@ std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transi
     }
     if (transition.sources.empty())
     {
-        Fail(checker, syntax.first.where, "this transition leaves from no state",
-             "removing states left none for it to leave from");
+        Diagnostic &error =
+            Fail(checker, SourcesSpan(syntax), "this transition leaves from no state", "these are no states");
+        error.help = "removing states left none for it to leave from";
         return std::nullopt;
     }
     const bool restarts = std::ranges::find(transition.sources, *target) != transition.sources.end();
     if (restarts && transition.sources.size() > 1)
     {
-        Fail(checker, syntax.first.where,
-             std::format("this transition goes to \"{}\", so it can't also leave from \"{}\"", syntax.target.name,
-                         syntax.target.name),
-             std::format("to restart \"{}\" while it's playing, write \"{} -> {}\" as a transition of its own",
-                         syntax.target.name, syntax.target.name, syntax.target.name));
+        Diagnostic &error = Fail(checker, SourcesSpan(syntax),
+                                 std::format("this transition goes to \"{}\", so it can't also leave from \"{}\"",
+                                             syntax.target.name, syntax.target.name),
+                                 std::format("these include \"{}\"", syntax.target.name));
+        Relate(error, syntax.target.Extent(), std::format("and it goes to \"{}\"", syntax.target.name));
+        error.help = std::format("to restart \"{}\" while it's playing, write \"{} -> {}\" as a transition of its own",
+                                 syntax.target.name, syntax.target.name, syntax.target.name);
         return std::nullopt;
     }
     return transition;
@@ -375,10 +442,12 @@ void CheckReachable(Checker &checker, const Block &block, std::span<const Edge> 
     {
         if (!reached[i])
         {
-            Fail(checker, block.children[i].where,
-                 std::format("\"{}\" is unreachable from the \"{}\" {}", block.children[i].name, block.name, kind),
-                 std::format("no transition or clause leads to it from \"{}\", where the {} starts",
-                             block.children.front().name, kind));
+            Diagnostic &error = Fail(checker, StateSpan(block.children[i]),
+                                     std::format("\"{}\" is unreachable from the \"{}\" {}", block.children[i].name,
+                                                 block.name, kind),
+                                     "never reached");
+            Relate(error, StateSpan(block.children.front()), std::format("the {} starts here", kind));
+            error.help = "no transition or clause leads to it from the first state; add a transition to it";
         }
     }
 }
@@ -392,7 +461,79 @@ bool Allowed(const BlockKind *parent, const BlockKind &child)
     return std::ranges::find(child.parents, parent->name) != child.parents.end();
 }
 
+/// Where @p kind may be written, for the help when it's written elsewhere.
+std::string AllowedParents(const BlockKind &kind)
+{
+    std::vector<std::string> places;
+    if (kind.topLevel)
+    {
+        places.emplace_back("the top level of the file");
+    }
+    for (const std::string &parent : kind.parents)
+    {
+        places.push_back(std::format("a {}", parent));
+    }
+    std::string text;
+    for (std::size_t i = 0; i < places.size(); ++i)
+    {
+        text += i == 0 ? "" : (i + 1 == places.size() ? " or " : ", ");
+        text += places[i];
+    }
+    return text;
+}
+
 Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind *kind, uint32_t kindIndex);
+
+/// Whether @p child can be checked as one of @p block's states, reporting why not.
+bool AcceptChild(Checker &checker, const Syntax::Block &child, const BlockKind *kind, const Block &block,
+                 std::optional<uint32_t> childKind)
+{
+    if (!childKind.has_value())
+    {
+        std::vector<std::string_view> names;
+        for (const BlockKind &candidate : checker.vocabulary.blocks)
+        {
+            names.push_back(candidate.name);
+        }
+        const std::optional<std::string_view> closest = ClosestName(names, child.kind.name);
+        Fail(checker, child.kind.Extent(), std::format("unknown block kind \"{}\"", child.kind.name),
+             closest.has_value() ? std::format("did you mean \"{}\"?", *closest)
+                                 : std::format("the {} vocabulary has no such block", checker.vocabulary.name));
+        return false;
+    }
+    const BlockKind &childSpec = checker.vocabulary.blocks[*childKind];
+    if (checker.program.library)
+    {
+        Diagnostic &error = Fail(checker, child.kind.Extent(), "a library can't hold blocks", "not allowed in a library");
+        error.help = "a library holds only imports, enums and consts; remove \"sigiltype library;\" to make this an "
+                     "ordinary file";
+        return false;
+    }
+    if (!Allowed(kind, childSpec))
+    {
+        Diagnostic &error = Fail(checker, child.kind.Extent(),
+                                 kind == nullptr ? std::format("a {} can't go at the top level of the file", childSpec.name)
+                                                 : std::format("a {} can't go in a {}", childSpec.name, kind->name),
+                                 "not allowed here");
+        error.help = std::format("a {} goes in {}", childSpec.name, AllowedParents(childSpec));
+        return false;
+    }
+    if (IsReserved(checker, child.name))
+    {
+        return false;
+    }
+    const std::optional<uint32_t> existing = FindState(block.children, child.name.name);
+    if (existing.has_value())
+    {
+        Diagnostic &error = Fail(checker, child.name.Extent(),
+                                 std::format("there are two {}s called \"{}\" here", childSpec.name, child.name.name),
+                                 "declared again here");
+        Relate(error, StateSpan(block.children[*existing]), "first declared here");
+        error.help = "states in one block need different names";
+        return false;
+    }
+    return true;
+}
 
 /// Checks @p syntax's child blocks into @p block, keeping which syntax each
 /// came from in @p childSyntax.
@@ -402,44 +543,11 @@ void CheckChildren(Checker &checker, const Syntax::Block &syntax, const BlockKin
     for (const Syntax::Block &child : syntax.blocks)
     {
         const std::optional<uint32_t> childKind = FindKind(checker.vocabulary, child.kind.name);
-        if (!childKind.has_value())
-        {
-            std::vector<std::string_view> names;
-            for (const BlockKind &candidate : checker.vocabulary.blocks)
-            {
-                names.push_back(candidate.name);
-            }
-            Fail(checker, child.kind.where,
-                 std::format("unknown block kind \"{}\"{}", child.kind.name, DidYouMean(names, child.kind.name)));
-            continue;
-        }
-        const BlockKind &childSpec = checker.vocabulary.blocks[*childKind];
-        if (checker.program.library)
-        {
-            Fail(checker, child.kind.where, "a library can only hold imports, enums and consts, not blocks",
-                 "remove \"sigiltype library;\" to make this an ordinary file");
-            continue;
-        }
-        if (!Allowed(kind, childSpec))
-        {
-            Fail(checker, child.kind.where,
-                 kind == nullptr ? std::format("a {} can't go at the top level of the file", childSpec.name)
-                                 : std::format("a {} can't go in a {}", childSpec.name, kind->name));
-            continue;
-        }
-        if (IsReserved(checker, child.name))
+        if (!AcceptChild(checker, child, kind, block, childKind))
         {
             continue;
         }
-        const std::optional<uint32_t> existing = FindState(block.children, child.name.name);
-        if (existing.has_value())
-        {
-            Fail(checker, child.name.where,
-                 std::format("there is already a {} \"{}\" here, on line {}", childSpec.name, child.name.name,
-                             block.children[*existing].where.line));
-            continue;
-        }
-        block.children.push_back(CheckBlock(checker, child, &childSpec, *childKind));
+        block.children.push_back(CheckBlock(checker, child, &checker.vocabulary.blocks[*childKind], *childKind));
         childSyntax.push_back(&child);
     }
 }
@@ -465,7 +573,9 @@ Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind 
     {
         for (const Syntax::Clause &clause : syntax.clauses)
         {
-            Fail(checker, clause.word.where, "clauses go inside a block, not at the top level of the file");
+            Diagnostic &error =
+                Fail(checker, clause.word.Extent(), "clauses go inside a block", "at the top level of the file");
+            error.help = "move it into the block it belongs to";
         }
     }
 
@@ -473,8 +583,10 @@ Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind 
                                               : std::format("{} \"{}\"", kind->name, block.name);
     if (!syntax.transitions.empty() && (kind == nullptr || !kind->holdsStates))
     {
-        Fail(checker, syntax.transitions.front().first.where,
-             std::format("transitions can't go in {}, which holds no states", owner));
+        Diagnostic &error = Fail(checker, SourcesSpan(syntax.transitions.front()),
+                                 std::format("transitions can't go in {}", owner), "not allowed here");
+        error.help = kind == nullptr ? std::string{"transitions go inside a block that holds states"}
+                                     : std::format("a {} holds no states to move between", kind->name);
         return block;
     }
     for (const Syntax::Transition &transitionSyntax : syntax.transitions)

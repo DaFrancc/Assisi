@@ -4,7 +4,9 @@
 #include <array>
 #include <charconv>
 #include <cstddef>
+#include <algorithm>
 #include <format>
+#include <limits>
 #include <optional>
 #include <system_error>
 #include <utility>
@@ -92,9 +94,19 @@ class Cursor
         }
     }
 
-    void Fail(SourceLocation where, std::string message)
+    void Fail(Span span, std::string message, std::string label = {})
     {
-        _errors.push_back(Diagnostic{.message = std::move(message), .file = std::string{_file}, .where = where});
+        _errors.push_back(Diagnostic{.message = std::move(message),
+                                     .label = std::move(label),
+                                     .file = std::string{_file},
+                                     .where = span.where,
+                                     .length = span.length});
+    }
+
+    /// The stretch from @p start to here, on @p start's line.
+    [[nodiscard]] Span From(SourceLocation start, std::size_t offset) const
+    {
+        return Span{.where = start, .length = static_cast<uint32_t>(std::max<std::size_t>(_offset - offset, 1))};
     }
 
     [[nodiscard]] Diagnostics &Errors() { return _errors; }
@@ -134,7 +146,7 @@ void SkipSpace(Cursor &cursor)
             }
             if (cursor.AtEnd())
             {
-                cursor.Fail(start, "this comment is never closed with */");
+                cursor.Fail(Span{.where = start, .length = 2}, "unclosed comment", "this comment never ends with */");
                 return;
             }
             cursor.Advance(2);
@@ -165,13 +177,14 @@ Token LexString(Cursor &cursor)
         }
         else
         {
-            cursor.Fail(cursor.Where(), "the only escapes in a string are \\\" and \\\\");
+            cursor.Fail(Span{.where = cursor.Where(), .length = 2}, "unknown escape in a string",
+                        "only \\\" and \\\\ can be written with a backslash");
         }
         cursor.Advance(2);
     }
     if (cursor.Peek() != '"')
     {
-        cursor.Fail(token.where, "this string is never closed with \"");
+        cursor.Fail(Span{.where = token.where, .length = 1}, "unclosed string", "this string never ends with a \"");
         return token;
     }
     cursor.Advance();
@@ -201,7 +214,7 @@ Token LexNumber(Cursor &cursor)
         {
             cursor.Advance();
         }
-        cursor.Fail(token.where, std::format("\"{}\": a name can't start with a digit", cursor.Since(start)));
+        cursor.Fail(cursor.From(token.where, start), "a name can't start with a digit");
     }
     token.text = std::string{cursor.Since(start)};
     if (token.kind == TokenKind::Int)
@@ -211,7 +224,8 @@ Token LexNumber(Cursor &cursor)
             std::from_chars(token.text.data(), token.text.data() + token.text.size(), value);
         if (read.ec == std::errc::result_out_of_range)
         {
-            cursor.Fail(token.where, std::format("{} is too large for an int", token.text));
+            cursor.Fail(cursor.From(token.where, start), "number too large for an int",
+                        std::format("the largest int is {}", std::numeric_limits<int32_t>::max()));
         }
     }
     return token;
@@ -250,6 +264,8 @@ std::expected<std::vector<Token>, Diagnostics> Lex(std::string_view source, std:
             break;
         }
         const char c = cursor.Peek();
+        const std::size_t start = cursor.Offset();
+        const SourceLocation where = cursor.Where();
         if (c == '"')
         {
             tokens.push_back(LexString(cursor));
@@ -260,8 +276,6 @@ std::expected<std::vector<Token>, Diagnostics> Lex(std::string_view source, std:
         }
         else if (IsNameStart(c))
         {
-            const SourceLocation where = cursor.Where();
-            const std::size_t start = cursor.Offset();
             while (IsNamePart(cursor.Peek()))
             {
                 cursor.Advance();
@@ -274,9 +288,12 @@ std::expected<std::vector<Token>, Diagnostics> Lex(std::string_view source, std:
         }
         else
         {
-            cursor.Fail(cursor.Where(), std::format("'{}' isn't part of Sigil", c));
+            cursor.Fail(Span{.where = where, .length = 1}, std::format("'{}' isn't part of Sigil", c),
+                        "unexpected character");
             cursor.Advance();
+            continue;
         }
+        tokens.back().length = cursor.From(where, start).length;
     }
     tokens.push_back(Token{.text = {}, .where = cursor.Where(), .kind = TokenKind::End});
     if (!cursor.Errors().empty())

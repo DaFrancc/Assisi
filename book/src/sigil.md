@@ -77,15 +77,16 @@ called `robot`, which is enough to try every part of the language on this page.
 out/build/gcc-debug/apps/sglc/sglc --root apps/sglc/examples apps/sglc/examples/arm.sgl
 ```
 
-It prints `arm.sgl: compiles, 0 warnings`. `--root` is the folder that `import`
-paths start from, like the `assets/` folder for the cook.
+It prints `Compiled "apps/sglc/examples/arm.sgl"`. `--root` is the folder that
+`import` paths start from, like the `assets/` folder for the cook.
 
 ### Step 3: see the errors
 
-Run it on `apps/sglc/examples/broken.sgl`, the same file with mistakes in it. Each
-mistake is listed with the line it's on and a `^` under the spot. In a terminal
-the output is in color; add `--color=never` to turn that off, or
-`--color=always` to keep it when piping to a file.
+Run it on `apps/sglc/examples/broken.sgl`, the same file with mistakes in it.
+Each mistake is listed with the line it's on and the spot underlined; the last
+line says `could not compile` and how many errors there were. In a terminal the
+output is in color; add `--color=never` to turn that off, or `--color=always` to
+keep it when piping to a file.
 
 `sglc` exits with 0 when every file compiles, 1 when any has errors, and 2 when
 it couldn't read a file or the command was wrong, so a script can use it as a
@@ -332,20 +333,29 @@ let moving = speed > walk_speed;
 
 ## What the cook checks
 
-The cook refuses a file with a mistake in it. For each mistake it says where, as
-`file:line:column`, and what's wrong, then shows the line with a `^` under the
-spot. A misspelt name gets the closest real one suggested, and when there's more
-to say about the fix, a `help:` line follows:
+The cook refuses a file with a mistake in it. For each mistake it says what's
+wrong, then where, as `file:line:column`, then shows the line with the spot
+underlined with `^` and a few words beside it. Other places that explain the
+mistake are underlined with `-`, such as where a name was first declared. A
+misspelt name gets the closest real one suggested, and when there's more to say
+about the fix, a `help:` line follows:
 
 ```
-characters/knight.sgl:14:18: error: unknown state "fal" — did you mean "fall"?
- 14 |     walk -> fal when !grounded;
-    |             ^
+error: unknown state "fal" in layer "base"
+  --> characters/knight.sgl:14:13
+   |
+14 |     walk -> fal when !grounded;
+   |             ^^^ did you mean "fall"?
 
-characters/knight.sgl:16:5: error: this transition goes to "flinch", so it can't also leave from "flinch"
- 16 |     any + flinch -> flinch when hit;
-    |     ^
-  help: to restart "flinch" while it's playing, write "flinch -> flinch" as a transition of its own
+error: this transition goes to "flinch", so it can't also leave from "flinch"
+  --> characters/knight.sgl:16:5
+   |
+16 |     any + flinch -> flinch when hit;
+   |     ^^^^^^^^^^^^    ------ and it goes to "flinch"
+   |     |
+   |     these include "flinch"
+   |
+   = help: to restart "flinch" while it's playing, write "flinch -> flinch" as a transition of its own
 ```
 
 Mistakes are listed from the top of the file down. One mistake isn't reported

@@ -128,14 +128,17 @@ TEST_CASE("Parser: calls, enum values and parentheses")
 
 TEST_CASE("Parser: a malformed file is refused with what was expected and where")
 {
-    CHECK(HasError(ParseErrors("use robot;\nparam p: float\nparam q: int;\n"), 3, "expected ';'"));
-    CHECK(HasError(ParseErrors("use robot;\nmachine m {\n"), 3, "expected '}'"));
+    // A missing ';' or '}' is pointed at just after what it should follow.
+    const Diagnostics missingSemicolon = ParseErrors("use robot;\nparam p: float\nparam q: int;\n");
+    CHECK(HasError(missingSemicolon, 2, "expected ';'"));
+    CHECK(missingSemicolon[0].where.column == 15);
+    CHECK(HasError(ParseErrors("use robot;\nmachine m {\n"), 2, "expected '}'"));
     CHECK(HasError(ParseErrors("use robot;\nmachine m { node a {} a -> a; }\n"), 2, "\"when\""));
     CHECK(HasError(ParseErrors("use robot;\nmachine m { node a {} a -> a when x { after 1.0; } }\n"), 2,
                    "at the end of the transition"));
     CHECK(HasError(ParseErrors("use robot;\nmachine m {\n};\n"), 3, "remove this ';'"));
     CHECK(HasError(ParseErrors("use robot;\nmachine m {\n  param p: float;\n}\n"), 3, "top level"));
-    CHECK(HasError(ParseErrors("param p: float;\n"), 1, "starts with \"use"));
+    CHECK(HasError(ParseErrors("param p: float;\n"), 1, "missing \"use\" line"));
     CHECK(HasError(ParseErrors("use robot;\nuse robot;\n"), 2, "only come at the start"));
     CHECK(HasError(ParseErrors("use robot;\nlet x = when;\n"), 2, "expected a value"));
 }
@@ -144,7 +147,7 @@ TEST_CASE("Parser: after an error it carries on, and reports the next one too")
 {
     const Diagnostics errors = ParseErrors("use robot;\nparam p float;\nparam q: int\nlet r = 1;\n");
     CHECK(HasError(errors, 2, "expected ':'"));
-    CHECK(HasError(errors, 4, "expected ';'"));
+    CHECK(HasError(errors, 3, "expected ';'"));
 }
 
 TEST_CASE("Parser: blocks nested too deep are refused, not a crash")

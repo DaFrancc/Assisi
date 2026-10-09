@@ -43,6 +43,19 @@ bool IsDeclarationWord(std::string_view word)
     return word == "import" || word == "enum" || word == "param" || word == "const" || word == "let";
 }
 
+/// Whether a missing @p kind is best pointed at just after what came before
+/// it, the way `;` is missing from the end of a statement, rather than at
+/// whatever came instead.
+bool EndsSomething(TokenKind kind)
+{
+    return kind == TokenKind::Semicolon || kind == TokenKind::RightBrace || kind == TokenKind::RightParen;
+}
+
+Span SpanOf(const Token &token)
+{
+    return Span{.where = token.where, .length = token.length};
+}
+
 class Parser
 {
   public:
@@ -53,7 +66,8 @@ class Parser
         Syntax::File file;
         if (!AtWord("use"))
         {
-            Fail(Peek().where, "a Sigil file starts with \"use <vocabulary>;\"");
+            Fail(SpanOf(Peek()), "missing \"use\" line", "expected \"use <vocabulary>;\" before this",
+                 "every Sigil file starts by naming its vocabulary, like \"use animation;\"");
             return file;
         }
         if (!ParseHeader("use", file.use.vocabulary))
@@ -83,6 +97,7 @@ class Parser
     const Token &Next()
     {
         const Token &token = Peek();
+        _lastEnd = SourceLocation{.line = token.where.line, .column = token.where.column + token.length};
         if (_next + 1 < _tokens.size())
         {
             ++_next;
@@ -93,10 +108,14 @@ class Parser
     [[nodiscard]] bool At(TokenKind kind) const { return Peek().kind == kind; }
     [[nodiscard]] bool AtWord(std::string_view word) const { return At(TokenKind::Name) && Peek().text == word; }
 
-    void Fail(SourceLocation where, std::string message, std::string help = {})
+    void Fail(Span span, std::string message, std::string label = {}, std::string help = {})
     {
-        _errors.push_back(Diagnostic{
-            .message = std::move(message), .help = std::move(help), .file = std::string{_file}, .where = where});
+        _errors.push_back(Diagnostic{.message = std::move(message),
+                                     .label = std::move(label),
+                                     .help = std::move(help),
+                                     .file = std::string{_file},
+                                     .where = span.where,
+                                     .length = span.length});
     }
 
     /// What the next token is, for "found ..." in a message.
@@ -109,6 +128,13 @@ class Parser
         return std::string{Describe(Peek().kind)};
     }
 
+    /// From @p start to the end of the last token read, on @p start's line.
+    [[nodiscard]] Span Since(SourceLocation start) const
+    {
+        const bool oneLine = _lastEnd.line == start.line && _lastEnd.column > start.column;
+        return Span{.where = start, .length = oneLine ? _lastEnd.column - start.column : 1};
+    }
+
     bool Expect(TokenKind kind, std::string_view after)
     {
         if (At(kind))
@@ -116,7 +142,15 @@ class Parser
             Next();
             return true;
         }
-        Fail(Peek().where, std::format("expected {} {}, found {}", Describe(kind), after, Found()));
+        const std::string message = std::format("expected {} {}, found {}", Describe(kind), after, Found());
+        if (EndsSomething(kind) && _next > 0)
+        {
+            Fail(Span{.where = _lastEnd, .length = 1}, message, std::format("add {} here", Describe(kind)));
+        }
+        else
+        {
+            Fail(SpanOf(Peek()), message, std::format("expected {}", Describe(kind)));
+        }
         return false;
     }
 
@@ -124,7 +158,7 @@ class Parser
     {
         if (!At(TokenKind::Name))
         {
-            Fail(Peek().where, std::format("expected {}, found {}", what, Found()));
+            Fail(SpanOf(Peek()), std::format("expected {}, found {}", what, Found()), "expected a name");
             return std::nullopt;
         }
         const Token &token = Next();
@@ -184,7 +218,7 @@ class Parser
                 Recover();
                 if (file != nullptr && At(TokenKind::RightBrace))
                 {
-                    Fail(Peek().where, "this '}' closes no block");
+                    Fail(SpanOf(Peek()), "unmatched '}'", "this closes no block");
                     Next();
                 }
             }
@@ -195,15 +229,16 @@ class Parser
     {
         if (AtWord("use") || AtWord("sigiltype"))
         {
-            Fail(Peek().where, std::format("\"{}\" can only come at the start of the file", Peek().text));
+            Fail(SpanOf(Peek()), std::format("\"{}\" can only come at the start of the file", Peek().text),
+                 "not allowed here");
             return false;
         }
         if (At(TokenKind::Name) && IsDeclarationWord(Peek().text))
         {
             if (file == nullptr)
             {
-                Fail(Peek().where, std::format("\"{}\" declarations go at the top level of the file, outside every block",
-                                               Peek().text));
+                Fail(SpanOf(Peek()), std::format("\"{}\" declarations go at the top level of the file", Peek().text),
+                     "inside a block", "move it above the blocks");
                 return false;
             }
             return ParseDeclaration(*file);
@@ -232,7 +267,8 @@ class Parser
             into.clauses.push_back(std::move(clause));
             return true;
         }
-        Fail(Peek().where, std::format("expected a block, a clause or a transition, found {}", Found()));
+        Fail(SpanOf(Peek()), std::format("expected a block, a clause or a transition, found {}", Found()),
+             "unexpected here");
         return false;
     }
 
@@ -262,7 +298,8 @@ class Parser
         Next();
         if (depth + 1 > kMaxBlockDepth)
         {
-            Fail(block.kind.where, std::format("blocks nest more than {} deep here", kMaxBlockDepth));
+            Fail(block.kind.Extent(), std::format("blocks nest more than {} deep here", kMaxBlockDepth),
+                 "too deep");
             return false;
         }
         ParseItems(block, depth + 1, nullptr);
@@ -273,7 +310,8 @@ class Parser
         into.blocks.push_back(std::move(block));
         if (At(TokenKind::Semicolon))
         {
-            Fail(Peek().where, "a block ends at its '}', with no ';' after it", "remove this ';'");
+            Fail(SpanOf(Peek()), "unexpected ';' after a block", "remove this ';'",
+                 "a block ends at its '}', with no ';' after it");
             Next();
         }
         return true;
@@ -319,8 +357,8 @@ class Parser
         transition.target = std::move(*target);
         if (!AtWord("when"))
         {
-            Fail(Peek().where,
-                 std::format("expected \"when\" after \"-> {}\", found {}", transition.target.name, Found()),
+            Fail(SpanOf(Peek()), std::format("expected \"when\" after \"-> {}\", found {}", transition.target.name, Found()),
+                 "expected \"when\"",
                  std::format("every transition needs a condition, like \"-> {} when speed > 1.0;\"",
                              transition.target.name));
             return false;
@@ -375,15 +413,17 @@ class Parser
         const SourceLocation where = Next().where;
         if (!At(TokenKind::String))
         {
-            Fail(Peek().where, std::format("expected the path of a file in quotes after \"import\", found {}", Found()));
+            Fail(SpanOf(Peek()), std::format("expected the path of a file after \"import\", found {}", Found()),
+                 "expected a path in quotes");
             return false;
         }
-        Syntax::Import import{.path = Next().text, .where = where};
+        const Token &path = Next();
+        Syntax::Import statement{.path = path.text, .where = where, .pathSpan = SpanOf(path)};
         if (!Expect(TokenKind::Semicolon, "after the import"))
         {
             return false;
         }
-        file.declarations.emplace_back(std::move(import));
+        file.declarations.emplace_back(std::move(statement));
         return true;
     }
 
@@ -417,7 +457,8 @@ class Parser
         file.declarations.emplace_back(std::move(declaration));
         if (At(TokenKind::Semicolon))
         {
-            Fail(Peek().where, "an enum ends at its '}', with no ';' after it", "remove this ';'");
+            Fail(SpanOf(Peek()), "unexpected ';' after an enum", "remove this ';'",
+                 "an enum ends at its '}', with no ';' after it");
             Next();
         }
         return true;
@@ -481,6 +522,19 @@ class Parser
 
     std::optional<Syntax::Expr> ParseExpression(uint32_t depth) { return ParseBinary(0, depth); }
 
+    /// An operator node over @p operands, the operator being @p op.
+    Syntax::Expr Operation(const Token &op, Syntax::ExprKind kind, SourceLocation start)
+    {
+        Syntax::Expr expr{.operands = {},
+                          .text = {},
+                          .member = {},
+                          .extent = Since(start),
+                          .anchor = SpanOf(op),
+                          .kind = kind,
+                          .op = op.kind};
+        return expr;
+    }
+
     std::optional<Syntax::Expr> ParseBinary(std::size_t level, uint32_t depth)
     {
         if (level == kPrecedenceLevels)
@@ -496,8 +550,7 @@ class Parser
             {
                 return std::nullopt;
             }
-            Syntax::Expr binary{.operands = {}, .text = {}, .member = {}, .where = op.where,
-                                .kind = Syntax::ExprKind::Binary, .op = op.kind};
+            Syntax::Expr binary = Operation(op, Syntax::ExprKind::Binary, left->extent.where);
             binary.operands.push_back(std::move(*left));
             binary.operands.push_back(std::move(*right));
             left = std::move(binary);
@@ -509,7 +562,8 @@ class Parser
     {
         if (depth > kMaxExpressionDepth)
         {
-            Fail(Peek().where, std::format("this expression nests more than {} deep", kMaxExpressionDepth));
+            Fail(SpanOf(Peek()), std::format("this expression nests more than {} deep", kMaxExpressionDepth),
+                 "too deep");
             return std::nullopt;
         }
         if (!At(TokenKind::Not) && !At(TokenKind::Minus))
@@ -522,8 +576,7 @@ class Parser
         {
             return std::nullopt;
         }
-        Syntax::Expr unary{.operands = {}, .text = {}, .member = {}, .where = op.where,
-                           .kind = Syntax::ExprKind::Unary, .op = op.kind};
+        Syntax::Expr unary = Operation(op, Syntax::ExprKind::Unary, op.where);
         unary.operands.push_back(std::move(*operand));
         return unary;
     }
@@ -531,8 +584,13 @@ class Parser
     std::optional<Syntax::Expr> ParsePrimary(uint32_t depth)
     {
         const Token &token = Peek();
-        Syntax::Expr expr{.operands = {}, .text = token.text, .member = {}, .where = token.where,
-                          .kind = Syntax::ExprKind::Int, .op = TokenKind::End};
+        Syntax::Expr expr{.operands = {},
+                          .text = token.text,
+                          .member = {},
+                          .extent = SpanOf(token),
+                          .anchor = SpanOf(token),
+                          .kind = Syntax::ExprKind::Int,
+                          .op = TokenKind::End};
         switch (token.kind)
         {
         case TokenKind::Int:
@@ -559,7 +617,7 @@ class Parser
         case TokenKind::Name:
             return ParseNamed(std::move(expr), depth);
         default:
-            Fail(token.where, std::format("expected a value, found {}", Found()));
+            Fail(SpanOf(token), std::format("expected a value, found {}", Found()), "expected a value");
             return std::nullopt;
         }
     }
@@ -575,7 +633,7 @@ class Parser
         }
         if (Syntax::IsCoreWord(expr.text))
         {
-            Fail(expr.where, std::format("expected a value, found \"{}\"", expr.text));
+            Fail(expr.anchor, std::format("expected a value, found \"{}\"", expr.text), "a reserved word");
             return std::nullopt;
         }
         Next();
@@ -590,6 +648,8 @@ class Parser
             }
             expr.kind = Syntax::ExprKind::Member;
             expr.member = std::move(member->name);
+            expr.extent = Since(expr.extent.where);
+            expr.anchor = expr.extent;
             return expr;
         }
         if (!At(TokenKind::LeftParen))
@@ -614,6 +674,7 @@ class Parser
         {
             return std::nullopt;
         }
+        expr.extent = Since(expr.extent.where);
         return expr;
     }
 
@@ -621,6 +682,8 @@ class Parser
     std::string_view _file;
     Diagnostics _errors;
     std::size_t _next = 0;
+    /// Just after the last token read: where a missing `;` belongs.
+    SourceLocation _lastEnd;
 };
 
 } // namespace

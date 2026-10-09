@@ -20,19 +20,19 @@ constexpr Type kBool{.index = 0, .kind = TypeKind::Bool};
 constexpr Type kInt{.index = 0, .kind = TypeKind::Int};
 constexpr Type kFloat{.index = 0, .kind = TypeKind::Float};
 
-Expr Failed(SourceLocation where)
+Expr Failed(Span span)
 {
     Expr expr;
-    expr.where = where;
+    expr.span = span;
     expr.type = kError;
     return expr;
 }
 
-Expr Literal(Constant value, Type type, SourceLocation where)
+Expr Literal(Constant value, Type type, Span span)
 {
     Expr expr;
     expr.literal = std::move(value);
-    expr.where = where;
+    expr.span = span;
     expr.type = type;
     return expr;
 }
@@ -59,7 +59,7 @@ Expr Widened(Expr expr)
         return expr;
     }
     Expr widened;
-    widened.where = expr.where;
+    widened.span = expr.span;
     widened.type = kFloat;
     widened.kind = ExprKind::Widen;
     widened.operands.push_back(std::move(expr));
@@ -111,28 +111,40 @@ Expr CheckLiteral(const Syntax::Expr &syntax)
     {
         int32_t value = 0;
         std::from_chars(syntax.text.data(), syntax.text.data() + syntax.text.size(), value);
-        return Literal(value, kInt, syntax.where);
+        return Literal(value, kInt, syntax.extent);
     }
     case Syntax::ExprKind::Float:
     {
         float value = 0.f;
         std::from_chars(syntax.text.data(), syntax.text.data() + syntax.text.size(), value);
-        return Literal(value, kFloat, syntax.where);
+        return Literal(value, kFloat, syntax.extent);
     }
     case Syntax::ExprKind::String:
-        return Literal(syntax.text, Type{.index = 0, .kind = TypeKind::String}, syntax.where);
+        return Literal(syntax.text, Type{.index = 0, .kind = TypeKind::String}, syntax.extent);
     default:
-        return Literal(syntax.text == "true", kBool, syntax.where);
+        return Literal(syntax.text == "true", kBool, syntax.extent);
     }
 }
 
 void MarkUsed(Checker &checker, Symbol &symbol)
 {
     symbol.used = true;
-    if (symbol.import >= 0)
+    if (symbol.from >= 0)
     {
-        checker.imports[static_cast<std::size_t>(symbol.import)].used = true;
+        checker.imports[static_cast<std::size_t>(symbol.from)].used = true;
     }
+}
+
+/// The label under an unknown name: the closest one it might be, or that it
+/// names nothing.
+std::string UnknownLabel(std::span<const std::string_view> names, std::string_view name)
+{
+    const std::optional<std::string_view> closest = ClosestName(names, name);
+    if (closest.has_value())
+    {
+        return std::format("did you mean \"{}\"?", *closest);
+    }
+    return "not declared in this file";
 }
 
 void ReportUnknown(Checker &checker, const Syntax::Expr &syntax)
@@ -141,17 +153,17 @@ void ReportUnknown(Checker &checker, const Syntax::Expr &syntax)
     {
         return;
     }
-    const std::unordered_map<std::string, SourceLocation>::const_iterator later =
-        checker.declaredLater.find(syntax.text);
+    const std::unordered_map<std::string, Span>::const_iterator later = checker.declaredLater.find(syntax.text);
     if (later != checker.declaredLater.end())
     {
-        Fail(checker, syntax.where,
-             std::format("\"{}\" is used before it is declared, on line {}", syntax.text, later->second.line),
-             "move the declaration above this line");
+        Diagnostic &error =
+            Fail(checker, syntax.anchor, std::format("\"{}\" is used before it is declared", syntax.text), "used here");
+        Relate(error, later->second, "declared here, further down");
+        error.help = "move the declaration above where it's used";
         return;
     }
     const std::vector<std::string_view> names = SymbolNames(checker);
-    Fail(checker, syntax.where, std::format("unknown name \"{}\"{}", syntax.text, DidYouMean(names, syntax.text)));
+    Fail(checker, syntax.anchor, std::format("unknown name \"{}\"", syntax.text), UnknownLabel(names, syntax.text));
 }
 
 Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
@@ -160,22 +172,22 @@ Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
     if (found == checker.symbols.end())
     {
         ReportUnknown(checker, syntax);
-        return Failed(syntax.where);
+        return Failed(syntax.extent);
     }
     Symbol &symbol = found->second;
     MarkUsed(checker, symbol);
     const bool readsFrame = symbol.kind == SymbolKind::Param || symbol.kind == SymbolKind::Let;
     if (mode == ExprMode::Constant && readsFrame)
     {
-        Fail(checker, syntax.where,
-             std::format("a const can't use \"{}\", which is a {}", syntax.text,
-                         symbol.kind == SymbolKind::Param ? "param" : "let"),
-             "a const is worked out once, when the file cooks, so it can only use numbers, strings, enum values "
-             "and other consts; to use this, make it a let");
-        return Failed(syntax.where);
+        const std::string_view kind = symbol.kind == SymbolKind::Param ? "param" : "let";
+        Diagnostic &error = Fail(checker, syntax.anchor, std::format("a const can't use \"{}\"", syntax.text),
+                                 std::format("a {}, which changes while the game runs", kind));
+        Relate(error, symbol.span, std::format("declared as a {} here", kind));
+        error.help = "a const is worked out once, when the file cooks; to use this, make it a let";
+        return Failed(syntax.extent);
     }
     Expr expr;
-    expr.where = syntax.where;
+    expr.span = syntax.extent;
     expr.index = symbol.index;
     switch (symbol.kind)
     {
@@ -189,16 +201,22 @@ Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
         return expr;
     case SymbolKind::Const:
         return Literal(checker.program.consts[symbol.index].value, checker.program.consts[symbol.index].type,
-                       syntax.where);
+                       syntax.extent);
     case SymbolKind::Enum:
-        Fail(checker, syntax.where, std::format("\"{}\" is an enum, which is a type, not a value", syntax.text),
-             std::format("write one of its values, like {}.{}", syntax.text,
-                         checker.program.enums[symbol.index].values.front()));
-        return Failed(syntax.where);
+    {
+        Diagnostic &error = Fail(checker, syntax.anchor, std::format("expected a value, found enum \"{}\"", syntax.text),
+                                 "an enum is a type, not a value");
+        error.help = std::format("write one of its values, like {}.{}", syntax.text,
+                                 checker.program.enums[symbol.index].values.front());
+        return Failed(syntax.extent);
+    }
     default:
-        Fail(checker, syntax.where, std::format("\"{}\" is a function, not a value", syntax.text),
-             std::format("call it: {}(...)", syntax.text));
-        return Failed(syntax.where);
+    {
+        Diagnostic &error = Fail(checker, syntax.anchor,
+                                 std::format("expected a value, found function \"{}\"", syntax.text), "not called");
+        error.help = std::format("call it: {}(...)", syntax.text);
+        return Failed(syntax.extent);
+    }
     }
 }
 
@@ -208,12 +226,12 @@ Expr CheckMember(Checker &checker, const Syntax::Expr &syntax)
     if (found == checker.symbols.end())
     {
         ReportUnknown(checker, syntax);
-        return Failed(syntax.where);
+        return Failed(syntax.extent);
     }
     if (found->second.kind != SymbolKind::Enum)
     {
-        Fail(checker, syntax.where, std::format("\"{}\" isn't an enum, so it has no values", syntax.text));
-        return Failed(syntax.where);
+        Fail(checker, syntax.anchor, std::format("\"{}\" isn't an enum", syntax.text), "so it has no values");
+        return Failed(syntax.extent);
     }
     MarkUsed(checker, found->second);
     const uint32_t enumIndex = found->second.index;
@@ -222,32 +240,39 @@ Expr CheckMember(Checker &checker, const Syntax::Expr &syntax)
     if (value == values.end())
     {
         const std::vector<std::string_view> names{values.begin(), values.end()};
-        Fail(checker, syntax.where,
-             std::format("{} has no value \"{}\"{}", syntax.text, syntax.member, DidYouMean(names, syntax.member)));
-        return Failed(syntax.where);
+        const std::optional<std::string_view> closest = ClosestName(names, syntax.member);
+        Diagnostic &error = Fail(checker, syntax.anchor, std::format("{} has no value \"{}\"", syntax.text, syntax.member),
+                                 closest.has_value() ? std::format("did you mean {}.{}?", syntax.text, *closest)
+                                                     : std::string{"no such value"});
+        Relate(error, found->second.span,
+               found->second.from >= 0 ? std::format("{} is imported here", syntax.text)
+                                       : std::format("{} is declared here", syntax.text));
+        return Failed(syntax.extent);
     }
     return Literal(static_cast<int32_t>(value - values.begin()), Type{.index = enumIndex, .kind = TypeKind::Enum},
-                   syntax.where);
+                   syntax.extent);
 }
 
 Expr CheckUnary(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
 {
     Expr operand = CheckExpression(checker, syntax.operands[0], mode);
     Expr expr;
-    expr.where = syntax.where;
+    expr.span = syntax.extent;
     expr.kind = ExprKind::Unary;
     expr.op = ToOperator(syntax.op, true);
     if (IsError(operand.type))
     {
-        return Failed(syntax.where);
+        return Failed(syntax.extent);
     }
     const bool fits = expr.op == Operator::Not ? IsBoolish(operand.type) : IsNumeric(operand.type);
     if (!fits)
     {
-        Fail(checker, syntax.where,
-             std::format("{} needs {}, got {}", Describe(syntax.op), expr.op == Operator::Not ? "a bool" : "a number",
-                         TypeName(checker, operand.type)));
-        return Failed(syntax.where);
+        Diagnostic &error = Fail(checker, syntax.anchor,
+                                 std::format("{} needs {}", Describe(syntax.op),
+                                             expr.op == Operator::Not ? "a bool" : "a number"),
+                                 std::format("expected {}", expr.op == Operator::Not ? "a bool" : "a number"));
+        Relate(error, operand.span, std::format("this is {}", TypeName(checker, operand.type)));
+        return Failed(syntax.extent);
     }
     expr.type = expr.op == Operator::Not ? kBool : operand.type;
     expr.operands.push_back(std::move(operand));
@@ -287,26 +312,49 @@ Type BinaryType(Operator op, Expr &left, Expr &right)
     }
 }
 
+/// What @p op takes, for the label under it when it's given the wrong types.
+std::string_view Takes(Operator op)
+{
+    switch (op)
+    {
+    case Operator::Or:
+    case Operator::And:
+        return "takes two bools";
+    case Operator::Equal:
+    case Operator::NotEqual:
+        return "compares two values of one type";
+    case Operator::Remainder:
+        return "takes two ints";
+    default:
+        return "takes two numbers";
+    }
+}
+
 Expr CheckBinary(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
 {
     Expr left = CheckExpression(checker, syntax.operands[0], mode);
     Expr right = CheckExpression(checker, syntax.operands[1], mode);
     if (IsError(left.type) || IsError(right.type))
     {
-        return Failed(syntax.where);
+        return Failed(syntax.extent);
     }
     const std::string leftName = TypeName(checker, left.type);
     const std::string rightName = TypeName(checker, right.type);
+    const Span leftSpan = left.span;
+    const Span rightSpan = right.span;
     Expr expr;
-    expr.where = syntax.where;
+    expr.span = syntax.extent;
     expr.kind = ExprKind::Binary;
     expr.op = ToOperator(syntax.op, false);
     expr.type = BinaryType(expr.op, left, right);
     if (IsError(expr.type))
     {
-        Fail(checker, syntax.where,
-             std::format("{} can't take {} and {}", Describe(syntax.op), leftName, rightName));
-        return Failed(syntax.where);
+        Diagnostic &error = Fail(checker, syntax.anchor,
+                                 std::format("{} can't take {} and {}", Describe(syntax.op), leftName, rightName),
+                                 std::string{Takes(expr.op)});
+        Relate(error, leftSpan, leftName);
+        Relate(error, rightSpan, rightName);
+        return Failed(syntax.extent);
     }
     expr.operands.push_back(std::move(left));
     expr.operands.push_back(std::move(right));
@@ -369,6 +417,33 @@ std::optional<Type> CallType(const Checker &checker, std::string_view name, Type
     return std::nullopt;
 }
 
+/// Checks a call's arguments against @p function's parameters, into @p expr.
+bool CheckArguments(Checker &checker, const Syntax::Expr &syntax, const FunctionSpec &function, Expr &expr)
+{
+    const Type numeric = NumericType(function, expr.operands);
+    for (std::size_t i = 0; i < expr.operands.size(); ++i)
+    {
+        const bool takesNumber = function.parameters[i] == TypeNames::kNumeric;
+        if (takesNumber && !IsNumeric(expr.operands[i].type))
+        {
+            Diagnostic &error = Fail(checker, expr.operands[i].span, std::format("{}() takes numbers", syntax.text),
+                                     std::format("this is {}", TypeName(checker, expr.operands[i].type)));
+            Relate(error, syntax.anchor, "in this call");
+            return false;
+        }
+        const std::optional<Type> wanted = CallType(checker, function.parameters[i], numeric);
+        const Reason because{.span = syntax.anchor,
+                             .label = std::format("{}() takes {} here", syntax.text, function.parameters[i])};
+        expr.operands[i] = Coerce(checker, std::move(expr.operands[i]), wanted.value_or(kError), because);
+        if (IsError(expr.operands[i].type))
+        {
+            return false;
+        }
+    }
+    expr.type = CallType(checker, function.result, numeric).value_or(kError);
+    return true;
+}
+
 Expr CheckCall(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
 {
     uint32_t index = 0;
@@ -380,54 +455,40 @@ Expr CheckCall(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
         {
             names.push_back(candidate.name);
         }
-        Fail(checker, syntax.where,
-             std::format("unknown function \"{}\"{}", syntax.text, DidYouMean(names, syntax.text)));
-        return Failed(syntax.where);
+        const std::optional<std::string_view> closest = ClosestName(names, syntax.text);
+        Fail(checker, syntax.anchor, std::format("unknown function \"{}\"", syntax.text),
+             closest.has_value() ? std::format("did you mean {}()?", *closest) : std::string{"no such function"});
+        return Failed(syntax.extent);
     }
     if (mode == ExprMode::Constant && index >= CoreFunctions().size())
     {
-        Fail(checker, syntax.where, std::format("a const can't call {}()", syntax.text),
-             std::format("{}() is only known while the game runs, and a const is worked out when the file cooks; "
-                         "make this a let, or use only abs, min, max and clamp",
-                         syntax.text));
-        return Failed(syntax.where);
+        Diagnostic &error = Fail(checker, syntax.anchor, std::format("a const can't call {}()", syntax.text),
+                                 "only known while the game runs");
+        error.help = "a const is worked out when the file cooks; make this a let, or call only abs, min, max and "
+                     "clamp";
+        return Failed(syntax.extent);
     }
     if (syntax.operands.size() != function->parameters.size())
     {
-        Fail(checker, syntax.where,
-             std::format("{} takes {} values, got {}", syntax.text, function->parameters.size(), syntax.operands.size()));
-        return Failed(syntax.where);
+        Fail(checker, syntax.extent,
+             std::format("{}() takes {} values, got {}", syntax.text, function->parameters.size(),
+                         syntax.operands.size()),
+             std::format("expected {} values", function->parameters.size()));
+        return Failed(syntax.extent);
     }
     Expr expr;
-    expr.where = syntax.where;
+    expr.span = syntax.extent;
     expr.kind = ExprKind::Call;
     expr.index = index;
     for (const Syntax::Expr &argument : syntax.operands)
     {
         expr.operands.push_back(CheckExpression(checker, argument, mode));
     }
-    if (std::ranges::any_of(expr.operands, [](const Expr &operand) { return IsError(operand.type); }))
+    if (std::ranges::any_of(expr.operands, [](const Expr &operand) { return IsError(operand.type); }) ||
+        !CheckArguments(checker, syntax, *function, expr))
     {
-        return Failed(syntax.where);
+        return Failed(syntax.extent);
     }
-    const Type numeric = NumericType(*function, expr.operands);
-    for (std::size_t i = 0; i < expr.operands.size(); ++i)
-    {
-        const bool takesNumber = function->parameters[i] == TypeNames::kNumeric;
-        if (takesNumber && !IsNumeric(expr.operands[i].type))
-        {
-            Fail(checker, expr.operands[i].where,
-                 std::format("{} takes numbers, got {}", syntax.text, TypeName(checker, expr.operands[i].type)));
-            return Failed(syntax.where);
-        }
-        const std::optional<Type> wanted = CallType(checker, function->parameters[i], numeric);
-        expr.operands[i] = Coerce(checker, std::move(expr.operands[i]), wanted.value_or(kError));
-        if (IsError(expr.operands[i].type))
-        {
-            return Failed(syntax.where);
-        }
-    }
-    expr.type = CallType(checker, function->result, numeric).value_or(kError);
     return expr;
 }
 
@@ -452,7 +513,7 @@ Expr CheckExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode
     }
 }
 
-Expr Coerce(Checker &checker, Expr value, Type wanted)
+Expr Coerce(Checker &checker, Expr value, Type wanted, const std::optional<Reason> &because)
 {
     if (IsError(value.type) || IsError(wanted) || value.type == wanted)
     {
@@ -474,15 +535,24 @@ Expr Coerce(Checker &checker, Expr value, Type wanted)
             type.validate ? type.validate(std::get<std::string>(value.literal)) : std::expected<void, std::string>{};
         if (!accepted)
         {
-            Fail(checker, value.where, accepted.error());
-            return Failed(value.where);
+            Diagnostic &error = Fail(checker, value.span, accepted.error(), std::format("not a {}", type.name));
+            if (because.has_value())
+            {
+                Relate(error, because->span, because->label);
+            }
+            return Failed(value.span);
         }
         value.type = wanted;
         return value;
     }
-    Fail(checker, value.where,
-         std::format("expected {}, got {}", TypeName(checker, wanted), TypeName(checker, value.type)));
-    return Failed(value.where);
+    Diagnostic &error =
+        Fail(checker, value.span, "mismatched types",
+             std::format("expected {}, found {}", TypeName(checker, wanted), TypeName(checker, value.type)));
+    if (because.has_value())
+    {
+        Relate(error, because->span, because->label);
+    }
+    return Failed(value.span);
 }
 
 bool ReadsWhenOnly(const Checker &checker, const Expr &expr)

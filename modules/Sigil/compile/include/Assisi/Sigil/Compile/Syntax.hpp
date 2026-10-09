@@ -36,6 +36,12 @@ struct Named
 {
     std::string name;
     SourceLocation where;
+
+    /// The stretch of source the name covers.
+    [[nodiscard]] Span Extent() const
+    {
+        return Span{.where = where, .length = static_cast<uint32_t>(name.empty() ? 1 : name.size())};
+    }
 };
 
 enum class ExprKind : uint8_t
@@ -59,7 +65,11 @@ struct Expr
     /// member, or the function called.
     std::string text;
     std::string member;
-    SourceLocation where;
+    /// The whole expression, operands and all.
+    Span extent;
+    /// The part an error about the expression itself points at: the operator
+    /// of a unary or binary one, the name of a call, the literal or name of a leaf.
+    Span anchor;
     ExprKind kind = ExprKind::Int;
     TokenKind op = TokenKind::End;
 };
@@ -75,6 +85,8 @@ struct Import
 {
     std::string path;
     SourceLocation where;
+    /// The quoted path as written.
+    Span pathSpan;
 };
 
 /// @brief `enum Name { a, b }`

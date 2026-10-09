@@ -61,6 +61,8 @@ struct Token
     /// A name or number as written; a string's contents with its escapes undone.
     std::string text;
     SourceLocation where;
+    /// How many characters it covers in the source, quotes and escapes included.
+    uint32_t length = 1;
     TokenKind kind = TokenKind::End;
 };
 

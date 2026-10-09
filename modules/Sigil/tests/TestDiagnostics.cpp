@@ -1,11 +1,11 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestDiagnostics.cpp
-/// @brief What a person reads when a file is wrong: each error shows its line
-/// with a caret under the place and help on a line of its own, in color for a
-/// terminal; errors come in the order of the file; one mistake isn't reported
-/// again where it's used; and nothing is called unused when errors may have
-/// hidden its use.
+/// @brief What a person reads when a file is wrong: each error shows its lines
+/// with the place underlined and labelled, related places marked beside it,
+/// and help below, in color for a terminal; errors come in the order of the
+/// file; one mistake isn't reported again where it's used; and nothing is
+/// called unused when errors may have hidden its use.
 
 #include "SigilTesting.hpp"
 
@@ -13,16 +13,21 @@
 
 using namespace Assisi::Sigil::Testing;
 
-TEST_CASE("Diagnostics: an error shows its line, a caret under the place, and its help below")
+TEST_CASE("Diagnostics: an error underlines its place and a related one, each labelled, with help below")
 {
     const Diagnostics errors = Errors(CompileRobot("use robot;\nparam p: bool;\nmachine m {\n    node a { }\n"
                                                    "    node b { }\n    a -> b when p;\n\tany + a -> a when p;\n}\n"));
     REQUIRE_MESSAGE(errors.size() == 1, Dump(errors));
     CHECK(Format(errors[0]) ==
-          "main.sgl:7:2: error: this transition goes to \"a\", so it can't also leave from \"a\"\n"
-          " 7 | \tany + a -> a when p;\n"
-          "   | \t^\n"
-          "  help: to restart \"a\" while it's playing, write \"a -> a\" as a transition of its own\n");
+          "error: this transition goes to \"a\", so it can't also leave from \"a\"\n"
+          " --> main.sgl:7:2\n"
+          "  |\n"
+          "7 | \tany + a -> a when p;\n"
+          "  | \t^^^^^^^    - and it goes to \"a\"\n"
+          "  | \t|\n"
+          "  | \tthese include \"a\"\n"
+          "  |\n"
+          "  = help: to restart \"a\" while it's playing, write \"a -> a\" as a transition of its own\n");
 }
 
 TEST_CASE("Diagnostics: in color, the parts are painted, and plain has no escapes")
@@ -31,7 +36,7 @@ TEST_CASE("Diagnostics: in color, the parts are painted, and plain has no escape
     REQUIRE(errors.size() == 1);
     const std::string colored = Format(errors[0], Style::Color);
     CHECK(colored.find("\x1b[1;31merror:\x1b[0m") != std::string::npos);
-    CHECK(colored.find("\x1b[1;32m^\x1b[0m") != std::string::npos);
+    CHECK(colored.find("\x1b[1;31m^\x1b[0m") != std::string::npos);
     CHECK(Format(errors[0], Style::Plain).find('\x1b') == std::string::npos);
 }
 

@@ -48,7 +48,7 @@ TEST_CASE("Triggers: a condition must be a bool, and a trigger is one")
 {
     CHECK(HasError(Errors(CompileRobot(
                        "use robot;\nparam f: float;\nmachine m {\n    node a { }\n    node b { }\n    a -> b when f;\n}\n")),
-                   6, "must be a bool, got a float"));
+                   6, "a condition must be a bool"));
     std::expected<Program, Diagnostics> program = CompileRobot(
         "use robot;\nparam t: trigger;\nmachine m {\n    node a { }\n    node b { }\n    a -> b when t;\n}\n");
     REQUIRE_MESSAGE(program.has_value(), Dump(Errors(program)));

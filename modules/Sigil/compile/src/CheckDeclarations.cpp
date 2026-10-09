@@ -16,7 +16,6 @@ namespace Assisi::Sigil::Compile::Detail
 namespace
 {
 
-constexpr std::string_view kLibraryHolds = "a library can only hold imports, enums and consts";
 constexpr std::string_view kNotALibrary = "remove \"sigiltype library;\" to make this an ordinary file";
 
 bool IsVocabularyWord(const Vocabulary &vocabulary, std::string_view word)
@@ -45,40 +44,41 @@ std::string_view KindName(SymbolKind kind)
     }
 }
 
-/// Where an existing name came from, for "already ..." messages.
-std::string Origin(const Checker &checker, const Symbol &symbol)
+/// Refuses what a library can't hold, with @p what naming it.
+void RefuseInLibrary(Checker &checker, const Syntax::Named &name, std::string_view what)
 {
-    if (symbol.kind == SymbolKind::Function)
-    {
-        return "the name of a function";
-    }
-    if (symbol.import >= 0)
-    {
-        return std::format("imported from \"{}\"", checker.imports[static_cast<std::size_t>(symbol.import)].path);
-    }
-    return std::format("declared on line {}", symbol.where.line);
+    Diagnostic &error = Fail(checker, name.Extent(), std::format("a library can't declare {}", what),
+                             "not allowed in a library");
+    error.help = std::format("a library holds only imports, enums and consts; {}", kNotALibrary);
 }
 
 void DeclareEnum(Checker &checker, const Syntax::EnumDecl &declaration)
 {
     Enum declared{.name = declaration.name.name, .values = {}, .origin = checker.file};
+    std::vector<Span> spans;
     for (const Syntax::Named &value : declaration.values)
     {
-        if (std::ranges::find(declared.values, value.name) != declared.values.end())
+        const std::vector<std::string>::iterator existing = std::ranges::find(declared.values, value.name);
+        if (existing != declared.values.end())
         {
-            Fail(checker, value.where, std::format("{} already has a value \"{}\"", declared.name, value.name));
+            Diagnostic &error = Fail(checker, value.Extent(),
+                                     std::format("{} has two values called \"{}\"", declared.name, value.name),
+                                     "declared again here");
+            Relate(error, spans[static_cast<std::size_t>(existing - declared.values.begin())], "first declared here");
             continue;
         }
         declared.values.push_back(value.name);
+        spans.push_back(value.Extent());
     }
     if (declared.values.empty())
     {
-        Fail(checker, declaration.name.where, std::format("enum {} has no values", declared.name));
+        Fail(checker, declaration.name.Extent(), std::format("enum {} has no values", declared.name),
+             "an enum needs at least one value");
         return;
     }
-    const Symbol symbol{.where = declaration.name.where,
+    const Symbol symbol{.span = declaration.name.Extent(),
                         .index = static_cast<uint32_t>(checker.program.enums.size()),
-                        .import = -1,
+                        .from = -1,
                         .kind = SymbolKind::Enum,
                         .used = false};
     if (Declare(checker, declaration.name, symbol))
@@ -91,7 +91,7 @@ void DeclareParam(Checker &checker, const Syntax::ParamDecl &declaration)
 {
     if (checker.program.library)
     {
-        Fail(checker, declaration.name.where, std::format("{}, not params", kLibraryHolds), std::string{kNotALibrary});
+        RefuseInLibrary(checker, declaration.name, "params");
         return;
     }
     const std::optional<Type> type = ResolveType(checker, declaration.type);
@@ -99,9 +99,9 @@ void DeclareParam(Checker &checker, const Syntax::ParamDecl &declaration)
     {
         return;
     }
-    const Symbol symbol{.where = declaration.name.where,
+    const Symbol symbol{.span = declaration.name.Extent(),
                         .index = static_cast<uint32_t>(checker.program.params.size()),
-                        .import = -1,
+                        .from = -1,
                         .kind = SymbolKind::Param,
                         .used = false};
     if (Declare(checker, declaration.name, symbol))
@@ -126,7 +126,8 @@ void DeclareConst(Checker &checker, const Syntax::ValueDecl &declaration, Expr v
         std::expected<Constant, std::string> evaluated = Evaluate(value, checker.program.functions);
         if (!evaluated)
         {
-            Fail(checker, value.where, std::move(evaluated.error()));
+            Fail(checker, value.span, std::format("can't work out const \"{}\"", declaration.name.name),
+                 std::move(evaluated.error()));
             value.type = Type{};
         }
         else
@@ -134,9 +135,9 @@ void DeclareConst(Checker &checker, const Syntax::ValueDecl &declaration, Expr v
             constant = std::move(*evaluated);
         }
     }
-    const Symbol symbol{.where = declaration.name.where,
+    const Symbol symbol{.span = declaration.name.Extent(),
                         .index = static_cast<uint32_t>(checker.program.consts.size()),
-                        .import = -1,
+                        .from = -1,
                         .kind = SymbolKind::Const,
                         .used = false};
     if (Declare(checker, declaration.name, symbol))
@@ -152,13 +153,14 @@ void DeclareLet(Checker &checker, const Syntax::ValueDecl &declaration, Expr val
 {
     if (!LetCanHold(value.type))
     {
-        Fail(checker, declaration.value.where, std::format("a let can't hold {}", TypeName(checker, value.type)),
-             std::format("only consts hold strings; make \"{}\" a const", declaration.name.name));
+        Diagnostic &error = Fail(checker, value.span, std::format("a let can't hold {}", TypeName(checker, value.type)),
+                                 std::format("this is {}", TypeName(checker, value.type)));
+        error.help = std::format("only consts hold strings; make \"{}\" a const", declaration.name.name);
         value.type = Type{};
     }
-    const Symbol symbol{.where = declaration.name.where,
+    const Symbol symbol{.span = declaration.name.Extent(),
                         .index = static_cast<uint32_t>(checker.program.lets.size()),
-                        .import = -1,
+                        .from = -1,
                         .kind = SymbolKind::Let,
                         .used = false};
     if (Declare(checker, declaration.name, symbol))
@@ -175,7 +177,7 @@ void DeclareValue(Checker &checker, const Syntax::ValueDecl &declaration)
     checker.declaredLater.erase(declaration.name.name);
     if (checker.program.library && !declaration.isConst)
     {
-        Fail(checker, declaration.name.where, std::format("{}, not lets", kLibraryHolds), std::string{kNotALibrary});
+        RefuseInLibrary(checker, declaration.name, "lets");
         return;
     }
     const ExprMode mode = declaration.isConst ? ExprMode::Constant : ExprMode::Formula;
@@ -183,7 +185,8 @@ void DeclareValue(Checker &checker, const Syntax::ValueDecl &declaration)
     if (declaration.type.has_value())
     {
         const std::optional<Type> wanted = ResolveType(checker, *declaration.type);
-        value = Coerce(checker, std::move(value), wanted.value_or(Type{}));
+        const Reason because{.span = declaration.type->Extent(), .label = "expected because of this type"};
+        value = Coerce(checker, std::move(value), wanted.value_or(Type{}), because);
     }
     if (declaration.isConst)
     {
@@ -213,35 +216,36 @@ uint32_t PlaceEnum(Checker &checker, const Enum &enumeration)
 
 } // namespace
 
-void Fail(Checker &checker, SourceLocation where, std::string message, std::string help)
+Diagnostic &Fail(Checker &checker, Span span, std::string message, std::string label)
 {
     checker.diagnostics.push_back(Diagnostic{.message = std::move(message),
-                                             .help = std::move(help),
+                                             .label = std::move(label),
                                              .file = checker.file,
-                                             .where = where,
+                                             .where = span.where,
+                                             .length = span.length,
                                              .severity = Severity::Error});
+    return checker.diagnostics.back();
 }
 
-void Warn(Checker &checker, SourceLocation where, std::string message)
+void Relate(Diagnostic &diagnostic, Span span, std::string label)
 {
-    checker.diagnostics.push_back(
-        Diagnostic{.message = std::move(message), .file = checker.file, .where = where, .severity = Severity::Warning});
+    diagnostic.related.push_back(Related{.label = std::move(label), .span = span});
 }
 
 bool IsReserved(Checker &checker, const Syntax::Named &name)
 {
     if (Syntax::IsCoreWord(name.name))
     {
-        Fail(checker, name.where, std::format("\"{}\" is a reserved word, so it can't be a name", name.name),
-             "pick another name");
+        Diagnostic &error = Fail(checker, name.Extent(), std::format("\"{}\" can't be a name", name.name),
+                                 "a reserved word");
+        error.help = "pick another name";
         return true;
     }
     if (IsVocabularyWord(checker.vocabulary, name.name))
     {
-        Fail(checker, name.where,
-             std::format("\"{}\" is a word of the {} vocabulary, so it can't be a name", name.name,
-                         checker.vocabulary.name),
-             "pick another name");
+        Diagnostic &error = Fail(checker, name.Extent(), std::format("\"{}\" can't be a name", name.name),
+                                 std::format("a word of the {} vocabulary", checker.vocabulary.name));
+        error.help = "pick another name";
         return true;
     }
     return false;
@@ -255,14 +259,33 @@ bool Declare(Checker &checker, const Syntax::Named &name, Symbol symbol)
         return false;
     }
     const std::unordered_map<std::string, Symbol>::const_iterator existing = checker.symbols.find(name.name);
-    if (existing != checker.symbols.end())
+    if (existing == checker.symbols.end())
     {
-        Fail(checker, name.where, std::format("\"{}\" is already {}", name.name, Origin(checker, existing->second)),
-             "two things in one file can't share a name; rename one of them");
+        checker.symbols.emplace(name.name, symbol);
+        return true;
+    }
+    const Symbol &first = existing->second;
+    if (first.kind == SymbolKind::Function)
+    {
+        Diagnostic &error = Fail(checker, name.Extent(), std::format("\"{}\" can't be a name", name.name),
+                                 std::format("{}() is a function", name.name));
+        error.help = "pick another name";
         return false;
     }
-    checker.symbols.emplace(name.name, symbol);
-    return true;
+    Diagnostic &error = Fail(checker, name.Extent(), std::format("\"{}\" is declared twice", name.name),
+                             "declared again here");
+    if (first.from >= 0)
+    {
+        Relate(error, first.span,
+               std::format("imported from \"{}\" here", checker.imports[static_cast<std::size_t>(first.from)].path));
+    }
+    else
+    {
+        const std::string_view article = first.kind == SymbolKind::Enum ? "an" : "a";
+        Relate(error, first.span, std::format("first declared here, as {} {}", article, KindName(first.kind)));
+    }
+    error.help = "two things in one file can't share a name; rename one of them";
+    return false;
 }
 
 std::vector<std::string_view> SymbolNames(const Checker &checker)
@@ -303,9 +326,9 @@ std::optional<Type> ResolveType(Checker &checker, const Syntax::Named &name)
     if (found != checker.symbols.end() && found->second.kind == SymbolKind::Enum)
     {
         found->second.used = true;
-        if (found->second.import >= 0)
+        if (found->second.from >= 0)
         {
-            checker.imports[static_cast<std::size_t>(found->second.import)].used = true;
+            checker.imports[static_cast<std::size_t>(found->second.from)].used = true;
         }
         return Type{.index = found->second.index, .kind = TypeKind::Enum};
     }
@@ -317,7 +340,9 @@ std::optional<Type> ResolveType(Checker &checker, const Syntax::Named &name)
         }
     }
     std::ranges::sort(names);
-    Fail(checker, name.where, std::format("unknown type \"{}\"{}", name.name, DidYouMean(names, name.name)));
+    const std::optional<std::string_view> closest = ClosestName(names, name.name);
+    Fail(checker, name.Extent(), std::format("unknown type \"{}\"", name.name),
+         closest.has_value() ? std::format("did you mean \"{}\"?", *closest) : std::string{"no such type"});
     return std::nullopt;
 }
 
@@ -344,25 +369,25 @@ std::string TypeName(const Checker &checker, Type type)
     }
 }
 
-void MergeLibrary(Checker &checker, const Program &library, const Syntax::Import &import)
+void MergeLibrary(Checker &checker, const Program &library, const Syntax::Import &statement)
 {
     const int32_t importIndex = static_cast<int32_t>(checker.imports.size());
-    checker.imports.push_back(ImportRecord{.path = import.path, .where = import.where, .used = false});
+    checker.imports.push_back(ImportRecord{.path = statement.path, .span = statement.pathSpan, .used = false});
     std::vector<uint32_t> enumIndex;
     for (const Enum &enumeration : library.enums)
     {
         const uint32_t placed = PlaceEnum(checker, enumeration);
         enumIndex.push_back(placed);
-        if (enumeration.origin == import.path)
+        if (enumeration.origin == statement.path)
         {
             const Symbol symbol{
-                .where = import.where, .index = placed, .import = importIndex, .kind = SymbolKind::Enum, .used = false};
-            (void)Declare(checker, Syntax::Named{.name = enumeration.name, .where = import.where}, symbol);
+                .span = statement.pathSpan, .index = placed, .from = importIndex, .kind = SymbolKind::Enum, .used = false};
+            (void)Declare(checker, Syntax::Named{.name = enumeration.name, .where = statement.pathSpan.where}, symbol);
         }
     }
     for (const Const &constant : library.consts)
     {
-        if (constant.origin != import.path)
+        if (constant.origin != statement.path)
         {
             continue;
         }
@@ -371,12 +396,12 @@ void MergeLibrary(Checker &checker, const Program &library, const Syntax::Import
         {
             merged.type.index = enumIndex[merged.type.index];
         }
-        const Symbol symbol{.where = import.where,
+        const Symbol symbol{.span = statement.pathSpan,
                             .index = static_cast<uint32_t>(checker.program.consts.size()),
-                            .import = importIndex,
+                            .from = importIndex,
                             .kind = SymbolKind::Const,
                             .used = false};
-        if (Declare(checker, Syntax::Named{.name = constant.name, .where = import.where}, symbol))
+        if (Declare(checker, Syntax::Named{.name = constant.name, .where = statement.pathSpan.where}, symbol))
         {
             checker.program.consts.push_back(std::move(merged));
         }
@@ -395,7 +420,7 @@ void CheckDeclarations(Checker &checker, const Syntax::File &file)
         }
         else if (const Syntax::ValueDecl *value = std::get_if<Syntax::ValueDecl>(&declaration))
         {
-            checker.declaredLater.emplace(value->name.name, value->name.where);
+            checker.declaredLater.emplace(value->name.name, value->name.Extent());
         }
     }
     for (const Syntax::Declaration &declaration : file.declarations)
@@ -426,28 +451,31 @@ void WarnUnused(Checker &checker)
     for (const std::pair<const std::string, Symbol> &entry : checker.symbols)
     {
         const Symbol &symbol = entry.second;
-        if (symbol.used || symbol.import >= 0 || symbol.kind == SymbolKind::Function)
+        if (symbol.used || symbol.from >= 0 || symbol.kind == SymbolKind::Function)
         {
             continue;
         }
-        warnings.push_back(Diagnostic{.message = std::format("{} \"{}\" is never used", KindName(symbol.kind), entry.first),
+        warnings.push_back(Diagnostic{.message = std::format("unused {} \"{}\"", KindName(symbol.kind), entry.first),
+                                      .label = "never used",
+                                      .help = "remove it if nothing needs it",
                                       .file = checker.file,
-                                      .where = symbol.where,
+                                      .where = symbol.span.where,
+                                      .length = symbol.span.length,
                                       .severity = Severity::Warning});
     }
-    for (const ImportRecord &import : checker.imports)
+    for (const ImportRecord &record : checker.imports)
     {
-        if (!import.used)
+        if (!record.used)
         {
-            warnings.push_back(Diagnostic{.message = std::format("nothing from \"{}\" is used", import.path),
+            warnings.push_back(Diagnostic{.message = std::format("unused import \"{}\"", record.path),
+                                          .label = "nothing from it is used",
+                                          .help = "remove the import if nothing needs it",
                                           .file = checker.file,
-                                          .where = import.where,
+                                          .where = record.span.where,
+                                          .length = record.span.length,
                                           .severity = Severity::Warning});
         }
     }
-    std::ranges::sort(warnings, [](const Diagnostic &a, const Diagnostic &b) {
-        return a.where.line != b.where.line ? a.where.line < b.where.line : a.where.column < b.where.column;
-    });
     checker.diagnostics.insert(checker.diagnostics.end(), warnings.begin(), warnings.end());
 }
 

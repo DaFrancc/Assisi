@@ -26,7 +26,7 @@ Program Compiled(std::string_view source)
 TEST_CASE("Checker: a value of the wrong type is refused where it is written")
 {
     const Diagnostics errors = Errors(CompileRobot("use robot;\nparam x: float;\nlet y: int = x;\n"));
-    CHECK_MESSAGE(HasError(errors, 3, "expected an int, got a float"), Dump(errors));
+    CHECK_MESSAGE(HasError(errors, 3, "expected an int, found a float"), Dump(errors));
 }
 
 TEST_CASE("Checker: an int widens to a float, and a float never narrows")
@@ -38,7 +38,7 @@ TEST_CASE("Checker: an int widens to a float, and a float never narrows")
     CHECK(program.lets[1].type.kind == TypeKind::Float);
     CHECK(program.lets[1].value.kind == ExprKind::Widen);
 
-    CHECK(HasError(Errors(CompileRobot("use robot;\nlet n: int = 2.0;\n")), 2, "expected an int, got a float"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nlet n: int = 2.0;\n")), 2, "expected an int, found a float"));
 }
 
 TEST_CASE("Checker: operators take only the types that make sense for them")
@@ -57,19 +57,23 @@ TEST_CASE("Checker: an enum compares with its own values and nothing else")
     CHECK_FALSE(HasError(errors, 5, ""));
     CHECK(HasError(errors, 6, "can't take a Mode and an int"));
     CHECK(HasError(errors, 7, "can't take a Mode and a Side"));
-    CHECK(HasError(errors, 8, "Mode has no value \"fsat\" — did you mean \"fast\"?"));
+    CHECK(HasError(errors, 8, "Mode has no value \"fsat\""));
+    CHECK(HasError(errors, 8, "did you mean Mode.fast?"));
 }
 
 TEST_CASE("Checker: consts and lets must be declared before they're used")
 {
     const Diagnostics errors = Errors(CompileRobot("use robot;\nlet a = b;\nlet b = 1;\n"));
-    CHECK(HasError(errors, 2, "\"b\" is used before it is declared, on line 3"));
+    CHECK(HasError(errors, 2, "\"b\" is used before it is declared"));
+    REQUIRE(errors.size() == 1);
+    REQUIRE(errors[0].related.size() == 1);
+    CHECK(errors[0].related[0].span.where.line == 3);
 }
 
 TEST_CASE("Checker: a const can only use what the cook knows")
 {
     CHECK(HasError(Errors(CompileRobot("use robot;\nparam p: float;\nconst c = p * 2.0;\n")), 3,
-                   "a const can't use \"p\", which is a param"));
+                   "a const can't use \"p\""));
     CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = battery();\n")), 2, "a const can't call battery()"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = 1 / 0;\n")), 2, "divides by zero"));
 }
@@ -92,9 +96,10 @@ TEST_CASE("Checker: consts are worked out when the file compiles, and used as th
 TEST_CASE("Checker: an unknown name suggests the closest one")
 {
     const Diagnostics errors = Errors(CompileRobot("use robot;\nparam walk: float;\nlet x = wlak > 1.0;\n"));
-    CHECK(HasError(errors, 3, "unknown name \"wlak\" — did you mean \"walk\"?"));
+    CHECK(HasError(errors, 3, "unknown name \"wlak\""));
+    CHECK(HasError(errors, 3, "did you mean \"walk\"?"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nparam x: flaot;\n")), 2, "did you mean \"float\""));
-    CHECK(HasError(Errors(CompileRobot("use robot;\nlet x = clmap(1, 2, 3);\n")), 2, "did you mean \"clamp\""));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nlet x = clmap(1, 2, 3);\n")), 2, "did you mean clamp()?"));
 }
 
 TEST_CASE("Checker: functions work out their result from their arguments")
@@ -103,18 +108,20 @@ TEST_CASE("Checker: functions work out their result from their arguments")
                                      "let g = i > 0 && b;\n");
     CHECK(program.lets[0].type.kind == TypeKind::Int);
     CHECK(program.lets[1].type.kind == TypeKind::Float);
-    CHECK(HasError(Errors(CompileRobot("use robot;\nlet a = abs(true);\n")), 2, "abs takes numbers, got a bool"));
-    CHECK(HasError(Errors(CompileRobot("use robot;\nlet a = min(1);\n")), 2, "min takes 2 values, got 1"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nlet a = abs(true);\n")), 2, "abs() takes numbers"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nlet a = min(1);\n")), 2, "min() takes 2 values, got 1"));
 }
 
 TEST_CASE("Checker: no two things in a file share a name, and reserved words name nothing")
 {
+    CHECK(HasError(Errors(CompileRobot("use robot;\nparam x: float;\nconst x = 1;\n")), 3, "\"x\" is declared twice"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nparam x: float;\nconst x = 1;\n")), 3,
-                   "\"x\" is already declared on line 2"));
-    CHECK(HasError(Errors(CompileRobot("use robot;\nenum x { a }\nlet x = 1;\n")), 3, "already declared on line 2"));
+                   "first declared here, as a param"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nenum x { a }\nlet x = 1;\n")), 3,
+                   "first declared here, as an enum"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nparam when: float;\n")), 2, "reserved word"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nparam emit: float;\n")), 2, "word of the robot vocabulary"));
-    CHECK(HasError(Errors(CompileRobot("use robot;\nparam abs: float;\n")), 2, "the name of a function"));
+    CHECK(HasError(Errors(CompileRobot("use robot;\nparam abs: float;\n")), 2, "abs() is a function"));
 }
 
 TEST_CASE("Checker: a let holds no strings, which only consts do")
@@ -132,8 +139,8 @@ TEST_CASE("Checker: what nothing uses is a warning, and the file still compiles"
         CHECK(warning.severity == Severity::Warning);
         messages.push_back(warning.message);
     }
-    CHECK(messages == std::vector<std::string>{"param \"idle\" is never used", "enum \"Unused\" is never used",
-                                               "let \"x\" is never used"});
+    CHECK(messages ==
+          std::vector<std::string>{"unused param \"idle\"", "unused enum \"Unused\"", "unused let \"x\""});
 }
 
 TEST_CASE("Checker: a library holds only imports, enums and consts, and warns about nothing unused")
@@ -144,8 +151,8 @@ TEST_CASE("Checker: a library holds only imports, enums and consts, and warns ab
 
     const Diagnostics errors = Errors(CompileRobot(
         "use robot;\nsigiltype library;\nparam p: float;\nlet x = 1;\nmachine m { node a { } }\n"));
-    CHECK(HasError(errors, 3, "not params"));
-    CHECK(HasError(errors, 4, "not lets"));
-    CHECK(HasError(errors, 5, "not blocks"));
+    CHECK(HasError(errors, 3, "a library can't declare params"));
+    CHECK(HasError(errors, 4, "a library can't declare lets"));
+    CHECK(HasError(errors, 5, "a library can't hold blocks"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nsigiltype libary;\n")), 2, "did you mean \"library\""));
 }

@@ -46,21 +46,21 @@ TEST_CASE("Vocabulary: a clause goes only where the vocabulary puts it")
                    "\"cost\" can't go in a transition"));
     CHECK(HasError(ErrorsOf("speed 1.0;\n"), 2, "clauses go inside a block"));
     CHECK(HasError(ErrorsOf("machine m {\n    node a { emitt \"beep\"; }\n}\n"), 3,
-                   "unknown clause \"emitt\" — did you mean \"emit\"?"));
+                   "did you mean \"emit\"?"));
 }
 
 TEST_CASE("Vocabulary: a clause takes the values the vocabulary says")
 {
     CHECK(HasError(ErrorsOf("machine m {\n    node a { goto 1; }\n}\n"), 3, "the name of a state"));
-    CHECK(HasError(ErrorsOf("machine m {\n    node a { cost 1.5; }\n}\n"), 3, "expected an int, got a float"));
+    CHECK(HasError(ErrorsOf("machine m {\n    node a { cost 1.5; }\n}\n"), 3, "expected an int, found a float"));
     CHECK(HasError(ErrorsOf("machine m {\n    node a { cost 1, 2; }\n}\n"), 3, "takes 1 values, got 2"));
 }
 
 TEST_CASE("Vocabulary: a clause is written as often as the vocabulary allows")
 {
     CHECK(HasError(ErrorsOf("machine m {\n    node a {\n        cost 1;\n        cost 2;\n    }\n}\n"), 5,
-                   "\"cost\" can only be written once in a node"));
-    CHECK(HasError(ErrorsOf("dock d { }\n"), 2, "dock \"d\" needs a \"port\" clause"));
+                   "\"cost\" is written twice in a node"));
+    CHECK(HasError(ErrorsOf("dock d { }\n"), 2, "dock \"d\" has no \"port\" clause"));
     std::expected<Program, Diagnostics> program =
         CompileRobot("use robot;\nmachine m { node a { emit \"beep\"; emit \"boop\"; } }\n");
     CHECK_MESSAGE(program.has_value(), Dump(Errors(program)));
@@ -70,14 +70,15 @@ TEST_CASE("Vocabulary: a block kind goes only where the vocabulary puts it")
 {
     CHECK(HasError(ErrorsOf("node a { }\n"), 2, "a node can't go at the top level of the file"));
     CHECK(HasError(ErrorsOf("machine m {\n    dock d { port 1; }\n}\n"), 3, "a dock can't go in a machine"));
-    CHECK(HasError(ErrorsOf("machine m {\n    nod a { }\n}\n"), 3, "unknown block kind \"nod\" — did you mean \"node\"?"));
+    CHECK(HasError(ErrorsOf("machine m {\n    nod a { }\n}\n"), 3, "did you mean \"node\"?"));
 }
 
 TEST_CASE("Vocabulary: the use line names one this build has, and nothing else is checked until it does")
 {
     const Diagnostics errors = Errors(CompileRobot("use robbot;\nparam x: nonsense;\n"));
     REQUIRE(errors.size() == 1);
-    CHECK(HasError(errors, 1, "unknown vocabulary \"robbot\" — did you mean \"robot\"?"));
+    CHECK(HasError(errors, 1, "unknown vocabulary \"robbot\""));
+    CHECK(HasError(errors, 1, "did you mean \"robot\"?"));
 }
 
 TEST_CASE("Vocabulary: one whose words clash with the core or each other is refused")

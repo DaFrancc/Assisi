@@ -36,9 +36,10 @@ enum class SymbolKind : uint8_t
 /// @brief A name in the file's one namespace.
 struct Symbol
 {
-    SourceLocation where{};
+    /// Its name where it was declared, or the path of the import it came from.
+    Span span{};
     uint32_t index = 0; ///< Into the Program list its kind names.
-    int32_t import = -1; ///< Into Checker::imports when it came from one; -1 when declared here.
+    int32_t from = -1; ///< Into Checker::imports when it came from one; -1 when declared here.
     SymbolKind kind = SymbolKind::Param;
     bool used = false;
 };
@@ -46,7 +47,7 @@ struct Symbol
 struct ImportRecord
 {
     std::string path;
-    SourceLocation where;
+    Span span; ///< The path as written.
     bool used = false;
 };
 
@@ -67,7 +68,7 @@ struct Checker
     std::unordered_map<std::string, Symbol> symbols{};
     /// Consts and lets declared further down, so using one too early says so
     /// rather than calling it unknown.
-    std::unordered_map<std::string, SourceLocation> declaredLater{};
+    std::unordered_map<std::string, Span> declaredLater{};
     std::vector<ImportRecord> imports{};
     /// The core functions, then the vocabulary's; Program::functions in names.
     std::vector<FunctionSpec> functions{};
@@ -76,10 +77,13 @@ struct Checker
     std::unordered_set<std::string> refused{};
 };
 
-/// @brief Reports an error at @p where, with @p help on how to fix it when
-///        there's more to say than the message holds.
-void Fail(Checker &checker, SourceLocation where, std::string message, std::string help = {});
-void Warn(Checker &checker, SourceLocation where, std::string message);
+/// @brief Reports an error about @p span, labelled @p label under it. The
+///        result is the diagnostic as stored, to add help or related places
+///        to before anything else is reported.
+Diagnostic &Fail(Checker &checker, Span span, std::string message, std::string label = {});
+
+/// @brief @p diagnostic with @p span in the same file labelled @p label too.
+void Relate(Diagnostic &diagnostic, Span span, std::string label);
 
 /// @brief Whether @p name is a reserved word, which can't name anything,
 ///        reporting it if so: a core word, or one of the vocabulary's.
@@ -100,10 +104,17 @@ std::optional<Type> ResolveType(Checker &checker, const Syntax::Named &name);
 
 [[nodiscard]] Expr CheckExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode);
 
+/// @brief Why a value must have a type: a place to point at, and what to say there.
+struct Reason
+{
+    Span span;
+    std::string label;
+};
+
 /// @brief @p value as @p wanted: as it is, widened from int, or a string
-///        accepted by a vocabulary type. An Error-typed expression, reported,
-///        when it can't be.
-[[nodiscard]] Expr Coerce(Checker &checker, Expr value, Type wanted);
+///        accepted by a vocabulary type. An Error-typed expression, reported
+///        with @p because pointed at when there is one, when it can't be.
+[[nodiscard]] Expr Coerce(Checker &checker, Expr value, Type wanted, const std::optional<Reason> &because);
 
 /// @brief Whether @p expr reads a trigger or a when-only function, directly or
 ///        through lets, so it may only decide transitions.
@@ -116,7 +127,7 @@ void CollectTriggers(const Checker &checker, const Expr &expr, std::vector<uint3
 [[nodiscard]] std::expected<Constant, std::string> Evaluate(const Expr &expr, std::span<const std::string> functions);
 
 /// @brief Brings a library's own enums and consts into the namespace.
-void MergeLibrary(Checker &checker, const Program &library, const Syntax::Import &import);
+void MergeLibrary(Checker &checker, const Program &library, const Syntax::Import &statement);
 
 void CheckDeclarations(Checker &checker, const Syntax::File &file);
 void CheckBlocks(Checker &checker, const Syntax::File &file);

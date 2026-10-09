@@ -35,9 +35,13 @@ struct ImportContext
 std::expected<Program, Diagnostics> CompileFile(std::string_view source, std::string_view file,
                                                 ImportContext &context);
 
-Diagnostic Error(std::string_view file, SourceLocation where, std::string message)
+Diagnostic Error(std::string_view file, Span span, std::string message, std::string label)
 {
-    return Diagnostic{.message = std::move(message), .file = std::string{file}, .where = where};
+    return Diagnostic{.message = std::move(message),
+                      .label = std::move(label),
+                      .file = std::string{file},
+                      .where = span.where,
+                      .length = span.length};
 }
 
 const Vocabulary *FindVocabulary(std::span<const Vocabulary> vocabularies, std::string_view name)
@@ -57,50 +61,53 @@ std::string Chain(std::span<const std::string> files, std::string_view last)
     return chain + std::format("\"{}\"", last);
 }
 
-/// Compiles the library @p import names and brings it into @p checker.
-void ImportLibrary(Detail::Checker &checker, const Syntax::Import &import, ImportContext &context)
+/// Compiles the library @p statement names and brings it into @p checker.
+void ImportLibrary(Detail::Checker &checker, const Syntax::Import &statement, ImportContext &context)
 {
-    if (std::ranges::find(context.chain, import.path) != context.chain.end())
+    const Span path = statement.pathSpan;
+    if (std::ranges::find(context.chain, statement.path) != context.chain.end())
     {
-        Detail::Fail(checker, import.where, "these files import each other",
-                     std::format("{}; move what they share into a library neither imports",
-                                 Chain(context.chain, import.path)));
+        Diagnostic &error = Detail::Fail(checker, path, "these files import each other", "imported here");
+        error.help = std::format("{}; move what they share into a library neither imports",
+                                 Chain(context.chain, statement.path));
         return;
     }
     if (context.chain.size() >= kMaxImportDepth)
     {
-        Detail::Fail(checker, import.where, std::format("imports chain more than {} files deep here", kMaxImportDepth));
+        Detail::Fail(checker, path, std::format("imports chain more than {} files deep", kMaxImportDepth),
+                     "too deep here");
         return;
     }
-    const std::expected<std::string, std::string> text = context.read(import.path);
+    const std::expected<std::string, std::string> text = context.read(statement.path);
     if (!text)
     {
-        Detail::Fail(checker, import.where, std::format("can't read \"{}\": {}", import.path, text.error()));
+        Detail::Fail(checker, path, std::format("can't read \"{}\"", statement.path), text.error());
         return;
     }
-    context.chain.push_back(import.path);
-    std::expected<Program, Diagnostics> library = CompileFile(*text, import.path, context);
+    context.chain.push_back(statement.path);
+    std::expected<Program, Diagnostics> library = CompileFile(*text, statement.path, context);
     context.chain.pop_back();
     if (!library)
     {
         checker.diagnostics.insert(checker.diagnostics.end(), library.error().begin(), library.error().end());
-        Detail::Fail(checker, import.where, std::format("\"{}\" has errors", import.path));
+        Detail::Fail(checker, path, std::format("\"{}\" has errors", statement.path), "imported here");
         return;
     }
     if (library->vocabulary != checker.vocabulary.name)
     {
-        Detail::Fail(checker, import.where,
-                     std::format("\"{}\" is written for the {} vocabulary, not {}", import.path, library->vocabulary,
+        Detail::Fail(checker, path, std::format("\"{}\" is for another vocabulary", statement.path),
+                     std::format("written for the {} vocabulary, not {}", library->vocabulary,
                                  checker.vocabulary.name));
         return;
     }
     if (!library->library)
     {
-        Detail::Fail(checker, import.where, std::format("\"{}\" isn't a library", import.path),
-                     "only files marked \"sigiltype library;\" can be imported, and they hold only enums and consts");
+        Diagnostic &error =
+            Detail::Fail(checker, path, std::format("\"{}\" isn't a library", statement.path), "can't be imported");
+        error.help = "only files marked \"sigiltype library;\" can be imported, and they hold only enums and consts";
         return;
     }
-    Detail::MergeLibrary(checker, *library, import);
+    Detail::MergeLibrary(checker, *library, statement);
 }
 
 /// The core functions and the vocabulary's, as names nothing else may take.
@@ -112,9 +119,9 @@ void DeclareFunctions(Detail::Checker &checker)
     for (std::size_t i = 0; i < checker.functions.size(); ++i)
     {
         checker.program.functions.push_back(checker.functions[i].name);
-        checker.symbols.emplace(checker.functions[i].name, Detail::Symbol{.where = {},
+        checker.symbols.emplace(checker.functions[i].name, Detail::Symbol{.span = {},
                                                                           .index = static_cast<uint32_t>(i),
-                                                                          .import = -1,
+                                                                          .from = -1,
                                                                           .kind = Detail::SymbolKind::Function,
                                                                           .used = true});
     }
@@ -128,10 +135,8 @@ void ReadSigilType(Detail::Checker &checker, const Syntax::File &file)
     }
     if (file.sigilType->name != kLibrary)
     {
-        const std::array<std::string_view, 1> kinds{kLibrary};
-        Detail::Fail(checker, file.sigilType->where,
-                     std::format("unknown sigiltype \"{}\"{}", file.sigilType->name,
-                                 DidYouMean(kinds, file.sigilType->name)));
+        Detail::Fail(checker, file.sigilType->Extent(), std::format("unknown sigiltype \"{}\"", file.sigilType->name),
+                     std::format("did you mean \"{}\"?", kLibrary));
         return;
     }
     checker.program.library = true;
@@ -147,15 +152,17 @@ std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_
         {
             names.push_back(candidate.name);
         }
-        return std::unexpected(Diagnostics{Error(path, file.use.vocabulary.where,
-                                                 std::format("unknown vocabulary \"{}\"{}", file.use.vocabulary.name,
-                                                             DidYouMean(names, file.use.vocabulary.name)))});
+        const std::optional<std::string_view> closest = ClosestName(names, file.use.vocabulary.name);
+        return std::unexpected(Diagnostics{
+            Error(path, file.use.vocabulary.Extent(), std::format("unknown vocabulary \"{}\"", file.use.vocabulary.name),
+                  closest.has_value() ? std::format("did you mean \"{}\"?", *closest)
+                                      : std::string{"this build has no vocabulary by that name"})});
     }
     if (const std::expected<void, std::string> usable = CheckVocabulary(*vocabulary); !usable)
     {
-        return std::unexpected(Diagnostics{Error(
-            path, file.use.vocabulary.where,
-            std::format("the {} vocabulary can't be used: {}", vocabulary->name, usable.error()))});
+        return std::unexpected(
+            Diagnostics{Error(path, file.use.vocabulary.Extent(),
+                              std::format("the {} vocabulary can't be used", vocabulary->name), usable.error())});
     }
 
     Detail::Checker checker{.vocabulary = *vocabulary, .file = std::string{path}};
@@ -164,9 +171,9 @@ std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_
     DeclareFunctions(checker);
     for (const Syntax::Declaration &declaration : file.declarations)
     {
-        if (const Syntax::Import *import = std::get_if<Syntax::Import>(&declaration))
+        if (const Syntax::Import *statement = std::get_if<Syntax::Import>(&declaration))
         {
-            ImportLibrary(checker, *import, context);
+            ImportLibrary(checker, *statement, context);
         }
     }
     Detail::CheckDeclarations(checker, file);
@@ -214,9 +221,20 @@ void AttachExcerpts(Diagnostics &diagnostics, std::string_view source, std::stri
     }
     for (Diagnostic &diagnostic : diagnostics)
     {
-        if (diagnostic.file == file && diagnostic.excerpt.empty() && diagnostic.where.line - 1 < lines.size())
+        if (diagnostic.file != file || !diagnostic.excerpt.empty())
+        {
+            continue;
+        }
+        if (diagnostic.where.line - 1 < lines.size())
         {
             diagnostic.excerpt = std::string{lines[diagnostic.where.line - 1]};
+        }
+        for (Related &related : diagnostic.related)
+        {
+            if (related.span.where.line - 1 < lines.size())
+            {
+                related.excerpt = std::string{lines[related.span.where.line - 1]};
+            }
         }
     }
 }
