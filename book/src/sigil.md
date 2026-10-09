@@ -40,9 +40,9 @@ layer base {
     state jump_start { play jump_clip; then fall; }
     state fall { play fall_clip; }
 
-    walk -> jump_start when jump && grounded fade 0.05;
-    any - jump_start -> fall when !grounded fade 0.15;
-    fall -> walk when grounded fade 0.1;
+    walk -> jump_start when jump && grounded { fade 0.05; }
+    any - jump_start -> fall when !grounded { fade 0.15; }
+    fall -> walk when grounded { fade 0.1; }
 }
 ```
 
@@ -210,12 +210,21 @@ A transition says: from these states, go to that state when this condition is
 true.
 
 ```
-walk -> jump_start when jump && grounded fade 0.05;
+walk -> jump_start when jump && grounded { fade 0.05; }
 ```
 
 - **`when` and a condition are always required.** The condition must be a
   `bool`.
-- **Clauses can follow the condition,** such as `fade 0.05`, before the `;`.
+- **Clauses go in braces after the condition,** each ending with `;`, just like
+  clauses in a block. A transition with clauses ends at its `}`; one without
+  ends with `;`:
+  ```
+  fall -> walk when grounded;
+  any - jump_start -> fall when !grounded {
+      fade 0.15;
+      interrupt;
+  }
+  ```
 - **The first true transition wins.** Transitions are checked in the order
   they're written, so put the one that matters most first.
 
@@ -234,7 +243,7 @@ walk -> jump_start when jump && grounded fade 0.05;
 transition only restarts a state when you write that state on both sides:
 
 ```
-flinch -> flinch when hit fade 0.05;   // hit again during a flinch: start it over
+flinch -> flinch when hit { fade 0.05; }   // hit again during a flinch: start it over
 ```
 
 ## Triggers
