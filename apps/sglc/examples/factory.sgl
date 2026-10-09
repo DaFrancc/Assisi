@@ -1,0 +1,76 @@
+// A factory floor: a loader that fetches parts and charges itself, a welder
+// whose weld runs through stages of its own, and a dock. It uses every part of
+// the language the robot vocabulary has, and compiles without a warning.
+use robot;
+import "shared/plant.sgl";
+
+param shift: Shift;
+param load: float;
+param parts: int;
+param heat: float;
+param jammed: bool;
+param start: trigger;
+param stop: trigger;
+param chime: signal;
+
+/* Derived values, worked out once a frame. */
+const half_load = capacity / 2.0;
+let busy = shift != Shift.off && parts > 0;
+let heavy = load > half_load;
+let cool = clamp(heat, 0.0, 100.0) < max_heat * 0.8;
+let low = battery() < reserve;
+let effort = min(parts * 2, max_cost) + abs(parts - 10) % 3;
+let go = start && busy && !low;
+let pace = heavy || load / capacity > 0.75;
+
+machine loader {
+    speed 2.0 * 0.75;
+
+    node idle {
+        emit "beep";
+        enabled !low;
+    }
+    node fetch {
+        emit "whirr";
+        emit chime;
+        cost effort;
+        enabled busy && cool;
+    }
+    node carry {
+        cost max_cost - 1;
+        enabled pace;
+        goto idle;
+    }
+    node charge { emit "boop"; }
+
+    idle -> fetch when go { after 0.25; };
+    fetch -> carry when heavy || parts >= 4;
+    carry -> idle when !busy || stop;
+    any -> charge when low;
+    charge -> idle when battery() >= 0.9 { after 1.0; };
+    fetch -> fetch when tick() % 5 == 0 && !heavy;
+}
+
+machine welder {
+    node ready { }
+    node weld {
+        node heat_up { cost 1; }
+        node seam {
+            cost 2;
+            enabled cool;
+        }
+        node cool_down { }
+
+        heat_up -> seam when heat > 60.0;
+        seam -> cool_down when !cool || jammed;
+        cool_down -> heat_up when heat < 40.0 && !jammed;
+    }
+    node fault { emit "boop"; }
+
+    ready -> weld when shift == Shift.day && go;
+    weld -> ready when stop;
+    ready + weld -> fault when jammed && heat >= max_heat;
+    fault -> ready when !jammed && cool { after 2.0; };
+}
+
+dock bay { port 3 * 2 + 1; }

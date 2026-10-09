@@ -1,0 +1,58 @@
+// The factory floor with a mistake of every kind in it, to see what sglc says.
+use robot;
+import "shared/plant.sgl";
+import "shared/missing.sgl";
+
+param shift: Shift;
+param load: float;
+param parts: int;
+param heat: float;
+param jammed: bool;
+param start: trigger;
+param stop: trigger;
+param parts: float;
+param when: int;
+param mood: feelings;
+
+const half_load = load / 2.0;
+let label = "loader";
+let busy = shift != Shift.of && parts > 0;
+let heavy = load > later;
+let later = 1.0;
+let cool = heat < max_heet * 0.8;
+let low = batery() < reserve;
+let ratio = parts / (3 - 3);
+let mixed = parts && heat;
+let deep = clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, clamp(parts, 0, parts))))))))))))))))))))))))))))))));
+
+speed 2.0;
+
+machine loader {
+    speed 1.5;
+
+    node idle {
+        emit "bepe";
+        enabled start;
+        after 0.5;
+    }
+    node fetch {
+        cost 1.5;
+        cost 2;
+        enabled busy, cool;
+    }
+    nod carry { }
+    node charge { goto nowhere; }
+    node lost { }
+
+    idle -> fetch when start && busy;
+    fetch -> idle when heat;
+    idle -> chrage when low;
+    any + idle -> idle when stop;
+    any - charge -> charge when jammed;
+    fetch -> charge when jammed;
+    fetch -> idle when tick() > 3 { cost 1; };
+}
+
+node stray { }
+
+dock bay { }

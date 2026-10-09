@@ -25,4 +25,10 @@ if (ASSISI_BUILD_TESTS)
   add_test(NAME SglcRefusesBrokenExample
     COMMAND Assisi-Sglc --root "${_sglc_examples}" --color=never "${_sglc_examples}/broken.sgl")
   set_tests_properties(SglcRefusesBrokenExample PROPERTIES PASS_REGULAR_EXPRESSION "broken.sgl\" due to 6 errors")
+  add_test(NAME SglcCompilesFactory
+    COMMAND Assisi-Sglc --root "${_sglc_examples}" --color=never "${_sglc_examples}/factory.sgl")
+  add_test(NAME SglcRefusesBrokenFactory
+    COMMAND Assisi-Sglc --root "${_sglc_examples}" --color=never "${_sglc_examples}/factory_broken.sgl")
+  set_tests_properties(SglcRefusesBrokenFactory PROPERTIES
+    PASS_REGULAR_EXPRESSION "factory_broken.sgl\" due to 29 errors")
 endif()

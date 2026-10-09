@@ -93,6 +93,14 @@ TEST_CASE("Vocabulary: one whose words clash with the core or each other is refu
     twice.clauses.push_back(ClauseSpec{.word = "node", .arguments = {}, .blocks = {"node"}});
     CHECK(CheckVocabulary(twice).error().find("declared twice") != std::string::npos);
 
+    // The engine writes a vocabulary function's value, so nothing can be passed to it.
+    Vocabulary arguments = Robot();
+    arguments.functions.push_back(FunctionSpec{.name = "charge", .parameters = {"int"}, .result = "float"});
+    CHECK(CheckVocabulary(arguments).error().find("can take none") != std::string::npos);
+    Vocabulary signalResult = Robot();
+    signalResult.functions.push_back(FunctionSpec{.name = "heard", .parameters = {}, .result = "signal"});
+    CHECK(CheckVocabulary(signalResult).error().find("gives a float, an int or a bool") != std::string::npos);
+
     Vocabulary unknownParent = Robot();
     unknownParent.blocks.push_back(BlockKind{.name = "room", .parents = {"house"}});
     CHECK(CheckVocabulary(unknownParent).error().find("\"house\", which isn't a block kind") != std::string::npos);

@@ -1,0 +1,10 @@
+// Numbers every machine on the factory floor shares.
+use robot;
+sigiltype library;
+
+enum Shift { off, day, night }
+
+const capacity = 40.0;
+const max_heat = 120.0;
+const reserve = 0.15;
+const max_cost = 6;

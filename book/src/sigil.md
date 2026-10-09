@@ -88,15 +88,20 @@ line says `could not compile` and how many errors there were. In a terminal the
 output is in color; add `--color=never` to turn that off, or `--color=always` to
 keep it when piping to a file.
 
+For something bigger, `factory.sgl` is a whole factory floor that compiles
+cleanly, and `factory_broken.sgl` is the same floor with a mistake of nearly
+every kind the cook catches, one per line.
+
 `sglc` exits with 0 when every file compiles, 1 when any has errors, and 2 when
 it couldn't read a file or the command was wrong, so a script can use it as a
 check.
 
 The `robot` vocabulary has machines (`machine`) holding nodes (`node`), which can
 hold nodes of their own. A node can `emit "beep";` (or `"boop"`, `"whirr"`),
-`goto` another node, and have a `cost` in whole numbers; a machine has a `speed`;
-a transition can wait `after` some seconds. Its functions are `battery()` and
-`tick()`, and `tick()` counts as a trigger.
+`goto` another node, have a `cost` in whole numbers, and be `enabled` or not; a
+machine has a `speed`; a transition can wait `after` some seconds. A `dock`
+stands on its own at the top of a file and must have a `port` number. The
+vocabulary's functions are `battery()` and `tick()`, and `tick()` counts as a trigger.
 
 ## How a file is laid out
 
@@ -168,9 +173,9 @@ let moving = speed > walk_speed;
 let fast_turn = abs(turn) > 0.5;
 ```
 
-A `let` never stores anything: using `moving` is the same as writing
-`speed > walk_speed` in its place. Nothing in Sigil can change a value after it
-is declared.
+The game works out every `let` once a frame, top to bottom, before it checks
+any transition, and every place that uses `moving` reads that one value. Nothing
+in Sigil can change a value after it is declared.
 
 You can write the type of a const or let to make it clearer, and the cook checks
 it matches: `let moving: bool = speed > walk_speed;`.
@@ -211,6 +216,20 @@ Use parentheses to group: `(a || b) && c`.
 Dividing one `int` by another gives a whole number: `7 / 2` is `3`. Write
 `7.0 / 2` for `3.5`.
 
+Every operation gives an answer, whatever the game's values are, so a
+condition never crashes the game:
+
+- Dividing by zero gives `0`, and so does `%` by zero. Writing a zero divisor
+  into the file, as in `speed / 0`, is refused, since it's always a mistake.
+- An `int` that goes past the largest whole number wraps around to the most
+  negative one, and the other way round.
+- A `float` that isn't a number (NaN) is equal to nothing, not even itself, and
+  is neither less nor more than anything.
+
+`&&` stops as soon as its left side is false, and `||` as soon as its left
+side is true; the right side isn't worked out. Anything the cook can work out
+itself, like `2.0 * 3.0`, it works out once, and the game uses the answer.
+
 **Functions** are written `name(...)`:
 
 | Function | Gives |
@@ -220,8 +239,10 @@ Dividing one `int` by another gives a whole number: `7 / 2` is `3`. Write
 | `clamp(x, low, high)` | `x` kept between `low` and `high` |
 
 The system a file is for can add functions of its own, such as animation's
-`progress()`, how far the current state's clip has played from 0 to 1. Every
-function only reads; none changes anything.
+`progress()`, how far the current state's clip has played from 0 to 1. These
+take no values: the game works out each one every frame, the way it fills in a
+param, and the file only reads it. Every function only reads; none changes
+anything.
 
 ## Blocks and states
 
@@ -377,7 +398,10 @@ Among other things, it refuses:
 - a const or let that uses one declared below it;
 - a state that no transition can ever reach;
 - removing a state from a set it isn't in, as in `walk - run -> fall`;
-- a trigger used outside a `when`.
+- a trigger used outside a `when`;
+- dividing by a zero written in the file;
+- an expression nested too deeply for the game to work out; move part of it
+  into a `let`.
 
 It also warns, without refusing the file, about a param, const, let, enum or
 import that nothing uses. Libraries don't get these warnings, and neither does a

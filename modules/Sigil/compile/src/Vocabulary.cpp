@@ -66,20 +66,22 @@ std::expected<void, std::string> CheckClause(const Vocabulary &vocabulary, const
     return {};
 }
 
-std::expected<void, std::string> CheckFunction(const Vocabulary &vocabulary, const FunctionSpec &function)
+/// A vocabulary function's value is written into the block by the engine, so
+/// it can't depend on values the file passes it.
+std::expected<void, std::string> CheckFunction(const FunctionSpec &function)
 {
-    for (const std::string &parameter : function.parameters)
+    if (!function.parameters.empty())
     {
-        if (!KnowsType(vocabulary, parameter))
-        {
-            return std::unexpected(std::format("function \"{}\" takes \"{}\", which isn't a type", function.name,
-                                               parameter));
-        }
+        return std::unexpected(std::format("function \"{}\" takes values, but the engine supplies a vocabulary "
+                                           "function's value, so it can take none",
+                                           function.name));
     }
-    if (!KnowsType(vocabulary, function.result))
+    if (function.result != TypeNames::kFloat && function.result != TypeNames::kInt &&
+        function.result != TypeNames::kBool)
     {
-        return std::unexpected(std::format("function \"{}\" gives \"{}\", which isn't a type", function.name,
-                                           function.result));
+        return std::unexpected(std::format("function \"{}\" gives \"{}\", but a vocabulary function gives a float, "
+                                           "an int or a bool",
+                                           function.name, function.result));
     }
     return {};
 }
@@ -149,7 +151,7 @@ std::expected<void, std::string> CheckVocabulary(const Vocabulary &vocabulary)
         {
             return claimed;
         }
-        if (std::expected<void, std::string> checked = CheckFunction(vocabulary, function); !checked)
+        if (std::expected<void, std::string> checked = CheckFunction(function); !checked)
         {
             return checked;
         }
