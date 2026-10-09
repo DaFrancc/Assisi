@@ -24,6 +24,7 @@
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/InternedString.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Geometry/AnimationBlend.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
@@ -120,8 +121,88 @@ struct SkinnedMesh
     AFIELD(transient) bool poseChanged = false;
 };
 
+/// @brief What plays one animation, the base's or a layer's: the clips it
+///        resolved to, the blend it plays and the one fading out, and the
+///        poses a fade runs between. Never saved; rebuilt from the settings.
+struct AnimationTrack
+{
+    Geometry::ClipBlend current;  ///< What the animation plays.
+    Geometry::ClipBlend outgoing; ///< What is fading out; no sources once frozen.
+    /// What the system resolved the animation to this frame: one clip, or one per point.
+    std::vector<std::shared_ptr<const Geometry::AnimationClip>> resolved;
+    std::vector<glm::vec2> positions;               ///< Each point's position; empty for a clip.
+    std::vector<Geometry::JointTransform> fromPose; ///< The side a fade leaves.
+    std::vector<Geometry::JointTransform> toPose;   ///< The side a fade reaches.
+    std::shared_ptr<const Geometry::BlendSpace> space; ///< The space `current` plays, or null.
+    Core::AssetId boundAnimation; ///< The animation `current` belongs to.
+    Geometry::CrossFade crossFade;
+    uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
+    bool fading = false;
+    bool warned = false; ///< Whether this binding's missing joints were reported.
+};
+
+/// @brief How a layer combines with the pose below it, inside its mask.
+AENUM()
+enum class LayerMode : uint8_t
+{
+    Override, ///< Replaces the joints its animation moves, by its weight.
+    Additive, ///< Adds its animation's change since its first frame, by its weight.
+    Count_,
+};
+
+/// @brief How long a layer's weight takes to reach a new value.
+AENUM()
+enum class WeightSlide : uint8_t
+{
+    Duration, ///< Every change takes `weightFade` seconds, however big.
+    Speed,    ///< The weight moves 1 every `weightFade` seconds, so a small change is quick.
+    Count_,
+};
+
+/// @brief An animation played over the pose below it, on the joints its mask
+///        takes: `maskRoot` and every joint under it, less each joint in
+///        `exclusions` and every joint under that. An empty root takes the
+///        whole skeleton.
+ASTRUCT()
+struct AnimationLayer
+{
+    AFIELD() std::vector<Core::InternedString> exclusions;
+    AFIELD() Core::AssetId animation; ///< A clip or a blend space, as the player's own.
+    AFIELD() glm::vec2 parameter{0.f, 0.f};
+    AFIELD() Core::InternedString maskRoot;
+    AFIELD() float speed = 1.f;
+    AFIELD(min = 0) float fade = 0.15f; ///< Seconds a change of `animation` fades over; 0 cuts.
+    AFIELD(min = 0, max = 1) float weight = 1.f;
+    AFIELD(min = 0) float weightFade = 0.f; ///< Seconds `weightSlide` measures a change of `weight` in; 0 snaps.
+    AFIELD() LayerMode mode = LayerMode::Override;
+    AFIELD() WeightSlide weightSlide = WeightSlide::Duration;
+    AFIELD() bool loop = true;
+};
+
+/// @brief What a layer keeps between frames. Never saved.
+struct LayerState
+{
+    AnimationTrack track;
+    std::vector<Geometry::JointTransform> pose;          ///< The layer's animation this frame.
+    std::vector<Geometry::JointTransform> reference;     ///< An additive layer's first frame.
+    std::vector<Geometry::JointTransform> fromReference; ///< The first frame of what is fading out.
+    std::vector<Geometry::JointTransform> mixedReference;
+    std::vector<uint8_t> mask; ///< Per joint, whether the mask takes it.
+    std::vector<Core::InternedString> maskExclusions; ///< The exclusions `mask` was built from.
+    Geometry::CrossFade weightChange;
+    Core::InternedString maskRoot; ///< The root `mask` was built from.
+    uint32_t maskMeshId = kUnboundMesh; ///< The mesh `mask` was built for.
+    float weight = 0.f;     ///< Where the weight is now.
+    float fromWeight = 0.f; ///< Where it was when it began moving to `toWeight`.
+    float toWeight = 0.f;
+    bool started = false;          ///< Whether the weight has been set from the layer yet.
+    bool rootMissing = false;      ///< The mask's root names no joint of the mesh.
+    bool exclusionMissing = false; ///< An exclusion names no joint of the mesh.
+    bool maskWarned = false;       ///< Whether the missing names were reported.
+};
+
 /// @brief Plays an animation on its entity's SkinnedMesh: a clip, or a blend
-///        space that mixes clips by `parameter`.
+///        space that mixes clips by `parameter`, with `layers` on top.
 ///
 /// `animation` is a clip file Extract animations wrote (or any `.glb` holding
 /// one animation), or a `.ablnd` blend space. Each Update the player moves on
@@ -135,34 +216,33 @@ struct SkinnedMesh
 /// during a fade starts from the pose that fade had reached, so nothing jumps.
 /// A fade takes its seconds as they pass, whatever `speed` is.
 ///
+/// Each layer then plays its own animation, with its own fade, and combines it
+/// with the pose so far inside its mask, in order: an override layer replaces
+/// what its animation moves, an additive one adds its change. A joint a layer's
+/// animation does not move keeps what the layers below gave it.
+///
 /// The pose goes back to rest only when the animation or the mesh changes, so a
 /// joint the animation does not move keeps whatever code writes to it. One it
-/// does move is written every Update, so code that adjusts it on top runs after,
-/// in PostUpdate.
+/// moves, or a layer's mask takes, is written every Update, so code that
+/// adjusts it on top runs after, in PostUpdate.
 ///
-/// Replicable: a remote copy plays the same animation at the same speed and
-/// parameter. Its timeline is its own, so two machines can be a moment apart.
+/// Replicable: a remote copy plays the same animations at the same speeds and
+/// parameters. Its timelines are its own, so two machines can be a moment apart.
 ACOMP(replicable, requires = {SkinnedMesh})
 struct AnimationPlayer
 {
-    AFIELD(transient) Geometry::ClipBlend current;  ///< What `animation` plays.
-    AFIELD(transient) Geometry::ClipBlend outgoing; ///< What is fading out; no sources once frozen.
-    /// What the system resolved `animation` to this frame: one clip, or one per point.
-    AFIELD(transient) std::vector<std::shared_ptr<const Geometry::AnimationClip>> resolved;
-    AFIELD(transient) std::vector<glm::vec2> positions; ///< Each point's position; empty for a clip.
-    AFIELD(transient) std::vector<Geometry::JointTransform> fromPose; ///< The side a fade leaves.
-    AFIELD(transient) std::vector<Geometry::JointTransform> toPose;   ///< The side a fade reaches.
-    AFIELD(transient) std::shared_ptr<const Geometry::BlendSpace> space; ///< The space `current` plays, or null.
+    AFIELD(transient) AnimationTrack track; ///< What `animation` plays.
+    AFIELD(transient) std::vector<LayerState> layerStates; ///< One per layer, in order.
+    /// The pose as the base left it last frame, before the layers wrote over
+    /// it: what a joint a layer took goes back to before the base plays again,
+    /// so no layer builds on what it wrote itself.
+    AFIELD(transient) std::vector<Geometry::JointTransform> underLayers;
+    AFIELD() std::vector<AnimationLayer> layers;
     AFIELD() Core::AssetId animation;
-    AFIELD(transient) Core::AssetId boundAnimation; ///< The `animation` that `current` belongs to.
-    AFIELD() glm::vec2 parameter{0.f, 0.f};         ///< Where a blend space plays; a clip ignores it.
-    AFIELD(transient) Geometry::CrossFade crossFade;
-    AFIELD() float speed = 1.f;                     ///< 1 plays at the speed it was authored; negative plays backwards.
-    AFIELD(min = 0) float fade = 0.15f;             ///< Seconds a change of `animation` fades over; 0 cuts.
-    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
+    AFIELD() glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
+    AFIELD() float speed = 1.f;             ///< 1 plays at the speed it was authored; negative plays backwards.
+    AFIELD(min = 0) float fade = 0.15f;     ///< Seconds a change of `animation` fades over; 0 cuts.
     AFIELD() bool loop = true;
-    AFIELD(transient) bool fading = false;
-    AFIELD(transient) bool warned = false; ///< Whether this binding's missing joints were reported.
 };
 
 /// @brief Projection and activation parameters for a camera entity.

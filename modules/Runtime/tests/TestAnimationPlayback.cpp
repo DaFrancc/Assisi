@@ -149,7 +149,7 @@ struct Rig
         return AdvanceAnimationPlayer(player, animation, skeleton, dt, skinned);
     }
     float Knee() const { return skinned.pose[1].Translation.x; }
-    float Time() const { return player.current.Phase * kDuration; }
+    float Time() const { return player.track.current.Phase * kDuration; }
 };
 
 } // namespace
@@ -220,9 +220,9 @@ TEST_CASE("Animation playback: a joint the mesh lacks is skipped and the rest st
 {
     Rig rig;
     CHECK(rig.Advance(kFrame));
-    REQUIRE(rig.player.current.Sources.size() == 1);
-    REQUIRE(rig.player.current.Sources[0].Binding.JointOfTrack.size() == 2);
-    CHECK(rig.player.current.Sources[0].Binding.JointOfTrack[1] == Geometry::kNoJoint);
+    REQUIRE(rig.player.track.current.Sources.size() == 1);
+    REQUIRE(rig.player.track.current.Sources[0].Binding.JointOfTrack.size() == 2);
+    CHECK(rig.player.track.current.Sources[0].Binding.JointOfTrack[1] == Geometry::kNoJoint);
     CHECK(rig.Knee() == doctest::Approx(kFrame));
 }
 
@@ -275,8 +275,8 @@ TEST_CASE("Animation playback: a fade mixes the outgoing clip, still playing, in
     CHECK(rig.Knee() == doctest::Approx(0.5f * 1.5f + 0.5f * 10.f));
     (void)rig.Advance(2.f * kFrame);
     CHECK(rig.Knee() == doctest::Approx(10.f));
-    CHECK_FALSE(rig.player.fading);
-    CHECK(rig.player.outgoing.Sources.empty());
+    CHECK_FALSE(rig.player.track.fading);
+    CHECK(rig.player.track.outgoing.Sources.empty());
 }
 
 TEST_CASE("Animation playback: a fade interrupted by another starts from the pose it had reached")
@@ -320,11 +320,11 @@ TEST_CASE("Animation playback: another mesh during a fade ends it and starts fro
     rig.player.fade = 1.f;
     rig.Play(KneeHeld(10.f, 1.f), 2);
     (void)rig.Advance(kFrame);
-    REQUIRE(rig.player.fading);
+    REQUIRE(rig.player.track.fading);
 
     (void)Runtime::BindPose(rig.skinned, rig.skeleton, kOtherMesh);
     CHECK(rig.Advance(kFrame));
-    CHECK_FALSE(rig.player.fading);
+    CHECK_FALSE(rig.player.track.fading);
     CHECK(rig.Knee() == doctest::Approx(10.f));
 }
 
@@ -335,7 +335,7 @@ TEST_CASE("Animation playback: with no fade a new animation cuts straight to its
     rig.Play(KneeHeld(10.f, 1.f), 2);
     (void)rig.Advance(kFrame);
     CHECK(rig.Knee() == doctest::Approx(10.f));
-    CHECK_FALSE(rig.player.fading);
+    CHECK_FALSE(rig.player.track.fading);
 }
 
 TEST_CASE("Animation playback: clearing the animation puts the pose back to rest")
@@ -367,7 +367,7 @@ TEST_CASE("Animation playback: clearing the animation with a fade eases back to 
     CHECK(rig.Knee() == doctest::Approx(5.f));
     (void)rig.Advance(2.f * kFrame);
     CHECK(rig.Knee() == doctest::Approx(0.f));
-    CHECK_FALSE(rig.player.fading);
+    CHECK_FALSE(rig.player.track.fading);
 }
 
 TEST_CASE("Animation playback: an animation set after none fades in from the pose as it is")
