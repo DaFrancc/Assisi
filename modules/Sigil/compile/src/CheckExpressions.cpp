@@ -147,6 +147,38 @@ std::string UnknownLabel(std::span<const std::string_view> names, std::string_vi
     return "not declared in this file";
 }
 
+std::string_view TrimSpace(std::string_view text)
+{
+    const std::size_t first = text.find_first_not_of(" \t");
+    const std::size_t last = text.find_last_not_of(" \t");
+    return first == std::string_view::npos ? std::string_view{} : text.substr(first, last - first + 1);
+}
+
+/// Moves the declaration on @p declarationLine to just above @p useLine, when
+/// it's a whole line of its own; nothing when it shares its line.
+std::optional<Suggestion> MoveAbove(const Checker &checker, uint32_t declarationLine, uint32_t useLine)
+{
+    const std::string_view declaration = TrimSpace(LineOf(checker, declarationLine));
+    const bool ownLine = (declaration.starts_with("let ") || declaration.starts_with("const ")) &&
+                         declaration.ends_with(';') && std::ranges::count(declaration, ';') == 1;
+    if (!ownLine || declarationLine == useLine)
+    {
+        return std::nullopt;
+    }
+    const std::string_view use = LineOf(checker, useLine);
+    const std::string_view indent = use.substr(0, use.find_first_not_of(" \t"));
+    return Suggestion{
+        .message = "move the declaration above where it's used",
+        .edits = {Edit{.text = std::string{indent} + std::string{declaration},
+                       .line = std::string{use},
+                       .span = Span{.where = SourceLocation{.line = useLine, .column = 1}, .length = 0},
+                       .kind = EditKind::InsertBefore},
+                  Edit{.text = {},
+                       .line = std::string{LineOf(checker, declarationLine)},
+                       .span = Span{.where = SourceLocation{.line = declarationLine, .column = 1}, .length = 0},
+                       .kind = EditKind::Delete}}};
+}
+
 void ReportUnknown(Checker &checker, const Syntax::Expr &syntax)
 {
     if (checker.refused.contains(syntax.text))
@@ -159,7 +191,15 @@ void ReportUnknown(Checker &checker, const Syntax::Expr &syntax)
         Diagnostic &error =
             Fail(checker, syntax.anchor, std::format("\"{}\" is used before it is declared", syntax.text), "used here");
         Relate(error, later->second, "declared here, further down");
-        error.help = "move the declaration above where it's used";
+        std::optional<Suggestion> move = MoveAbove(checker, later->second.where.line, syntax.anchor.where.line);
+        if (move.has_value())
+        {
+            error.suggestions.push_back(std::move(*move));
+        }
+        else
+        {
+            error.help = "move the declaration above where it's used";
+        }
         return;
     }
     const std::vector<std::string_view> names = SymbolNames(checker);
@@ -183,7 +223,11 @@ Expr CheckName(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
         Diagnostic &error = Fail(checker, syntax.anchor, std::format("a const can't use \"{}\"", syntax.text),
                                  std::format("a {}, which changes while the game runs", kind));
         Relate(error, symbol.span, std::format("declared as a {} here", kind));
-        error.help = "a const is worked out once, when the file cooks; to use this, make it a let";
+        error.help = "a const is worked out once, when the file cooks";
+        if (checker.declaring != nullptr)
+        {
+            error.suggestions.push_back(SwapKeyword(checker, *checker.declaring, "let"));
+        }
         return Failed(syntax.extent);
     }
     Expr expr;

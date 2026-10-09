@@ -92,7 +92,7 @@ TEST_CASE("Graph: a source set is refused when it doesn't make sense")
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any + b -> b when p;\n}\n"))), 7,
                    "this transition goes to \"b\", so it can't also leave from \"b\""));
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any + b -> b when p;\n}\n"))), 7,
-                   "write \"b -> b\" as a transition of its own"));
+                   "restart it in a transition of its own"));
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    a + b -> b when p;\n}\n"))), 7, "restart"));
     CHECK(HasError(Errors(CompileRobot(WithHeader(states + "    any - c -> b when p;\n}\n"))), 7,
                    "unknown state \"c\""));

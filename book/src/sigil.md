@@ -355,8 +355,15 @@ error: this transition goes to "flinch", so it can't also leave from "flinch"
    |     |
    |     these include "flinch"
    |
-   = help: to restart "flinch" while it's playing, write "flinch -> flinch" as a transition of its own
+help: leave "flinch" out of the set, and restart it in a transition of its own
+   |
+16 ~     any -> flinch when hit;
+   +     flinch -> flinch when hit;
 ```
+
+When the fix is a change to the file the cook is sure of, it shows the lines as
+they'd read fixed: `+` marks a line or text added, `-` a line removed, and `~` a
+line changed, with `~` also under the words that replace others.
 
 Mistakes are listed from the top of the file down. One mistake isn't reported
 again at every place it shows up later: a name the cook refused once is left

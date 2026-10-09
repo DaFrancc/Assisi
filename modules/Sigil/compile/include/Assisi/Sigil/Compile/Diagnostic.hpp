@@ -45,6 +45,32 @@ struct Related
     Span span{};
 };
 
+enum class EditKind : uint8_t
+{
+    Replace,      ///< `span` on its line becomes `text`; a span of no length inserts it.
+    InsertBefore, ///< `text` becomes a new line above line `span.where.line`.
+    InsertAfter,  ///< `text` becomes a new line below line `span.where.line`.
+    Delete,       ///< Line `span.where.line` goes.
+    Count_,
+};
+
+/// @brief One change a suggestion makes to the source.
+struct Edit
+{
+    std::string text{};
+    /// The line the edit is on, as it is now.
+    std::string line{};
+    Span span{};
+    EditKind kind = EditKind::Replace;
+};
+
+/// @brief A fix the compiler is sure of, shown as the source would read with it.
+struct Suggestion
+{
+    std::string message;
+    std::vector<Edit> edits{};
+};
+
 /// @brief One thing the compiler says. Each member has an initializer, so a
 ///        diagnostic can be built naming only some: GCC's missing-initializer
 ///        warning passes over a member that has one.
@@ -61,6 +87,7 @@ struct Diagnostic
     /// The text of the line `where` is on, filled in by the compile.
     std::string excerpt{};
     std::vector<Related> related{};
+    std::vector<Suggestion> suggestions{};
     SourceLocation where{};
     /// How many characters from `where` the diagnostic is about.
     uint32_t length = 1;
@@ -78,7 +105,8 @@ enum class Style : uint8_t
 
 /// @brief @p diagnostic for a person to read: the message, then `--> file:line:
 ///        column`, then each line it's about with the place underlined and
-///        labelled, then the help. Ends with a newline.
+///        labelled, then the help, then each suggestion as the source would
+///        read with it. Ends with a newline.
 [[nodiscard]] std::string Format(const Diagnostic &diagnostic, Style style = Style::Plain);
 
 /// @brief Whether any of @p diagnostics is an error.

@@ -27,7 +27,67 @@ TEST_CASE("Diagnostics: an error underlines its place and a related one, each la
           "  | \t|\n"
           "  | \tthese include \"a\"\n"
           "  |\n"
-          "  = help: to restart \"a\" while it's playing, write \"a -> a\" as a transition of its own\n");
+          "help: leave \"a\" out of the set, and restart it in a transition of its own\n"
+          "  |\n"
+          "7 ~ \tany -> a when p;\n"
+          "  + \ta -> a when p;\n");
+}
+
+TEST_CASE("Diagnostics: a one-line fix shows the line fixed, with ~ under what it replaced")
+{
+    const Diagnostics errors = Errors(CompileRobot("use robot;\nlet label = \"beep\";\n"));
+    REQUIRE(errors.size() == 1);
+    CHECK(Format(errors[0]).ends_with("help: make \"label\" a const\n"
+                                      "  |\n"
+                                      "2 | const label = \"beep\";\n"
+                                      "  | ~~~~~\n"));
+
+    const Diagnostics constant = Errors(CompileRobot("use robot;\nparam pace: float;\nconst fast = pace * 2.0;\n"));
+    REQUIRE(constant.size() == 1);
+    REQUIRE(constant[0].suggestions.size() == 1);
+    const Edit &edit = constant[0].suggestions[0].edits.at(0);
+    CHECK(edit.text == "let");
+    CHECK(edit.span.where.line == 3);
+    CHECK(edit.span.where.column == 1);
+    CHECK(edit.span.length == 5);
+}
+
+TEST_CASE("Diagnostics: a declaration used too early is shown moved above its use")
+{
+    const Diagnostics errors = Errors(CompileRobot("use robot;\nlet ready = later > 1;\nlet b = 3;\nlet later = 2;\n"));
+    REQUIRE(errors.size() == 1);
+    CHECK_MESSAGE(Format(errors[0]).ends_with("help: move the declaration above where it's used\n"
+                                              "  |\n"
+                                              "  + let later = 2;\n"
+                                              "2 | let ready = later > 1;\n"
+                                              "...\n"
+                                              "4 - let later = 2;\n"),
+                  Format(errors[0]));
+
+    // Sharing a line with something else, the declaration can't be moved whole,
+    // so the advice stays in words.
+    const Diagnostics shared = Errors(CompileRobot("use robot;\nlet a = b; let b = 1;\n"));
+    REQUIRE(shared.size() == 1);
+    CHECK(shared[0].suggestions.empty());
+    CHECK(shared[0].help == "move the declaration above where it's used");
+}
+
+TEST_CASE("Diagnostics: a restart in a set keeps the rest of the set and moves the restart to its own line")
+{
+    const std::string_view states = "use robot;\nparam p: bool;\nmachine m {\n    node a { }\n    node b { }\n"
+                                    "    node c { }\n    a -> b when p;\n    b -> c when p;\n";
+    const Diagnostics first = Errors(CompileRobot(std::string{states} + "    a + c + b -> a when p;\n}\n"));
+    REQUIRE_MESSAGE(first.size() == 1, Dump(first));
+    REQUIRE(first[0].suggestions.size() == 1);
+    // The set started with the target, so the next state added starts it instead.
+    CHECK(first[0].suggestions[0].edits[0].text == "c + b");
+    CHECK(first[0].suggestions[0].edits[1].text == "    a -> a when p;");
+
+    // A state removed from the set stays removed.
+    const Diagnostics removed = Errors(CompileRobot(std::string{states} + "    any - c + a -> a when p;\n}\n"));
+    REQUIRE_MESSAGE(removed.size() == 1, Dump(removed));
+    REQUIRE(removed[0].suggestions.size() == 1);
+    CHECK(removed[0].suggestions[0].edits[0].text == "any - c");
 }
 
 TEST_CASE("Diagnostics: in color, the parts are painted, and plain has no escapes")

@@ -114,12 +114,15 @@ inline std::string Dump(std::span<const Diagnostic> diagnostics)
 }
 
 /// Whether @p diagnostic says @p says anywhere a reader sees words: its
-/// message, label, help, or a related place's label.
+/// message, label, help, a related place's label or a suggestion's message.
 inline bool Says(const Diagnostic &diagnostic, std::string_view says)
 {
     const bool related = std::ranges::any_of(
         diagnostic.related, [says](const Related &place) { return place.label.find(says) != std::string::npos; });
-    return related || diagnostic.message.find(says) != std::string::npos ||
+    const bool suggested = std::ranges::any_of(diagnostic.suggestions, [says](const Suggestion &suggestion) {
+        return suggestion.message.find(says) != std::string::npos;
+    });
+    return related || suggested || diagnostic.message.find(says) != std::string::npos ||
            diagnostic.label.find(says) != std::string::npos || diagnostic.help.find(says) != std::string::npos;
 }
 

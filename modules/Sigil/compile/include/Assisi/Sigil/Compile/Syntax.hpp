@@ -109,6 +109,8 @@ struct ValueDecl
     Named name;
     std::optional<Named> type;
     Expr value;
+    /// Where `const` or `let` is written.
+    SourceLocation keyword{};
     bool isConst = false;
 };
 

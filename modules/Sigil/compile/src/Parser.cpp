@@ -484,13 +484,14 @@ class Parser
     bool ParseValue(Syntax::File &file, bool isConst)
     {
         const std::string_view word = isConst ? "const" : "let";
-        Next();
+        const SourceLocation keyword = Next().where;
         std::optional<Named> name = ExpectName(std::format("the {}'s name", word));
         if (!name.has_value())
         {
             return false;
         }
-        Syntax::ValueDecl declaration{.name = std::move(*name), .type = std::nullopt, .value = {}, .isConst = isConst};
+        Syntax::ValueDecl declaration{
+            .name = std::move(*name), .type = std::nullopt, .value = {}, .keyword = keyword, .isConst = isConst};
         if (At(TokenKind::Colon))
         {
             Next();

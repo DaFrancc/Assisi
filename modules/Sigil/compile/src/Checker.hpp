@@ -75,7 +75,19 @@ struct Checker
     /// Names whose declaration was refused. Using one says nothing more: the
     /// refusal already explained it.
     std::unordered_set<std::string> refused{};
+    /// The source, a line per entry, for suggestions that quote it.
+    std::vector<std::string_view> lines{};
+    /// The const or let whose value is being checked, if one is.
+    const Syntax::ValueDecl *declaring = nullptr;
 };
+
+/// @brief The text of line @p line of the source, or nothing past its end.
+[[nodiscard]] std::string_view LineOf(const Checker &checker, uint32_t line);
+
+/// @brief A suggestion that turns the `const` or `let` keyword of @p declaration
+///        into @p keyword.
+[[nodiscard]] Suggestion SwapKeyword(const Checker &checker, const Syntax::ValueDecl &declaration,
+                                     std::string_view keyword);
 
 /// @brief Reports an error about @p span, labelled @p label under it. The
 ///        result is the diagnostic as stored, to add help or related places

@@ -366,6 +366,67 @@ Span SourcesSpan(const Syntax::Transition &syntax)
                 .length = oneLine ? end - syntax.first.where.column : syntax.first.Extent().length};
 }
 
+/// The source part of @p syntax written without the steps that add its
+/// target, or nothing when that leaves no first state to start from.
+std::optional<std::string> SourcesWithoutTarget(const Syntax::Transition &syntax)
+{
+    const std::string &target = syntax.target.name;
+    std::vector<const Syntax::SourceStep *> steps;
+    for (const Syntax::SourceStep &step : syntax.steps)
+    {
+        if (step.remove || step.state.name != target)
+        {
+            steps.push_back(&step);
+        }
+    }
+    std::string first = syntax.first.name;
+    if (!syntax.fromAny && first == target)
+    {
+        const std::vector<const Syntax::SourceStep *>::iterator added =
+            std::ranges::find_if(steps, [](const Syntax::SourceStep *step) { return !step->remove; });
+        if (added == steps.end())
+        {
+            return std::nullopt;
+        }
+        first = (*added)->state.name;
+        steps.erase(added);
+    }
+    std::string text = first;
+    for (const Syntax::SourceStep *step : steps)
+    {
+        text += std::format(" {} {}", step->remove ? '-' : '+', step->state.name);
+    }
+    return text;
+}
+
+/// Splits a transition that leaves from its own target into one that
+/// doesn't and one that restarts it, when the transition is a line of its own.
+std::optional<Suggestion> SplitRestart(const Checker &checker, const Syntax::Transition &syntax)
+{
+    const Span sources = SourcesSpan(syntax);
+    const std::string_view line = LineOf(checker, sources.where.line);
+    const std::size_t sourcesEnd = sources.where.column - 1 + sources.length;
+    const std::optional<std::string> kept = SourcesWithoutTarget(syntax);
+    if (!kept.has_value() || sourcesEnd > line.size())
+    {
+        return std::nullopt;
+    }
+    const std::string_view rest = line.substr(sourcesEnd);
+    if (!rest.ends_with(';'))
+    {
+        return std::nullopt;
+    }
+    const std::string_view indent = line.substr(0, sources.where.column - 1);
+    return Suggestion{
+        .message = std::format("leave \"{}\" out of the set, and restart it in a transition of its own",
+                               syntax.target.name),
+        .edits = {Edit{.text = *kept, .line = std::string{line}, .span = sources, .kind = EditKind::Replace},
+                  Edit{.text = std::format("{}{}{}", indent, syntax.target.name, rest),
+                       .line = std::string{line},
+                       .span = sources,
+                       .kind = EditKind::InsertAfter}}};
+}
+
 std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transition &syntax, StateList states,
                                           std::string_view owner)
 {
@@ -407,8 +468,17 @@ std::optional<Transition> CheckTransition(Checker &checker, const Syntax::Transi
                                              syntax.target.name, syntax.target.name),
                                  std::format("these include \"{}\"", syntax.target.name));
         Relate(error, syntax.target.Extent(), std::format("and it goes to \"{}\"", syntax.target.name));
-        error.help = std::format("to restart \"{}\" while it's playing, write \"{} -> {}\" as a transition of its own",
-                                 syntax.target.name, syntax.target.name, syntax.target.name);
+        std::optional<Suggestion> split = SplitRestart(checker, syntax);
+        if (split.has_value())
+        {
+            error.suggestions.push_back(std::move(*split));
+        }
+        else
+        {
+            error.help =
+                std::format("to restart \"{}\" while it's playing, write \"{} -> {}\" as a transition of its own",
+                            syntax.target.name, syntax.target.name, syntax.target.name);
+        }
         return std::nullopt;
     }
     return transition;

@@ -142,7 +142,27 @@ void ReadSigilType(Detail::Checker &checker, const Syntax::File &file)
     checker.program.library = true;
 }
 
-std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_view path, ImportContext &context)
+/// @p source a line per entry, without line endings.
+std::vector<std::string_view> SplitLines(std::string_view source)
+{
+    std::vector<std::string_view> lines;
+    std::size_t start = 0;
+    while (start <= source.size())
+    {
+        const std::size_t end = std::min(source.find('\n', start), source.size());
+        std::string_view line = source.substr(start, end - start);
+        if (line.ends_with('\r'))
+        {
+            line.remove_suffix(1);
+        }
+        lines.push_back(line);
+        start = end + 1;
+    }
+    return lines;
+}
+
+std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_view path, std::string_view source,
+                                          ImportContext &context)
 {
     const Vocabulary *vocabulary = FindVocabulary(context.vocabularies, file.use.vocabulary.name);
     if (vocabulary == nullptr)
@@ -166,6 +186,7 @@ std::expected<Program, Diagnostics> Check(const Syntax::File &file, std::string_
     }
 
     Detail::Checker checker{.vocabulary = *vocabulary, .file = std::string{path}};
+    checker.lines = SplitLines(source);
     checker.program.vocabulary = vocabulary->name;
     ReadSigilType(checker, file);
     DeclareFunctions(checker);
@@ -200,25 +221,13 @@ std::expected<Program, Diagnostics> CompileText(std::string_view source, std::st
     {
         return std::unexpected(syntax.error());
     }
-    return Check(*syntax, file, context);
+    return Check(*syntax, file, source, context);
 }
 
 /// Gives each diagnostic about @p file the text of the line it points at.
 void AttachExcerpts(Diagnostics &diagnostics, std::string_view source, std::string_view file)
 {
-    std::vector<std::string_view> lines;
-    std::size_t start = 0;
-    while (start <= source.size())
-    {
-        const std::size_t end = std::min(source.find('\n', start), source.size());
-        std::string_view line = source.substr(start, end - start);
-        if (line.ends_with('\r'))
-        {
-            line.remove_suffix(1);
-        }
-        lines.push_back(line);
-        start = end + 1;
-    }
+    const std::vector<std::string_view> lines = SplitLines(source);
     for (Diagnostic &diagnostic : diagnostics)
     {
         if (diagnostic.file != file || !diagnostic.excerpt.empty())

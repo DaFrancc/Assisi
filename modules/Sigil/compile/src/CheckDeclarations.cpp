@@ -155,7 +155,8 @@ void DeclareLet(Checker &checker, const Syntax::ValueDecl &declaration, Expr val
     {
         Diagnostic &error = Fail(checker, value.span, std::format("a let can't hold {}", TypeName(checker, value.type)),
                                  std::format("this is {}", TypeName(checker, value.type)));
-        error.help = std::format("only consts hold strings; make \"{}\" a const", declaration.name.name);
+        error.help = "only consts hold strings";
+        error.suggestions.push_back(SwapKeyword(checker, declaration, "const"));
         value.type = Type{};
     }
     const Symbol symbol{.span = declaration.name.Extent(),
@@ -181,7 +182,9 @@ void DeclareValue(Checker &checker, const Syntax::ValueDecl &declaration)
         return;
     }
     const ExprMode mode = declaration.isConst ? ExprMode::Constant : ExprMode::Formula;
+    checker.declaring = &declaration;
     Expr value = CheckExpression(checker, declaration.value, mode);
+    checker.declaring = nullptr;
     if (declaration.type.has_value())
     {
         const std::optional<Type> wanted = ResolveType(checker, *declaration.type);
@@ -215,6 +218,21 @@ uint32_t PlaceEnum(Checker &checker, const Enum &enumeration)
 }
 
 } // namespace
+
+std::string_view LineOf(const Checker &checker, uint32_t line)
+{
+    return line >= 1 && line <= checker.lines.size() ? checker.lines[line - 1] : std::string_view{};
+}
+
+Suggestion SwapKeyword(const Checker &checker, const Syntax::ValueDecl &declaration, std::string_view keyword)
+{
+    const std::string_view was = declaration.isConst ? "const" : "let";
+    const Edit edit{.text = std::string{keyword},
+                    .line = std::string{LineOf(checker, declaration.keyword.line)},
+                    .span = Span{.where = declaration.keyword, .length = static_cast<uint32_t>(was.size())},
+                    .kind = EditKind::Replace};
+    return Suggestion{.message = std::format("make \"{}\" a {}", declaration.name.name, keyword), .edits = {edit}};
+}
 
 Diagnostic &Fail(Checker &checker, Span span, std::string message, std::string label)
 {
