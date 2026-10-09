@@ -1,14 +1,19 @@
 add_executable(Assisi-Sigil-Tests
   main.cpp
+  BytecodeTesting.hpp
   SigilTesting.hpp
+  TestBenchmark.cpp
   TestChecker.cpp
   TestDiagnostics.cpp
+  TestEvaluate.cpp
   TestGraph.cpp
   TestImports.cpp
+  TestIntegration.cpp
   TestLexer.cpp
   TestParser.cpp
   TestSuggest.cpp
   TestTriggers.cpp
+  TestVerify.cpp
   TestVocabulary.cpp
 )
 
@@ -21,6 +26,12 @@ target_include_directories(Assisi-Sigil-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Sigil-Tests
   PRIVATE
     Assisi::SigilCompile
+)
+
+# The integration test compiles the examples sglc ships, so they stay ones
+# that compile and refuse as the book says.
+target_compile_definitions(Assisi-Sigil-Tests PRIVATE
+  ASSISI_SGLC_EXAMPLES="${PROJECT_SOURCE_DIR}/apps/sglc/examples"
 )
 
 add_test(NAME Sigil COMMAND Assisi-Sigil-Tests)

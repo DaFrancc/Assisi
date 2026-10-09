@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Checker.hpp"
 
+#include <Assisi/Sigil/Bytecode.hpp>
 #include <Assisi/Sigil/Compile/Suggest.hpp>
 
 #include <algorithm>
@@ -374,6 +375,23 @@ std::string_view Takes(Operator op)
     }
 }
 
+/// Whether @p divisor is known now to be zero: written as one, or worked out
+/// from literals and consts.
+bool IsZero(const Checker &checker, const Expr &divisor)
+{
+    const std::expected<Constant, std::string> value = Evaluate(divisor, checker.program.functions);
+    if (!value)
+    {
+        return false;
+    }
+    if (const int32_t *integer = std::get_if<int32_t>(&*value))
+    {
+        return *integer == 0;
+    }
+    const float *real = std::get_if<float>(&*value);
+    return real != nullptr && *real == 0.f;
+}
+
 Expr CheckBinary(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
 {
     Expr left = CheckExpression(checker, syntax.operands[0], mode);
@@ -398,6 +416,11 @@ Expr CheckBinary(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
                                  std::string{Takes(expr.op)});
         Relate(error, leftSpan, leftName);
         Relate(error, rightSpan, rightName);
+        return Failed(syntax.extent);
+    }
+    if ((expr.op == Operator::Divide || expr.op == Operator::Remainder) && IsZero(checker, right))
+    {
+        Fail(checker, rightSpan, "this divides by zero", "this is always zero");
         return Failed(syntax.extent);
     }
     expr.operands.push_back(std::move(left));
@@ -536,9 +559,25 @@ Expr CheckCall(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
     return expr;
 }
 
-} // namespace
+/// The most words @p expr has on the stack at once when it runs: each operand
+/// is worked out with the ones before it already waiting there. Folding only
+/// lowers it, so it is a bound on the code the expression becomes.
+uint32_t StackNeed(const Expr &expr)
+{
+    if (expr.kind == ExprKind::Binary && (expr.op == Operator::And || expr.op == Operator::Or))
+    {
+        // The left side's value is dropped before the right side runs.
+        return std::max(StackNeed(expr.operands[0]), StackNeed(expr.operands[1]));
+    }
+    uint32_t need = 1;
+    for (std::size_t i = 0; i < expr.operands.size(); ++i)
+    {
+        need = std::max(need, static_cast<uint32_t>(i) + StackNeed(expr.operands[i]));
+    }
+    return need;
+}
 
-Expr CheckExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
+Expr CheckAnyExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
 {
     switch (syntax.kind)
     {
@@ -555,6 +594,26 @@ Expr CheckExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode
     default:
         return CheckLiteral(syntax);
     }
+}
+
+} // namespace
+
+Expr CheckExpression(Checker &checker, const Syntax::Expr &syntax, ExprMode mode)
+{
+    Expr expr = CheckAnyExpression(checker, syntax, mode);
+    if (mode == ExprMode::Constant || IsError(expr.type))
+    {
+        return expr;
+    }
+    const uint32_t need = StackNeed(expr);
+    if (need > kMaxStackDepth)
+    {
+        Diagnostic &error = Fail(checker, syntax.extent, "this expression nests too deeply to run",
+                                 std::format("it needs {} values at once; at most {} fit", need, kMaxStackDepth));
+        error.help = "work out part of it in a let";
+        return Failed(syntax.extent);
+    }
+    return expr;
 }
 
 Expr Coerce(Checker &checker, Expr value, Type wanted, const std::optional<Reason> &because)

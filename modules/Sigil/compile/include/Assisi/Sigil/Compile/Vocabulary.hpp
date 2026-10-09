@@ -97,10 +97,14 @@ enum class FunctionUse : uint8_t
 };
 
 /// @brief A function a file can call. Every function only reads.
+///
+/// A vocabulary's functions take nothing and give a float, an int or a bool:
+/// the engine writes each one's value into the block an expression runs
+/// against, the way it writes params, so running never calls out to it.
 struct FunctionSpec
 {
     std::string name;
-    std::vector<std::string> parameters;
+    std::vector<std::string> parameters; ///< Empty for a vocabulary's function.
     std::string result;
     FunctionUse use = FunctionUse::Anywhere;
 };
@@ -112,6 +116,16 @@ struct Vocabulary
     std::vector<BlockKind> blocks;
     std::vector<ClauseSpec> clauses;
     std::vector<FunctionSpec> functions;
+};
+
+/// @brief The functions every file has, in the order CoreFunctions lists them.
+enum class CoreFunction : uint8_t
+{
+    Abs,
+    Min,
+    Max,
+    Clamp,
+    Count_,
 };
 
 /// @brief The functions every file has: abs, min, max and clamp.

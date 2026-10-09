@@ -5,7 +5,7 @@
 /// with ints widening to floats and nothing narrowing, consts are worked out
 /// when the file compiles, and what nothing uses is warned about.
 
-#include "SigilTesting.hpp"
+#include "BytecodeTesting.hpp"
 
 #include <doctest/doctest.h>
 
@@ -19,6 +19,30 @@ Program Compiled(std::string_view source)
     std::expected<Program, Diagnostics> program = CompileRobot(source);
     REQUIRE_MESSAGE(program.has_value(), Dump(Errors(program)));
     return std::move(*program);
+}
+
+constexpr std::string_view kDivisionParams = "use robot;\nparam i: int;\nparam f: float;\n";
+
+/// Whether @p rest, after an int i and a float f, is refused for dividing by
+/// zero on its last line.
+bool RefusesDivision(std::string_view rest)
+{
+    const std::string source = std::string{kDivisionParams} + std::string{rest};
+    const uint32_t lines = static_cast<uint32_t>(std::ranges::count(source, '\n'));
+    const uint32_t last = rest.ends_with("}\n") ? lines - 1 : lines;
+    return HasError(Errors(CompileRobot(source)), last, "divides by zero");
+}
+
+/// A let of @p depth clamps, each holding two values while its third, the
+/// next clamp, is worked out.
+std::string NestedClamps(uint32_t depth)
+{
+    std::string expression = "i";
+    for (uint32_t level = 0; level < depth; ++level)
+    {
+        expression = std::format("clamp(i, i, {})", expression);
+    }
+    return std::format("param i: int;\nlet r = {};\n", expression);
 }
 
 } // namespace
@@ -76,6 +100,28 @@ TEST_CASE("Checker: a const can only use what the cook knows")
                    "a const can't use \"p\""));
     CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = battery();\n")), 2, "a const can't call battery()"));
     CHECK(HasError(Errors(CompileRobot("use robot;\nconst c = 1 / 0;\n")), 2, "divides by zero"));
+}
+
+TEST_CASE("Checker: dividing by a zero written in the file is refused anywhere")
+{
+    CHECK(RefusesDivision("let r = i / 0;\n"));
+    CHECK(RefusesDivision("let r = i % (2 - 2);\n"));
+    CHECK(RefusesDivision("let r = f / 0.0;\n"));
+    CHECK(RefusesDivision("machine m {\n    node a { }\n    node b { }\n    a -> b when f / 0 > 1.0;\n}\n"));
+    CHECK(RefusesDivision("const zero = 0;\nlet r = i / zero;\n"));
+    // Zero only while the game runs is fine: it gives 0 there.
+    CHECK(CompileRobot(std::string{kDivisionParams} + "param j: int;\nlet r = i / j;\n").has_value());
+}
+
+TEST_CASE("Checker: an expression that needs more stack than the evaluator has is refused")
+{
+    const uint32_t fits = (Assisi::Sigil::kMaxStackDepth - 1) / 2;
+    const Lowered lowered = LowerRobot(NestedClamps(fits));
+    CHECK(lowered.lets.size() == 1);
+    const Diagnostics errors = Errors(CompileRobot("use robot;\n" + NestedClamps(fits + 1)));
+    REQUIRE(errors.size() == 1);
+    CHECK(HasError(errors, 3, "nests too deeply to run"));
+    CHECK(HasError(errors, 3, "work out part of it in a let"));
 }
 
 TEST_CASE("Checker: consts are worked out when the file compiles, and used as their values")

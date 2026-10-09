@@ -38,6 +38,7 @@ Vocabulary Robot()
     robot.blocks = {
         BlockKind{.name = "machine", .parents = {}, .topLevel = true, .holdsStates = true},
         BlockKind{.name = "node", .parents = {"machine", "node"}, .topLevel = false, .holdsStates = true},
+        BlockKind{.name = "dock", .parents = {}, .topLevel = true, .holdsStates = false},
     };
     const ArgumentSpec state{.type = {}, .kind = ArgumentKind::State};
     robot.clauses = {
@@ -47,10 +48,14 @@ Vocabulary Robot()
                    .cardinality = Cardinality::AtMostOnce},
         ClauseSpec{.word = "cost", .arguments = {{"int"}}, .blocks = {"node"}, .onTransition = false,
                    .cardinality = Cardinality::AtMostOnce},
+        ClauseSpec{.word = "enabled", .arguments = {{"bool"}}, .blocks = {"node"}, .onTransition = false,
+                   .cardinality = Cardinality::AtMostOnce},
         ClauseSpec{.word = "speed", .arguments = {{"float"}}, .blocks = {"machine"}, .onTransition = false,
                    .cardinality = Cardinality::AtMostOnce},
         ClauseSpec{.word = "after", .arguments = {{"float"}}, .blocks = {}, .onTransition = true,
                    .cardinality = Cardinality::AtMostOnce},
+        ClauseSpec{.word = "port", .arguments = {{"int"}}, .blocks = {"dock"}, .onTransition = false,
+                   .cardinality = Cardinality::ExactlyOnce},
     };
     robot.functions = {
         FunctionSpec{.name = "tick", .parameters = {}, .result = "int", .use = FunctionUse::WhenOnly},
