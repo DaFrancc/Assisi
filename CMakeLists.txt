@@ -1330,6 +1330,9 @@ add_subdirectory(modules/Debug)
 # Mondrian's core sits on Core alone; its engine layer adds Render. Above both so
 # App, which owns the game UI, can link it.
 add_subdirectory(modules/Mondrian)
+# Sigil, the state-machine language. Its compiler needs nothing but the standard
+# library; the cook and editor link it, the game does not.
+add_subdirectory(modules/Sigil)
 add_subdirectory(modules/App)
 add_subdirectory(modules/Editor)
 
