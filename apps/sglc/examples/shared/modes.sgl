@@ -1,0 +1,7 @@
+// Values every robot file shares.
+use robot;
+sigiltype library;
+
+enum Mode { idle, busy }
+
+const top_cost = 3;

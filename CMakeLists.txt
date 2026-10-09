@@ -1330,6 +1330,9 @@ add_subdirectory(modules/Debug)
 # Mondrian's core sits on Core alone; its engine layer adds Render. Above both so
 # App, which owns the game UI, can link it.
 add_subdirectory(modules/Mondrian)
+# Sigil, the state-machine language. Its compiler needs nothing but the standard
+# library; the cook and editor link it, the game does not.
+add_subdirectory(modules/Sigil)
 add_subdirectory(modules/App)
 add_subdirectory(modules/Editor)
 
@@ -1343,6 +1346,7 @@ add_subdirectory(apps/game)
 # level may name a component this project declares rather than the engine.
 add_subdirectory(apps/cook)
 add_subdirectory(apps/pack)
+add_subdirectory(apps/sglc)
 
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).

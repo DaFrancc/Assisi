@@ -1,0 +1,21 @@
+// A robot arm that reaches when it's busy and rests when it's bumped or tired.
+use robot;
+import "shared/modes.sgl";
+
+param mode: Mode;
+param bump: trigger;
+
+let tired = battery() < 0.2;
+
+machine arm {
+    speed 1.5;
+
+    node rest { emit "beep"; }
+    node reach {
+        emit "whirr";
+        cost top_cost;
+    }
+
+    rest -> reach when mode == Mode.busy && !tired { after 0.2; };
+    reach -> rest when bump || tired;
+}
