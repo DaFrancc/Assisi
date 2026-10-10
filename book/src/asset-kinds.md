@@ -177,6 +177,39 @@ file's path, the code and your detail:
 cook: sounds/bad.wav: the file's contents are corrupt (the audio could not be decoded)
 ```
 
+### A file that names other files
+
+A sound stands alone, so its cook step sees only its own bytes. Some files name
+other files: an animation state machine imports libraries and names clips by
+path. Their cook step needs to read those files, turn their paths into asset
+ids, and cook again when one of them changes. Register it with
+`MakeContextCookStep` instead:
+
+```cpp
+std::expected<std::vector<std::byte>, Assisi::Core::AssetError> CookScript(
+    std::span<const std::byte> source, const Assisi::Core::AssetCookContext &context);
+
+std::vector<std::string> ScriptDependencies(std::span<const std::byte> source,
+                                            const Assisi::Core::AssetCookContext &context);
+
+[[maybe_unused]] const bool kRegistered = Assisi::Core::AssetKindRegistry::Instance().RegisterCookStep(
+    Assisi::Core::MakeContextCookStep(kScriptKind, kScriptCookVersion, CookScript, ScriptDependencies));
+```
+
+The `context` gives the step:
+
+| Call | Gives |
+|---|---|
+| `Path()` | The file being cooked, for messages. |
+| `Read(path)` | The bytes of another file in `assets/`. |
+| `IdFor(path)` | That file's asset id, from its `.aast`. |
+| `KindNameOf(id)` | The kind that file's `.aast` names, such as `"animation"`. |
+| `Report(text)` | Shows a long explanation with the failure, such as every mistake in a script with its line. |
+
+The dependencies function lists every other file the result depends on, as
+paths in `assets/`. The cook redoes the file when one of them changes, and the
+editor reloads it.
+
 ## Step 4: tell the build
 
 In the module's `CMakeLists.txt`, list the two files. The cook step is optional:

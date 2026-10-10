@@ -219,6 +219,15 @@ Things to know about layers:
 - **Joints a layer's mask takes are written every Update.** Code that adjusts
   one of them runs after, in PostUpdate, as for joints the base clip moves.
 
+## Choosing animations with a state machine
+
+Setting `animation`, `fade` and the layers from code works for one or two
+animations. A character that walks, runs, jumps, lands and aims needs rules for
+which plays when, and an **Animator** runs those rules from a `.sgl` file. With
+an Animator on the entity, the player's `animation`, `parameter`, `speed`,
+`loop`, `fade` and `layers` are set by it every frame, so change the file
+rather than those fields. [Animators](animator.md) shows how.
+
 ## Example: turning a joint from code
 
 The pose is a list with one entry per joint. Each entry is the joint's position,
