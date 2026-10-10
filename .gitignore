@@ -50,6 +50,10 @@ crash-*.txt
 # The build tool's per-developer history, recipes and default level and compiler.
 .assisi/
 
+# Released games kept by ./assisi release: binaries players received, matched by
+# later packages. Too large for git, and not source.
+/releases/
+
 # Runtime-generated user state (written under the user root at runtime; the
 # repo-root copies are artifacts of running the app from the repo root). The
 # app falls back to defaults when these are absent.

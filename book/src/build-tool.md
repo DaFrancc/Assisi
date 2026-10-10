@@ -25,6 +25,7 @@ command's options.
 | `./assisi run game` | Builds, then starts the packaged game. Package it first. |
 | `./assisi test` | Builds, then runs the tests. Anything after `--` goes to ctest: `./assisi test -- -R Audio`. |
 | `./assisi package ship` | Builds the game, cooks the assets and packs them: the folder a player gets. See [Packaging your game](packaging.md). |
+| `./assisi release ship --version 1.0` | Packages, then keeps the game and its pak in `releases/1.0/` so later packages keep updates small. See [Packaging your game](packaging.md#releasing-and-keeping-updates-small). |
 | `./assisi cook`, `./assisi pack` | The two halves of packaging on their own. |
 | `./assisi clean dev` | Deletes a build's folder, so the next build starts from nothing. `--all` deletes every build. |
 | `./assisi doctor` | Checks you have every tool the build needs, and says what to install if not. |

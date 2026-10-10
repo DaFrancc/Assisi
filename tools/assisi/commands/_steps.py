@@ -4,9 +4,12 @@ hand-off of a Steam Runtime build to its container."""
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import List, Optional, Sequence
 
+from assisi import releases
 from assisi.core import Context
+from assisi.options import FRESH, PREVIOUS
 from assisi.project import CODECS, STEAMRT_BUILD, TIERS, UsageError, compiler_of, config_of
 from assisi.request import Request
 
@@ -51,11 +54,35 @@ def cook(context: Context, tree: str) -> None:
                         "--texture-tier", TIERS[config_of(tree)]])
 
 
-def pack(context: Context, tree: str) -> None:
+def previous_pak(context: Context, request: Request) -> Optional[Path]:
+    """The pak a new one is laid out against: the one named with --previous, none
+    with --fresh, and otherwise the newest release of the same level."""
+    if request.get(FRESH):
+        return None
+    named = request.get(PREVIOUS)
+    if named is not None:
+        return context.project.path_from(named)
+    level = request.specs(context.project)[0].level
+    release = releases.latest(context.project, level)
+    if release is None:
+        return None
+    print(f"assisi: laying the pak out against release {release.version} ({release.pak}); --fresh ignores it")
+    return release.pak
+
+
+def check_previous(request: Request) -> None:
+    if request.get(PREVIOUS) is not None and request.get(FRESH):
+        raise UsageError("--previous names a pak to match and --fresh matches none; give one or the other.")
+
+
+def pack(context: Context, tree: str, previous: Optional[Path]) -> None:
     project = context.project
     build(context, tree, (PACK_TARGET,))
-    context.runner.run([project.pack_tool(tree), "--cooked", project.cooked_dir(tree), "--out",
-                        project.pak_path(tree), "--compress", CODECS[config_of(tree)]])
+    argv = [project.pack_tool(tree), "--cooked", project.cooked_dir(tree), "--out", project.pak_path(tree),
+            "--compress", CODECS[config_of(tree)]]
+    if previous is not None:
+        argv += ["--previous", previous]
+    context.runner.run(argv)
 
 
 def forward_to_container(context: Context, request: Request) -> Optional[int]:

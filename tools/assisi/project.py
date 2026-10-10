@@ -71,6 +71,10 @@ GAME_DIR = ("apps", "game")
 COOKED_DIR = "cooked"
 PAK_NAME = "assets.pak"
 
+# Where releases are kept: at the root rather than under out/, so that cleaning
+# every build never deletes what players have.
+RELEASES_DIR = "releases"
+
 # The per-developer settings file, kept with the history and recipes, and the
 # keys of the defaults it holds.
 SETTINGS_DIR = ".assisi"
@@ -303,6 +307,14 @@ class Project:
 
     def assets_dir(self) -> Path:
         return self.root / "assets"
+
+    def releases_dir(self) -> Path:
+        return self.root / RELEASES_DIR
+
+    def path_from(self, given: str) -> Path:
+        """A path as typed on the command line, which runs from the repository root."""
+        path = Path(given)
+        return path if path.is_absolute() else self.root / path
 
     def launcher(self) -> Path:
         return self.root / "assisi"

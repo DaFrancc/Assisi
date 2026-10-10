@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from assisi.commands import _steps
-from assisi.options import build_options
+from assisi.options import build_options, previous_options
 
 NAME = "package"
 HELP = "Build the game, cook the assets and pack them: the two files a player needs"
-OPTIONS = build_options(sanitizers=False, required=True)
+OPTIONS = build_options(sanitizers=False, required=True) + previous_options()
 RECORDED = True
+
+
+def validate(request, project) -> None:
+    _steps.check_previous(request)
 
 
 def execute(request, context) -> int:
@@ -20,5 +24,5 @@ def execute(request, context) -> int:
     _steps.build(context, tree)
     _steps.build(context, tree, (_steps.GAME_TARGET,))
     _steps.cook(context, tree)
-    _steps.pack(context, tree)
+    _steps.pack(context, tree, _steps.previous_pak(context, request))
     return 0

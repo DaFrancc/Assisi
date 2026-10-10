@@ -60,7 +60,7 @@ class Request:
                 argv.append(str(value))
             elif option.kind is Kind.LEVELS:
                 argv.extend(value)
-            elif option.kind is Kind.VALUE:
+            elif option.kind in (Kind.VALUE, Kind.STRING, Kind.PATH):
                 if value is not None:
                     argv += [option.flag, value]
             elif option.kind is Kind.FLAG:
@@ -106,6 +106,9 @@ def make_parser(module) -> argparse.ArgumentParser:
             parser.add_argument(option.name, nargs="?", type=int, help=shown, metavar=option.name.upper())
         elif option.kind is Kind.VALUE:
             parser.add_argument(option.flag, dest=option.name, choices=option.choices, default=None, help=shown)
+        elif option.kind in (Kind.STRING, Kind.PATH):
+            parser.add_argument(option.flag, dest=option.name, default=None, help=shown,
+                                metavar=option.name.upper())
         elif option.kind is Kind.FLAG:
             parser.add_argument(option.flag, dest=option.name, action="store_true", help=shown)
     return parser
@@ -143,6 +146,10 @@ def _resolve(option: Option, raw: Any, project: Project) -> Any:
         if raw is None and option.name == COMPILER and option.defaulted:
             return project.default_compiler()
         return raw
+    if option.kind in (Kind.STRING, Kind.PATH) and raw is None and option.required:
+        raise UsageError(f"{option.flag} is required: {option.help}.")
+    if option.kind is Kind.PATH and raw is not None and not project.path_from(raw).is_file():
+        raise UsageError(f"{raw} is not a file.")
     if option.kind is Kind.NUMBER:
         value = option.default if raw is None else raw
         if value < 1:

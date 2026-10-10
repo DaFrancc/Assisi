@@ -156,7 +156,7 @@ class FormModel:
                     argv.append(option.flag)
             elif option.kind is Kind.PASSTHROUGH:
                 passthrough = shlex.split(str(value)) if value else []
-            elif option.kind is Kind.VALUE:
+            elif option.kind in (Kind.VALUE, Kind.STRING, Kind.PATH):
                 if value not in (None, ""):
                     argv += [option.flag, str(value)]
             elif value not in (None, ""):

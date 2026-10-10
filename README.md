@@ -285,6 +285,9 @@ MSVC on Windows, until `./assisi default` says otherwise). Underneath, each pair
 
 # The player's game: build it, cook assets/, pack them into assets.pak beside it.
 ./assisi package ship                 # or each step alone: build --game, cook, pack
+./assisi release ship --version 1.0   # package, then keep the game and pak in releases/1.0/; later
+                                      # packages of that level lay their pak out against it, so a
+                                      # store patch is only the assets that changed (--fresh: don't)
 
 # Optional, Linux: the ship build made inside Valve's Steam Runtime SDK container,
 # for a game that runs on any distro with glibc 2.31+ (see "Building for every

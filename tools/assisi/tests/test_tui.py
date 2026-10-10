@@ -70,6 +70,14 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(text, model.command_line(form.request().to_argv()))
         self.assertEqual(text, "./assisi build ship --compiler clang --game")
 
+    def test_text_fields_become_their_flags(self):
+        from assisi.commands import by_name
+        form = model.FormModel(by_name()["release"], self.context.project)
+        self.assertFalse(form.preview()[0])
+        form.set("version", "1.2")
+        form.set("level", "ship")
+        self.assertEqual(form.request().to_argv(), ["release", "ship", "--compiler", "gcc", "--version", "1.2"])
+
     def test_a_form_for_a_build_with_no_preset_says_so(self):
         from assisi.commands import by_name
         form = model.FormModel(by_name()["build"], self.context.project)

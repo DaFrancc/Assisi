@@ -69,6 +69,31 @@ smallest compression, and the game is fully optimized.
 would start it. If the game can't find `assets.pak` next to it, it refuses to
 start and says so.
 
+## Releasing, and keeping updates small
+
+When you give players a version, package it with `release` instead, and name
+the version:
+
+```bash
+./assisi release ship --version 1.0
+```
+
+This packages the game exactly like `package`, then keeps a copy of the game
+and its `assets.pak` in `releases/1.0/`. Every later `package` and `pack` of
+the same level lays its pak out against the newest release: every asset that
+didn't change stays where players already have it. Stores like Steam only
+download the parts of a file that changed, so an update that touches three
+textures is a download of three textures, not the whole game.
+
+- The tool says which release it matched against each time.
+- `--fresh` packs from scratch, ignoring every release.
+- `--previous <path to a pak>` matches a pak you name instead, for one kept
+  somewhere else.
+- A version is never overwritten; release 1.1 is a new folder.
+- `releases/` is never committed to git (the files are large), and cleaning
+  builds never touches it. **Back it up** with your other release files: if it
+  is lost, the next update is laid out from scratch and players download more.
+
 ## Releasing on Linux
 
 A game built with `./assisi package ship` only runs on Linux systems at least as

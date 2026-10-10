@@ -192,6 +192,108 @@ class PackageTest(ToolTest):
         self.assertEqual(self.sandbox.calls(), self.expected_package("clang-dev", "best", "lz4"))
 
 
+class ReleaseTest(ToolTest):
+    """A release keeps what players got, and later packages lay out against it."""
+
+    def setUp(self):
+        super().setUp()
+        for preset in ("gcc-ship", "gcc-dev"):
+            self.sandbox.configured(preset)
+            self.sandbox.tools_built(preset)
+            pak = self.sandbox.build_dir(preset) / "apps" / "game" / "assets.pak"
+            pak.write_text(f"pak of {preset}\n")
+
+    def pack_call(self) -> str:
+        return next(line for line in self.sandbox.calls() if line.startswith("assisi-pack"))
+
+    def release_dir(self, version: str) -> Path:
+        return self.sandbox.root / "releases" / version
+
+    def test_without_a_release_the_pak_is_laid_out_fresh(self):
+        self.assertEqual(self.sandbox.run("package", "ship")[0], 0)
+        self.assertNotIn("--previous", self.pack_call())
+
+    def test_a_release_keeps_the_game_and_its_pak(self):
+        code, _, err = self.sandbox.run("release", "ship", "--version", "1.0")
+        self.assertEqual(code, 0, err)
+        self.assertIn("assisi-pack", " ".join(self.sandbox.calls()))
+        kept = self.release_dir("1.0")
+        self.assertEqual((kept / "assets.pak").read_text(), "pak of gcc-ship\n")
+        self.assertTrue((kept / "Assisi-Game").exists())
+        record = json.loads((kept / "release.json").read_text())
+        self.assertEqual(record["level"], "ship")
+
+    def test_later_packages_lay_out_against_the_newest_release_of_their_level(self):
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.1")[0], 0)
+        self.sandbox.log.write_text("")
+        code, out, err = self.sandbox.run("package", "ship")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"--previous {self.release_dir('1.1') / 'assets.pak'}", self.pack_call())
+        self.assertIn("1.1", out)
+
+    def test_a_release_of_another_level_is_not_used(self):
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.sandbox.log.write_text("")
+        self.assertEqual(self.sandbox.run("package", "dev")[0], 0)
+        self.assertNotIn("--previous", self.pack_call())
+
+    def test_fresh_ignores_the_releases(self):
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.sandbox.log.write_text("")
+        self.assertEqual(self.sandbox.run("package", "ship", "--fresh")[0], 0)
+        self.assertNotIn("--previous", self.pack_call())
+
+    def test_a_named_previous_pak_is_used_as_given(self):
+        named = self.sandbox.root / "old.pak"
+        named.write_text("old\n")
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.sandbox.log.write_text("")
+        self.assertEqual(self.sandbox.run("pack", "ship", "--previous", "old.pak")[0], 0)
+        self.assertIn(f"--previous {named}", self.pack_call())
+
+    def test_a_missing_previous_pak_is_refused_before_anything_runs(self):
+        code, _, err = self.sandbox.run("package", "ship", "--previous", "nowhere.pak")
+        self.assertNotEqual(code, 0)
+        self.assertIn("nowhere.pak", err)
+        self.assertEqual(self.sandbox.calls(), [])
+
+    def test_previous_and_fresh_together_are_refused(self):
+        (self.sandbox.root / "old.pak").write_text("old\n")
+        code, _, _ = self.sandbox.run("package", "ship", "--previous", "old.pak", "--fresh")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.sandbox.calls(), [])
+
+    def test_a_version_is_never_overwritten(self):
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.sandbox.log.write_text("")
+        code, _, err = self.sandbox.run("release", "ship", "--version", "1.0")
+        self.assertNotEqual(code, 0)
+        self.assertIn("1.0", err)
+        self.assertEqual(self.sandbox.calls(), [])
+
+    def test_a_release_needs_a_version(self):
+        code, _, err = self.sandbox.run("release", "ship")
+        self.assertNotEqual(code, 0)
+        self.assertIn("--version", err)
+        self.assertEqual(self.sandbox.calls(), [])
+
+    def test_a_failed_package_keeps_nothing(self):
+        code, _, _ = self.sandbox.run("release", "ship", "--version", "1.0", FAKE_FAIL_ON="assisi-pack")
+        self.assertNotEqual(code, 0)
+        self.assertFalse(self.release_dir("1.0").exists())
+
+    def test_a_steam_runtime_release_packages_in_the_container_and_keeps_on_the_host(self):
+        self.sandbox.configured("gcc-ship-steamrt")
+        self.sandbox.tools_built("gcc-ship-steamrt")
+        (self.sandbox.build_dir("gcc-ship-steamrt") / "apps" / "game" / "assets.pak").write_text("steamrt pak\n")
+        code, _, err = self.sandbox.run("release", "ship", "--steam-runtime", "--version", "1.0")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            f"steamrt run -- python3 {self.sandbox.path('assisi')} package ship --compiler gcc --steam-runtime"])
+        self.assertEqual((self.release_dir("1.0") / "assets.pak").read_text(), "steamrt pak\n")
+
+
 class BuildTest(ToolTest):
     def test_unconfigured_build_is_configured_first(self):
         code, _, err = self.sandbox.run("build", "dev")
@@ -482,6 +584,8 @@ class RequestTest(ToolTest):
         ["build", "debug", "--sanitize", "thread", "--profiler"],
         ["package", "ship"],
         ["package", "ship", "--steam-runtime"],
+        ["package", "ship", "--fresh"],
+        ["release", "ship", "--version", "1.2"],
         ["cook", "debug"],
         ["test", "debug", "--", "-R", "Audio"],
         ["run", "editor", "dev", "--no-build", "--", "-l", "x.alvl"],

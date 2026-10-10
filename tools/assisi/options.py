@@ -20,6 +20,8 @@ class Kind(enum.Enum):
     LEVELS = "levels"  # any number of levels
     CHOICE = "choice"  # one word from a fixed list, as a positional
     VALUE = "value"  # --name word, the word from a fixed list
+    STRING = "string"  # --name word, any word
+    PATH = "path"  # --name path, to a file that has to exist
     FLAG = "flag"  # --name, on or off
     TEXT = "text"  # a free word, such as a recipe name
     NUMBER = "number"  # a positive whole number
@@ -84,3 +86,18 @@ def build_options(levels: bool = False, sanitizers: bool = True, required: bool 
                           "build inside the Steam Runtime container, so the game runs on any distribution "
                           "from 2020 on (gcc ship only)"))
     return tuple(options)
+
+
+PREVIOUS = "previous"
+FRESH = "fresh"
+
+
+def previous_options() -> Tuple[Option, ...]:
+    """What a pak is laid out against. Packing keeps every asset that a previous
+    package had where that package had it, so an update players download is the
+    assets that changed rather than the whole file reshuffled."""
+    return (
+        Option(PREVIOUS, Kind.PATH, "lay the pak out against this earlier one (default: the newest release "
+                                    "of the same level, if there is one)"),
+        Option(FRESH, Kind.FLAG, "lay the pak out from scratch, ignoring every release"),
+    )
