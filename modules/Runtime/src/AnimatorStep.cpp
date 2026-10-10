@@ -368,6 +368,16 @@ bool SetAnimatorBool(Animator &animator, std::string_view name, bool value)
     return true;
 }
 
+std::optional<float> AnimatorFloat(const Animator &animator, std::string_view name)
+{
+    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Float);
+    if (!slot.has_value())
+    {
+        return std::nullopt;
+    }
+    return Sigil::ToFloat(animator.run.block[*slot]);
+}
+
 bool FireAnimatorTrigger(Animator &animator, std::string_view name)
 {
     const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Bool);

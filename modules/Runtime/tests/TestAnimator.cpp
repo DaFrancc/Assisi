@@ -9,7 +9,9 @@
 
 #include "AnimatorTesting.hpp"
 
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/AnimatorStep.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <doctest/doctest.h>
 
@@ -223,6 +225,36 @@ TEST_CASE("Animator: a param is set only by its own name and type")
     CHECK_FALSE(Runtime::SetAnimatorFloat(character.animator, "sped", 1.f));
     Runtime::Animator unbound;
     CHECK_FALSE(Runtime::SetAnimatorFloat(unbound, "speed", 1.f));
+
+    REQUIRE(Runtime::SetAnimatorFloat(character.animator, "speed", 2.5f));
+    CHECK(Runtime::AnimatorFloat(character.animator, "speed") == std::optional<float>{2.5f});
+    CHECK_FALSE(Runtime::AnimatorFloat(character.animator, "grounded").has_value());
+    CHECK_FALSE(Runtime::AnimatorFloat(unbound, "speed").has_value());
+}
+
+TEST_CASE("Animator: a level keeps its file and clip bindings, and not where it was in them")
+{
+    ECS::Scene scene;
+    const ECS::Entity entity = scene.Create();
+    REQUIRE(scene.Add(entity, Runtime::SkinnedMesh{}) != nullptr);
+    REQUIRE(scene.Add(entity, Runtime::AnimationPlayer{}) != nullptr);
+    Runtime::Animator animator;
+    animator.machine = Core::DerivedAssetId("characters/hero.sgl");
+    animator.clips.push_back(
+        Runtime::ClipBinding{.clip = ClipId("Walk_Loop"), .name = Core::InternedString{"run_clip"}});
+    Runtime::BindAnimator(animator, *scene.Get<Runtime::AnimationPlayer>(entity), Cooked(kCharacter));
+    REQUIRE(scene.Add(entity, std::move(animator)) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(Runtime::SceneSerializer::Load(loaded, Runtime::SceneSerializer::Save(scene)).has_value());
+    const Runtime::Animator *restored = loaded.Get<Runtime::Animator>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(restored != nullptr);
+    CHECK(restored->machine == Core::DerivedAssetId("characters/hero.sgl"));
+    REQUIRE(restored->clips.size() == 1);
+    CHECK(restored->clips[0].clip == ClipId("Walk_Loop"));
+    CHECK(restored->clips[0].name.View() == "run_clip");
+    // Bound again from the file when it loads.
+    CHECK(restored->run.graph == nullptr);
 }
 
 TEST_CASE("Animator: a clip param plays what the Animator binds to it")

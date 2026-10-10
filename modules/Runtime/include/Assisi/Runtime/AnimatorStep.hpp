@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,5 +54,9 @@ bool SetAnimatorBool(Animator &animator, std::string_view name, bool value);
 
 /// @brief Sets trigger @p name for this frame. False when there is none.
 bool FireAnimatorTrigger(Animator &animator, std::string_view name);
+
+/// @brief The value of float param @p name, for code that eases it towards a
+///        target; nothing when it is unbound or has no such float param.
+[[nodiscard]] std::optional<float> AnimatorFloat(const Animator &animator, std::string_view name);
 
 } // namespace Assisi::Runtime
