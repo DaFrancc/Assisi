@@ -403,6 +403,8 @@ endfunction()
 #
 # COOK_TARGET, optional, is what the cook step links instead of TARGET, for a
 # kind whose cooking needs a library the game must not link (a parser).
+# assisi_link_asset_cook_steps() links it into the executable too, since an
+# OBJECT library's own links don't reach the executable its objects go into.
 function(assisi_asset_kind)
     cmake_parse_arguments(_ARG "" "TARGET;COOK_TARGET" "LOAD;COOK" ${ARGN})
     if(NOT _ARG_TARGET)
@@ -426,6 +428,7 @@ function(assisi_asset_kind)
         add_library("${_cook_target}" OBJECT ${_ARG_COOK})
         target_link_libraries("${_cook_target}" PRIVATE "${_cook_links}")
         set_property(GLOBAL APPEND PROPERTY ASSISI_ASSET_COOK_OBJECT_TARGETS "${_cook_target}")
+        set_property(GLOBAL APPEND PROPERTY ASSISI_ASSET_COOK_LINKS "${_cook_links}")
     endif()
 endfunction()
 
@@ -436,4 +439,9 @@ function(assisi_link_asset_cook_steps target)
     foreach(_ct ${_cook_targets})
         target_sources("${target}" PRIVATE "$<TARGET_OBJECTS:${_ct}>")
     endforeach()
+    get_property(_cook_links GLOBAL PROPERTY ASSISI_ASSET_COOK_LINKS)
+    if(_cook_links)
+        list(REMOVE_DUPLICATES _cook_links)
+        target_link_libraries("${target}" PRIVATE ${_cook_links})
+    endif()
 endfunction()

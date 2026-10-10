@@ -12,6 +12,8 @@ target_sources(Assisi-Sglc PRIVATE
 target_link_libraries(Assisi-Sglc
   PRIVATE
     Assisi::SigilCompile
+    # The animation vocabulary.
+    Assisi::RuntimeImport
 )
 
 set_target_properties(Assisi-Sglc PROPERTIES OUTPUT_NAME "sglc")

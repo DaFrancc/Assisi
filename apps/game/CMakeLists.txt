@@ -520,6 +520,7 @@ if (ASSISI_BUILD_TESTS)
     --forbid "Assisi::Image::Compress("
     --forbid "Assisi::Mondrian::Import::"
     --forbid "Assisi::Sigil::Compile::"
+    --forbid "Assisi::Runtime::Import::"
     --forbid "FT_Init_FreeType"
     --forbid "Assisi::Cook::"
   )

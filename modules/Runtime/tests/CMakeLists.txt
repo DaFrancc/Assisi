@@ -31,6 +31,7 @@ add_executable(Assisi-Runtime-Tests
   TestFrustum.cpp
   TestSceneSerializer.cpp
   TestAnimationLayers.cpp
+  TestAnimatorCompile.cpp
   TestAnimationPlayback.cpp
   TestSkinnedMesh.cpp
   TestLifecycle.cpp
@@ -52,6 +53,7 @@ target_include_directories(Assisi-Runtime-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Runtime-Tests
   PRIVATE
     Assisi::Runtime
+    Assisi::RuntimeImport
     Assisi-Runtime-TestComponents
 )
 

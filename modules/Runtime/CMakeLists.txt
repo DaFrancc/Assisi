@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Runtime)
 
 target_sources(Assisi-Runtime
   PUBLIC
+    "include/Assisi/Runtime/AnimatorGraph.hpp"
     "include/Assisi/Runtime/AssetResolve.hpp"
     "include/Assisi/Runtime/AudioEmitter.hpp"
     "include/Assisi/Runtime/Blueprint.hpp"
@@ -26,6 +27,7 @@ target_sources(Assisi-Runtime
   PRIVATE
     "src/AssetResolve.cpp"
     "src/AnimationPlayback.cpp"
+    "src/AnimatorGraph.cpp"
     "src/SkinnedMeshPose.cpp"
     "src/Blueprint.cpp"
     "src/Camera.cpp"
@@ -64,6 +66,8 @@ target_link_libraries(Assisi-Runtime
     Assisi::Render
     # Audio: the SoundHandle an AudioEmitter keeps for each sound it plays.
     Assisi::Audio
+    # Sigil: the graphs and code an Animator runs.
+    Assisi::Sigil
 )
 
 assisi_reflect(
@@ -81,6 +85,43 @@ assisi_reflect(
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)
+
+# Compiling `.sgl` files into animator graphs: what the editor and the cook do,
+# and a shipped game never does. A library of its own so the game's link can't
+# reach the Sigil compiler or the glTF reader the skeleton check uses.
+add_library(Assisi-RuntimeImport)
+Assisi_apply_defaults(Assisi-RuntimeImport)
+
+target_sources(Assisi-RuntimeImport
+  PUBLIC
+    "import/include/Assisi/Runtime/Import/AnimatorCompiler.hpp"
+  PRIVATE
+    "import/src/AnimatorCompiler.cpp"
+)
+
+target_include_directories(Assisi-RuntimeImport
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/import/include"
+)
+
+target_link_libraries(Assisi-RuntimeImport
+  PUBLIC
+    Assisi::Runtime
+    Assisi::SigilCompile
+  PRIVATE
+    Assisi::GeometryImport
+)
+
+add_library(Assisi::RuntimeImport ALIAS Assisi-RuntimeImport)
+
+# The animator kind loads in every build; cooking one compiles Sigil, so the
+# cook step links the import library a shipped game never does.
+assisi_asset_kind(
+  TARGET      Assisi-Runtime
+  LOAD        src/AnimatorGraphKind.cpp
+  COOK        import/src/AnimatorGraphCook.cpp
+  COOK_TARGET Assisi-RuntimeImport
+)
 
 if (ASSISI_BUILD_TESTS)
   add_subdirectory(tests)

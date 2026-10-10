@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Vocabularies.hpp"
 
+#include <Assisi/Runtime/Import/AnimatorCompiler.hpp>
 #include <Assisi/Sigil/Compile/Suggest.hpp>
 
 #include <algorithm>
@@ -68,7 +69,9 @@ Vocabulary Robot()
 
 std::vector<Sigil::Compile::Vocabulary> Vocabularies()
 {
-    return {Robot()};
+    // sglc has no asset tree, so animation names are checked only for being
+    // written; the cook checks them against the tree.
+    return {Robot(), Runtime::Import::AnimationVocabulary(nullptr)};
 }
 
 } // namespace Assisi::Sglc
