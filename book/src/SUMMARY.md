@@ -40,6 +40,7 @@
     - [The character controller](physics-character.md)
 - [Audio](audio.md)
 - [Animation](animation.md)
+    - [Animators](animator.md)
 - [Sigil](sigil.md)
 - [Levels and blueprints](levels-and-blueprints.md)
 

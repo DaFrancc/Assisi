@@ -18,6 +18,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Assisi::Sigil::Compile
 {
@@ -35,6 +36,17 @@ using SourceReader = std::function<std::expected<std::string, std::string>(std::
 ///        it, so a caller can pick what to compile it with. Nothing when the
 ///        file doesn't start with one.
 [[nodiscard]] std::optional<std::string> ReadUseLine(std::string_view source);
+
+/// @brief The paths @p source imports, in order, read without checking it, so
+///        a cook can tell which files its output depends on. Empty when the
+///        file doesn't parse.
+[[nodiscard]] std::vector<std::string> ListImports(std::string_view source);
+
+/// @brief The string written as the first value of the clause @p word at the
+///        top of @p source, read without checking it. Nothing when there is no
+///        such clause, its value isn't a string written out, or the file
+///        doesn't parse.
+[[nodiscard]] std::optional<std::string> FileClauseString(std::string_view source, std::string_view word);
 
 /// @brief @p source checked against the vocabulary it names, which must be one
 ///        of @p vocabularies.

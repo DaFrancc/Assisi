@@ -124,7 +124,7 @@ TEST_CASE("The sound cook step ships a sound that decodes exactly as authored")
     for (const std::vector<std::byte> &source : sources)
     {
         REQUIRE_FALSE(source.empty());
-        const std::expected<std::vector<std::byte>, Core::AssetError> cooked = step.cook(source);
+        const std::expected<std::vector<std::byte>, Core::AssetError> cooked = step.cook(source, Core::NoCookContext());
         REQUIRE(cooked.has_value());
         CHECK(*cooked == source);
     }
@@ -136,7 +136,7 @@ TEST_CASE("The sound cook step refuses a file that would not play")
 
     const std::vector<std::byte> mp3 = Audio::Testing::ReadFixture("tone.mp3");
     REQUIRE_FALSE(mp3.empty());
-    const std::expected<std::vector<std::byte>, Core::AssetError> fromMp3 = step.cook(mp3);
+    const std::expected<std::vector<std::byte>, Core::AssetError> fromMp3 = step.cook(mp3, Core::NoCookContext());
     REQUIRE_FALSE(fromMp3.has_value());
     // A valid file this build cannot read, not a broken one.
     CHECK(fromMp3.error() == Core::AssetErrorCode::UnsupportedEncoding);
@@ -145,7 +145,7 @@ TEST_CASE("The sound cook step refuses a file that would not play")
     const std::string_view text = "not a sound at all";
     const std::byte *first = reinterpret_cast<const std::byte *>(text.data());
     const std::vector<std::byte> garbage{first, first + text.size()};
-    CHECK_FALSE(step.cook(garbage).has_value());
+    CHECK_FALSE(step.cook(garbage, Core::NoCookContext()).has_value());
 }
 
 TEST_CASE("A decoder's error becomes the asset error that says what went wrong")

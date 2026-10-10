@@ -222,34 +222,40 @@ struct Propagation
     /// blended between the last two fixed steps if it moved in the latest one.
     glm::mat4 DrawnLocalMatrix(uint32_t slot, const Transform &transform) const
     {
+        glm::vec3 position = transform.position;
+        glm::vec3 scale = transform.scale;
+        glm::quat rotation = transform.rotation;
         const SparseSetLanes<Transform>::BlendMark &mark = lanes._marks[slot];
-        if (mark.step != lanes._step)
+        if (mark.step == lanes._step)
         {
-            return ComposeMatrix(transform.rotation, transform.position, transform.scale);
+            BlendPose(lanes._current[mark.entry], transform, position, scale, rotation);
         }
+        // One call whether or not the step moved it. With fast math the compiler
+        // may contract each inlined copy differently, so two copies would draw an
+        // entity at rest a rounding away from where the frame before drew it.
+        return ComposeMatrix(rotation, position, scale);
+    }
 
-        // Each field the step did not change is taken exactly, so an entity at
-        // rest is drawn bit for bit where it is. Written again since the step,
-        // the step's motion is blended and the later write applied in full.
-        const SparseSetLanes<Transform>::BlendEntry &entry = lanes._current[mark.entry];
+    /// Blends the pose @p transform is drawn at between the step's start and
+    /// end. Each field the step did not change is left exactly as it is, so an
+    /// entity at rest is drawn bit for bit where it is. Written again since
+    /// the step, the step's motion is blended and the later write applied in
+    /// full.
+    void BlendPose(const SparseSetLanes<Transform>::BlendEntry &entry, const Transform &transform,
+                   glm::vec3 &position, glm::vec3 &scale, glm::quat &rotation) const
+    {
         const float alpha = lanes._alpha;
-        const glm::vec3 &prevPosition = entry.prevPosition;
-        const glm::vec3 &prevScale = entry.prevScale;
         const glm::vec3 endPosition = entry.hasEnd ? entry.endPosition : transform.position;
         const glm::vec3 endScale = entry.hasEnd ? entry.endScale : transform.scale;
         const glm::quat endRotation = entry.hasEnd ? entry.endRotation : transform.rotation;
-
-        glm::vec3 position = transform.position;
-        if (prevPosition != endPosition)
+        if (entry.prevPosition != endPosition)
         {
-            position = glm::mix(prevPosition, endPosition, alpha) + (transform.position - endPosition);
+            position = glm::mix(entry.prevPosition, endPosition, alpha) + (transform.position - endPosition);
         }
-        glm::vec3 scale = transform.scale;
-        if (prevScale != endScale)
+        if (entry.prevScale != endScale)
         {
-            scale = glm::mix(prevScale, endScale, alpha) + (transform.scale - endScale);
+            scale = glm::mix(entry.prevScale, endScale, alpha) + (transform.scale - endScale);
         }
-        glm::quat rotation = transform.rotation;
         if (entry.prevRotation != endRotation)
         {
             rotation = BlendRotation(entry.prevRotation, endRotation, alpha);
@@ -258,7 +264,6 @@ struct Propagation
                 rotation = glm::normalize(transform.rotation * glm::conjugate(endRotation) * rotation);
             }
         }
-        return ComposeMatrix(rotation, position, scale);
     }
 
     /// Resolves @p e's world matrix, recomputing it when @p e is dirty or its

@@ -24,11 +24,13 @@ struct Edge
     uint32_t to = 0;
 };
 
-/// Where a clause is written: in a block of a kind, or in a transition.
+/// Where a clause is written: in a block of a kind, in a transition, or at the
+/// top of the file.
 struct Placement
 {
     std::string_view kind;
     bool transition = false;
+    bool file = false;
 };
 
 std::optional<uint32_t> FindKind(const Vocabulary &vocabulary, std::string_view name)
@@ -87,6 +89,10 @@ std::optional<uint32_t> ResolveState(Checker &checker, const Syntax::Named &name
 
 bool PlacedHere(const ClauseSpec &spec, Placement placement)
 {
+    if (placement.file)
+    {
+        return spec.fileLevel;
+    }
     if (placement.transition)
     {
         return spec.onTransition;
@@ -96,12 +102,20 @@ bool PlacedHere(const ClauseSpec &spec, Placement placement)
 
 std::string PlacementName(Placement placement)
 {
+    if (placement.file)
+    {
+        return "the file";
+    }
     return placement.transition ? std::string{"a transition"} : std::format("a {}", placement.kind);
 }
 
 /// Where @p spec may be written, for the help when it's written elsewhere.
 std::string AllowedPlaces(const ClauseSpec &spec)
 {
+    if (spec.fileLevel)
+    {
+        return "the top of the file, outside any block";
+    }
     std::vector<std::string> places;
     for (const std::string &block : spec.blocks)
     {
@@ -252,14 +266,23 @@ void CheckCardinality(Checker &checker, std::span<const Clause> clauses, Placeme
     }
     for (std::size_t i = 0; i < specs.size(); ++i)
     {
-        if (specs[i].cardinality == Cardinality::ExactlyOnce && first[i] == nullptr && PlacedHere(specs[i], placement))
+        if (specs[i].cardinality != Cardinality::ExactlyOnce || first[i] != nullptr || !PlacedHere(specs[i], placement))
+        {
+            continue;
+        }
+        if (placement.file)
         {
             Diagnostic &error = Fail(checker, owner.Extent(),
-                                     std::format("{} \"{}\" has no \"{}\" clause", placement.kind, owner.name,
-                                                 specs[i].word),
+                                     std::format("the file has no \"{}\" clause", specs[i].word),
                                      std::format("needs a \"{}\" clause", specs[i].word));
-            error.help = std::format("every {} needs exactly one \"{}\"", placement.kind, specs[i].word);
+            error.help = std::format("write one \"{}\" at the top of the file, before any block", specs[i].word);
+            continue;
         }
+        Diagnostic &error = Fail(checker, owner.Extent(),
+                                 std::format("{} \"{}\" has no \"{}\" clause", placement.kind, owner.name,
+                                             specs[i].word),
+                                 std::format("needs a \"{}\" clause", specs[i].word));
+        error.help = std::format("every {} needs exactly one \"{}\"", placement.kind, specs[i].word);
     }
 }
 
@@ -639,16 +662,6 @@ Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind 
         block.children[i].clauses =
             CheckBlockClauses(checker, *childSyntax[i], block.children, static_cast<uint32_t>(i), edges);
     }
-    if (kind == nullptr)
-    {
-        for (const Syntax::Clause &clause : syntax.clauses)
-        {
-            Diagnostic &error =
-                Fail(checker, clause.word.Extent(), "clauses go inside a block", "at the top level of the file");
-            error.help = "move it into the block it belongs to";
-        }
-    }
-
     const std::string owner = kind == nullptr ? std::string{"the file"}
                                               : std::format("{} \"{}\"", kind->name, block.name);
     if (!syntax.transitions.empty() && (kind == nullptr || !kind->holdsStates))
@@ -679,11 +692,52 @@ Block CheckBlock(Checker &checker, const Syntax::Block &syntax, const BlockKind 
     return block;
 }
 
+/// The clauses written at the top of @p file: those the vocabulary marks
+/// file-level, which a library, holding only enums and consts, takes none of.
+std::vector<Clause> CheckFileClauses(Checker &checker, const Syntax::File &file)
+{
+    const Placement placement{.kind = {}, .transition = false, .file = true};
+    std::vector<Clause> clauses;
+    for (const Syntax::Clause &syntax : file.root.clauses)
+    {
+        const std::vector<ClauseSpec>::const_iterator spec =
+            std::ranges::find_if(checker.vocabulary.clauses,
+                                 [&syntax](const ClauseSpec &candidate) { return candidate.word == syntax.word.name; });
+        // An unknown word is checked here too, so CheckClause suggests the closest.
+        const bool belongsHere = spec == checker.vocabulary.clauses.end() || spec->fileLevel;
+        if (checker.program.library && belongsHere)
+        {
+            Diagnostic &error =
+                Fail(checker, syntax.word.Extent(), "a library can't hold clauses", "not allowed in a library");
+            error.help = "a library holds only imports, enums and consts; write it in the files that import it";
+            continue;
+        }
+        if (!belongsHere)
+        {
+            Diagnostic &error =
+                Fail(checker, syntax.word.Extent(), "clauses go inside a block", "at the top level of the file");
+            error.help = "move it into the block it belongs to";
+            continue;
+        }
+        std::optional<Clause> clause = CheckClause(checker, syntax, placement, {});
+        if (clause.has_value())
+        {
+            clauses.push_back(std::move(*clause));
+        }
+    }
+    if (!checker.program.library)
+    {
+        CheckCardinality(checker, clauses, placement, file.use.vocabulary);
+    }
+    return clauses;
+}
+
 } // namespace
 
 void CheckBlocks(Checker &checker, const Syntax::File &file)
 {
     checker.program.root = CheckBlock(checker, file.root, nullptr, 0);
+    checker.program.root.clauses = CheckFileClauses(checker, file);
 }
 
 } // namespace Assisi::Sigil::Compile::Detail

@@ -15,25 +15,24 @@ that needs real computation, like a raycast or a timer that game rules care
 about, stays in C++ and reaches Sigil as one of those values. So Sigil has no
 loops, no functions of your own and no variables it changes.
 
-> **Status:** this page describes the core language. Nothing in the engine
-> reads `.sgl` files yet: the animation state machine is the first thing that
-> will. Until then, the words used for animation below (`layer`, `state`,
-> `play`, `fade` and so on) are examples, and may change.
+This page teaches the language itself. Animation is the first system that
+runs `.sgl` files; [Animators](animator.md) covers its words, such as `layer`,
+`play` and `fade`, and how a character uses a file.
 
 ## Example: a character that walks, jumps and falls
 
 ```
 use animation;
+skeleton "quaternius/UAL1/UAL1.glb";
 
 // Values the game writes every frame.
-param speed: float;
 param grounded: bool;
 param jump: trigger;
 
 // Fixed for this file.
-const walk_clip = "UAL1_animations/Walk_Loop.glb";
-const jump_clip = "UAL1_animations/Jump_Start.glb";
-const fall_clip = "UAL1_animations/Jump_Loop.glb";
+const walk_clip = "quaternius/UAL1/UAL1_animations/Walk_Loop.glb";
+const jump_clip = "quaternius/UAL1/UAL1_animations/Jump_Start.glb";
+const fall_clip = "quaternius/UAL1/UAL1_animations/Jump_Loop.glb";
 
 layer base {
     state walk { play walk_clip; }
@@ -51,6 +50,9 @@ Read it top to bottom:
 - `use animation;` says this file is written for the animation system. Every
   file starts by naming the system it is for, and that system decides which
   words like `layer`, `state` and `play` exist.
+- `skeleton "...";` names the model whose joints the file is written for. It
+  is a word of the animation system, and one of the few written outside any
+  block.
 - `param` lines are the file's **inputs**. The game writes them; the file only
   reads them.
 - `const` lines name values that never change.
@@ -63,8 +65,10 @@ Read it top to bottom:
 
 `sglc` is the Sigil compiler on its own, as a command-line tool. It reads `.sgl`
 files and prints what's wrong with them, without running the game or the cook.
-Until the animation system arrives, it only knows a small made-up vocabulary
-called `robot`, which is enough to try every part of the language on this page.
+It knows the `animation` vocabulary, though without the asset tree it can't
+check that a clip or joint exists; the cook does that. It also knows a small
+made-up vocabulary called `robot`, which the examples below use to try every
+part of the language.
 
 ### Step 1: build it
 
@@ -253,6 +257,10 @@ the system the file is for.
 Inside a block, a **clause** is a word followed by its values and a `;`, such
 as `play walk_clip;`. The system says which clauses a block may hold and what
 type each value must be.
+
+A system can also have clauses about the whole file, written at the top level
+outside any block, such as animation's `skeleton "...";`. Those go nowhere
+else, and a library can't hold them.
 
 The blocks inside a block are its **states**:
 

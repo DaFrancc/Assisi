@@ -8,11 +8,13 @@ target_sources(Assisi-Sigil
   PUBLIC
     "include/Assisi/Sigil/Bytecode.hpp"
     "include/Assisi/Sigil/Evaluate.hpp"
+    "include/Assisi/Sigil/Graph.hpp"
     "include/Assisi/Sigil/Layout.hpp"
     "include/Assisi/Sigil/Verify.hpp"
   PRIVATE
     "src/Bytecode.cpp"
     "src/Evaluate.cpp"
+    "src/Graph.cpp"
     "src/Layout.cpp"
     "src/Verify.cpp"
 )

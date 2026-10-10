@@ -678,6 +678,49 @@ class ScreenCooker final : public Cooker
 
 // ── Kinds registered by modules ───────────────────────────────────────────────
 
+/// Other files as the cook sees them: read from the source tree, named by the
+/// cook's database. What a step reports is kept for the line a failure prints.
+class TreeCookContext final : public Core::AssetCookContext
+{
+  public:
+    TreeCookContext(std::string_view vpath, const Core::AssetDatabase *database) : _path(vpath), _database(database) {}
+
+    [[nodiscard]] std::string_view Path() const override { return _path; }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> Read(std::string_view vpath) const override
+    {
+        std::expected<std::vector<std::byte>, Core::AssetError> bytes = Core::AssetSystem::ReadBinary(vpath);
+        if (!bytes)
+        {
+            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Core::Describe(bytes.error())));
+        }
+        return std::move(*bytes);
+    }
+
+    [[nodiscard]] std::optional<Core::AssetId> IdFor(std::string_view vpath) const override
+    {
+        return _database != nullptr ? _database->IdFor(vpath) : std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::string> KindNameOf(Core::AssetId id) const override
+    {
+        return _database != nullptr ? _database->KindNameOf(id) : std::nullopt;
+    }
+
+    void Report(std::string message) const override
+    {
+        _reported += _reported.empty() ? "" : "\n";
+        _reported += message;
+    }
+
+    [[nodiscard]] const std::string &Reported() const { return _reported; }
+
+  private:
+    std::string _path;
+    mutable std::string _reported;
+    const Core::AssetDatabase *_database;
+};
+
 /// A kind a module registered with AssetKindRegistry: its files cook through
 /// its own step, or ship as they are when it has none. One of these is made per
 /// registered kind, so nothing here names any of them.
@@ -695,18 +738,36 @@ class KindCooker final : public Cooker
         return step != nullptr ? step->version : 0;
     }
 
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
+    {
+        const Core::AssetCookStep *step = Core::AssetKindRegistry::Instance().CookStepFor(_kind->id);
+        if (step == nullptr || !step->dependencies)
+        {
+            return {};
+        }
+        const std::expected<std::vector<std::byte>, CookError> source = ReadSource(vpath);
+        if (!source)
+        {
+            return {};
+        }
+        // Listing what a file names needs no ids, so no database.
+        return step->dependencies(*source, TreeCookContext{vpath, nullptr});
+    }
+
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
-                                                                        const CookContext &) const override
+                                                                        const CookContext &context) const override
     {
         const std::expected<std::vector<std::byte>, CookError> source = ReadSource(vpath);
         if (!source)
         {
             return std::unexpected(source.error());
         }
-        std::expected<std::vector<std::byte>, Core::AssetError> cooked = Core::CookAssetBytes(*_kind, *source);
+        const TreeCookContext tree{vpath, context.database};
+        std::expected<std::vector<std::byte>, Core::AssetError> cooked = Core::CookAssetBytes(*_kind, *source, tree);
         if (!cooked)
         {
-            return std::unexpected(Failure(vpath, Core::Describe(cooked.error())));
+            const std::string reason = Core::Describe(cooked.error());
+            return std::unexpected(Failure(vpath, tree.Reported().empty() ? reason : reason + "\n" + tree.Reported()));
         }
         return std::move(*cooked);
     }

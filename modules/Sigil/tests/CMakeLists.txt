@@ -11,6 +11,7 @@ add_executable(Assisi-Sigil-Tests
   TestIntegration.cpp
   TestLexer.cpp
   TestParser.cpp
+  TestStateGraph.cpp
   TestSuggest.cpp
   TestTriggers.cpp
   TestVerify.cpp

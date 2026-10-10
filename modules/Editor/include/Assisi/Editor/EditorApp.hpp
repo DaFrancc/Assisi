@@ -285,6 +285,14 @@ class EditorApp : public Assisi::App::Application
     void DrawPanels();
 
   private:
+    /// When the source file at @p vpath was last written, for the cooking
+    /// provider to tell an edited file from one it already cooked.
+    static std::optional<std::int64_t> SourceStamp(std::string_view vpath);
+
+    /// Every kSourcePollSeconds, forgets each cooked asset whose files were
+    /// edited, so what uses it loads the new version.
+    void ReloadEditedSources(float dt);
+
     // --- Setup ---
     void SetupCamera();
     void SetupScene();
@@ -1640,7 +1648,13 @@ class EditorApp : public Assisi::App::Application
     Assisi::Core::LooseFileProvider _sourceFiles{_assetDatabase};
     Assisi::Core::CookingProvider _cookedSources{
         _sourceFiles, [this](Assisi::Core::AssetId id) { return _assetDatabase.PathFor(id); },
-        [this](Assisi::Core::AssetId id) { return _assetDatabase.KindNameOf(id); }};
+        [this](Assisi::Core::AssetId id) { return _assetDatabase.KindNameOf(id); }, &SourceStamp};
+
+    // How often the files behind cooked assets are checked for edits, and the
+    // time since the last check. Often enough that a saved edit shows in the
+    // time it takes to look back at the game; each check stats every watched file.
+    static constexpr float kSourcePollSeconds = 0.5f;
+    float _sinceSourcePoll = 0.f;
 
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
     // source changed in a way the conservative classifier couldn't auto-resolve.

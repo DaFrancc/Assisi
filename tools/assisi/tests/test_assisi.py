@@ -684,6 +684,13 @@ class HistoryTest(ToolTest):
         self.assertEqual(len(entries), store.HISTORY_LIMIT)
         self.assertNotIn(["build-0"], [entry.argv for entry in entries])
 
+    def test_history_writes_times_no_finer_than_it_reads_them(self):
+        keeper = store.Store(self.sandbox.root)
+        keeper.record(["build"], True, 23.886717182998837, now=1791612082.4157877)
+        text = (self.sandbox.root / ".assisi" / "history.json").read_text()
+        self.assertIn('"last_run": 1791612082.416', text)
+        self.assertIn('"duration": 23.9', text)
+
     def test_corrupt_history_starts_empty_and_says_so(self):
         folder = self.sandbox.root / ".assisi"
         folder.mkdir()

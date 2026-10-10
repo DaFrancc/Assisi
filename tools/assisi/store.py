@@ -23,6 +23,11 @@ RECIPES_FILE = "recipes.json"
 # step and test somebody runs in a working week; the least recently run goes.
 HISTORY_LIMIT = 50
 
+# Decimal places history keeps. Milliseconds still order two runs started in
+# the same second; a duration is shown in whole seconds, so tenths are plenty.
+RUN_TIME_PLACES = 3
+DURATION_PLACES = 1
+
 
 @dataclass
 class Entry:
@@ -93,6 +98,10 @@ class Store:
             match.last_ok = ok
             match.duration = duration
         kept = rank_recent(entries)[:HISTORY_LIMIT]
+        # Every entry, so ones written before the rounding are tidied too.
+        for entry in kept:
+            entry.last_run = round(entry.last_run, RUN_TIME_PLACES)
+            entry.duration = round(entry.duration, DURATION_PLACES)
         self._write(HISTORY_FILE, [asdict(entry) for entry in kept])
 
     # --- Recipes

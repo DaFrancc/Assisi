@@ -88,6 +88,11 @@ class AssetStore
     ///        flight. Values already handed out stay valid for whoever holds them.
     void Clear();
 
+    /// @brief Forget @p id, loaded, loading or failed, so the next Resolve loads
+    ///        it again: after its file changed. A load of it in flight is dropped
+    ///        when it lands; a value already handed out stays valid.
+    void Forget(AssetId id);
+
   private:
     struct State;
 

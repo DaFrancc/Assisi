@@ -10,6 +10,8 @@
 #include <Assisi/Geometry/BlendSpace.hpp>
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Runtime/AnimationPlayback.hpp>
+#include <Assisi/Runtime/AnimatorGraph.hpp>
+#include <Assisi/Runtime/AnimatorStep.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
@@ -169,6 +171,26 @@ void AnimationPlayerSystem(SystemContext &ctx)
             WarnMissingJoints(player.track);
         }
         AdvanceLayers(*ctx.assets, player, skeleton, ctx.dt, skinned);
+    }
+}
+
+void AnimatorSystem(SystemContext &ctx)
+{
+    if (ctx.assets == nullptr)
+    {
+        return;
+    }
+    for (auto [entity, animator, player] :
+         ctx.world.scene.Query<Mut<Runtime::Animator>, Mut<Runtime::AnimationPlayer>>())
+    {
+        std::shared_ptr<const Runtime::AnimatorGraph> graph =
+            ctx.assets->Resolve<Runtime::AnimatorGraph>(animator.machine);
+        // Null while a changed file cooks again, or when it won't: the one bound plays on.
+        if (graph != nullptr && graph != animator.run.graph)
+        {
+            Runtime::BindAnimator(animator, player, std::move(graph));
+        }
+        Runtime::StepAnimator(animator, player);
     }
 }
 

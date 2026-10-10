@@ -28,6 +28,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,6 +36,7 @@
 #include <utility>
 #include <vector>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Core/Errors.hpp>
 
@@ -54,10 +56,52 @@ using AssetLoadFunction =
 ///        value is shared. Built by MakeAssetFinish.
 using AssetFinishFunction = std::function<std::expected<void, AssetError>(void *value)>;
 
-/// @brief Source file bytes to the payload a package carries, run by the cook
-///        and, in the editor, on every load.
+/// @brief What a cook step may know besides its own bytes: which file it is
+///        cooking, the other source files, and their ids and kinds.
+///
+/// For a kind whose files name other files, such as a script that imports a
+/// library or names a model. Every path starts at the asset root. The cook
+/// tool and the editor each provide one, so a step cooks the same either way.
+class AssetCookContext
+{
+  public:
+    virtual ~AssetCookContext() = default;
+
+    /// @brief The virtual path of the file being cooked, for messages.
+    [[nodiscard]] virtual std::string_view Path() const = 0;
+
+    /// @brief The bytes of the source file at @p vpath, or why they can't be read.
+    [[nodiscard]] virtual std::expected<std::vector<std::byte>, std::string> Read(std::string_view vpath) const = 0;
+
+    /// @brief The id of the file at @p vpath, or nothing when it has none.
+    [[nodiscard]] virtual std::optional<AssetId> IdFor(std::string_view vpath) const = 0;
+
+    /// @brief The kind @p id's sidecar names, or nothing when it names none.
+    [[nodiscard]] virtual std::optional<std::string> KindNameOf(AssetId id) const = 0;
+
+    /// @brief Shows @p message to whoever is cooking: a refused file's whole
+    ///        explanation, which an AssetError's fixed detail can't hold.
+    virtual void Report(std::string message) const = 0;
+};
+
+/// @brief A context with no other files and nobody to report to beyond the
+///        log, for a cook of bytes on their own.
+[[nodiscard]] const AssetCookContext &NoCookContext();
+
+/// @brief Source file bytes to the payload a package carries, for a kind whose
+///        files stand alone.
 using AssetCookFunction =
     std::function<std::expected<std::vector<std::byte>, AssetError>(std::span<const std::byte> source)>;
+
+/// @brief Source file bytes to the payload a package carries, run by the cook
+///        and, in the editor, on every load.
+using AssetContextCookFunction = std::function<std::expected<std::vector<std::byte>, AssetError>(
+    std::span<const std::byte> source, const AssetCookContext &context)>;
+
+/// @brief The other source files a file's payload depends on, as virtual paths,
+///        so a change to one of them cooks it again.
+using AssetDependenciesFunction =
+    std::function<std::vector<std::string>(std::span<const std::byte> source, const AssetCookContext &context)>;
 
 /// @brief What a kind does with files of one format.
 enum class FormatRole : std::uint8_t
@@ -110,7 +154,9 @@ struct AssetKind
 /// @brief How a kind's source files are cooked.
 struct AssetCookStep
 {
-    AssetCookFunction cook;
+    AssetContextCookFunction cook;
+    /// Empty when a file depends on no other.
+    AssetDependenciesFunction dependencies;
     AssetKindId kind;
 
     /// Folded into the cook's cache key: bump it when the step's output changes
@@ -216,7 +262,22 @@ template <typename T>
 [[nodiscard]] inline AssetCookStep MakeAssetCookStep(AssetKindId kind, std::uint32_t version, AssetCookFunction cook)
 {
     AssetCookStep step;
+    step.cook = [standalone = std::move(cook)](std::span<const std::byte> source, const AssetCookContext &)
+    { return standalone(source); };
+    step.kind = kind;
+    step.version = version;
+    return step;
+}
+
+/// @brief The cook step for @p kind, whose files name other files: @p cook reads
+///        them through its context, and @p dependencies lists them.
+[[nodiscard]] inline AssetCookStep MakeContextCookStep(AssetKindId kind, std::uint32_t version,
+                                                       AssetContextCookFunction cook,
+                                                       AssetDependenciesFunction dependencies)
+{
+    AssetCookStep step;
     step.cook = std::move(cook);
+    step.dependencies = std::move(dependencies);
     step.kind = kind;
     step.version = version;
     return step;
@@ -225,6 +286,11 @@ template <typename T>
 /// @brief The cooked blob for a file of @p kind: the envelope, then the kind's
 ///        cook step applied to @p source, or @p source unchanged when the kind
 ///        has no step.
+[[nodiscard]] std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind &kind,
+                                                                               std::span<const std::byte> source,
+                                                                               const AssetCookContext &context);
+
+/// @brief CookAssetBytes for a file that names no other.
 [[nodiscard]] std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind &kind,
                                                                                std::span<const std::byte> source);
 
