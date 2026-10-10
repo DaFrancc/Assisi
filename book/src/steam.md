@@ -99,8 +99,14 @@ game:
 **What success looks like:**
 
 - The log says `Steam: running as <your Steam name> for app 480`.
-- Press **Shift+Tab** in the game: the Steam overlay opens over it.
 - Your friends list shows you playing the game (or "Spacewar", with 480).
+
+**The Steam overlay** (Shift+Tab) only appears in a game that Steam itself
+launched, from the Steam library. On Linux, Steam switches its overlay on in
+the game it launches, and a game you start yourself, from a terminal, a file
+manager or `./assisi run game`, never gets it. Everything else works either
+way: the player's name, achievements, stats and rich presence. You'll see the
+overlay once players, or you, start the game from Steam.
 
 If the log says something else instead, see [When it doesn't work](#when-it-doesnt-work).
 
@@ -243,6 +249,20 @@ game's developer, you own it, so it simply starts.
   a file named `steam_appid.txt`, holding just your app ID, beside
   `Assisi-Game`. Without it, the game hands itself to Steam and closes. Delete
   the file when you're done testing.
+
+Steam looks for `steam_appid.txt` in the folder the game is **started from**,
+not the folder the game is in. Double-clicking the game, and `./assisi run
+game`, both start it from its own folder, so the file is found. From a
+terminal, change to the game's folder first:
+
+```bash
+cd releases/1.0
+./Assisi-Game
+```
+
+Running `releases/1.0/Assisi-Game` from anywhere else doesn't find the file,
+so the game hands itself to Steam. With app ID 480 that starts Valve's
+Spacewar instead, since that's what app 480 is in your Steam library.
 - **If you ever copy a game folder by hand** to upload it, make sure
   `steam_appid.txt` isn't in it.
 
@@ -260,8 +280,12 @@ game's developer, you own it, so it simply starts.
 - **The game won't start at all and mentions `libsteam_api.so`**: the library
   isn't beside the game. Build again, or for a folder you copied by hand, copy
   `libsteam_api.so` from the build folder too.
-- **A ship build closes as soon as it starts**: it asked Steam to start it,
-  which is right for a player. To test it outside Steam, see [`steam_appid.txt`](#steam_appidtxt-on-your-computer-never-in-a-release).
+- **A ship build closes as soon as it starts** (or Spacewar opens instead): it
+  asked Steam to start it, which is right for a player. To test it outside
+  Steam, add [`steam_appid.txt`](#steam_appidtxt-on-your-computer-never-in-a-release)
+  and start the game from its own folder.
+- **No overlay on Shift+Tab**: the overlay only appears when Steam launches the
+  game; see [Run it with Steam](#4-run-it-with-steam).
 - **A ship build won't configure, naming the Steamworks SDK**: a game with an
   app ID needs the SDK to build its release. Run step 2.
 
