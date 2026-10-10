@@ -184,18 +184,26 @@ libsteam_api.so      Steam's runtime library (steam_api64.dll on Windows)
 
 Valve's agreement allows shipping that library inside your game.
 
-**What never goes anywhere:**
+**What never goes in git or to players:** the SDK, its zip, and the
+`steamworks/` folder.
 
-- `steam_appid.txt`. Debug and dev builds write it beside the game so Steam
-  knows the app ID while you develop. Valve says never to ship it, and the
-  engine never puts it in a release. If you copy a game folder by hand, leave
-  it out.
-- The SDK, its zip, and the `steamworks/` folder: never in git and never in a
-  release.
+### `steam_appid.txt`: on your computer, never in a release
 
-To test a ship build outside Steam on your own machine, put a file named
-`steam_appid.txt` holding just your app ID beside the game; it then runs
-without relaunching. Delete it again before you upload.
+`steam_appid.txt` is a small file holding just your app ID. When it sits
+beside the game, Steam takes the app ID from it instead of from the Steam
+library, which is what lets you run the game straight from your build folder.
+It's a development tool only: **Valve says never to ship it to players.**
+
+- **Debug and dev builds** write it beside the game for you. You don't need to
+  do anything.
+- **Ship builds** don't get one, because a ship build is what players receive.
+  `./assisi release` and `./assisi package` never include it either.
+- **To try a ship build outside Steam on your own computer**, add one by hand:
+  a file named `steam_appid.txt`, holding just your app ID, beside
+  `Assisi-Game`. Without it, the game hands itself to Steam and closes. Delete
+  the file when you're done testing.
+- **If you ever copy a game folder by hand** to upload it, make sure
+  `steam_appid.txt` isn't in it.
 
 ## When it doesn't work
 
@@ -212,7 +220,7 @@ without relaunching. Delete it again before you upload.
   isn't beside the game. Build again, or for a folder you copied by hand, copy
   `libsteam_api.so` from the build folder too.
 - **A ship build closes as soon as it starts**: it asked Steam to start it,
-  which is right for a player. To test it outside Steam, see the end of step 6.
+  which is right for a player. To test it outside Steam, see [`steam_appid.txt`](#steam_appidtxt-on-your-computer-never-in-a-release).
 - **A ship build won't configure, naming the Steamworks SDK**: a game with an
   app ID needs the SDK to build its release. Run step 2.
 
