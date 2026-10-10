@@ -154,6 +154,13 @@ bool Application::Initialize()
         return false;
     }
 
+    // Before the window and the device: Steam's overlay hooks the renderer as it
+    // is created, and cannot hook one that already exists.
+    if (!_headless && _steamApp.has_value() && !ConnectSteam())
+    {
+        return false;
+    }
+
     // Headless stops here: no window is created, RenderSystem::Initialize is
     // never called, and nothing below this line touches a GPU.
     if (!_headless && !InitializePresentation())
@@ -167,6 +174,27 @@ bool Application::Initialize()
     _playerSettings->ApplyAudio();
 
     _initialized = true;
+    return true;
+}
+
+bool Application::ConnectSteam()
+{
+    std::expected<std::unique_ptr<Steam::Client>, Steam::SteamError> client = Steam::Connect(*_steamApp);
+    if (client.has_value())
+    {
+        _steam = std::move(*client);
+        const std::expected<std::string, Steam::SteamError> name = _steam->PersonaName();
+        Core::Log::Info("Steam: running as {} for app {}", name.value_or("an unnamed player"), _steamApp->value);
+        return true;
+    }
+    _steam = std::make_unique<Steam::Unavailable>(client.error());
+    if (_steamRequired)
+    {
+        Core::Log::Fatal("Steam: {}. This game runs through Steam: start it from your Steam library.",
+                         Steam::ToString(client.error()));
+        return false;
+    }
+    Core::Log::Warn("Steam: {}; running without it.", Steam::ToString(client.error()));
     return true;
 }
 
@@ -801,6 +829,12 @@ void Application::Run()
             _audioDevice->Update();
             _mixer->Update();
         }
+        {
+            ASSISI_PROFILE_SCOPE("steam");
+            // What Steam queued since last frame, such as the overlay opening,
+            // before any system reads it.
+            _steam->Update();
+        }
         const Clock::time_point drainEnd = Clock::now();
 
         {
@@ -974,6 +1008,9 @@ void Application::Run()
     }
 
     OnShutdown();
+
+    // Shuts Steam down, which the destructors skipped below never would.
+    _steam.reset();
 
     // The process ends here instead of unwinding. Workers may be mid-way through a
     // texture encode that takes seconds, and waiting for it makes a closed window

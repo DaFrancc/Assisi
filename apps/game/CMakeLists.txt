@@ -155,6 +155,49 @@ endforeach()
 # The editor cooks source files as it loads them; the game reads cooked ones.
 assisi_link_asset_cook_steps(Assisi-GameEditor)
 
+# --- Steam.
+#
+# TYPE YOUR GAME'S STEAM APP ID HERE to make it a Steam game; leave it empty for
+# a game that does not use Steam. book/src/steam.md walks through getting one,
+# and 480 is the test app every developer can use.
+set(GAME_STEAM_APP_ID "")
+
+if (GAME_STEAM_APP_ID)
+  # A release refuses to start without Steam, so a ship build made without the
+  # SDK would be a game that can never start. Stop here instead.
+  if (CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT ASSISI_STEAMWORKS_ENABLED)
+    message(FATAL_ERROR "This game has a Steam app id but the Steamworks SDK is not installed, so its release "
+                        "build could never start. Install it with ./assisi steam-sdk <your download>; "
+                        "book/src/steam.md explains.")
+  endif()
+  # Release builds are what players receive, and they require Steam: started
+  # outside it they relaunch through it, and refuse to run without it.
+  target_compile_definitions(Assisi-Game PRIVATE
+    GAME_STEAM_APP_ID=${GAME_STEAM_APP_ID}
+    $<$<CONFIG:Release>:GAME_STEAM_REQUIRED>)
+  # Development runs tell Steam the app id through this file beside the game,
+  # which also stops a run outside Steam from relaunching through it. Never in a
+  # Release build: Valve says not to ship it, and staging never copies it.
+  file(GENERATE OUTPUT "$<TARGET_FILE_DIR:Assisi-Game>/steam_appid.txt" CONTENT "${GAME_STEAM_APP_ID}\n"
+       CONDITION $<NOT:$<CONFIG:Release>>)
+endif()
+
+# With the SDK, every binary that links the engine needs libsteam_api beside it.
+# It is copied there from the developer's own SDK at build time, and the game and
+# editor look for it only there, so no path on the build machine ends up in a
+# binary a player runs.
+if (ASSISI_STEAMWORKS_ENABLED)
+  foreach(_exe Assisi-Game Assisi-GameEditor)
+    if (NOT WIN32)
+      set_target_properties("${_exe}" PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN")
+    endif()
+    add_custom_command(TARGET "${_exe}" POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:Steamworks::steam_api>"
+              "$<TARGET_FILE_DIR:${_exe}>"
+      VERBATIM)
+  endforeach()
+endif()
+
 # A refused start has to reach the exit code. Driven as a real process because
 # that is the whole claim — `StartupFailed()` returning true is not the property
 # anyone depends on, `$?` being non-zero is, and only main() joins the two.
@@ -269,17 +312,36 @@ if (ASSISI_BUILD_TESTS)
   set(_staged "${CMAKE_CURRENT_BINARY_DIR}/staged")
   set(_unstaged "${CMAKE_CURRENT_BINARY_DIR}/unstaged")
   set(_stage_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageGame.cmake")
+  # A game built with the SDK needs the Steam library beside it to start at all.
+  set(_stage_steam "")
+  if (ASSISI_STEAMWORKS_ENABLED)
+    set(_stage_steam "-DSTEAM_LIB=$<TARGET_FILE:Steamworks::steam_api>")
+  endif()
   add_test(NAME Game-Staged
     COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_staged}"
-            "-DPAK=${CMAKE_CURRENT_BINARY_DIR}/thin.pak" -P "${_stage_script}"
+            "-DPAK=${CMAKE_CURRENT_BINARY_DIR}/thin.pak" ${_stage_steam} -P "${_stage_script}"
   )
   set_tests_properties(Game-Staged PROPERTIES
     FIXTURES_REQUIRED "GameBinary;thinPak"
     FIXTURES_SETUP StagedGame
     LABELS game)
   add_test(NAME Game-Unstaged
-    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_unstaged}" -P "${_stage_script}"
+    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_unstaged}" ${_stage_steam}
+            -P "${_stage_script}"
   )
+
+  # What a player receives carries the Steam library and never steam_appid.txt,
+  # which only development runs use and Valve says never to ship.
+  if (ASSISI_STEAMWORKS_ENABLED)
+    add_test(NAME GameStagedCarriesSteam
+      COMMAND Python3::Interpreter -c
+              "import os,sys; d=sys.argv[1]; sys.exit(0 if os.path.isfile(os.path.join(d, sys.argv[2])) and not os.path.exists(os.path.join(d, 'steam_appid.txt')) else 1)"
+              "${_staged}" "$<TARGET_FILE_NAME:Steamworks::steam_api>"
+    )
+    set_tests_properties(GameStagedCarriesSteam PROPERTIES
+      FIXTURES_REQUIRED StagedGame
+      LABELS game)
+  endif()
   set_tests_properties(Game-Unstaged PROPERTIES
     FIXTURES_REQUIRED GameBinary
     FIXTURES_SETUP UnstagedGame
@@ -507,6 +569,12 @@ if (ASSISI_BUILD_TESTS)
       --allow libdl.so.2
       --allow ld-linux-x86-64.so.2
     )
+    # The Steam library ships beside the game, so it is the one dependency
+    # allowed past glibc — and only in a build made with the SDK.
+    set(_steam_library "")
+    if (ASSISI_STEAMWORKS_ENABLED)
+      set(_steam_library --allow libsteam_api.so)
+    endif()
 
     # The ceiling goes on this check only. The control below is about the library
     # list, and a ceiling there would let it fail for the wrong reason.
@@ -520,6 +588,7 @@ if (ASSISI_BUILD_TESTS)
               --binary "$<TARGET_FILE:Assisi-Game>"
               --readelf "${_dependency_readelf}"
               ${_system_libraries}
+              ${_steam_library}
               ${_glibc_ceiling}
     )
     set_tests_properties(GameNeedsOnlySystemLibraries PROPERTIES
@@ -541,12 +610,30 @@ if (ASSISI_BUILD_TESTS)
               --allow libpthread.so.0
               --allow libdl.so.2
               --allow ld-linux-x86-64.so.2
+              ${_steam_library}
     )
     set_tests_properties(GameDependencyCheckSeesLibc PROPERTIES
       FIXTURES_REQUIRED GameBinary
       LABELS game
       WILL_FAIL TRUE
       SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+    # The same control for the Steam library: without its allowance the check
+    # must refuse a game built with the SDK, or the allowance above proves
+    # nothing — the library could have dropped out of the link unnoticed.
+    if (ASSISI_STEAMWORKS_ENABLED)
+      add_test(NAME GameDependencyCheckSeesSteam
+        COMMAND Python3::Interpreter "${_dependency_checker}"
+                --binary "$<TARGET_FILE:Assisi-Game>"
+                --readelf "${_dependency_readelf}"
+                ${_system_libraries}
+      )
+      set_tests_properties(GameDependencyCheckSeesSteam PROPERTIES
+        FIXTURES_REQUIRED GameBinary
+        LABELS game
+        WILL_FAIL TRUE
+        SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+    endif()
   endif()
 
   # Registered beside the scans they underwrite rather than in a directory of

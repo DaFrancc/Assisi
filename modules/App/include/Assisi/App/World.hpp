@@ -429,6 +429,7 @@ public:
         Audio::SoundOutput *mixer = nullptr;
         PlayerSettings *settings = nullptr;
         Core::AssetStore *assets = nullptr;
+        Steam::Services *steam = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 

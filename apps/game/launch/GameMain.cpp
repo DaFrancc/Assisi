@@ -291,8 +291,27 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+#if defined(GAME_STEAM_APP_ID)
+    // The app id comes from apps/game/CMakeLists.txt; book/src/steam.md explains.
+    constexpr Assisi::Steam::AppId kSteamApp{GAME_STEAM_APP_ID};
+#if defined(GAME_STEAM_REQUIRED)
+    constexpr bool kSteamRequired = true;
+    // A release started outside Steam asks Steam to start it, and steps aside.
+    // Not headless: a dedicated server is not a Steam game client.
+    if (!args.headless && Assisi::Steam::RelaunchThroughSteamIfNeeded(kSteamApp))
+    {
+        return EXIT_SUCCESS;
+    }
+#else
+    constexpr bool kSteamRequired = false;
+#endif
+#endif
+
     Assisi::App::GameApp app(args.launch);
     app.SetHeadless(args.headless);
+#if defined(GAME_STEAM_APP_ID)
+    app.UseSteam(kSteamApp, kSteamRequired);
+#endif
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

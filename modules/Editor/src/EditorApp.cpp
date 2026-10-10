@@ -317,7 +317,8 @@ void EditorApp::OnStart()
                          .ui = GetUi(),
                          .mixer = GetMixer(),
                          .settings = GetPlayerSettings(),
-                         .assets = &GetAssets()});
+                         .assets = &GetAssets(),
+                         .steam = &GetSteam()});
 
     // Editor travel is the game's path, so it honours the game's policy: a level
     // that waits for its assets in the shipped game waits here too, or testing a
@@ -1391,7 +1392,8 @@ Assisi::App::SystemContext EditorApp::WorldContext(Assisi::App::World &world, fl
             .ui = GetUi(),
             .mixer = GetMixer(),
             .settings = GetPlayerSettings(),
-            .assets = &GetAssets()};
+            .assets = &GetAssets(),
+            .steam = &GetSteam()};
 }
 
 Assisi::App::SystemContext EditorApp::WorldStartContext(Assisi::App::World &world)

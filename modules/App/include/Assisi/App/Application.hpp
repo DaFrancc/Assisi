@@ -24,6 +24,7 @@
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
+#include <Assisi/Steam/Client.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
@@ -121,6 +122,18 @@ public:
 
     /// @brief Whether this process is a capture run.
     [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
+
+    /// @brief Start Steam for @p app during Initialize(). Must be called before
+    /// it. A headless process never starts Steam, whatever this says.
+    ///
+    /// With @p required, a Steam that will not start refuses the launch, with
+    /// the reason logged: the shipped game of a Steam-only release. Without it,
+    /// the game runs on and Steam reports itself unavailable.
+    void UseSteam(Steam::AppId app, bool required)
+    {
+        _steamApp = app;
+        _steamRequired = required;
+    }
 
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
@@ -258,6 +271,9 @@ protected:
     /// @brief What sounds are started and stopped through, or null in a headless
     /// process, which has no audio. Bus volumes go through GetPlayerSettings.
     [[nodiscard]] Audio::SoundOutput *GetMixer() const { return _mixer.get(); }
+
+    /// @brief Steam, or its stand-in that answers it is unavailable. Never null.
+    [[nodiscard]] Steam::Services &GetSteam() { return *_steam; }
 
     /// @brief Assets of every kind a module registered, by id, loaded in the
     /// background. Every Resolve returns null until the app says where assets
@@ -404,6 +420,10 @@ private:
     /// input, post-process. Skipped entirely when headless.
     [[nodiscard]] bool InitializePresentation();
 
+    /// Starts Steam for the app UseSteam named. False when it is required and
+    /// would not start, which refuses the launch; the reason is logged either way.
+    [[nodiscard]] bool ConnectSteam();
+
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
@@ -467,11 +487,19 @@ private:
     std::unique_ptr<Audio::Mixer> _mixer;
     std::optional<Audio::AudioDevice> _audioDevice;
 
+    /// Steam once Initialize() has started it, and until then — or for good, in
+    /// a process that does not use it — the stand-in. Reset after OnShutdown, the
+    /// only place Steam is shut down, since Run ends without destructors.
+    std::unique_ptr<Steam::Client> _steam = std::make_unique<Steam::Unavailable>(Steam::SteamError::NotRequested);
+    std::optional<Steam::AppId> _steamApp;
+
     /// Built at the end of Initialize(), over _options and the mixer.
     std::optional<PlayerSettings> _playerSettings;
 
     /// ShowsGameUi's answer for the current frame.
     bool _uiShown = false;
+    /// Set by UseSteam: whether a Steam that will not start refuses the launch.
+    bool _steamRequired = false;
     /// Whether this app installed a DisplayedString resolver, and so owes the
     /// previous one back.
     bool _stringResolverInstalled = false;

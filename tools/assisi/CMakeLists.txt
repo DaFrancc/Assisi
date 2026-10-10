@@ -15,6 +15,13 @@ add_test(
 # that has choices.
 set_tests_properties(assisi-tool PROPERTIES LABELS container)
 
+# ./assisi steam-sdk, against a fake SDK the test builds: no real one is read.
+add_test(
+    NAME assisi-steam-sdk
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_steam_sdk.py"
+)
+set_tests_properties(assisi-steam-sdk PROPERTIES LABELS container)
+
 if (WIN32)
   set(_assisi_tui_python "${CMAKE_SOURCE_DIR}/out/tool-env/Scripts/python.exe")
 else()

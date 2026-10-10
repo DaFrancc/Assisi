@@ -223,6 +223,15 @@ class ReleaseTest(ToolTest):
         record = json.loads((kept / "release.json").read_text())
         self.assertEqual(record["level"], "ship")
 
+    def test_a_steam_game_is_kept_with_its_library_and_never_its_app_id_file(self):
+        game_dir = self.sandbox.build_dir("gcc-ship") / "apps" / "game"
+        (game_dir / "libsteam_api.so").write_text("steam\n")
+        (game_dir / "steam_appid.txt").write_text("480\n")
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        kept = self.release_dir("1.0")
+        self.assertTrue((kept / "libsteam_api.so").exists())
+        self.assertFalse((kept / "steam_appid.txt").exists())
+
     def test_later_packages_lay_out_against_the_newest_release_of_their_level(self):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.1")[0], 0)

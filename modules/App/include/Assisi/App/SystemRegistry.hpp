@@ -67,6 +67,11 @@ namespace Assisi::Audio
 class SoundOutput;
 } // namespace Assisi::Audio
 
+namespace Assisi::Steam
+{
+class Services;
+} // namespace Assisi::Steam
+
 namespace Assisi::Core
 {
 class AssetStore;
@@ -150,6 +155,13 @@ struct SystemContext
     /// null until the asset has loaded, so a system asks again on later frames.
     /// Null in hosts that run systems without an application (tests).
     Core::AssetStore *assets = nullptr;
+
+    /// Steam: the player, achievements, stats, rich presence, the overlay. Never
+    /// null in a running application; in the editor, a headless run, a build
+    /// without the Steamworks SDK or with no Steam client, it answers that Steam
+    /// is unavailable, so systems call it without checking first. Null only in
+    /// hosts that run systems without an application (tests).
+    Steam::Services *steam = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

@@ -70,6 +70,8 @@ target_link_libraries(Assisi-App
     Assisi::Core
     # Every windowed game has a mixer: Application owns it.
     Assisi::Audio
+    # Every app owns a Steam client, the stand-in when it does not use Steam.
+    Assisi::Steam
     Assisi::Window
     Assisi::Render
     Assisi::ECS

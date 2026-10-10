@@ -19,6 +19,9 @@ from assisi.project import PAK_NAME, BuildSpec, Project, UsageError
 
 RECORD = "release.json"
 
+# Steam's runtime library as the build copies it beside the game, per platform.
+STEAM_LIBRARIES = ("libsteam_api.so", "steam_api64.dll")
+
 # Suffix of the folder a release is assembled in before it takes its name, so a
 # copy that fails part-way never looks like a release.
 PARTIAL_SUFFIX = ".partial"
@@ -74,6 +77,12 @@ def keep(project: Project, version: str, spec: BuildSpec, tree: str, argv: List[
     partial.mkdir(parents=True)
     shutil.copy2(project.game_path(tree), partial / project.game_path(tree).name)
     shutil.copy2(project.pak_path(tree), partial / PAK_NAME)
+    # A game built with the Steamworks SDK cannot start without Steam's runtime
+    # library beside it. Named one by one, so steam_appid.txt never comes along.
+    for name in STEAM_LIBRARIES:
+        library = project.game_dir(tree) / name
+        if library.is_file():
+            shutil.copy2(library, partial / name)
     record = {"version": version, "level": spec.level, "compiler": spec.compiler,
               "steam_runtime": spec.steam_runtime, "created": time.time(), "command": argv}
     (partial / RECORD).write_text(json.dumps(record, indent=2) + "\n")
