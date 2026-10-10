@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Build, run, test and package the engine. ./assisi --help lists the commands;
+with no arguments in a terminal it opens the TUI. The tool is tools/assisi/."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "tools"))
+
+from assisi.cli import main  # noqa: E402
+
+sys.exit(main())

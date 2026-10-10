@@ -6,9 +6,9 @@ game built on a current distro refuses to start on anything older. Built in the
 SDK's container, which carries the glibc Steam's own runtime does, it starts on
 any distro at least that new and under Steam.
 
-The whole thing is optional. Nothing else in the build calls this; the Makefile's
-steamrt targets are the only way in, and a machine with no container runtime
-never touches it.
+The whole thing is optional. Nothing else in the build calls this; the build
+tool's --steam-runtime builds and its `steamrt` command are the only way in, and
+a machine with no container runtime never touches it.
 
   steamrt.py prepare             find podman or docker, pull the SDK, build the image
   steamrt.py run -- <command>    run <command> in the image, in this repository
@@ -94,7 +94,7 @@ def image_present(runtime: str, image: str) -> bool:
 def ensure_pulled(runtime: str, image: str, what: str) -> None:
     if image_present(runtime, image):
         return
-    print(f"steamrt: downloading {what} (once; `make steamrt-remove` deletes it)")
+    print(f"steamrt: downloading {what} (once; `./assisi steamrt remove` deletes it)")
     if call(runtime, "pull", image) != 0:
         fail(f"could not download {image}")
 
@@ -147,7 +147,7 @@ def run(command: list[str]) -> int:
 def boot_check(staged: Path) -> int:
     game = staged / GAME_NAME
     if not game.is_file():
-        print(f"steamrt: no {game} to boot. `make gs-steamrt-test` builds and stages it first.",
+        print(f"steamrt: no {game} to boot. `./assisi test ship --steam-runtime` builds and stages it first.",
               file=sys.stderr)
         return SKIP_EXIT_CODE
     runtime = next((candidate for candidate in RUNTIMES if shutil.which(candidate)), None)

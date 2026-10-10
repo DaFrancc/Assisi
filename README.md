@@ -13,7 +13,7 @@ a game with the engine.
 # Quick start
 
 **You need:** Windows or Linux, a Vulkan-capable GPU, a C++ compiler (MSVC 2022+, GCC or Clang), CMake
-3.28+, Ninja, Make, ccache and Python 3. On Linux, podman or docker as well if you want release builds
+3.28+, Ninja, ccache and Python 3.9+. On Linux, podman or docker as well if you want release builds
 that run on other distributions (optional; see *Building for every Linux distribution* below).
 
 <details>
@@ -21,8 +21,7 @@ that run on other distributions (optional; see *Building for every Linux distrib
 
 Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
 C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://www.python.org/) if you
-do not already have it on `PATH`, [Make](https://www.gnu.org/software/make/), and
-[ccache](https://ccache.dev/) on `PATH`. Build from a
+do not already have it on `PATH`, and [ccache](https://ccache.dev/) on `PATH`. Build from a
 *Developer Command Prompt* so the MSVC environment is set up.
 
 </details>
@@ -175,7 +174,7 @@ Install the equivalents of the package groups below — they are the whole list.
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
-| podman or docker | **Optional**, only for the Steam Runtime build (`make gs-steamrt…`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
+| podman or docker | **Optional**, only for the Steam Runtime build (`./assisi package ship --steam-runtime`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
 
 Optionally, installing `simdjson` (Arch) or `simdjson-devel` (Fedora) makes fastgltf link the system
 copy instead of compiling its own bundled amalgamation. Both work. The system copy trims a little off
@@ -187,27 +186,26 @@ installed.
 
 </details>
 
-Then clone, configure once, build, and run the editor:
+Then clone, build, and run the editor:
 
 ```bash
 git clone https://github.com/DaFrancc/Assisi.git
 cd Assisi
 
-make configure-gcc    # Linux (or configure-clang); Windows: make configure-msvc
-make gv               # build the dev configuration;  Windows: make mv
-
-./out/build/gcc-dev/apps/game/Assisi-GameEditor -l levels/Test.alvl
-# Windows: .\out\build\msvc-dev\apps\game\Assisi-GameEditor.exe -l levels/Test.alvl
+./assisi doctor                                # checks the tools above are installed
+./assisi run editor -- -l levels/Test.alvl     # builds the dev configuration, then starts the editor
+# Windows, from a Developer Command Prompt: assisi run editor -- -l levels/Test.alvl
 ```
 
-The first configure downloads and builds every dependency, which takes several minutes. It happens once.
+The first build configures the tree, downloading and building every dependency, which takes several
+minutes. It happens once. `./assisi` with no arguments opens a menu of builds and commands instead.
 
 **Your game's code goes in `apps/game/src/`**, and its content (levels, models, settings) in `assets/`.
 Any file you add under `src/` is built automatically, with nothing to register.
 [The book](https://dafrancc.github.io/Assisi/) walks through writing your first system.
 
 <details>
-<summary><b>Build variants and every make target</b></summary>
+<summary><b>Build variants and the build tool</b></summary>
 
 There are five build *variants*. They differ in how much the compiler optimizes, how much debug
 information is kept, and whether extra runtime checking is compiled in.
@@ -262,44 +260,44 @@ that can also record a capture. That combination is the one to profile with.
 On Linux, `scripts/run-sanitized.sh` launches the editor under a sanitizer build and captures the
 report to a log file, so a diagnostic survives even if the window dies.
 
-The Makefile targets (`make help` prints the full list):
+Everything goes through `./assisi` (`assisi` on Windows), the engine's build tool in `tools/assisi/`.
+`./assisi --help` lists its commands and `./assisi <command> --help` one command's options; with no
+arguments in a terminal it opens a menu instead. A build is a level (`debug`, `dev`, `ship`) and a
+compiler (`--compiler gcc|clang|msvc`), each defaulting to your own choice (`dev` with GCC on Linux,
+MSVC on Windows, until `./assisi default` says otherwise). Underneath, each pair is the CMake preset
+`<compiler>-<level>`.
 
 ```bash
-# Configure + build all presets for a toolchain
-make msvc    # Windows
-make gcc     # Linux (GCC)
-make clang   # Linux (Clang)
+./assisi build dev                    # configure on first use, then build the editor, tests and shaders
+./assisi build debug dev ship         # several levels at once
+./assisi build ship --compiler clang  # another compiler
+./assisi build ship --game            # also the player Game executable
+./assisi run editor debug             # build, then start the editor (args after -- go to it)
+./assisi test dev -- -R ECS           # build, then ctest (args after -- go to ctest)
 
-# Or build a specific preset
-make msvc-debug  # (alias: md)
-make msvc-dev    # (alias: mv)
-make msvc-ship   # (alias: ms)
-make gcc-debug   # (alias: gd)
-make gcc-dev     # (alias: gv)
-make gcc-ship    # (alias: gs)
-make clang-debug # (alias: cd)
-make clang-dev   # (alias: cv)
-make clang-ship  # (alias: cs)
+# Sanitizer builds, debug level only. Address works with every compiler; thread
+# is GCC and Clang only, and the two can never be combined in one build.
+./assisi test debug --sanitize address    # AddressSanitizer + UBSan
+./assisi test debug --sanitize thread     # ThreadSanitizer
 
-# Sanitizer builds (no short aliases). ASan is available on MSVC too; TSan is
-# Linux-only, and the two can never be combined in one build.
-make gcc-asan    # AddressSanitizer + UBSan   (also: msvc-asan, clang-asan)
-make gcc-tsan    # ThreadSanitizer            (also: clang-tsan)
+# Any build can compile the profiler in (see the Chiara module below).
+./assisi run editor ship --profiler   # the build worth profiling
 
-# Every preset has a `-chiara` variant that compiles the profiler in (see the
-# Chiara module below). Suffix the alias with `-c`:
-make gcc-ship-chiara  # (alias: gs-c) — the build worth profiling
-make gcc-debug-chiara # (alias: gd-c)
+# The player's game: build it, cook assets/, pack them into assets.pak beside it.
+./assisi package ship                 # or each step alone: build --game, cook, pack
 
-# Steps after a build: the player Game executable, a cook of assets/, and a pak.
-make gdg     # gcc-debug-game
-make gdgkp   # gcc-debug-game-cook-pack
+# Optional, Linux: the ship build made inside Valve's Steam Runtime SDK container,
+# for a game that runs on any distro with glibc 2.31+ (see "Building for every
+# Linux distribution" below).
+./assisi package ship --steam-runtime
+./assisi test ship --steam-runtime    # the game tests in the SDK, then a boot on a bare Debian 11
 
-# Optional, Linux: gcc-ship built inside Valve's Steam Runtime SDK container, for
-# a game that runs on any distro with glibc 2.31+ (see "Building for every Linux
-# distribution" below).
-make gs-steamrt-game-cook-pack
-make gs-steamrt-test   # the game tests in the SDK, then a boot on a bare Debian 11
+./assisi default ship --compiler clang      # your defaults; yours alone, never committed
+./assisi history                      # what you ran; ./assisi again N runs it again
+./assisi save ship-it -- package ship # a recipe: run it as ./assisi ship-it
+./assisi clean dev                    # delete one build (--all: every build; --deps: the dependency sources)
+./assisi format                       # uncrustify the C++ sources (--check only reports)
+./assisi doctor                       # check the tools a build needs are installed
 
 # Or use cmake directly
 cmake --preset msvc-debug
@@ -307,24 +305,24 @@ cmake --build --preset msvc-debug
 ```
 
 The download of dependency sources happens once for the whole tree, not once per build directory: they
-are cloned into `out/_deps-src` and every preset is pointed at them. `make clean` keeps that cache;
-`make clean-deps` deletes it, which is also what makes a bumped dependency pin take effect.
+are cloned into `out/_deps-src` and every preset is pointed at them. `./assisi clean --all` keeps that
+cache; `./assisi clean --deps` deletes it, which is also what makes a bumped dependency pin take effect.
 
 `Assisi-GameEditor` is the game with the editor linked in. `Assisi-Game` is the same project with no
-editor in the link — what a player would run. It is out of the default build; build it with the `-game`
-targets above.
+editor in the link — what a player would run. It is out of the default build; build it with
+`./assisi build <build> --game` or `./assisi package`.
 
 </details>
 
 <details>
 <summary><b>Running the tests</b></summary>
 
-The unit tests (doctest) and the `reflectgen` golden-file tests run through CTest presets that
-mirror the build presets:
+The unit tests (doctest), the `reflectgen` golden-file tests and the build tool's own tests run through
+CTest presets that mirror the build presets:
 
 ```bash
-ctest --preset gcc-dev        # build first, then run all suites
-ctest --preset gcc-dev -R ECS # a single suite
+./assisi test dev                 # build, then run all suites
+./assisi test dev -- -R ECS       # a single suite
 ```
 
 </details>
@@ -333,7 +331,7 @@ ctest --preset gcc-dev -R ECS # a single suite
 <summary><b>Building for every Linux distribution (the Steam Runtime build)</b></summary>
 
 A Linux program runs on the glibc it was built against or newer, never older. A game built bare on a
-current distro (`make gsgkp`) therefore refuses to start on Ubuntu LTS, Debian stable, or anything else
+current distro (`./assisi package ship`) therefore refuses to start on Ubuntu LTS, Debian stable, or anything else
 older than the build machine, and running it through Steam does not change that: Steam uses the host's
 glibc whenever it is newer than its runtime's.
 
@@ -345,13 +343,13 @@ nothing extra.
 
 | | Bare | Steam Runtime |
 |---|---|---|
-| Command | `make gsgkp` | `make gs-steamrt-game-cook-pack` |
+| Command | `./assisi package ship` | `./assisi package ship --steam-runtime` |
 | Runs on | the build machine's glibc or newer | glibc 2.31 or newer |
 | Needs | the packages above | the packages above, plus podman or docker |
 | Disk | — | about 5 GB (4.3 GB of images, ~1 GB build tree and ccache) |
 | Output | `out/build/gcc-ship/apps/game/` | `out/build/gcc-ship-steamrt/apps/game/` |
 
-**It is optional.** No other target, preset or test starts a container or needs podman or docker.
+**It is optional.** No other build, preset or test starts a container or needs podman or docker.
 
 **Dependencies.** podman (preferred, rootless) or docker, usable as your own user without `sudo`:
 
@@ -365,15 +363,15 @@ With docker, your user must be in the `docker` group and the daemon running. Eve
 compiler, a CMake new enough for the engine, Ninja, Python, ccache, and GLFW's headers — comes from the
 SDK image, and the build shares `out/_deps-src` with every other preset.
 
-**Targets:**
+**Commands:**
 
 ```bash
-make gs-steamrt-game-cook-pack  # build, cook and pack; any step combination works, e.g. gs-steamrt-cook-pack
-make gs-steamrt                 # build only
-make gs-steamrt-test            # the game tests in the SDK, then a headless boot on a bare Debian 11
-make steamrt-fetch              # download and prepare the images without building
-make steamrt-remove             # delete the images and the container's ccache
-make clean-gcc-ship-steamrt     # delete the build tree
+./assisi package ship --steam-runtime   # build, cook and pack; cook and pack work alone too
+./assisi build ship --steam-runtime     # build only
+./assisi test ship --steam-runtime      # the game tests in the SDK, then a headless boot on a bare Debian 11
+./assisi steamrt fetch                  # download and prepare the images without building
+./assisi steamrt remove                 # delete the images and the container's ccache
+./assisi clean ship --steam-runtime     # delete the build tree
 ```
 
 The first run downloads the SDK (about 3.9 GB, pinned by digest) and builds a small image on top of it
@@ -414,6 +412,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
 | [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |
+| [Textual](https://github.com/Textualize/textual) | The build tool's terminal menu (`./assisi` with no arguments). Developer-only and never in a game: pinned with hashes, with its own dependencies (Rich, Pygments, markdown-it-py, …, all MIT/BSD/PSF), in `tools/assisi/tui/requirements.txt`, and installed into `out/tool-env/` the first time the menu opens |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [libsodium](https://github.com/jedisct1/libsodium) | GameNetworkingSockets' encryption on Linux (Windows uses the OS's own) |
 | [LZ4](https://github.com/lz4/lz4) | Fast pak compression |

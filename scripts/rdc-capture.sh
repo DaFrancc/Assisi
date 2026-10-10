@@ -41,7 +41,7 @@ command -v renderdoccmd >/dev/null || {
 }
 
 [[ -x "$BUILD_DIR/Assisi-GameEditor" ]] || {
-    echo "no Assisi-GameEditor in $BUILD_DIR — build it first with: make gs-c" >&2
+    echo "no Assisi-GameEditor in $BUILD_DIR — build it first with: ./assisi build ship --profiler" >&2
     exit 1
 }
 
@@ -53,7 +53,7 @@ mkdir -p "$OUT_DIR"
 CACHE="$(dirname "$(dirname "$BUILD_DIR")")/CMakeCache.txt"
 if [[ -f "$CACHE" ]] && ! grep -q "ASSISI_ENABLE_GPU_MARKERS:BOOL=ON" "$CACHE"; then
     echo "warning: this build has no GPU markers; passes will be unnamed." >&2
-    echo "         rebuild with 'make gs-c' for a labelled capture." >&2
+    echo "         rebuild with './assisi build ship --profiler' for a labelled capture." >&2
 fi
 
 echo "Launching under RenderDoc (forced onto XWayland)."

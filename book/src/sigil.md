@@ -68,7 +68,7 @@ called `robot`, which is enough to try every part of the language on this page.
 
 ### Step 1: build it
 
-`make gd` builds it with everything else. The tool ends up at
+`./assisi build debug` builds it with everything else. The tool ends up at
 `out/build/gcc-debug/apps/sglc/sglc`.
 
 ### Step 2: check the example

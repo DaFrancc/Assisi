@@ -55,7 +55,7 @@ struct SerializeResult
 [[nodiscard]] inline SerializeResult SerializeCapture(const std::filesystem::path &, double = 0.0)
 {
     SerializeResult result;
-    result.error = "Chiara is not compiled in (build with -c, e.g. make gs-c)";
+    result.error = "Chiara is not compiled in (build with the profiler, e.g. ./assisi build ship --profiler)";
     return result;
 }
 #endif

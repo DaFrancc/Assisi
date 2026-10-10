@@ -505,7 +505,7 @@ TEST_CASE("Serializing while other threads emit stays consistent")
 // **This case cannot be kept in the suite.** A race is only observable to the
 // thread sanitizer, and a tsan report fails the *process*, not a case — there is
 // no `doctest::should_fail()` for it, so keeping it would make
-// `make test-gcc-tsan-chiara` red for as long as the bug stands. Suppressing it
+// `./assisi test debug --sanitize thread --profiler` red for as long as the bug stands. Suppressing it
 // is not an option either: .tsan-suppressions may not name an Assisi symbol,
 // for exactly the reason that would defeat. So it lives here as a reproduction,
 // the way TestComponentRegistry.cpp's finalize-race case does.
@@ -524,7 +524,7 @@ TEST_CASE("Serializing while other threads emit stays consistent")
 // object is the one global session.
 //
 // To re-run it: uncomment, add <atomic> (<thread> is already included above),
-// then `make test-gcc-tsan-chiara`. A clean run is the assertion — so once the
+// then `./assisi test debug --sanitize thread --profiler`. A clean run is the assertion — so once the
 // read is synchronised this becomes an ordinary case worth keeping live, and
 // uncommenting it is part of the fix rather than a follow-up to it.
 //

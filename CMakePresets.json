@@ -115,7 +115,7 @@
     {
       "name": "gcc-ship-steamrt",
       "inherits": "gcc-ship",
-      "description": "gcc-ship built inside the Steam Runtime SDK container (make gs-steamrt), for a game that runs on glibc 2.31+",
+      "description": "gcc-ship built inside the Steam Runtime SDK container (./assisi build ship --steam-runtime), for a game that runs on glibc 2.31+",
       "condition": {
         "type": "allOf",
         "conditions": [

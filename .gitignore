@@ -47,6 +47,9 @@ __pycache__/
 crash-*.txt
 *.dmp
 
+# The build tool's per-developer history, recipes and default level and compiler.
+.assisi/
+
 # Runtime-generated user state (written under the user root at runtime; the
 # repo-root copies are artifacts of running the app from the repo root). The
 # app falls back to defaults when these are absent.

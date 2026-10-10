@@ -121,7 +121,7 @@ void TutorialMenuSystem(Assisi::App::SystemContext &ctx)
 Use the same command as in [Installation](installation.md):
 
 ```bash
-make gcc-dev
+./assisi build
 ```
 
 ## Step 4: Add the screen to a level

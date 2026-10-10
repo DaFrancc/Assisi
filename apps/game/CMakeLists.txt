@@ -86,8 +86,7 @@ endif()
 #
 # Game is out of the default build: editor iteration is the common case, and a
 # second full link of every reflected type is time spent on a binary nobody is
-# running. Ask for it by name (`--target Assisi-Game`, or a Makefile `-game`
-# target).
+# running. Ask for it by name (`--target Assisi-Game`, or `./assisi build --game`).
 add_executable(Assisi-Game EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Game)
 target_sources(Assisi-Game PRIVATE "launch/GameMain.cpp")

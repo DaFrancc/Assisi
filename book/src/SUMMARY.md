@@ -5,6 +5,7 @@
 # Getting started
 
 - [Installation](installation.md)
+- [The build tool](build-tool.md)
 - [A tour of the repository](tour.md)
 
 # Making a game
