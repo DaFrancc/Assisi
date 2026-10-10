@@ -309,13 +309,13 @@ TEST_CASE("ComponentRegistry resolves requires and excludes when it finalizes")
 // (one registry per process).
 //
 // It was run, by making that constructor public temporarily:
-//   * with the lock — clean under `make gcc-tsan`;
+//   * with the lock — clean under `./assisi test debug --sanitize thread`;
 //   * with the `lock_guard` in EnsureFinalized removed — 393 data races,
 //     naming ComponentRegistry.cpp's sort comparator and ComponentMeta's move
 //     constructor/assignment, i.e. two threads sorting the same vector.
 //
 // To re-run it: make ComponentRegistry() public, uncomment below, add <atomic>,
-// <cstdint>, <string>, <thread> and <vector>, then `make test-gcc-tsan`. To keep
+// <cstdint>, <string>, <thread> and <vector>, then `./assisi test debug --sanitize thread`. To keep
 // it permanently instead, it needs its own test binary — nothing else linked
 // into it may query the registry — following the Assisi-Chiara-PreInit-Tests
 // pattern in modules/Chiara/tests/CMakeLists.txt, which exists for the same

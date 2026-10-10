@@ -1,0 +1,126 @@
+/* The TUI's look. Theme variables only, so every built-in theme, dark or
+   light, styles it consistently. */
+
+#panes {
+    height: 1fr;
+}
+
+#left {
+    width: 1fr;
+}
+
+#recipes, #frequent, BuildTable {
+    border: round $primary;
+    height: 1fr;
+}
+
+BuildTable {
+    width: 2fr;
+}
+
+#recipes:focus, #frequent:focus, BuildTable:focus {
+    border: tall $accent;
+}
+
+#filter {
+    dock: top;
+    margin: 0 1;
+}
+
+.hidden {
+    display: none;
+}
+
+#command-bar {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $accent;
+    text-style: bold;
+}
+
+#command-bar.invalid {
+    color: $error;
+    text-style: none;
+}
+
+#result-bar {
+    height: 1;
+    padding: 0 1;
+}
+
+#result-bar.success {
+    background: $success 25%;
+}
+
+#result-bar.failure {
+    background: $error 25%;
+}
+
+#form {
+    padding: 1 2;
+}
+
+.form-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.field-label {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+.flag-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.flag-label {
+    padding: 1 0 0 1;
+}
+
+.form-buttons {
+    height: auto;
+    margin-top: 2;
+}
+
+.form-buttons Button {
+    margin-right: 2;
+}
+
+#dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+ModalScreen {
+    align: center middle;
+}
+
+.dialog-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.dialog-command {
+    color: $accent;
+    margin-bottom: 1;
+}
+
+#recipe-problem {
+    color: $error;
+    height: auto;
+}
+
+.dialog-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+.dialog-buttons Button {
+    margin-right: 2;
+}

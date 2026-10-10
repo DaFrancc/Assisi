@@ -6,7 +6,7 @@
 # Usage:  ./scripts/run-sanitized.sh [editor args...]
 #         ASSISI_SAN_PRESET=gcc-tsan ./scripts/run-sanitized.sh
 #
-# Build the preset first (e.g. `make gcc-asan`). Logs land in
+# Build the preset first (e.g. `./assisi build debug --sanitize address`). Logs land in
 # out/sanitizer-logs/, which is gitignored.
 set -uo pipefail
 
@@ -18,7 +18,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$LOGDIR/run-$STAMP"
 
 mkdir -p "$LOGDIR"
-[ -x "$EXE" ] || { echo "Not built. Run: make $PRESET" >&2; exit 1; }
+[ -x "$EXE" ] || { echo "Not built. Run: ./assisi build $PRESET" >&2; exit 1; }
 
 # log_path makes the sanitizers write to $LOG.<pid> instead of interleaving with
 # the app's own stdout, so a report survives even if the window dies.

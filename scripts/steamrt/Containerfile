@@ -22,7 +22,7 @@ RUN set -eu; \
     tar -xzf "/tmp/${archive}" -C /opt/cmake --strip-components=1; \
     rm "/tmp/${archive}"
 
-# ASSISI_STEAMRT_SDK is what the gcc-ship-steamrt preset and the Makefile look
-# for: that build is only configured where this image is the one running it.
+# ASSISI_STEAMRT_SDK is what the gcc-ship-steamrt preset and ./assisi look for:
+# that build is only configured where this image is the one running it.
 ENV PATH=/opt/cmake/bin:${PATH} \
     ASSISI_STEAMRT_SDK=1

@@ -160,7 +160,7 @@ TEST_CASE("MessageRegistry: a duplicate message name leaves one entry, not two" 
     // NDEBUG-only, and that is the finding rather than a gap in it. In a debug
     // build the assert aborts inside finalize, so the retention is unobservable
     // in-process; the release build is where it is a silent misdispatch. Run
-    // this binary under `make gs` (gcc-ship) to exercise it.
+    // this binary under `./assisi test ship` to exercise it.
     //
     // should_fail until finalize drops duplicates; the fix removes this decorator.
     auto &registry = MessageRegistry::Instance();

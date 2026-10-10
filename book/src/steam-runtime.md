@@ -6,7 +6,7 @@ Linux systems can run the game**.
 
 | | Bare build | Steam Runtime build |
 |---|---|---|
-| Command | `make gsgkp` | `make gs-steamrt-game-cook-pack` |
+| Command | `./assisi package ship` | `./assisi package ship --steam-runtime` |
 | Built by | your own compiler, on your own system | the compiler in Valve's Steam Runtime SDK, inside a container |
 | Runs on | your distribution, and others at least as new | any distribution from about 2020 on, and Steam Deck |
 | Extra tools | none | podman or docker |
@@ -94,10 +94,10 @@ docker run --rm hello-world
 
 ## Building
 
-The same steps as the bare build, with `-steamrt` added:
+The same command as the bare build, with `--steam-runtime` added:
 
 ```bash
-make gs-steamrt-game-cook-pack
+./assisi package ship --steam-runtime
 ```
 
 The first run downloads the SDK (about 3.9 GB) and then builds everything from
@@ -114,13 +114,14 @@ assets.pak
 Copy those two files into a folder, and that folder is your game, the same as
 in [Packaging your game](packaging.md).
 
-`gs-steamrt` on its own builds without cooking or packing, and the other step
-combinations work too, like `make gs-steamrt-cook-pack`.
+The other commands take the flag too: `./assisi build ship --steam-runtime`
+builds without cooking or packing, and `./assisi cook ship --steam-runtime`
+only cooks. It's always the ship level with GCC; the tool refuses anything else.
 
 ## Checking the result
 
 ```bash
-make gs-steamrt-test
+./assisi test ship --steam-runtime
 ```
 
 This builds, runs the game's tests inside the SDK, and then starts the game in
@@ -136,10 +137,10 @@ older system or a virtual machine as well.
 
 | Command | What it removes |
 |---|---|
-| `make clean-gcc-ship-steamrt` | The build folder. The next build starts over but reuses the SDK. |
-| `make steamrt-remove` | The SDK, the image built on top of it, the Debian image, and the compiler cache. The next build downloads everything again. |
+| `./assisi clean ship --steam-runtime` | The build folder. The next build starts over but reuses the SDK. |
+| `./assisi steamrt remove` | The SDK, the image built on top of it, the Debian image, and the compiler cache. The next build downloads everything again. |
 
-`make steamrt-fetch` does only the download and image step, without building.
+`./assisi steamrt fetch` does only the download and image step, without building.
 Run it before going offline, or to get the big download out of the way.
 
 ## Which distributions can play it
@@ -161,7 +162,7 @@ anyone else:
 <details>
 <summary>What happens inside</summary>
 
-`make gs-steamrt-...` runs `scripts/steamrt.py`, which:
+Any `./assisi` command with `--steam-runtime` runs `scripts/steamrt.py`, which:
 
 1. Finds podman, or docker if podman isn't installed.
 2. Downloads the SDK image if it isn't already present. The image is pinned to
@@ -170,7 +171,7 @@ anyone else:
 3. Builds a small image on top of it from `scripts/steamrt/Containerfile`,
    adding a newer CMake. It's rebuilt only when that file or the pinned SDK
    changes.
-4. Runs the same `make` target inside the container, as your own user, with
+4. Runs the same `./assisi` command inside the container, as your own user, with
    the repository mounted at the same path. Everything it writes is yours, not
    root's.
 

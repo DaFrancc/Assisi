@@ -1,8 +1,8 @@
 # The packer: a cooked tree in, one pak archive out.
 #
 # Out of the default build, like the Game executable: only a build that wants a
-# pak runs it, and those ask for it by name (a Makefile `p` target, or the Game
-# tests' pak fixture).
+# pak runs it, and those ask for it by name (`./assisi pack`, or the Game tests'
+# pak fixture).
 add_executable(Assisi-Pack-Tool EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Pack-Tool)
 

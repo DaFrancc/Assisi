@@ -109,12 +109,12 @@ class SteamRuntimeTest(unittest.TestCase):
 
     def test_podman_builds_as_the_developer_in_the_repository_at_its_own_path(self):
         write_fake_runtime(self.bin, "podman")
-        result = self.helper("run", "--", "make", "gcc-ship-steamrt")
+        result = self.helper("run", "--", "python3", "assisi", "build", "ship", "--steam-runtime")
         self.assertEqual(result.returncode, 0, result.stderr)
         run = self.run_command()
         self.assertIn("--userns=keep-id", run)
         self.assertIn(f"-v {REPO}:{REPO}", run)
-        self.assertTrue(run.endswith("make gcc-ship-steamrt"), run)
+        self.assertTrue(run.endswith("python3 assisi build ship --steam-runtime"), run)
 
     def test_docker_builds_as_the_developer_in_the_repository_at_its_own_path(self):
         write_fake_runtime(self.bin, "docker")

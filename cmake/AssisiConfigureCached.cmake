@@ -41,7 +41,7 @@
 #
 # The cost: GIT_TAG pins stop being enforced for anything in the cache, because
 # CMake never runs a git operation against a directory handed to it this way.
-# After bumping a pin, delete the cache (`make clean-deps`) or the bump silently
+# After bumping a pin, delete the cache (`./assisi clean --deps`) or the bump silently
 # does nothing. The cache is also a shared dependency of every tree pointed at
 # it, so deleting it breaks all of them until they are configured again.
 #

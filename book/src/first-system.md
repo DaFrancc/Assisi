@@ -66,18 +66,14 @@ system because of the `ASYSTEM` annotation.
 
 ### Step 2: build
 
-Use the same build command as in [Installation](installation.md). For example,
-on Linux with GCC:
+Use the same build command as in [Installation](installation.md):
 
 ```bash
-make gcc-dev
+./assisi build
 ```
 
-On Windows:
-
-```bash
-make msvc-dev
-```
+On Windows, `assisi build`. `./assisi run editor` builds too, then starts the
+editor.
 
 ### Step 3: turn it on in a level
 

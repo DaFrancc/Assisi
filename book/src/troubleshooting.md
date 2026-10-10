@@ -10,8 +10,9 @@ is `libstdc++-static`.
 Install ccache. The build expects it. See [Installation](installation.md).
 
 **A new dependency version isn't picked up.**
-Downloaded dependencies are cached in `out/_deps-src`. Run `make clean-deps`,
-then configure again.
+Downloaded dependencies are cached in `out/_deps-src`. Run `./assisi clean
+--deps`, then `./assisi configure` for each level you use, e.g. `./assisi
+configure debug dev ship`.
 
 **The build stops on a warning.**
 Warnings are treated as errors, on purpose, so they get fixed rather than piling

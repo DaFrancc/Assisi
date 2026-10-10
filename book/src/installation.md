@@ -1,15 +1,14 @@
 # Installation
 
 This chapter gets you from nothing to the editor running on your screen. It
-takes four steps:
+takes three steps:
 
 1. Get the code.
 2. Install the tools and a few system packages.
-3. Configure: CMake downloads and prepares everything else.
-4. Build and run the editor.
+3. Build and run the editor with one command.
 
-> **Tip:** The first configure downloads and builds every library the engine
-> uses. It takes several minutes, but only happens once.
+> **Tip:** The first build downloads and builds every library the engine uses.
+> It takes several minutes, but only happens once.
 
 ## What your computer needs
 
@@ -29,20 +28,19 @@ cd Assisi
 
 ## 2. Install the tools
 
-You need a C++ compiler, **CMake 3.28+**, **Ninja**, **Make**, **ccache** and
-**Python 3**. ccache makes rebuilds faster, and the build expects it to be
-installed. Python runs a code generator during the build; it only uses the
-standard library, so there's nothing to `pip install`.
+You need a C++ compiler, **CMake 3.28+**, **Ninja**, **ccache** and **Python
+3.9+**. ccache makes rebuilds faster, and the build expects it to be installed.
+Python runs the engine's build tool, `assisi`, and a code generator during the
+build. Neither needs anything from `pip`.
 
 You don't install any C++ libraries yourself. CMake downloads and builds all of
-them during the configure step.
+them the first time you build.
 
 ### Windows
 
 Install [Visual Studio 2022 or newer](https://visualstudio.microsoft.com/) with
 the **Desktop development with C++** workload. That gives you the MSVC compiler,
-CMake and Ninja. Also install [Python 3](https://www.python.org/) and make sure
-it's on your `PATH`. Also install [Make](https://www.gnu.org/software/make/) and
+CMake and Ninja. Also install [Python 3](https://www.python.org/) and
 [ccache](https://ccache.dev/), and make sure both are on your `PATH`.
 
 Run every command in this book from a **Developer Command Prompt for VS**, which
@@ -88,7 +86,7 @@ Reboot after installing an NVIDIA driver.
 ### Fedora, RHEL, Rocky, Alma
 
 ```bash
-sudo dnf install gcc-c++ make git cmake ninja-build ccache python3 pkgconf-pkg-config \
+sudo dnf install gcc-c++ git cmake ninja-build ccache python3 pkgconf-pkg-config \
                  libstdc++-static \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
@@ -184,116 +182,84 @@ including how to install podman.
 
 </details>
 
-## 3. Configure
+## 3. Build and run the editor
 
-Configuring tells CMake which compiler to use and downloads the engine's
-libraries. **Run only the one command for your system**, once.
+Everything from here on goes through `assisi`, the engine's build tool, which
+sits in the top folder of the repository. First check that step 2 left nothing
+out:
 
-**Linux** (GCC, the usual choice):
-
-```bash
-make configure-gcc
-```
-
-**Linux with Clang** instead, if you prefer it:
+**Linux**
 
 ```bash
-make configure-clang
+./assisi doctor
 ```
 
 **Windows**, from the Developer Command Prompt:
 
 ```bash
-make configure-msvc
+assisi doctor
 ```
 
-This is the slow step. Later configures are fast because the downloads are
-cached in `out/_deps-src`.
+It lists each tool with `ok`, or `MISSING` and what to install. When it says
+**All required tools are present**, build the editor and start it with the
+example level open:
 
-## 4. Build and run the editor
-
-Build the **dev** configuration. It's optimized, so the editor runs smoothly,
-but still debuggable. Use the same compiler you configured in step 3.
-
-**Linux (GCC)**
+**Linux**
 
 ```bash
-make gcc-dev
-```
-
-**Linux (Clang)**
-
-```bash
-make clang-dev
+./assisi run editor -- -l levels/Test.alvl
 ```
 
 **Windows**
 
 ```bash
-make msvc-dev
+assisi run editor -- -l levels/Test.alvl
 ```
 
-**dev** is the right build for everyday work, but it isn't the only one:
-
-- **To step through your code in a debugger**, you need a **debug** build.
-- **To run the game fully optimized**, for a release or to measure performance,
-  you need a **ship** build.
-
-**If you want either, open "Every build target" below** for the exact commands.
-
-<details>
-<summary>Every build target</summary>
-
-| | Linux (GCC) | Linux (Clang) | Windows |
-|---|---|---|---|
-| **debug** | `make gcc-debug` | `make clang-debug` | `make msvc-debug` |
-| **dev** | `make gcc-dev` | `make clang-dev` | `make msvc-dev` |
-| **ship** | `make gcc-ship` | `make clang-ship` | `make msvc-ship` |
-
-Each build goes into its own folder, like `out/build/gcc-ship/`, so building one
-doesn't replace another. To run a different build, swap `dev` in the editor path
-below for its name, e.g. `out/build/gcc-debug/...`.
-
-There are also sanitizer builds for hunting memory bugs and data races, and
-profiler builds. [Build types](build-types.md) explains all of them and when to
-use each. `make help` lists every target.
-
-</details>
-
-Then start the editor with the example level open.
-
-**Linux (GCC)**
-
-```bash
-./out/build/gcc-dev/apps/game/Assisi-GameEditor -l levels/Test.alvl
-```
-
-**Linux (Clang)**
-
-```bash
-./out/build/clang-dev/apps/game/Assisi-GameEditor -l levels/Test.alvl
-```
-
-**Windows**
-
-```bash
-.\out\build\msvc-dev\apps\game\Assisi-GameEditor.exe -l levels/Test.alvl
-```
+The first time, this downloads and builds the engine's libraries before it
+builds the editor, which is the slow part. The downloads are kept in
+`out/_deps-src`, so it never happens again.
 
 A window should open showing the level. Hold the **right mouse button** and use
 **W A S D** to fly around. **You're set up.**
 
-`-l` picks the level to open. Without it the editor starts with an empty world,
-and you can load a level from its **Levels** panel.
+Anything after `--` is handed to the editor. `-l` picks the level to open;
+without it the editor starts with an empty world, and you can load a level from
+its **Levels** panel.
 
-From now on, rebuilding after a code change is the same build command as above.
-It only rebuilds what changed. Each one also has a short alias: `make gv` (GCC),
-`make cv` (Clang), `make mv` (Windows).
+From now on, run the same command after changing code. It rebuilds only what
+changed, then starts the editor. To build without starting it, use
+`./assisi build`.
+
+### Which build that was
+
+`./assisi` built the **dev** level with your system's usual compiler: GCC on
+Linux, MSVC on Windows. It lives in `out/build/gcc-dev/` (or `msvc-dev`). dev is
+optimized, so the editor runs smoothly, but still debuggable, which makes it
+the right level for everyday work. Two others are worth knowing:
+
+- **To step through your code in a debugger**, you need the **debug** level:
+  `./assisi run editor debug`.
+- **To run the game fully optimized**, for a release or to measure performance,
+  you need the **ship** level: `./assisi build ship`.
+
+Each level goes into its own folder, so building one doesn't replace another.
+The compiler is a separate choice: add `--compiler clang` to use Clang instead
+of GCC, or run `./assisi default --compiler clang` to make it your usual one.
+[Build types](build-types.md) explains every level and option.
+
+### The menu
+
+Run `./assisi` with nothing after it and it opens a menu in your terminal
+instead: every build with what has been built of it, your most used commands,
+and keys to build, package or start the editor. The first time, it downloads
+the few Python packages the menu uses into `out/tool-env/`, which needs
+Python 3.10 or newer. Every command works without the menu.
 
 ## If something went wrong
 
-- **The configure step fails naming a package**: install that package and run
-  the configure again.
+- **The first build fails naming a package**: install that package and run the
+  same command again.
 - **The editor starts and immediately exits, or complains about Vulkan**: check
   that your GPU driver is installed and supports Vulkan.
 - **"Illegal instruction" on startup**: your CPU is older than the AVX2
@@ -304,11 +270,11 @@ It only rebuilds what changed. Each one also has a short alias: `make gv` (GCC),
 <details>
 <summary>Optional: running the tests</summary>
 
-The engine has unit tests. Build first, then:
+The engine has unit tests. This builds, then runs them:
 
 ```bash
-ctest --preset gcc-dev          # every test suite
-ctest --preset gcc-dev -R ECS   # just the suites whose name matches "ECS"
+./assisi test                   # every test suite
+./assisi test -- -R ECS         # just the suites whose name matches "ECS"
 ```
 
 </details>

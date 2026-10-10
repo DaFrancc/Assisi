@@ -1354,6 +1354,7 @@ add_subdirectory(apps/sglc)
 # reflectgen (the reflection codegen script) has its own Python golden-file tests.
 if (ASSISI_BUILD_TESTS)
     add_subdirectory(tools/reflectgen)
+    add_subdirectory(tools/assisi)
 endif()
 
 # Must be last: it counts ACOMP(replicable) types across every header that has
