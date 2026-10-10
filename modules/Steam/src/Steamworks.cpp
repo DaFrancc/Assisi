@@ -93,7 +93,7 @@ SteamError ToError(ESteamAPIInitResult result)
 
 class Steamworks final : public Client
 {
-  public:
+public:
     Steamworks() = default;
     ~Steamworks() override { SteamAPI_Shutdown(); }
 
@@ -193,7 +193,7 @@ class Steamworks final : public Client
         }
     }
 
-  private:
+private:
     void Handle(const CallbackMsg_t &message)
     {
         if (message.m_iCallback == GameOverlayActivated_t::k_iCallback)

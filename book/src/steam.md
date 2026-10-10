@@ -151,24 +151,23 @@ walked. Define it on the Steamworks site first, next to achievements: give it an
 **API name** such as `kills`, and choose whether it's a whole number or a
 decimal.
 
-`SetStat` **replaces** the stat's value; it doesn't add to it. To count up,
-read the current value and set the new one:
+There are two ways to change one:
+
+- **`AddToStat("kills", 1)` adds** to the stat and returns its new value. Use
+  it for anything that counts up, which is most stats. A negative number
+  subtracts.
+- **`SetStat("kills", 12)` replaces** the stat's value with exactly that
+  number. Use it for stats that aren't counters, like a best lap time.
 
 ```cpp
-#include <cstdint>
-#include <expected>
-
 void CountKill(Assisi::App::SystemContext &ctx)
 {
-    const std::expected<std::int32_t, Assisi::Steam::SteamError> kills = ctx.steam->StatInt("kills");
-    if (kills)
-    {
-        (void)ctx.steam->SetStat("kills", *kills + 1);
-    }
+    (void)ctx.steam->AddToStat("kills", 1);
 }
 ```
 
-Use `StatFloat` and a `float` value for a decimal stat.
+`StatInt("kills")` reads a whole-number stat. For a decimal stat, pass a
+`float`, as in `AddToStat("distance", 2.5f)`, and read it with `StatFloat`.
 
 Changes stay on the player's computer until you call `StoreStats()`, which
 sends every changed stat and achievement to Steam at once. Call it at natural

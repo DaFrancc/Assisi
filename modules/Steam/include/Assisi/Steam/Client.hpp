@@ -17,7 +17,7 @@ namespace Assisi::Steam
 ///        Destroying a connected client shuts Steam down.
 class Client : public Services
 {
-  public:
+public:
     /// @brief Handle what Steam reported since the last frame, such as the
     ///        overlay opening. Called once per frame on the main thread.
     virtual void Update() = 0;
@@ -28,7 +28,7 @@ class Client : public Services
 ///        it does not imitate it.
 class Unavailable final : public Client
 {
-  public:
+public:
     explicit Unavailable(SteamError reason) : _reason(reason) {}
 
     [[nodiscard]] bool IsAvailable() const override { return false; }
@@ -50,7 +50,7 @@ class Unavailable final : public Client
     [[nodiscard]] bool IsRunningUnderProton() const override { return false; }
     void Update() override {}
 
-  private:
+private:
     SteamError _reason;
 };
 

@@ -1,5 +1,6 @@
 add_executable(Assisi-Steam-Tests
   main.cpp
+  TestAddToStat.cpp
   TestUnavailable.cpp
 )
 

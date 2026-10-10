@@ -79,7 +79,7 @@ enum class DefaultConfig : std::uint8_t
 /// @brief Steam, as game systems reach it through SystemContext::steam.
 class Services
 {
-  public:
+public:
     virtual ~Services() = default;
 
     /// @brief Whether Steam is running for this game. When false, Why() says why
@@ -98,13 +98,19 @@ class Services
     [[nodiscard]] virtual std::expected<void, SteamError> UnlockAchievement(std::string_view name) = 0;
     [[nodiscard]] virtual std::expected<bool, SteamError> IsAchievementUnlocked(std::string_view name) const = 0;
 
-    /// @brief Replace a stat's value; it does not add. To count up, read it with
-    ///        StatInt or StatFloat and set the sum. Kept on this machine until
-    ///        StoreStats sends it.
+    /// @brief Replace a stat's value; it does not add. To count up, use
+    ///        AddToStat. Kept on this machine until StoreStats sends it.
     [[nodiscard]] virtual std::expected<void, SteamError> SetStat(std::string_view name, std::int32_t value) = 0;
     [[nodiscard]] virtual std::expected<void, SteamError> SetStat(std::string_view name, float value) = 0;
     [[nodiscard]] virtual std::expected<std::int32_t, SteamError> StatInt(std::string_view name) const = 0;
     [[nodiscard]] virtual std::expected<float, SteamError> StatFloat(std::string_view name) const = 0;
+
+    /// @brief Add @p amount to a stat (negative subtracts) and return its new
+    ///        value: the read-then-set every counter needs. Like SetStat, kept
+    ///        on this machine until StoreStats. A stat that cannot be read is
+    ///        left as it was, and the error is returned.
+    [[nodiscard]] std::expected<std::int32_t, SteamError> AddToStat(std::string_view name, std::int32_t amount);
+    [[nodiscard]] std::expected<float, SteamError> AddToStat(std::string_view name, float amount);
 
     /// @brief Send changed achievements and stats to Steam.
     [[nodiscard]] virtual std::expected<void, SteamError> StoreStats() = 0;

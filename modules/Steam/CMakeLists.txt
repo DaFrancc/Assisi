@@ -6,6 +6,7 @@ target_sources(Assisi-Steam
     "include/Assisi/Steam/Client.hpp"
     "include/Assisi/Steam/Steam.hpp"
   PRIVATE
+    "src/Services.cpp"
     "src/Unavailable.cpp"
 )
 
