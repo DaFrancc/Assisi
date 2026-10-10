@@ -121,8 +121,12 @@ class SourceTree
     [[nodiscard]] Core::CookingProvider Provider() const
     {
         return Core::CookingProvider{_files, [this](Core::AssetId id) { return Lookup(_paths, id); },
-                                     [this](Core::AssetId id) { return Lookup(_kinds, id); }};
+                                     [this](Core::AssetId id) { return Lookup(_kinds, id); },
+                                     [this](std::string_view vpath) { return StampOf(vpath); }};
     }
+
+    /// Marks the file at @p path written since it was last read.
+    void Touch(const std::string &path) { ++_stamps[path]; }
 
   private:
     using TextById = std::unordered_map<Core::AssetId, std::string>;
@@ -137,9 +141,16 @@ class SourceTree
         return found->second;
     }
 
+    [[nodiscard]] std::optional<std::int64_t> StampOf(std::string_view vpath) const
+    {
+        const std::unordered_map<std::string, std::int64_t>::const_iterator found = _stamps.find(std::string{vpath});
+        return found == _stamps.end() ? std::int64_t{0} : found->second;
+    }
+
     MemoryProvider _files;
     TextById _paths;
     TextById _kinds;
+    std::unordered_map<std::string, std::int64_t> _stamps;
 };
 
 /// A type no kind loads as.
@@ -333,6 +344,81 @@ TEST_CASE("A load that lands after a Clear is dropped, and the next request load
     Finish(jobs, store);
     CHECK(store.Resolve<Testing::TestBytes>(kPresent) != nullptr);
     CHECK(package.Opens() == 2);
+}
+
+TEST_CASE("A forgotten asset loads again the next time it is asked for, and what was handed out stays")
+{
+    Core::JobSystem jobs(kWorkers);
+    MemoryProvider package;
+    package.Add(kPresent, Blob(Testing::kRawKind, "hello"));
+    Core::AssetStore store;
+    store.Initialize(jobs, package);
+    (void)store.Resolve<Testing::TestBytes>(kPresent);
+    Finish(jobs, store);
+    const std::shared_ptr<const Testing::TestBytes> before = store.Resolve<Testing::TestBytes>(kPresent);
+    REQUIRE(before != nullptr);
+
+    package.Add(kPresent, Blob(Testing::kRawKind, "changed"));
+    store.Forget(kPresent);
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == nullptr);
+    Finish(jobs, store);
+    const std::shared_ptr<const Testing::TestBytes> after = store.Resolve<Testing::TestBytes>(kPresent);
+    REQUIRE(after != nullptr);
+    CHECK(after->bytes == Bytes("changed"));
+    CHECK(before->bytes == Bytes("hello"));
+}
+
+TEST_CASE("A load in flight when its asset is forgotten is dropped, so the next one reads the file anew")
+{
+    Core::JobSystem jobs(kWorkers);
+    MemoryProvider package;
+    package.Add(kPresent, Blob(Testing::kRawKind, "hello"));
+    Core::AssetStore store;
+    store.Initialize(jobs, package);
+
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == nullptr);
+    REQUIRE(store.HasPendingLoads());
+    // Before any main-thread drain, so the load cannot have published yet.
+    store.Forget(kPresent);
+    CHECK_FALSE(store.HasPendingLoads());
+    jobs.HelpUntil([&package] { return package.Opens() == 1; }, true);
+    (void)jobs.DrainMain();
+
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == nullptr);
+    Finish(jobs, store);
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) != nullptr);
+    CHECK(package.Opens() == 2);
+}
+
+TEST_CASE("The cooking provider names the assets whose source, or a file it read, has changed")
+{
+    SourceTree tree;
+    (void)tree.Add("things/payload.traw", "test raw bytes", "linked payload");
+    const Core::AssetId kLink = tree.Add("things/link.tlink", "test linked bytes", "things/payload.traw");
+    (void)tree.Add("things/other.traw", "test raw bytes", "unrelated");
+    Core::CookingProvider cooking = tree.Provider();
+
+    Core::JobSystem jobs(kWorkers);
+    Core::AssetStore store;
+    store.Initialize(jobs, cooking);
+    (void)store.Resolve<Testing::TestBytes>(kLink);
+    Finish(jobs, store);
+    REQUIRE(store.Resolve<Testing::TestBytes>(kLink) != nullptr);
+    CHECK(cooking.ChangedAssets().empty());
+
+    tree.Touch("things/other.traw");
+    CHECK(cooking.ChangedAssets().empty());
+
+    tree.Touch("things/payload.traw");
+    CHECK(cooking.ChangedAssets() == std::vector<Core::AssetId>{kLink});
+    // Named once: the next cook watches its files again.
+    CHECK(cooking.ChangedAssets().empty());
+
+    store.Forget(kLink);
+    (void)store.Resolve<Testing::TestBytes>(kLink);
+    Finish(jobs, store);
+    tree.Touch("things/link.tlink");
+    CHECK(cooking.ChangedAssets() == std::vector<Core::AssetId>{kLink});
 }
 
 TEST_CASE("Source files cook on demand and load through the same store")

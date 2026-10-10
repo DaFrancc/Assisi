@@ -9,6 +9,7 @@
 #include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <expected>
 #include <format>
 #include <span>
@@ -90,6 +91,11 @@ struct AssetStore::State
     /// The type each resident id loaded as, so asking for it as another type is
     /// refused instead of cast.
     std::unordered_map<AssetId, std::type_index> residentType;
+
+    /// How many times each id has been forgotten. A load publishes only if its
+    /// id's count is still the one it started with, so a load that began on
+    /// the old file never lands over a newer one.
+    std::unordered_map<AssetId, std::uint32_t> forgotten;
 };
 
 AssetStore::AssetStore() : _state(std::make_shared<State>())
@@ -133,14 +139,15 @@ AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const st
 
     state.loading.insert(id);
     const std::weak_ptr<State> startedIn = _state;
+    const std::uint32_t generation = state.forgotten[id];
     // A copy: the caller's types live only as long as its call.
     const std::vector<std::type_index> types{accepted.begin(), accepted.end()};
     _jobs->Run(Pool::Worker, [provider = _provider, id, types] { return ReadAndLoad(*provider, id, types); })
         .Then(Pool::Main,
-              [startedIn, id](LoadResult result)
+              [startedIn, id, generation](LoadResult result)
               {
                   const std::shared_ptr<State> live = startedIn.lock();
-                  if (live == nullptr)
+                  if (live == nullptr || live->forgotten[id] != generation)
                   {
                       return;
                   }
@@ -165,6 +172,16 @@ AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const st
                   live->residentType.emplace(id, result->kind->valueType);
               });
     return {};
+}
+
+void AssetStore::Forget(AssetId id)
+{
+    State &state = *_state;
+    state.resident.erase(id);
+    state.residentType.erase(id);
+    state.failed.erase(id);
+    state.loading.erase(id);
+    ++state.forgotten[id];
 }
 
 bool AssetStore::HasPendingLoads() const

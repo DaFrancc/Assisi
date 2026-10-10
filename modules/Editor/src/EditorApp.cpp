@@ -1151,9 +1151,44 @@ void EditorApp::OnFixedUpdate(float dt)
 #endif
 }
 
+std::optional<std::int64_t> EditorApp::SourceStamp(std::string_view vpath)
+{
+    const std::expected<std::filesystem::path, Assisi::Core::AssetError> path =
+        Assisi::Core::AssetSystem::Resolve(vpath);
+    if (!path)
+    {
+        return std::nullopt;
+    }
+    std::error_code error;
+    const std::filesystem::file_time_type written = std::filesystem::last_write_time(*path, error);
+    if (error)
+    {
+        return std::nullopt;
+    }
+    return static_cast<std::int64_t>(written.time_since_epoch().count());
+}
+
+void EditorApp::ReloadEditedSources(float dt)
+{
+    _sinceSourcePoll += dt;
+    if (_sinceSourcePoll < kSourcePollSeconds)
+    {
+        return;
+    }
+    _sinceSourcePoll = 0.f;
+    for (const Assisi::Core::AssetId id : _cookedSources.ChangedAssets())
+    {
+        const std::optional<std::string> path = _assetDatabase.PathFor(id);
+        Assisi::Core::Log::Info("Editor: '{}' changed; loading it again.", path.value_or(id.ToString()));
+        GetAssets().Forget(id);
+    }
+}
+
 void EditorApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
+
+    ReloadEditedSources(dt);
 
     // Escape does not stop play: it belongs to the game, which opens its pause
     // menu with it. The editor read it first, so a menu bound to Escape could
