@@ -30,7 +30,7 @@ from assisi import core
 from assisi.commands import by_name, catalog
 from assisi.commands.save import name_problem
 from assisi.options import Kind
-from assisi.project import COMPILER_KEY, LEVEL_KEY, Project, Status, UsageError, spec_of
+from assisi.project import COMPILER_KEY, LEVEL_KEY, Status, UsageError, spec_of
 from assisi.request import Request, parse
 from assisi.tui import model
 
@@ -51,17 +51,17 @@ def status_style(app: App, status: Status) -> str:
 
 
 class BuildTable(DataTable):
-    """The builds, one row each. Its keys act on the build under the cursor."""
+    """The builds, one row each. Its keys open an action's menu for the build
+    under the cursor; nothing runs until that menu is told to."""
 
     BINDINGS = [
-        Binding("b", "act('b')", "Build"),
-        Binding("g", "act('g')", "Game", show=False),
-        Binding("k", "act('k')", "Cook", show=False),
-        Binding("p", "act('p')", "Package"),
-        Binding("t", "act('t')", "Test", show=False),
-        Binding("e", "act('e')", "Editor"),
-        Binding("r", "act('r')", "Run game", show=False),
-        Binding("o", "options", "Options"),
+        Binding("b", "menu('b')", "Build"),
+        Binding("k", "menu('k')", "Cook"),
+        Binding("p", "menu('p')", "Package"),
+        Binding("v", "menu('v')", "Release"),
+        Binding("e", "menu('e')", "Editor"),
+        Binding("r", "menu('r')", "Game", show=False),
+        Binding("t", "menu('t')", "Test", show=False),
         Binding("D", "make_default", "Make default", show=False),
     ]
 
@@ -70,15 +70,10 @@ class BuildTable(DataTable):
             return None
         return str(self.coordinate_to_cell_key(self.cursor_coordinate).row_key.value)
 
-    def action_act(self, key: str) -> None:
+    def action_menu(self, key: str) -> None:
         tree = self.current_tree()
         if tree is not None:
-            self.app.run_build_key(key, tree)
-
-    def action_options(self) -> None:
-        tree = self.current_tree()
-        if tree is not None:
-            self.app.open_form("build", model.request_for_build_key("b", tree, self.app.context.project))
+            self.app.open_build_menu(key, tree)
 
     def action_make_default(self) -> None:
         tree = self.current_tree()
@@ -143,9 +138,9 @@ class FormScreen(Screen):
         Binding("ctrl+s", "save", "Save as recipe"),
     ]
 
-    def __init__(self, module, initial: Optional[Request], project: Project):
+    def __init__(self, form: model.FormModel):
         super().__init__()
-        self.form = model.FormModel(module, project, initial)
+        self.form = form
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -155,6 +150,12 @@ class FormScreen(Screen):
             for option in model.form_options(self.form.module):
                 value = self.form.values[option.name]
                 field_id = f"field-{option.name}"
+                if option.kind is Kind.FLAG:
+                    # A switch sits beside what it says rather than under it.
+                    with Horizontal(classes="flag-row"):
+                        yield Switch(value=bool(value), id=field_id)
+                        yield Label(option.help, classes="flag-label")
+                    continue
                 yield Label(option.help, classes="field-label")
                 if option.kind in (Kind.LEVEL, Kind.LEVELS, Kind.VALUE, Kind.CHOICE):
                     # A blank entry only where leaving it out means something:
@@ -162,8 +163,6 @@ class FormScreen(Screen):
                     choices = model.value_choices(option, project)
                     yield Select([(choice, choice) for choice in choices], value=value or Select.NULL,
                                  allow_blank=value is None, prompt="none", id=field_id)
-                elif option.kind is Kind.FLAG:
-                    yield Switch(value=bool(value), id=field_id)
                 else:
                     yield Input(str(value), id=field_id)
             with Horizontal(classes="form-buttons"):
@@ -369,7 +368,7 @@ class AssisiApp(App):
 
     @on(DataTable.RowSelected, "BuildTable")
     def row_chosen(self, event: DataTable.RowSelected) -> None:
-        self.open_form("build", model.request_for_build_key("b", str(event.row_key.value), self.context.project))
+        self.open_build_menu("b", str(event.row_key.value))
 
     # --- Running
 
@@ -415,14 +414,16 @@ class AssisiApp(App):
         except UsageError as error:
             self.notify(str(error), severity="error")
 
-    def run_build_key(self, key: str, tree: str) -> None:
+    def open_build_menu(self, key: str, tree: str) -> None:
         try:
-            self.run_request(model.request_for_build_key(key, tree, self.context.project))
+            form = model.form_for_build_key(key, tree, self.context.project)
         except UsageError as error:
             self.notify(str(error), severity="error")
+            return
+        self.push_screen(FormScreen(form))
 
     def open_form(self, command: str, initial: Optional[Request]) -> None:
-        self.push_screen(FormScreen(by_name()[command], initial, self.context.project))
+        self.push_screen(FormScreen(model.FormModel(by_name()[command], self.context.project, initial)))
 
     def save_recipe(self, argv: List[str]) -> None:
         def saved(name: Optional[str]) -> None:

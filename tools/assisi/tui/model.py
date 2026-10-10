@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from assisi import request as requests
-from assisi.options import Kind, Option
+from assisi.options import COMPILER, PROFILER, SANITIZE, STEAM_RUNTIME, Kind, Option
 from assisi.process import describe
 from assisi.project import BuildSpec, BuildStatus, Project, Status, UsageError, spec_of
 from assisi.store import Entry, Store, rank_common
@@ -27,16 +27,17 @@ STATUS_COLUMNS = (("Configured", "configured"), ("Editor", "editor"), ("Game", "
 # How many history entries the home screen lists; each has a number key.
 FREQUENT_LIMIT = 9
 
-# What each key does to the build under the cursor: the command and the words
-# that go before and after the build's name on its command line.
-BUILD_KEYS: Dict[str, Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = {
-    "b": ("build", (), ()),
-    "g": ("build", (), ("--game",)),
-    "k": ("cook", (), ()),
-    "p": ("package", (), ()),
-    "t": ("test", (), ()),
-    "e": ("run", ("editor",), ()),
-    "r": ("run", ("game",), ()),
+# What each key on a build row opens: a command's menu, set to that build, plus
+# any option the key itself chooses. A key never runs anything; the menu does,
+# once the developer has seen every setting the action has.
+BUILD_MENUS: Dict[str, Tuple[str, Dict[str, object]]] = {
+    "b": ("build", {}),
+    "k": ("cook", {}),
+    "p": ("package", {}),
+    "v": ("release", {}),
+    "t": ("test", {}),
+    "e": ("run", {"program": "editor"}),
+    "r": ("run", {"program": "game"}),
 }
 
 SECONDS_PER_MINUTE = 60
@@ -93,11 +94,23 @@ def recipes(store: Store, needle: str = "") -> List[Tuple[str, List[str]]]:
             if matches(name + " " + " ".join(argv), needle)]
 
 
-def request_for_build_key(key: str, tree: str, project: Project) -> requests.Request:
-    """The request a key on a build row makes; UsageError when it does not
-    apply to that build, such as cooking a sanitizer build."""
-    command, before, after = BUILD_KEYS[key]
-    return requests.parse([command, *before, *spec_of(tree).argv(), *after], project)
+def form_for_build_key(key: str, tree: str, project: Project) -> "FormModel":
+    """The menu a key on a build row opens, set to that build; UsageError when
+    the action does not apply to it, such as cooking a sanitizer build."""
+    from assisi.commands import by_name
+
+    command, chosen = BUILD_MENUS[key]
+    module = by_name()[command]
+    names = {option.name for option in module.OPTIONS}
+    spec = spec_of(tree)
+    if spec.sanitize and SANITIZE not in names:
+        raise UsageError(f"a sanitizer build has no game to {command}.")
+    values: Dict[str, object] = {"levels" if "levels" in names else "level": spec.level, COMPILER: spec.compiler,
+                                 PROFILER: spec.profiler, STEAM_RUNTIME: spec.steam_runtime}
+    if SANITIZE in names:
+        values[SANITIZE] = spec.sanitize
+    values.update(chosen)
+    return FormModel(module, project, preset=values)
 
 
 def form_options(module) -> List[Option]:
@@ -115,12 +128,18 @@ def value_choices(option: Option, project: Project) -> List[str]:
 class FormModel:
     """A command's options as the form holds them, and the request they make."""
 
-    def __init__(self, module, project: Project, initial: Optional[requests.Request] = None):
+    def __init__(self, module, project: Project, initial: Optional[requests.Request] = None,
+                 preset: Optional[Dict[str, object]] = None):
+        """@p initial fills the form from a request; @p preset sets fields to
+        values already in the form's own terms, and wins over both."""
         self.module = module
         self.project = project
         self.values: Dict[str, object] = {}
         for option in form_options(module):
             self.values[option.name] = self._initial(option, initial)
+        for name, value in (preset or {}).items():
+            if name in self.values:
+                self.values[name] = value
 
     def _initial(self, option: Option, initial: Optional[requests.Request]) -> object:
         given = initial.get(option.name) if initial is not None else None

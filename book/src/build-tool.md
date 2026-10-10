@@ -89,10 +89,9 @@ selected, so the menu teaches you the commands as you use it.
 | Key | Does |
 |---|---|
 | **↑ ↓**, **Tab** | Move around |
-| **Enter** | Run the selected recipe or command; on a build, open its options |
-| **b**, **p**, **e** | On a build: build it, package it, start its editor |
-| **g**, **k**, **t**, **r** | On a build: build the game, cook, test, start the game |
-| **o** | On a build: every option of `build`, with switches and lists |
+| **Enter** | Run the selected recipe or command; on a build, open its build menu |
+| **b**, **k**, **p**, **v** | On a build: open the build, cook, package or release menu |
+| **e**, **r**, **t** | On a build: open the menu to start its editor, start its game, or test it |
 | **D** | On a build: make its level and compiler your defaults |
 | **1**–**9** | Run that entry of your most used commands |
 | **a** | Run the last command again |
@@ -101,6 +100,15 @@ selected, so the menu teaches you the commands as you use it.
 | **Ctrl+P** | Search every command and recipe |
 | **?** | Show every key |
 | **q** | Quit |
+
+The keys on a build never start anything by themselves. Each opens a menu
+holding every setting of that action, already set to the build you were on:
+the package menu, for example, has the level, compiler, Steam Runtime switch
+and which earlier release to match. Change what you need and choose **Run**
+(or press **Ctrl+R**); **Ctrl+S** saves it as a recipe instead, and **Esc**
+goes back without running anything. A recipe or a most-used command, on the
+other hand, runs as soon as you choose it, because you already picked every
+setting when you first ran it.
 
 When something runs, the menu steps aside and the build prints straight to your
 terminal as usual. When it finishes, press **Enter** to go back.

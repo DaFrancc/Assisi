@@ -43,20 +43,31 @@ class ModelTest(unittest.TestCase):
     def tearDown(self):
         self._directory.cleanup()
 
-    def test_build_keys_make_the_request_for_the_row(self):
-        project = self.context.project
-        self.assertEqual(model.request_for_build_key("p", "gcc-ship", project).to_argv(),
-                         ["package", "ship", "--compiler", "gcc"])
-        self.assertEqual(model.request_for_build_key("g", "clang-dev", project).to_argv(),
-                         ["build", "dev", "--compiler", "clang", "--game"])
-        self.assertEqual(model.request_for_build_key("e", "gcc-asan", project).to_argv(),
-                         ["run", "editor", "debug", "--compiler", "gcc", "--sanitize", "address"])
-        self.assertEqual(model.request_for_build_key("p", "gcc-ship-steamrt", project).to_argv(),
-                         ["package", "ship", "--compiler", "gcc", "--steam-runtime"])
+    def preview_for_key(self, key: str, tree: str) -> str:
+        form = model.form_for_build_key(key, tree, self.context.project)
+        return form.preview()[1]
+
+    def test_build_keys_open_their_command_set_to_the_row(self):
+        self.assertEqual(self.preview_for_key("p", "gcc-ship"), "./assisi package ship --compiler gcc")
+        self.assertEqual(self.preview_for_key("b", "clang-dev"), "./assisi build dev --compiler clang")
+        self.assertEqual(self.preview_for_key("e", "gcc-asan"),
+                         "./assisi run editor debug --compiler gcc --sanitize address")
+        self.assertEqual(self.preview_for_key("r", "gcc-dev"), "./assisi run game dev --compiler gcc")
+        self.assertEqual(self.preview_for_key("p", "gcc-ship-steamrt"),
+                         "./assisi package ship --compiler gcc --steam-runtime")
+        self.assertEqual(self.preview_for_key("k", "gcc-ship-chiara"), "./assisi cook ship --compiler gcc --profiler")
+
+    def test_the_release_key_opens_a_form_waiting_for_its_version(self):
+        form = model.form_for_build_key("v", "gcc-ship", self.context.project)
+        self.assertFalse(form.preview()[0])
+        form.set("version", "1.0")
+        self.assertEqual(form.preview(), (True, "./assisi release ship --compiler gcc --version 1.0"))
 
     def test_a_key_that_does_not_apply_to_the_build_is_refused(self):
-        with self.assertRaises(UsageError):
-            model.request_for_build_key("k", "gcc-asan", self.context.project)
+        for key in ("k", "p", "v"):
+            with self.subTest(key=key):
+                with self.assertRaises(UsageError):
+                    model.form_for_build_key(key, "gcc-asan", self.context.project)
 
     def test_the_form_previews_exactly_the_command_line_it_runs(self):
         from assisi.commands import by_name
@@ -154,14 +165,33 @@ class AppTest(unittest.IsolatedAsyncioTestCase):
             await pilot.press("enter")
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
 
-    async def test_a_key_on_a_build_row_runs_that_step_for_that_build(self):
+    async def test_a_key_on_a_build_row_opens_its_menu_and_runs_nothing_until_asked(self):
+        app = self.app()
+        async with app.run_test(size=SCREEN_SIZE) as pilot:
+            from assisi.tui.app import BuildTable, FormScreen
+            table = app.query_one(BuildTable)
+            table.move_cursor(row=table.get_row_index("gcc-ship"))
+            await pilot.press("p")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, FormScreen)
+            self.assertEqual(str(app.screen.query_one("#command-bar").content), "./assisi package ship --compiler gcc")
+            self.assertEqual(self.ran, [])
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+        self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
+
+    async def test_escape_leaves_a_menu_without_running_it(self):
         app = self.app()
         async with app.run_test(size=SCREEN_SIZE) as pilot:
             from assisi.tui.app import BuildTable
             table = app.query_one(BuildTable)
-            table.move_cursor(row=table.get_row_index("gcc-ship"))
-            await pilot.press("p")
-        self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
+            table.move_cursor(row=table.get_row_index("gcc-dev"))
+            await pilot.press("k")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertIsInstance(app.screen.query_one(BuildTable), BuildTable)
+        self.assertEqual(self.ran, [])
 
     async def test_the_command_bar_follows_the_form(self):
         app = self.app()
@@ -169,7 +199,7 @@ class AppTest(unittest.IsolatedAsyncioTestCase):
             from assisi.tui.app import BuildTable
             table = app.query_one(BuildTable)
             table.move_cursor(row=table.get_row_index("gcc-dev"))
-            await pilot.press("o")
+            await pilot.press("b")
             await pilot.pause()
             app.screen.query_one("#field-game").focus()
             await pilot.press("space")
@@ -188,7 +218,7 @@ class AppTest(unittest.IsolatedAsyncioTestCase):
             from assisi.tui.app import BuildTable
             table = app.query_one(BuildTable)
             table.move_cursor(row=table.get_row_index("gcc-debug"))
-            await pilot.press("o")
+            await pilot.press("b")
             await pilot.pause()
             app.screen.query_one("#field-sanitize").focus()
             await pilot.press("enter")

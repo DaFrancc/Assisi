@@ -71,6 +71,15 @@ BuildTable {
     color: $text-muted;
 }
 
+.flag-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.flag-label {
+    padding: 1 0 0 1;
+}
+
 .form-buttons {
     height: auto;
     margin-top: 2;
