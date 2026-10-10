@@ -194,6 +194,14 @@ beside the game, Steam takes the app ID from it instead of from the Steam
 library, which is what lets you run the game straight from your build folder.
 It's a development tool only: **Valve says never to ship it to players.**
 
+Anyone can write this file, and that's fine, because it isn't what protects
+your game. It only lets a game start without going through the Steam library.
+The game still has to start Steam, and Steam only starts for an account that
+**owns** the game, with the Steam client running and signed in. Someone who
+copies your game folder and adds `steam_appid.txt` gets past the relaunch,
+then Steam refuses them, and the game refuses to run. On your computer, as the
+game's developer, you own it, so it simply starts.
+
 - **Debug and dev builds** write it beside the game for you. You don't need to
   do anything.
 - **Ship builds** don't get one, because a ship build is what players receive.
