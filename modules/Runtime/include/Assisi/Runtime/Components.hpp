@@ -34,6 +34,8 @@
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
+#include <Assisi/Sigil/Bytecode.hpp>
+#include <Assisi/Sigil/Graph.hpp>
 
 namespace Assisi::Geometry
 {
@@ -247,6 +249,49 @@ struct AnimationPlayer
     AFIELD() float speed = 1.f;             ///< 1 plays at the speed it was authored; negative plays backwards.
     AFIELD(min = 0) float fade = 0.15f;     ///< Seconds a change of `animation` fades over; 0 cuts.
     AFIELD() bool loop = true;
+};
+
+struct AnimatorGraph;
+
+/// @brief The clip or blend space an Animator plays for one of its file's
+///        `clip` params, so one file serves characters with different clips.
+ASTRUCT()
+struct ClipBinding
+{
+    AFIELD() Core::AssetId clip;
+    AFIELD() Core::InternedString name; ///< The param's name in the file.
+};
+
+/// @brief Where an Animator is in its file. Never saved; rebuilt from the
+///        file when it loads.
+struct AnimatorRun
+{
+    std::vector<Sigil::Word> block;           ///< Its params, the engine's values and its lets.
+    std::vector<std::vector<uint32_t>> paths; ///< Per layer, the states from the root down to the one playing.
+    std::vector<Sigil::Gate> gates;           ///< Scratch: which of a layer's transitions may fire.
+    std::shared_ptr<const AnimatorGraph> graph;
+    bool warned = false; ///< Whether an unbound clip param was reported.
+};
+
+/// @brief Runs a `.sgl` state machine on its entity's AnimationPlayer.
+///
+/// Each Update, before the player plays, it reads the params game code set,
+/// moves each layer to the state its transitions choose, and writes into the
+/// player what that state plays, at what rate and where in a blend space. The
+/// player's base is the file's first layer and its `layers` the rest, so with
+/// an Animator they are outputs: edit the file instead.
+///
+/// `machine` is the `.sgl` file; `clips` fill its `clip` params. A file
+/// changed while the game runs is picked up where it stands: a character stays
+/// in the state of the same name if there is one.
+///
+/// Replicable: a remote copy runs the same file. Its params are its own.
+ACOMP(replicable, requires = {AnimationPlayer})
+struct Animator
+{
+    AFIELD(transient) AnimatorRun run;
+    AFIELD() std::vector<ClipBinding> clips;
+    AFIELD() Core::AssetId machine;
 };
 
 /// @brief Projection and activation parameters for a camera entity.

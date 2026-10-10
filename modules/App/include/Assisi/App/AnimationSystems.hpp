@@ -21,4 +21,13 @@ struct SystemContext;
 /// animation or mesh changes.
 ASYSTEM(Update, name = "AnimationPlayers") void AnimationPlayerSystem(SystemContext &ctx);
 
+/// @brief Runs every Animator's `.sgl` file for the frame, telling its
+///        AnimationPlayer what to play.
+///
+/// Before AnimationPlayers in the same Update, so what a transition chose
+/// plays this frame. An Animator waits while its file loads; one whose file
+/// is changed while the game runs carries on in the new one from where it
+/// was, and keeps the old one while the new one loads or if it won't cook.
+ASYSTEM(Update, name = "Animators", before = "AnimationPlayers") void AnimatorSystem(SystemContext &ctx);
+
 } // namespace Assisi::App

@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Runtime)
 target_sources(Assisi-Runtime
   PUBLIC
     "include/Assisi/Runtime/AnimatorGraph.hpp"
+    "include/Assisi/Runtime/AnimatorStep.hpp"
     "include/Assisi/Runtime/AssetResolve.hpp"
     "include/Assisi/Runtime/AudioEmitter.hpp"
     "include/Assisi/Runtime/Blueprint.hpp"
@@ -28,6 +29,7 @@ target_sources(Assisi-Runtime
     "src/AssetResolve.cpp"
     "src/AnimationPlayback.cpp"
     "src/AnimatorGraph.cpp"
+    "src/AnimatorStep.cpp"
     "src/SkinnedMeshPose.cpp"
     "src/Blueprint.cpp"
     "src/Camera.cpp"
