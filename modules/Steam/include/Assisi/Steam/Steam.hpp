@@ -98,6 +98,9 @@ class Services
     [[nodiscard]] virtual std::expected<void, SteamError> UnlockAchievement(std::string_view name) = 0;
     [[nodiscard]] virtual std::expected<bool, SteamError> IsAchievementUnlocked(std::string_view name) const = 0;
 
+    /// @brief Replace a stat's value; it does not add. To count up, read it with
+    ///        StatInt or StatFloat and set the sum. Kept on this machine until
+    ///        StoreStats sends it.
     [[nodiscard]] virtual std::expected<void, SteamError> SetStat(std::string_view name, std::int32_t value) = 0;
     [[nodiscard]] virtual std::expected<void, SteamError> SetStat(std::string_view name, float value) = 0;
     [[nodiscard]] virtual std::expected<std::int32_t, SteamError> StatInt(std::string_view name) const = 0;

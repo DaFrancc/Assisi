@@ -144,6 +144,41 @@ Steam shows the achievement pop-up once `StoreStats` sends it. Add
 system](first-system.md), and run the game. An achievement unlocks once per
 account; after that, the call succeeds and nothing pops up.
 
+### Stats
+
+A stat is a number Steam keeps for each player, like kills or distance
+walked. Define it on the Steamworks site first, next to achievements: give it an
+**API name** such as `kills`, and choose whether it's a whole number or a
+decimal.
+
+`SetStat` **replaces** the stat's value; it doesn't add to it. To count up,
+read the current value and set the new one:
+
+```cpp
+#include <cstdint>
+#include <expected>
+
+void CountKill(Assisi::App::SystemContext &ctx)
+{
+    const std::expected<std::int32_t, Assisi::Steam::SteamError> kills = ctx.steam->StatInt("kills");
+    if (kills)
+    {
+        (void)ctx.steam->SetStat("kills", *kills + 1);
+    }
+}
+```
+
+Use `StatFloat` and a `float` value for a decimal stat.
+
+Changes stay on the player's computer until you call `StoreStats()`, which
+sends every changed stat and achievement to Steam at once. Call it at natural
+moments, like the end of a level or a match, rather than after every change.
+Steam keeps the values between sessions, so the next time the game starts,
+`StatInt("kills")` returns where the player left off.
+
+A stat name that isn't defined on the Steamworks site, or the wrong kind of
+number for it, comes back as an error instead of quietly doing nothing.
+
 ### Everything else
 
 | Call | What it does |
@@ -151,7 +186,6 @@ account; after that, the call succeeds and nothing pops up.
 | `ctx.steam->PersonaName()` | The player's Steam name. |
 | `ctx.steam->UserId()` | Their Steam account id. |
 | `ctx.steam->IsOverlayActive()` | True while the overlay is open: pause your game. |
-| `ctx.steam->SetStat("kills", 3)`, `StatInt("kills")` | Whole-number stats, which you define on the Steamworks site like achievements. `float` stats work the same. |
 | `ctx.steam->SetRichPresence("status", "Hunting")` | What friends see you doing. |
 | `ctx.steam->RunningOn()`, `SuggestedConfig()`, `IsRunningUnderProton()` | Which Steam hardware the game runs on, the settings preset Steam suggests for it, and whether it runs under Proton. |
 
