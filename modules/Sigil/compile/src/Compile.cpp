@@ -285,6 +285,22 @@ std::expected<Program, Diagnostics> CompileFile(std::string_view source, std::st
     return result;
 }
 
+/// @p source parsed but not checked, or nothing when it doesn't parse.
+std::optional<Syntax::File> ParseOnly(std::string_view source)
+{
+    const std::expected<std::vector<Token>, Diagnostics> tokens = Lex(source, {});
+    if (!tokens)
+    {
+        return std::nullopt;
+    }
+    std::expected<Syntax::File, Diagnostics> syntax = Parse(*tokens, {});
+    if (!syntax)
+    {
+        return std::nullopt;
+    }
+    return std::move(*syntax);
+}
+
 } // namespace
 
 std::optional<std::string> ReadUseLine(std::string_view source)
@@ -302,6 +318,42 @@ std::optional<std::string> ReadUseLine(std::string_view source)
         return std::nullopt;
     }
     return read[1].text;
+}
+
+std::vector<std::string> ListImports(std::string_view source)
+{
+    const std::optional<Syntax::File> syntax = ParseOnly(source);
+    std::vector<std::string> paths;
+    if (!syntax.has_value())
+    {
+        return paths;
+    }
+    for (const Syntax::Declaration &declaration : syntax->declarations)
+    {
+        if (const Syntax::Import *statement = std::get_if<Syntax::Import>(&declaration))
+        {
+            paths.push_back(statement->path);
+        }
+    }
+    return paths;
+}
+
+std::optional<std::string> FileClauseString(std::string_view source, std::string_view word)
+{
+    const std::optional<Syntax::File> syntax = ParseOnly(source);
+    if (!syntax.has_value())
+    {
+        return std::nullopt;
+    }
+    for (const Syntax::Clause &clause : syntax->root.clauses)
+    {
+        if (clause.word.name == word && !clause.arguments.empty() &&
+            clause.arguments.front().kind == Syntax::ExprKind::String)
+        {
+            return clause.arguments.front().text;
+        }
+    }
+    return std::nullopt;
 }
 
 std::expected<Program, Diagnostics> CompileSource(std::string_view source, std::string_view file,

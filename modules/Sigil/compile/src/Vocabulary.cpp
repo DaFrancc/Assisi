@@ -45,8 +45,32 @@ bool KnowsType(const Vocabulary &vocabulary, const std::string &name)
     return std::ranges::any_of(vocabulary.types, [&name](const ValueType &type) { return type.name == name; });
 }
 
+std::expected<void, std::string> CheckFileLevel(const ClauseSpec &clause)
+{
+    if (!clause.blocks.empty() || clause.onTransition)
+    {
+        return std::unexpected(
+            std::format("clause \"{}\" is file-level, so it goes only at the top of the file", clause.word));
+    }
+    const bool namesState = std::ranges::any_of(
+        clause.arguments, [](const ArgumentSpec &argument) { return argument.kind == ArgumentKind::State; });
+    if (namesState)
+    {
+        return std::unexpected(
+            std::format("clause \"{}\" is file-level, and the file has no states to name", clause.word));
+    }
+    return {};
+}
+
 std::expected<void, std::string> CheckClause(const Vocabulary &vocabulary, const ClauseSpec &clause)
 {
+    if (clause.fileLevel)
+    {
+        if (std::expected<void, std::string> checked = CheckFileLevel(clause); !checked)
+        {
+            return checked;
+        }
+    }
     for (const std::string &block : clause.blocks)
     {
         if (!HasKind(vocabulary, block))

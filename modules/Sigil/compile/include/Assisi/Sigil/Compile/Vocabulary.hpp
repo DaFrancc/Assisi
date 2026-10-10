@@ -84,6 +84,10 @@ struct ClauseSpec
     std::vector<std::string> blocks;
     /// Whether it may be written in a transition's braces.
     bool onTransition = false;
+    /// Whether it is written at the top of the file, outside any block, and
+    /// nowhere else. It then goes in no `blocks`, on no transition, and names
+    /// no state, since the file has none of its own.
+    bool fileLevel = false;
     Cardinality cardinality = Cardinality::AtMostOnce;
 };
 
