@@ -8,6 +8,7 @@
 /// evaluator, so a folded value is exactly the one the game would have got.
 
 #include <Assisi/Sigil/Bytecode.hpp>
+#include <Assisi/Sigil/Graph.hpp>
 #include <Assisi/Sigil/Compile/Program.hpp>
 #include <Assisi/Sigil/Compile/Vocabulary.hpp>
 #include <Assisi/Sigil/Layout.hpp>
@@ -36,5 +37,21 @@ namespace Assisi::Sigil::Compile
 [[nodiscard]] std::expected<std::vector<uint32_t>, std::string> LowerLets(const Program &program,
                                                                           const Layout &layout,
                                                                           std::vector<Word> &code);
+
+/// @brief A block's states as a Graph, and where each part of it came from,
+///        for a vocabulary to read its own clauses beside it.
+struct LoweredGraph
+{
+    Graph graph;
+    /// The block each node came from: blocks[0] is the one lowered.
+    std::vector<const Block *> blocks;
+    /// The transition each of graph.transitions came from.
+    std::vector<const Transition *> transitions;
+};
+
+/// @brief @p root, and every state inside it, as a Graph whose conditions are
+///        appended to @p code. Points into @p root, which must outlive it.
+[[nodiscard]] std::expected<LoweredGraph, std::string> LowerGraph(const Layout &layout, const Block &root,
+                                                                  std::vector<Word> &code);
 
 } // namespace Assisi::Sigil::Compile

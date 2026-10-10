@@ -337,4 +337,45 @@ std::expected<std::vector<uint32_t>, std::string> LowerLets(const Program &progr
     return entries;
 }
 
+std::expected<LoweredGraph, std::string> LowerGraph(const Layout &layout, const Block &root, std::vector<Word> &code)
+{
+    LoweredGraph lowered;
+    lowered.blocks.push_back(&root);
+    lowered.graph.nodes.push_back(Node{.name = {}});
+    // Breadth first, so each node's states sit together, after it.
+    for (std::size_t index = 0; index < lowered.blocks.size(); ++index)
+    {
+        const Block &block = *lowered.blocks[index];
+        Node &node = lowered.graph.nodes[index];
+        node.firstChild = static_cast<uint32_t>(lowered.blocks.size());
+        node.childCount = static_cast<uint32_t>(block.children.size());
+        node.firstTransition = static_cast<uint32_t>(lowered.graph.transitions.size());
+        node.transitionCount = static_cast<uint32_t>(block.transitions.size());
+        for (const Block &child : block.children)
+        {
+            lowered.blocks.push_back(&child);
+            lowered.graph.nodes.push_back(Node{.name = child.name});
+        }
+        for (const Transition &transition : block.transitions)
+        {
+            std::expected<uint32_t, std::string> condition = LowerExpression(layout, transition.condition, code);
+            if (!condition)
+            {
+                return std::unexpected(std::format("a transition in \"{}\": {}", block.name, condition.error()));
+            }
+            GraphTransition lowerTransition{.sources = transition.sources,
+                                            .triggersRead = {},
+                                            .condition = *condition,
+                                            .target = transition.target};
+            for (const uint32_t param : transition.triggersRead)
+            {
+                lowerTransition.triggersRead.push_back(layout.ParamSlot(param));
+            }
+            lowered.graph.transitions.push_back(std::move(lowerTransition));
+            lowered.transitions.push_back(&transition);
+        }
+    }
+    return lowered;
+}
+
 } // namespace Assisi::Sigil::Compile
