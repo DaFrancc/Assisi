@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behavioural tests for steam_sdk.py.
+"""Behavioural tests for ./assisi steam-sdk, which installs the Steamworks SDK.
 
 What matters is what lands in the repository: the headers and the runtime
 libraries the engine builds and ships with, and nothing else from the SDK — no
@@ -11,15 +11,21 @@ The SDK here is a tree of placeholder files built by the test, laid out the way
 Valve's zip is. No real SDK is needed or read.
 """
 
-import subprocess
+from __future__ import annotations
+
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "steam_sdk.py"
-REPO = SCRIPT.parent.parent
+TOOLS = Path(__file__).resolve().parents[2]
+REPO = TOOLS.parent
+sys.path.insert(0, str(TOOLS))
+
+from assisi import cli, steamworks  # noqa: E402
 
 # What a fake v1.65 SDK holds, relative to the folder the zip unpacks to. The
 # first group is what the engine needs; the rest is what it must leave behind.
@@ -92,89 +98,89 @@ class SteamSdkTest(unittest.TestCase):
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory()
         self.directory = Path(self._directory.name)
-        self.dest = self.directory / "repo" / "steamworks"
+        self.repo = self.directory / "repo"
+        self.repo.mkdir()
+        self.dest = self.repo / "steamworks"
 
     def tearDown(self):
         self._directory.cleanup()
 
     def install(self, sdk: Path):
-        return subprocess.run([sys.executable, "-I", str(SCRIPT), "--sdk", str(sdk), "--dest", str(self.dest)],
-                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["steam-sdk", str(sdk)], root=self.repo, host="Linux", interactive=False)
+        return code, out.getvalue(), err.getvalue()
 
     def test_zip_yields_only_headers_and_libraries(self):
         archive = zip_folder(make_sdk_folder(self.directory), self.directory / "steamworks_sdk_165.zip")
-        result = self.install(archive)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        code, _, err = self.install(archive)
+        self.assertEqual(code, 0, err)
         self.assertEqual(tree(self.dest), EXPECTED_TREE)
         self.assertEqual((self.dest / "public/steam/steam_api.h").read_text(),
                          "placeholder sdk/public/steam/steam_api.h\n")
 
     def test_unpacked_folder_yields_the_same(self):
-        result = self.install(make_sdk_folder(self.directory))
-        self.assertEqual(result.returncode, 0, result.stderr)
+        code, _, err = self.install(make_sdk_folder(self.directory))
+        self.assertEqual(code, 0, err)
         self.assertEqual(tree(self.dest), EXPECTED_TREE)
 
     def test_sdk_folder_itself_yields_the_same(self):
-        result = self.install(make_sdk_folder(self.directory) / "sdk")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        code, _, err = self.install(make_sdk_folder(self.directory) / "sdk")
+        self.assertEqual(code, 0, err)
         self.assertEqual(tree(self.dest), EXPECTED_TREE)
 
     def test_version_is_recorded(self):
-        result = self.install(make_sdk_folder(self.directory))
-        self.assertEqual(result.returncode, 0, result.stderr)
+        code, _, err = self.install(make_sdk_folder(self.directory))
+        self.assertEqual(code, 0, err)
         self.assertEqual((self.dest / "VERSION").read_text().strip(), "1.65")
 
     def test_second_run_replaces_the_first(self):
         sdk = make_sdk_folder(self.directory)
-        self.assertEqual(self.install(sdk).returncode, 0)
+        self.assertEqual(self.install(sdk)[0], 0)
         stale = self.dest / "public/steam/isteamremovedinterface.h"
         stale.write_text("left over from an older SDK\n")
-        result = self.install(sdk)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        code, _, err = self.install(sdk)
+        self.assertEqual(code, 0, err)
         self.assertEqual(tree(self.dest), EXPECTED_TREE)
 
     def test_download_without_the_api_header_is_refused_and_changes_nothing(self):
-        self.assertEqual(self.install(make_sdk_folder(self.directory / "good")).returncode, 0)
+        self.assertEqual(self.install(make_sdk_folder(self.directory / "good"))[0], 0)
         before = tree(self.dest)
         broken = make_sdk_folder(self.directory / "broken", leave_out="sdk/public/steam/steam_api.h")
-        result = self.install(broken)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("steam_api.h", result.stderr)
+        code, _, err = self.install(broken)
+        self.assertNotEqual(code, 0)
+        self.assertIn("steam_api.h", err)
         self.assertEqual(tree(self.dest), before)
 
     def test_download_without_the_api_header_leaves_no_folder(self):
         broken = make_sdk_folder(self.directory, leave_out="sdk/public/steam/steam_api.h")
-        self.assertNotEqual(self.install(broken).returncode, 0)
+        self.assertNotEqual(self.install(broken)[0], 0)
         self.assertFalse(self.dest.exists())
 
     def test_archive_member_escaping_the_folder_is_refused(self):
         archive = zip_folder(make_sdk_folder(self.directory), self.directory / "steamworks_sdk_165.zip",
                              {"sdk/public/steam/../../../../escaped.h": "outside\n"})
-        result = self.install(archive)
-        self.assertNotEqual(result.returncode, 0)
+        code, _, _ = self.install(archive)
+        self.assertNotEqual(code, 0)
         self.assertFalse(self.dest.exists())
         self.assertEqual([path for path in self.directory.rglob("escaped.h")], [])
 
     def test_older_sdk_is_refused_and_names_the_version_needed(self):
-        result = self.install(make_sdk_folder(self.directory, version="1.60"))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("1.60", result.stderr)
-        self.assertIn("1.65", result.stderr)
+        code, _, err = self.install(make_sdk_folder(self.directory, version="1.60"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("1.60", err)
+        self.assertIn("1.65", err)
         self.assertFalse(self.dest.exists())
 
     def test_missing_path_is_refused(self):
-        result = self.install(self.directory / "no-such-download.zip")
-        self.assertNotEqual(result.returncode, 0)
+        code, _, _ = self.install(self.directory / "no-such-download.zip")
+        self.assertNotEqual(code, 0)
         self.assertFalse(self.dest.exists())
 
-    def test_default_destination_is_the_folder_the_build_reads(self):
+    def test_the_folder_is_the_one_the_build_reads(self):
         # The build finds the SDK at a fixed folder in the repository, named in
-        # cmake/AssisiSteamworks.cmake; the script's default must be that folder.
-        result = subprocess.run([sys.executable, "-I", str(SCRIPT), "--print-dest"], capture_output=True,
-                                text=True, check=False, stdin=subprocess.DEVNULL)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        default = Path(result.stdout.strip())
-        self.assertEqual(default, REPO / "steamworks")
+        # cmake/AssisiSteamworks.cmake; the tool must install it there.
+        self.assertEqual(steamworks.SDK_DIR, "steamworks")
         cmake = (REPO / "cmake" / "AssisiSteamworks.cmake").read_text()
         self.assertIn('"${CMAKE_SOURCE_DIR}/steamworks"', cmake)
 

@@ -11,7 +11,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 
 class CommandFailed(Exception):
@@ -30,14 +30,15 @@ class Runner:
     def __init__(self, root: Path):
         self.root = root
 
-    def run(self, argv: Sequence[object]) -> None:
+    def run(self, argv: Sequence[object], cwd: Optional[Path] = None) -> None:
         """Echo @p argv, run it with the terminal attached, and raise CommandFailed
         on a non-zero exit. Output is not captured, so compilers keep their colour
-        and ninja its progress line."""
+        and ninja its progress line. @p cwd is for programs that read files from
+        where they start; every build tool runs from the root."""
         parts = [str(part) for part in argv]
         print(f"$ {describe(parts)}", flush=True)
         try:
-            code = subprocess.call(parts, cwd=self.root)
+            code = subprocess.call(parts, cwd=cwd if cwd is not None else self.root)
         except FileNotFoundError as missing:
             print(f"assisi: {parts[0]} is not installed or not on PATH. `./assisi doctor` checks the setup.",
                   file=sys.stderr)

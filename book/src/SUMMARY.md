@@ -49,6 +49,7 @@
 - [Build types](build-types.md)
 - [Packaging your game](packaging.md)
 - [Building for every Linux distribution](steam-runtime.md)
+- [Steam](steam.md)
 
 # Going further
 

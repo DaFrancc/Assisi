@@ -50,6 +50,15 @@ crash-*.txt
 # The build tool's per-developer history, recipes and default level and compiler.
 .assisi/
 
+# The Steamworks SDK, installed from the developer's own download by
+# ./assisi steam-sdk. Valve's agreement allows copying it locally to build a game
+# and nothing more, so it never goes into git, and neither does the download.
+/steamworks/
+/steamworks.partial/
+steamworks_sdk_*.zip
+# What Steam reads beside a development build; never shipped, never committed.
+steam_appid.txt
+
 # Released games kept by ./assisi release: binaries players received, matched by
 # later packages. Too large for git, and not source.
 /releases/

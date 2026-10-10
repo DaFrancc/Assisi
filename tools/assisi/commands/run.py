@@ -40,5 +40,7 @@ def execute(request, context) -> int:
     if game and not project.pak_path(tree).exists():
         raise UsageError(f"there is no {project.pak_path(tree).name} beside the game. "
                          f"Make one with ./assisi package {spec}.")
-    context.runner.run([program, *request.get("program_arguments")])
+    # From its own folder: Steam reads steam_appid.txt from where a game starts,
+    # and the build writes it beside the game.
+    context.runner.run([program, *request.get("program_arguments")], cwd=program.parent)
     return 0

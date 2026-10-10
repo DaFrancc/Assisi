@@ -85,6 +85,9 @@ option(ASSISI_PAK_OVERRIDES "Let the game read a content package named on its co
 # against this machine's glibc needs that glibc, and that is not a defect.
 set(ASSISI_GLIBC_CEILING "" CACHE STRING "Newest glibc version the Game may need, e.g. 2.31; empty for no ceiling")
 
+# The Steamworks SDK, when the developer has installed their own copy of it.
+include("${CMAKE_SOURCE_DIR}/cmake/AssisiSteamworks.cmake")
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
@@ -1302,6 +1305,9 @@ add_subdirectory(modules/Image)
 # Audio needs only Core: it plays samples and decodes files, and knows nothing
 # about entities. The layer that turns components into sound sits above ECS.
 add_subdirectory(modules/Audio)
+# Steam needs only Core; without the Steamworks SDK it builds a stand-in that
+# reports Steam unavailable.
+add_subdirectory(modules/Steam)
 # Geometry sits above Core+Math+Image and below Render: CPU-side mesh data and
 # the mesh-file importer (glTF via fastgltf), with no GPU dependency.
 add_subdirectory(modules/Geometry)

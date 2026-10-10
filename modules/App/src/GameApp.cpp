@@ -144,7 +144,8 @@ void GameApp::OnStart()
                          .ui = GetUi(),
                          .mixer = GetMixer(),
                          .settings = GetPlayerSettings(),
-                         .assets = &GetAssets()});
+                         .assets = &GetAssets(),
+                         .steam = &GetSteam()});
 
     // What the shipped config asked for, before the first world starts — the
     // policy has to be installed ahead of the load it governs, not after it.
@@ -347,7 +348,8 @@ SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTic
             .ui = GetUi(),
             .mixer = GetMixer(),
             .settings = GetPlayerSettings(),
-            .assets = &GetAssets()};
+            .assets = &GetAssets(),
+            .steam = &GetSteam()};
 }
 
 SystemContext GameApp::WorldStartContext(World &world)

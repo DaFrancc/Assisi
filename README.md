@@ -415,6 +415,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
 | [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |
+| [Steamworks SDK](https://partner.steamgames.com/) | **Optional, never in this repository.** Steam for a game: the player, overlay, achievements, stats, rich presence. Valve's agreement allows only a local copy, so each developer downloads their own and installs it with `./assisi steam-sdk <download>`; without it Steam reports itself unavailable. See the book's Steam page |
 | [Textual](https://github.com/Textualize/textual) | The build tool's terminal menu (`./assisi` with no arguments). Developer-only and never in a game: pinned with hashes, with its own dependencies (Rich, Pygments, markdown-it-py, …, all MIT/BSD/PSF), in `tools/assisi/tui/requirements.txt`, and installed into `out/tool-env/` the first time the menu opens |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [libsodium](https://github.com/jedisct1/libsodium) | GameNetworkingSockets' encryption on Linux (Windows uses the OS's own) |

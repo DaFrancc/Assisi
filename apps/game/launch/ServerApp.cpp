@@ -392,7 +392,8 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
             .events        = GetEvents(),
             .isActiveWorld = true,
             .worldManager  = nullptr,
-            .ui            = nullptr};
+            .ui            = nullptr,
+            .steam         = &GetSteam()};
 }
 
 void ServerApp::OnShutdown()
