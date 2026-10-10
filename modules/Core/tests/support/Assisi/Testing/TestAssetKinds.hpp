@@ -45,11 +45,17 @@ inline constexpr Core::AssetKindId kReversedKind{"test reversed bytes"};
 ///        finish, so its payload is its source. An empty payload fails to load.
 inline constexpr Core::AssetKindId kRawKind{"test raw bytes"};
 
+/// @brief `.tlink`: its source is the virtual path of another file, and it
+///        cooks to that file's bytes, read through the cook's context. It
+///        depends on that file, and a file that can't be read fails the cook.
+inline constexpr Core::AssetKindId kLinkedKind{"test linked bytes"};
+
 /// @brief The detail each test kind's refusal carries, so a test can tell which
 ///        refusal it got.
 inline constexpr std::string_view kEmptyPayloadDetail = "the payload is empty";
 inline constexpr std::string_view kCookRefusedDetail = "the source asks the cook to fail";
 inline constexpr std::string_view kFinishRefusedDetail = "the payload asks the finish to fail";
+inline constexpr std::string_view kLinkUnreadableDetail = "the linked file can't be read";
 
 /// @brief How many times a test kind's load has run, for tests that check a
 ///        load did or did not happen.

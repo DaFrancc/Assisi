@@ -5,12 +5,31 @@
 #include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
+#include <format>
 
 namespace Assisi::Core
 {
 
 namespace
 {
+
+/// Bytes on their own: no other file to read, so a step that asks finds none.
+class StandaloneCookContext final : public AssetCookContext
+{
+  public:
+    [[nodiscard]] std::string_view Path() const override { return {}; }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> Read(std::string_view vpath) const override
+    {
+        return std::unexpected(std::format("\"{}\" can't be read: this cook has no other files", vpath));
+    }
+
+    [[nodiscard]] std::optional<AssetId> IdFor(std::string_view) const override { return std::nullopt; }
+
+    [[nodiscard]] std::optional<std::string> KindNameOf(AssetId) const override { return std::nullopt; }
+
+    void Report(std::string message) const override { Log::Warn("AssetKind: {}", message); }
+};
 
 AssetFormat ReadFormat(std::string extension)
 {
@@ -203,8 +222,21 @@ std::string_view ExtensionOf(std::string_view vpath)
     return name.substr(dot);
 }
 
+const AssetCookContext &NoCookContext()
+{
+    static const StandaloneCookContext context;
+    return context;
+}
+
 std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind &kind,
                                                                  std::span<const std::byte> source)
+{
+    return CookAssetBytes(kind, source, NoCookContext());
+}
+
+std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind &kind,
+                                                                 std::span<const std::byte> source,
+                                                                 const AssetCookContext &context)
 {
     BitWriter writer;
     WriteCookedHeader(writer, kind.id);
@@ -216,7 +248,7 @@ std::expected<std::vector<std::byte>, AssetError> CookAssetBytes(const AssetKind
     }
     else
     {
-        const std::expected<std::vector<std::byte>, AssetError> cooked = step->cook(source);
+        const std::expected<std::vector<std::byte>, AssetError> cooked = step->cook(source, context);
         if (!cooked)
         {
             return std::unexpected(cooked.error());

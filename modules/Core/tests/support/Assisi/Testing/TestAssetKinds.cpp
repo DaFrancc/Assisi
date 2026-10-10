@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <expected>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -20,6 +21,8 @@ constexpr std::byte kFailFinish{'F'};
 
 /// The reversing step has never changed what it cooks.
 constexpr std::uint32_t kReversedCookVersion = 1;
+/// Nor has the linking one.
+constexpr std::uint32_t kLinkedCookVersion = 1;
 
 std::expected<TestBytes, Core::AssetError> Load(std::span<const std::byte> payload)
 {
@@ -68,6 +71,36 @@ bool RegisterReversed()
                              Core::MakeAssetCookStep(kReversedKind, kReversedCookVersion, CookReversed));
 }
 
+std::string LinkedPath(std::span<const std::byte> source)
+{
+    return std::string{reinterpret_cast<const char *>(source.data()), source.size()};
+}
+
+std::expected<std::vector<std::byte>, Core::AssetError> CookLinked(std::span<const std::byte> source,
+                                                                   const Core::AssetCookContext &context)
+{
+    std::expected<std::vector<std::byte>, std::string> linked = context.Read(LinkedPath(source));
+    if (!linked)
+    {
+        context.Report(linked.error());
+        return std::unexpected(Core::AssetError{Core::AssetErrorCode::CorruptAsset, kLinkUnreadableDetail});
+    }
+    return std::move(*linked);
+}
+
+std::vector<std::string> LinkedDependencies(std::span<const std::byte> source, const Core::AssetCookContext &)
+{
+    return {LinkedPath(source)};
+}
+
+bool RegisterLinked()
+{
+    const bool registered = Core::AssetKindRegistry::Instance().Register(Core::MakeAssetKind<TestBytes>(
+        "test linked bytes", {Core::AssetFormat{.extension = ".tlink", .preferred = true}}, Load));
+    return registered && Core::AssetKindRegistry::Instance().RegisterCookStep(Core::MakeContextCookStep(
+                             kLinkedKind, kLinkedCookVersion, CookLinked, LinkedDependencies));
+}
+
 bool RegisterRaw()
 {
     // Also reads `.png` without preferring it: a PNG can be chosen as this kind,
@@ -86,6 +119,7 @@ bool RegisterCount()
 [[maybe_unused]] const bool kReversedRegistered = RegisterReversed();
 [[maybe_unused]] const bool kRawRegistered = RegisterRaw();
 [[maybe_unused]] const bool kCountRegistered = RegisterCount();
+[[maybe_unused]] const bool kLinkedRegistered = RegisterLinked();
 
 } // namespace
 

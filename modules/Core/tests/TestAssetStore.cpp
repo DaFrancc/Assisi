@@ -55,15 +55,23 @@ class MemoryProvider final : public Core::AssetProvider
         return found->second;
     }
 
-    [[nodiscard]] std::expected<Core::AssetId, Core::AssetError> Resolve(std::string_view) const override
+    void Name(std::string path, Core::AssetId id) { _ids[std::move(path)] = id; }
+
+    [[nodiscard]] std::expected<Core::AssetId, Core::AssetError> Resolve(std::string_view vpath) const override
     {
-        return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
+        const std::unordered_map<std::string, Core::AssetId>::const_iterator found = _ids.find(std::string{vpath});
+        if (found == _ids.end())
+        {
+            return std::unexpected(Core::AssetErrorCode::UnknownAssetId);
+        }
+        return found->second;
     }
 
     [[nodiscard]] std::uint32_t Opens() const { return _opens.load(); }
 
   private:
     std::unordered_map<Core::AssetId, std::vector<std::byte>> _files;
+    std::unordered_map<std::string, Core::AssetId> _ids;
     mutable std::atomic<std::uint32_t> _opens = 0;
 };
 
@@ -101,6 +109,7 @@ class SourceTree
     {
         const Core::AssetId id = Core::DerivedAssetId(path);
         _files.Add(id, Bytes(contents));
+        _files.Name(path, id);
         _paths[id] = path;
         if (!kind.empty())
         {
@@ -343,6 +352,27 @@ TEST_CASE("Source files cook on demand and load through the same store")
     // Cooked by the kind's own step, then finished on the main thread before it was shared.
     CHECK(loaded->bytes == Bytes("cba"));
     CHECK(loaded->finished);
+}
+
+TEST_CASE("A source file that names another cooks from it, read through the provider")
+{
+    SourceTree tree;
+    (void)tree.Add("things/payload.traw", "test raw bytes", "linked payload");
+    const Core::AssetId kLink = tree.Add("things/link.tlink", "test linked bytes", "things/payload.traw");
+    const Core::AssetId kBroken = tree.Add("things/broken.tlink", "test linked bytes", "things/missing.traw");
+    const Core::CookingProvider cooking = tree.Provider();
+
+    Core::JobSystem jobs(kWorkers);
+    Core::AssetStore store;
+    store.Initialize(jobs, cooking);
+    (void)store.Resolve<Testing::TestBytes>(kLink);
+    (void)store.Resolve<Testing::TestBytes>(kBroken);
+    Finish(jobs, store);
+
+    const std::shared_ptr<const Testing::TestBytes> loaded = store.Resolve<Testing::TestBytes>(kLink);
+    REQUIRE(loaded != nullptr);
+    CHECK(loaded->bytes == Bytes("linked payload"));
+    CHECK(store.Resolve<Testing::TestBytes>(kBroken) == nullptr);
 }
 
 TEST_CASE("An asset whose finishing step fails stays null")
