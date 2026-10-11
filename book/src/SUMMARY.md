@@ -16,6 +16,7 @@
 - [Your own components](your-own-components.md)
 - [Strings](strings.md)
 - [Input](input.md)
+- [Players](players.md)
 - [Events](events.md)
 - [User interface](user-interface.md)
     - [Tutorial: a pause menu](ui-tutorial.md)

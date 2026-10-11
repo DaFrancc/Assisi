@@ -62,6 +62,31 @@ When two machines connect, they first compare a fingerprint of every replicable
 component's layout. If the builds differ, they refuse to connect rather than
 misreading each other's data. **Host and clients must run the same build.**
 
+## Players
+
+Each person in a session controls their own character, and sees everyone
+else's. The host hands out the characters:
+
+- **The host keeps the level's own player.** The first character in the level
+  marked `Player` (see [Players](players.md)) becomes the host's.
+- **Everyone who joins gets a new one**, made at a **`PlayerStart`**. Give an
+  entity a `PlayerStart` and a `Transform`, and set its `blueprint` to the
+  player blueprint to make, `blueprints/Player.abp` by default. With several
+  starts, players are spread over them in the order they joined. A level with
+  no start gives late joiners nothing, and the log says so.
+- **A player who leaves takes their character with them**, camera and all.
+
+`levels/NetPile.alvl` has three starts. To try it, open it, pick **Host + 2
+clients** and press **Run**: each window walks its own character, and sees the
+other two.
+
+Only a player's controls cross the network, never what they do: each machine
+sends its own player's buttons, movement and turning every fixed step, and the
+host moves that player's character with them. Your own character moves as soon
+as you press a key, without waiting for the host. It can be pulled back a little
+when the host disagrees, since the engine does not yet replay your input on top
+of a correction.
+
 ## Running a dedicated server
 
 The editor binary can also run as a server with no window:
