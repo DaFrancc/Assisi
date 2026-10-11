@@ -610,6 +610,15 @@ public:
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
+    /// @brief Whether anything but @p entity's own step may push its character,
+    /// whatever its Character says. On by default; off, other characters and
+    /// bodies walking into it are blocked by it and do not move it.
+    ///
+    /// For a character whose motion another machine decides: shoved here, it
+    /// would only be put back where it was by the next word from there.
+    /// Kept until set again or the character is destroyed.
+    void SetCharacterPushable(ECS::Entity entity, bool pushable);
+
     /// @brief Where @p entity's character is now and what its last step
     /// consumed. A default frame for an entity with no character.
     [[nodiscard]] CharacterFrame CaptureCharacter(ECS::Entity entity) const;

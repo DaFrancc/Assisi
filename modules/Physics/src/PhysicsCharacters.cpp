@@ -56,6 +56,13 @@ float CharacterHalfHeight(float radius, float halfHeight)
     return glm::max(halfHeight, JPH::cDefaultConvexRadius) + glm::max(radius, JPH::cDefaultConvexRadius);
 }
 
+CollisionFilter CharacterFilter(const Character &character)
+{
+    const bool ownChannel = character.channel == CollisionChannel::Character ||
+                            static_cast<std::uint32_t>(character.channel) >= kFirstGameChannel;
+    return CollisionFilter{character.collidesWith, ownChannel ? character.channel : CollisionChannel::Character};
+}
+
 JPH::Vec3 ApplyFriction(JPH::Vec3Arg velocity, float friction, float stopSpeed, float deltaTime)
 {
     const float speed = velocity.Length();
@@ -390,6 +397,14 @@ void PhysicsWorld::Impl::PlaceCharacter(CharacterRecord &record, glm::vec3 feet,
     record.character->RefreshContacts({}, layerFilter, bodyFilter, {}, tempAlloc);
     WritePose(record.entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), feet}, /*writeRotation=*/ false);
     ECS::SnapTransform(scene, record.entity);
+}
+
+void PhysicsWorld::SetCharacterPushable(ECS::Entity entity, bool pushable)
+{
+    if (Impl::CharacterRecord *record = _impl->FindCharacter(entity); record != nullptr)
+    {
+        record->pushable = pushable;
+    }
 }
 
 CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
@@ -808,7 +823,7 @@ void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
 
     // The sweep must not be stopped by sensors; the inner body still is seen by
     // them.
-    queryFilter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
+    queryFilter = CharacterFilter(tuning).Without(CollisionChannel::Trigger);
 
     jumpSpeed = tuning.jumpSpeed;
     walkSpeed = tuning.walkSpeed;
@@ -884,8 +899,7 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
     // tunnels through it. It keeps the Character's full mask, Trigger included,
     // which is what lets a trigger volume find it.
     settings.mInnerBodyShape = record.standingShape;
-    settings.mInnerBodyLayer =
-        LayerFor(CollisionFilter{tuning.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
+    settings.mInnerBodyLayer = LayerFor(CharacterFilter(tuning), BodyMotion::Kinematic);
 
     // The entity rides in the character's user data, which Jolt copies onto the
     // inner body, so a contact or a cast that finds a character names it exactly
@@ -944,7 +958,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     BodySlot &slot = SlotAt(entity);
     slot = BodySlot{};
     slot.body = record.character->GetInnerBodyID();
-    slot.filter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character};
+    slot.filter = CharacterFilter(tuning);
     slot.generation = entity.generation;
     slot.motion = BodyMotion::Kinematic;
     slot.kind = SlotKind::Character;
@@ -970,6 +984,11 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
                          crouchHalfHeight != record.crouchHalfHeight;
 
     record.Retune(tuning);
+
+    // Before either path: a resize builds the inner body on the new layer
+    // already, and other characters read what this one is from here.
+    const CollisionFilter filter = CharacterFilter(tuning);
+    slot.filter = filter;
 
     JPH::CharacterVirtual &character = *record.character;
     if (resized)
@@ -1015,9 +1034,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
     character.SetMass(tuning.mass);
     character.SetMaxStrength(tuning.options.Has(CharacterOption::PushesBodies) ? tuning.pushStrength : 0.f);
 
-    const CollisionFilter filter{tuning.collidesWith, CollisionChannel::Character};
     physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, LayerFor(filter, BodyMotion::Kinematic));
-    slot.filter = filter;
 }
 
 bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)

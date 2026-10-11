@@ -675,10 +675,10 @@ inline constexpr Core::Bitmask<CharacterOption, std::uint8_t> AllCharacterOption
 /// physics module instead, so this struct stays a list of decisions about feel
 /// rather than a wall of numbers.
 ///
-/// A character is always on CollisionChannel::Character — there is no channel
-/// field, because a character on any other channel would be a rigid body with
-/// extra steps, and one on Trigger could not be a sensor and a solid volume at
-/// once.
+/// A character is on CollisionChannel::Character or on one of the game's own
+/// channels, never on another of the engine's: one on World would be a rigid
+/// body with extra steps, and one on Trigger could not be a sensor and a solid
+/// volume at once.
 ///
 /// No Collider or RigidBody beside it: a character already owns a body (its
 /// inner capsule), and a second one would collide with its own character. No
@@ -810,6 +810,13 @@ struct Character
     /// hold its mark wants. Clearing PushesBodies differs from a zero
     /// @ref pushStrength only in intent; both are honoured.
     AFIELD() Core::Bitmask<CharacterOption, std::uint8_t> options = AllCharacterOptions;
+
+    /// What this character is, to everything deciding whether to meet it, other
+    /// characters included. Character, or one of the game's own channels to
+    /// tell kinds of character apart: players on their own channel, with it left
+    /// out of their @ref collidesWith, walk through each other and still meet
+    /// everyone else. Any other of the engine's channels is taken as Character.
+    AFIELD() CollisionChannel channel = CollisionChannel::Character;
 };
 
 /// @brief What a character is being asked to do.

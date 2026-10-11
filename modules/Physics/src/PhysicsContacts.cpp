@@ -24,7 +24,9 @@
 
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -441,7 +443,7 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
     // Jolt's spelling of these is from the body's point of view, which is the
     // opposite of how a character is authored: "can this body push the
     // character" is the character's Pushable.
-    settings.mCanPushCharacter   = record.options.Has(CharacterOption::Pushable);
+    settings.mCanPushCharacter   = record.pushable && record.options.Has(CharacterOption::Pushable);
     settings.mCanReceiveImpulses = record.options.Has(CharacterOption::PushesBodies);
 
     // The no-lock interface for the same reason RecordCharacterTouch gives:
@@ -469,7 +471,7 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
     }
     const CharacterRecord &record = *found;
 
-    settings.mCanPushCharacter = record.options.Has(CharacterOption::Pushable);
+    settings.mCanPushCharacter = record.pushable && record.options.Has(CharacterOption::Pushable);
 
     // Neither character can be given an impulse: a character is moved by its own
     // step and nothing else, so one shoving the other is gameplay's to express.
@@ -498,6 +500,72 @@ void PhysicsWorld::Impl::CharacterContacts::OnAdjustBodyVelocity(const JPH::Char
     const JPH::Vec3 offset = JPH::Vec3(body.GetCenterOfMassPosition() - bodies.GetCenterOfMassPosition(found->baseBody));
     linearVelocity -= baseLinear + baseAngular.Cross(offset);
     angularVelocity -= baseAngular;
+}
+
+bool PhysicsWorld::Impl::CharacterCrowd::Meet(const JPH::CharacterVirtual &a, const JPH::CharacterVirtual &b) const
+{
+    const BodySlot *slotA = _owner.SlotFor(EntityOfUserData(a.GetUserData()));
+    const BodySlot *slotB = _owner.SlotFor(EntityOfUserData(b.GetUserData()));
+    if (slotA == nullptr || slotB == nullptr)
+    {
+        return true;
+    }
+    using ChannelMask = Core::Bitmask<CollisionChannel, std::uint32_t>;
+    return ChannelsAgree(slotA->filter.collidesWith.bits, ChannelMask::Of(slotA->filter.channel).bits,
+                         slotB->filter.collidesWith.bits, ChannelMask::Of(slotB->filter.channel).bits);
+}
+
+// Jolt's loops over every registered character, with the pair rule added.
+
+void PhysicsWorld::Impl::CharacterCrowd::CollideCharacter(const JPH::CharacterVirtual *character,
+                                                          JPH::RMat44Arg centerOfMassTransform,
+                                                          const JPH::CollideShapeSettings &collideShapeSettings,
+                                                          JPH::RVec3Arg baseOffset,
+                                                          JPH::CollideShapeCollector &collector) const
+{
+    const JPH::Mat44 transform1 = centerOfMassTransform.PostTranslated(-baseOffset).ToMat44();
+    JPH::CollideShapeSettings settings = collideShapeSettings;
+    for (const JPH::CharacterVirtual *other : _characters)
+    {
+        if (other == character || collector.ShouldEarlyOut() || !Meet(*character, *other))
+        {
+            continue;
+        }
+        collector.SetUserData(reinterpret_cast<JPH::uint64>(other));
+        const JPH::Mat44 transform2 = other->GetCenterOfMassTransform().PostTranslated(-baseOffset).ToMat44();
+
+        // Against the other's outer shell, which its padding widens.
+        settings.mMaxSeparationDistance = collideShapeSettings.mMaxSeparationDistance + other->GetCharacterPadding();
+        JPH::CollisionDispatch::sCollideShapeVsShape(character->GetShape(), other->GetShape(), JPH::Vec3::sReplicate(1.f),
+                                                     JPH::Vec3::sReplicate(1.f), transform1, transform2,
+                                                     JPH::SubShapeIDCreator(), JPH::SubShapeIDCreator(), settings,
+                                                     collector);
+    }
+    collector.SetUserData(0);
+}
+
+void PhysicsWorld::Impl::CharacterCrowd::CastCharacter(const JPH::CharacterVirtual *character,
+                                                       JPH::RMat44Arg centerOfMassTransform, JPH::Vec3Arg direction,
+                                                       const JPH::ShapeCastSettings &shapeCastSettings,
+                                                       JPH::RVec3Arg baseOffset,
+                                                       JPH::CastShapeCollector &collector) const
+{
+    const JPH::Mat44 transform1 = centerOfMassTransform.PostTranslated(-baseOffset).ToMat44();
+    const JPH::ShapeCast cast(character->GetShape(), JPH::Vec3::sReplicate(1.f), transform1, direction);
+    for (const JPH::CharacterVirtual *other : _characters)
+    {
+        if (other == character || collector.ShouldEarlyOut() || !Meet(*character, *other))
+        {
+            continue;
+        }
+        collector.SetUserData(reinterpret_cast<JPH::uint64>(other));
+        const JPH::Mat44 transform2 = other->GetCenterOfMassTransform().PostTranslated(-baseOffset).ToMat44();
+        JPH::CollisionDispatch::sCastShapeVsShapeWorldSpace(cast, shapeCastSettings, other->GetShape(),
+                                                            JPH::Vec3::sReplicate(1.f), {}, transform2,
+                                                            JPH::SubShapeIDCreator(), JPH::SubShapeIDCreator(),
+                                                            collector);
+    }
+    collector.SetUserData(0);
 }
 
 std::span<const ContactEvent> PhysicsWorld::ContactEvents() const

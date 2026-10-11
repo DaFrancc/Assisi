@@ -225,6 +225,107 @@ TEST_CASE("A character whose mask excludes World walks through the wall")
     CHECK(CharacterPosition(scene).x > 4.f); // straight through where the wall is
 }
 
+namespace
+{
+
+/// A game's own channel for the characters players play, as a game takes one.
+constexpr Physics::CollisionChannel kPlayers = Physics::GameChannel(0);
+
+/// Where a character stands for another to walk into.
+constexpr glm::vec3 kInTheWay{2.f, 0.f, 0.f};
+
+/// How far past the one in the way a walker has gone when it went through (m).
+constexpr float kWalkedThrough = 3.f;
+
+/// A character on @p channel that collides with @p collidesWith, and that
+/// nothing pushes: one in the way should block, not be shoved along.
+Physics::Character OnChannel(Physics::CollisionChannel channel,
+                             Core::Bitmask<Physics::CollisionChannel, std::uint32_t> collidesWith)
+{
+    Physics::Character descriptor{};
+    descriptor.channel = channel;
+    descriptor.collidesWith = collidesWith;
+    descriptor.options = Physics::AllCharacterOptions.Without(Physics::CharacterOption::Pushable);
+    return descriptor;
+}
+
+/// Where a walker on @p walker ends after walking at one standing on
+/// @p standing.
+float WalkInto(const Physics::Character &walker, const Physics::Character &standing)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    (void)SpawnFloor(scene, world);
+    (void)SpawnCharacter(scene, world, kInTheWay, standing);
+    const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, walker);
+    Walk(scene, world, walking, kWalkForward, kSettleSteps);
+    return scene.Get<ECS::Transform>(walking)->position.x;
+}
+
+/// How far counts as shoved rather than nudged by rounding (m).
+constexpr float kShoved = 0.1f;
+
+/// How far a default character standing in the way, set @p pushable, is moved
+/// by one walking into it.
+float ShovedBy(bool pushable)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    (void)SpawnFloor(scene, world);
+    const ECS::Entity standing = SpawnCharacter(scene, world, kInTheWay);
+    world.SetCharacterPushable(standing, pushable);
+    const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
+    Walk(scene, world, walking, kWalkForward, kSettleSteps);
+    return scene.Get<ECS::Transform>(standing)->position.x - kInTheWay.x;
+}
+
+} // namespace
+
+TEST_CASE("Two characters meet only when each one's channel is in the other's mask")
+{
+    const Core::Bitmask<Physics::CollisionChannel, std::uint32_t> notPlayers = Physics::AllChannels.Without(kPlayers);
+    const Physics::Character player = OnChannel(kPlayers, notPlayers);
+    const float blocked = kInTheWay.x - 2.f * player.radius + 0.1f;
+
+    SUBCASE("players whose masks leave out their own channel walk through each other")
+    {
+        CHECK(WalkInto(player, player) > kWalkedThrough);
+    }
+    SUBCASE("a player still meets a character on another channel both masks admit")
+    {
+        const Physics::Character npc = OnChannel(Physics::CollisionChannel::Character, Physics::AllChannels);
+        CHECK(WalkInto(player, npc) < blocked);
+        CHECK(WalkInto(npc, player) < blocked);
+    }
+    SUBCASE("one side leaving the other out is enough")
+    {
+        const Physics::Character admitsAll = OnChannel(kPlayers, Physics::AllChannels);
+        CHECK(WalkInto(admitsAll, player) > kWalkedThrough);
+        CHECK(WalkInto(player, admitsAll) > kWalkedThrough);
+    }
+    SUBCASE("characters on the default channel still meet")
+    {
+        const Physics::Character plain = OnChannel(Physics::CollisionChannel::Character, Physics::AllChannels);
+        CHECK(WalkInto(plain, plain) < blocked);
+    }
+}
+
+TEST_CASE("A character set not pushable is not shoved by one walking into it, whatever its options say")
+{
+    CHECK(ShovedBy(/*pushable=*/ true) > kShoved);
+    CHECK(ShovedBy(/*pushable=*/ false) < kShoved);
+}
+
+TEST_CASE("A character asked onto one of the engine's other channels is on Character")
+{
+    // World, Trigger and the query channels each mean something a character is
+    // not; a game's own channels are for telling characters apart.
+    const Physics::Character onWorld = OnChannel(Physics::CollisionChannel::World, Physics::AllChannels);
+    const Physics::Character ignoresCharacters =
+        OnChannel(kPlayers, Physics::AllChannels.Without(Physics::CollisionChannel::Character));
+    CHECK(WalkInto(ignoresCharacters, onWorld) > kWalkedThrough);
+}
+
 TEST_CASE("A ray finds a character and names its entity, and misses once it is removed")
 {
     // What the inner body is for. Without one a character is not in the broad

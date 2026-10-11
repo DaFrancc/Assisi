@@ -389,6 +389,10 @@ JPH::RefConst<JPH::Shape> MakeCharacterShape(float radius, float halfHeight);
 /// @ref MakeCharacterShape builds.
 float CharacterHalfHeight(float radius, float halfHeight);
 
+/// What @p character is and meets: its own channel, or Character when it asks
+/// for another of the engine's, and its mask.
+CollisionFilter CharacterFilter(const Character &character);
+
 /// Below this horizontal speed friction stops the character outright (m/s).
 /// Dividing by a speed this small to keep the direction would amplify rounding
 /// into a velocity that wanders.
@@ -1601,6 +1605,10 @@ private:
         /// lets go of.
         bool basedByIntent = false;
 
+        /// Cleared by PhysicsWorld::SetCharacterPushable: nothing pushes it,
+        /// whatever its options say.
+        bool pushable = true;
+
         /// Riding, but standing on other ground that it moves with rather than
         /// the base (CarrierFooting::Ground): the base's change of speed is not
         /// passed on to it.
@@ -1635,7 +1643,35 @@ private:
     /// character is not in the broad phase, so without this registry two of them
     /// would each sweep through a world the other is not part of and walk
     /// straight through each other.
-    JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
+    ///
+    /// Jolt's own registry meets every pair, whatever their channels; this one
+    /// applies the same two-way rule as every other pair, so characters a game
+    /// keeps apart by channel pass through each other.
+    class CharacterCrowd final : public JPH::CharacterVsCharacterCollision
+    {
+public:
+        explicit CharacterCrowd(const Impl &owner) : _owner(owner) {}
+
+        void Add(JPH::CharacterVirtual *character) { _characters.push_back(character); }
+        void Remove(const JPH::CharacterVirtual *character) { std::erase(_characters, character); }
+
+        void CollideCharacter(const JPH::CharacterVirtual *character, JPH::RMat44Arg centerOfMassTransform,
+                              const JPH::CollideShapeSettings &collideShapeSettings, JPH::RVec3Arg baseOffset,
+                              JPH::CollideShapeCollector &collector) const override;
+
+        void CastCharacter(const JPH::CharacterVirtual *character, JPH::RMat44Arg centerOfMassTransform,
+                           JPH::Vec3Arg direction, const JPH::ShapeCastSettings &shapeCastSettings,
+                           JPH::RVec3Arg baseOffset, JPH::CastShapeCollector &collector) const override;
+
+private:
+        /// Whether @p a and @p b admit each other's channels.
+        [[nodiscard]] bool Meet(const JPH::CharacterVirtual &a, const JPH::CharacterVirtual &b) const;
+
+        std::vector<JPH::CharacterVirtual *> _characters;
+        const Impl &_owner;
+    };
+
+    CharacterCrowd characterVsCharacter{*this};
 
     CharacterRecord *FindCharacter(ECS::Entity entity);
     const CharacterRecord *FindCharacter(ECS::Entity entity) const;
