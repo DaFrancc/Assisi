@@ -83,6 +83,14 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
         character && transform != nullptr ? transform->rotation : simulated.rotation;
     const glm::quat targetRotation = character && ControlsEntity(entity) ? simulatedRotation : state.rotation;
 
+    // Only what this client predicts is its own to move. A character it does
+    // not, shoved here by the one it does, would be put back by the host's next
+    // word, into the way of the character it was shoved by.
+    if (character)
+    {
+        _physics->SetCharacterPushable(entity, PredictsCharacter(entity));
+    }
+
     // A character this client predicts is compared with where it predicted it
     // at the same tick, not with where it is now: it is a round trip further on.
     PredictionHistory *history = nullptr;

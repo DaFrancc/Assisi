@@ -35,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -1245,6 +1246,24 @@ constexpr float kHostShove = 0.5f;
 /// carries that over its few steps.
 constexpr float kReplayedNear = 0.01f;
 
+/// Where another player stands in the client's character's way.
+constexpr glm::vec3 kOtherPlayerAhead{1.5f, 0.f, 0.f};
+
+/// Ticks of walking into the other player: long enough to reach it, push it
+/// along and be stopped.
+constexpr std::uint32_t kPushTicks = 90;
+
+/// Further than the other player is pushed when it is pushed at all (m).
+constexpr float kPushedFar = 0.5f;
+
+/// How far ahead of the host's a client's mirror of another player may be: a
+/// quantized position, not a shove (m).
+constexpr float kMirrorNearHost = 0.01f;
+
+/// The most a client's own character may move back in a tick (m): rounding,
+/// not a pull.
+constexpr float kMostBackPerTick = 0.001f;
+
 /// Both machines walking the same character the same way, the client
 /// kLeadTicks ahead, with each machine's step and the wire between them run
 /// by hand so a case decides when a snapshot lands.
@@ -1253,12 +1272,24 @@ struct PredictionRig
     PhysicsHarness harness;
     ECS::Entity character{ECS::NullEntity};
     ECS::Entity mirror{ECS::NullEntity};
+    ECS::Entity otherPlayer{ECS::NullEntity};
     glm::vec3 move{1.f, 0.f, 0.f};
 
-    PredictionRig()
+    PredictionRig() : PredictionRig(std::nullopt) {}
+
+    /// With @p other, another player's character stands there: the host's
+    /// to move, and on the client a mirror like any other.
+    explicit PredictionRig(std::optional<glm::vec3> other)
     {
         harness.Step(4);
         character = SpawnStanding(harness);
+        if (other.has_value())
+        {
+            otherPlayer = harness.serverScene.Create();
+            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *other});
+            (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
+            (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
+        }
         harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
         harness.Step(30);
         mirror = MirrorOf(harness, character);
@@ -1379,6 +1410,36 @@ TEST_CASE("a correction the client got wrong is replayed from the host's state, 
             CHECK(rig.ClientPosition() == settled);
         }
     }
+}
+
+TEST_CASE("a client walking its character into another player does not shove that player's mirror")
+{
+    // Shoved here, the mirror would be put back by the host's next word, into
+    // the way of the character that shoved it, which would be pushed back in
+    // turn: a jitter every snapshot for as long as the two touch.
+    PredictionRig rig(kOtherPlayerAhead);
+    const ECS::Entity otherMirror = MirrorOf(rig.harness, rig.otherPlayer);
+    REQUIRE(otherMirror != ECS::NullEntity);
+
+    float mostBack = 0.f;
+    float mostAheadOfHost = 0.f;
+    glm::vec3 last = rig.ClientPosition();
+    for (std::uint32_t i = 0; i < kPushTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        const glm::vec3 now = rig.ClientPosition();
+        mostBack = std::max(mostBack, last.x - now.x);
+        const float onClient = rig.harness.clientScene.Get<ECS::Transform>(otherMirror)->position.x;
+        const float onHost = rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x;
+        mostAheadOfHost = std::max(mostAheadOfHost, onClient - onHost);
+        last = now;
+    }
+
+    // It walked into the other player and pushed it, on the host.
+    REQUIRE(rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x > kOtherPlayerAhead.x + kPushedFar);
+    CHECK(mostAheadOfHost < kMirrorNearHost);
+    CHECK(mostBack < kMostBackPerTick);
 }
 
 TEST_CASE("a Collider with no RigidBody replicates as a Transform, not as a body")
