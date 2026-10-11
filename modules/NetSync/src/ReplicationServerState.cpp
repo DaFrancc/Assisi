@@ -32,7 +32,13 @@ void ReplicationServer::ReconcileNetIds()
     {
         const ECS::Entity entity = it->first;
         if (!_scene.IsAlive(entity) || !_scene.Has<Replicated>(entity))
+        {
+            if (_physics != nullptr)
+            {
+                _physics->ClearCharacterOrderKey(entity);
+            }
             it = _netIds.Erase(it);
+        }
         else
             ++it;
     }

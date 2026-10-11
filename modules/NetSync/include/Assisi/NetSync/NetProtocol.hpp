@@ -240,7 +240,10 @@ enum class RejectReason : std::uint8_t
 ///    later joiner and no despawn ever named it. Same section, one bit wider in
 ///    the common case, and a v8 client would read the presence bit as the first
 ///    byte of the placement.
-inline constexpr std::uint32_t kNetProtocolVersion = 9;
+///  - 9 → 10: the snapshot header says which of the client's command ticks the
+///    server applied and which it stepped without one. Two fields in the middle
+///    of the header, so a v9 client reads the rest of it shifted.
+inline constexpr std::uint32_t kNetProtocolVersion = 10;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
@@ -356,6 +359,14 @@ struct SnapshotHeader
     /// The tick this delta is against — the client's last acked snapshot. Zero
     /// means the empty baseline, i.e. full state.
     std::uint64_t baselineTick = 0;
+    /// The newest tick the server stepped on a command from this client. Zero
+    /// before the first.
+    std::uint64_t lastAppliedCommandTick = 0;
+    /// Which of the 64 ticks up to and including `serverTick` the server stepped
+    /// with no command from this client, on held or released controls: bit i is
+    /// tick `serverTick - i`. Whole in every snapshot, so a lost one costs the
+    /// client nothing it needs.
+    std::uint64_t starvedMask = 0;
     /// How many of this client's input commands the server had buffered.
     std::uint32_t inputBufferDepth = 0;
     /// How many recent ticks found that buffer empty. Together with the depth,

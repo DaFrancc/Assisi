@@ -133,6 +133,10 @@ private:
     std::size_t _redundancy;
 };
 
+/// @brief How many recent ticks InputCommandQueue::StarvedMaskAt covers: one
+/// bit each in a 64-bit word.
+inline constexpr std::uint64_t kStarvedMaskTicks = 64;
+
 /// @brief The server's per-connection queue of commands waiting to be applied.
 ///
 /// Its job is to absorb jitter: commands arrive in bursts and gaps, but the
@@ -169,13 +173,25 @@ public:
     /// starvation signal the adaptive clock will act on.
     [[nodiscard]] std::uint64_t StarvedTicks() const { return _starvedTicks; }
 
+    /// @brief Which of the 64 ticks up to and including @p tick found no
+    /// command: bit i is tick `tick - i`. A tick never consumed reads as clear.
+    ///
+    /// What a client needs to step again exactly what the host stepped, since a
+    /// tick with no command is stepped on held or released controls rather than
+    /// on the command the client sent for it.
+    [[nodiscard]] std::uint64_t StarvedMaskAt(std::uint64_t tick) const;
+
     void Clear();
 
 private:
     std::deque<InputCommand> _commands; ///< Sorted ascending by tick.
     std::uint64_t _lastAppliedTick = 0;
-    bool _hasApplied      = false;
     std::uint64_t _starvedTicks    = 0;
+
+    /// StarvedMaskAt(_lastConsumedTick).
+    std::uint64_t _starvedMask = 0;
+    std::uint64_t _lastConsumedTick = 0;
+    bool _hasApplied      = false;
 
     /// The most recent command handed out, kept alive so Consume() can return a
     /// pointer that outlives the queue entry it came from.

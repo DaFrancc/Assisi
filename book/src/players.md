@@ -11,19 +11,25 @@ over a network.
 W, A, S and D walk, the mouse looks around, Space jumps and Left Control
 crouches.
 
-It holds two entities:
+It holds three entities:
 
 | Entity | Components |
 |---|---|
 | `Player` | `Character`, `Player`, `Replicated` |
 | `Camera` | `Camera`, `Parent` (the `Player`), `Replicated` |
+| `Body` | `MeshRenderer`, `Parent` (the `Player`), `Replicated` |
 
 - **`Character`** is the [character controller](physics-character.md): the
   capsule and how it moves.
 - **`Player`** marks the character as one a person controls. A character
   without it is never driven by the keyboard, so put it on your player and leave
   it off your NPCs.
-- **`Replicated`** sends both entities to the other machines in a
+- **`Body`** is what other players see: a red cylinder the size of the capsule.
+  Its `MeshRenderer` has **`hiddenFromOwnCamera`** set, so it isn't drawn
+  through a camera from the same blueprint. You don't see the inside of your
+  own body, but everyone else sees you, and your shadow is still cast. Swap the
+  mesh for your own model.
+- **`Replicated`** sends the entities to the other machines in a
   [networked game](multiplayer.md). It does nothing in a game played alone.
 
 The blueprint lists the systems that drive it, so any level it is placed in runs

@@ -9,6 +9,7 @@
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Chiara/Profile.hpp>
@@ -230,15 +231,17 @@ void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) co
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
     // gizmo built from a different camera lands where the cursor is not.
-    if (PlayViewCamera(world, camera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
+        world = view->world;
+        camera = view->camera;
         return;
     }
     world = _cameraWorld;
     camera = _camera;
 }
 
-bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
+std::optional<Assisi::App::SceneView> EditorApp::PlayView() const
 {
     // Only while a play session is live. Editing looks through the editor's own
     // camera whatever the scene says, or placing a camera would take the viewport
@@ -248,23 +251,15 @@ bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera
     // point of pausing, and snapping back to the editor camera would undo it.
     if (_playState == PlayState::Editing || _scene == nullptr)
     {
-        return false;
+        return std::nullopt;
     }
 
     // Which camera the scene nominates is the same question the game asks, and
     // App::ActiveSceneCamera is the one answer to it. What is editor-specific is
-    // the gate above: *whether* to ask at all.
-    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
-    if (!view)
-    {
-        // No active camera in the scene: the editor's own view is the fallback,
-        // which is what a level that has not composed a camera yet should get.
-        return false;
-    }
-
-    world = view->world;
-    camera = view->camera;
-    return true;
+    // the gate above: *whether* to ask at all. No active camera in the scene
+    // leaves the editor's own view as the fallback, which is what a level that
+    // has not composed a camera yet should get.
+    return Assisi::App::ActiveSceneCamera(*_scene);
 }
 
 void EditorApp::AdoptLevelCamera()
@@ -1035,15 +1030,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    glm::mat4 playWorld{1.f};
-    Assisi::Runtime::Camera playCamera;
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    if (PlayViewCamera(playWorld, playCamera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _sceneRenderer.Render(frame, *_scene, playWorld, playCamera, _world->propagationTick);
+        _sceneRenderer.SetViewingCamera(view->entity);
+        _sceneRenderer.Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
         return;
     }
 
+    // The editor's camera is nobody's eyes, so it sees every body.
+    _sceneRenderer.SetViewingCamera(Assisi::ECS::NullEntity);
     _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
 }
 
@@ -1055,11 +1051,9 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     }
     // Through the same camera the scene was drawn with, or an overlay would be
     // projected from somewhere the viewport is not looking from.
-    glm::mat4 playWorld{1.f};
-    Assisi::Runtime::Camera playCamera;
-    if (PlayViewCamera(playWorld, playCamera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _overlays.Render(frame, *_scene, playWorld, playCamera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, view->world, view->camera, _sceneRenderer);
         return;
     }
 
@@ -1070,6 +1064,10 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
+
+    // The process's own count, unless a session below says the step is another.
+    _stepTick = GetSimTick();
+
     // **Never gate this on IsSimulating().** It is false while Paused and during
     // the frames a join spends building its world, and both are states where the
     // wire must still be read: a join that stops polling never receives the
@@ -1080,10 +1078,6 @@ void EditorApp::OnFixedUpdate(float dt)
     // why it takes dt.
 #if defined(ASSISI_NETWORKING)
     PollNetSession(dt);
-    if (IsSimulating())
-    {
-        BeginNetStep();
-    }
 #endif
 
     // **The play state is a flat switch: while it is not Playing, nothing steps
@@ -1118,40 +1112,17 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
-                // Everything inside the scope is one fixed step to the render blend.
-                const Assisi::ECS::FixedStepScope step(world.scene);
-                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
-
-                {
-                    // Jolt's whole step, including its internal job dispatch:
-                    // everything under `fixed-update` that is not a named ECS system.
-                    ASSISI_PROFILE_SCOPE("physics-step");
-                    world.physics.Update(dt);
-                }
-
-                // The other half of the tick: what reacts to the step that just
-                // ran. Inside this loop rather than with the per-frame phases, so
-                // a frame that runs several steps runs this for every one of
-                // them rather than only the last.
-                world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
-                                  {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                Assisi::App::StepWorld(WorldContext(world, dt, _stepTick));
             });
     }
-
-    // Between the step and the snapshot, and it has to stay there. A mirrored body
-    // woken by a contact the server never had (client poses differ by whatever the
-    // last correction has not yet removed, and Jolt wakes by island) must be put
-    // back before anything reads it.
-#if defined(ASSISI_NETWORKING)
-    if (_netSession)
-        _netSession->AfterPhysicsStep();
-#endif
 
     // Last: a snapshot describes the world at the *end* of the tick it is stamped
     // with, so it has to be built after everything that moves it.
 #if defined(ASSISI_NETWORKING)
-    TickNetSession();
+    if (_networkedPlay)
+    {
+        _networkedPlay->EndStep();
+    }
 #endif
 }
 
@@ -1367,9 +1338,9 @@ void EditorApp::OnUpdate(float dt)
     // the expander places them — they have to, because that path has to work in a
     // build with no editor in it, and this loop is one.
 #if defined(ASSISI_NETWORKING)
-    if (_netSession != nullptr && _netSession->Client() != nullptr)
+    if (_networkedPlay != nullptr && _networkedPlay->Session().Client() != nullptr)
     {
-        if (const std::uint64_t revision = _netSession->Client()->StructureRevision();
+        if (const std::uint64_t revision = _networkedPlay->Session().Client()->StructureRevision();
             revision != _netStructureRevision)
         {
             _netStructureRevision = revision;
@@ -1391,7 +1362,7 @@ void EditorApp::OnUpdate(float dt)
 
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
-    Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, GetSimTick());
+    Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, _stepTick);
     editorCtx.isActiveWorld = true;
     _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
@@ -1410,7 +1381,7 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                const Assisi::App::SystemContext ctx = WorldContext(world, dt, GetSimTick());
+                const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);

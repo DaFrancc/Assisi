@@ -157,6 +157,20 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
     return *this;
 }
 
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::LiveOnly()
+{
+    if (!_setLiveOnly)
+    {
+        // Only the fixed-step phases are ever run again for a tick, so anywhere
+        // else the author expected a skip that can never happen.
+        Core::Log::Error("SystemRegistry: LiveOnly() means something only on a FixedUpdate or "
+                         "PostFixedUpdate system and was ignored.");
+        return *this;
+    }
+    _setLiveOnly();
+    return *this;
+}
+
 void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
 {
     if (id == Core::Reflect::kInvalidComponentId)
@@ -179,7 +193,8 @@ template <typename Ctx>
 SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                                                  std::string_view name,
                                                  std::function<void(Ctx &)> fn,
-                                                 bool supportsActiveOnly)
+                                                 bool supportsActiveOnly,
+                                                 bool supportsLiveOnly)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -205,6 +220,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                              .after      = {},
                              .before     = {},
                              .activeOnly = false,
+                             .liveOnly   = false,
                              .enabled    = true,
                              .ran        = false,
                              .requireAny = {},
@@ -221,10 +237,13 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
             (before ? entry.before : entry.after).emplace_back(depName);
             phasePtr->dirty = true;
         },
-        supportsActiveOnly ? SystemHandle::SetActiveOnly(
+        supportsActiveOnly ? SystemHandle::SetFlag(
             [phasePtr, entryIndex]
             { phasePtr->entries[entryIndex].activeOnly = true; })
-                           : SystemHandle::SetActiveOnly{},
+                           : SystemHandle::SetFlag{},
+        supportsLiveOnly ? SystemHandle::SetFlag([phasePtr, entryIndex]
+                                                 { phasePtr->entries[entryIndex].liveOnly = true; })
+                         : SystemHandle::SetFlag{},
         [phasePtr, entryIndex](Core::Reflect::ComponentId id)
         { phasePtr->entries[entryIndex].requireAny.push_back(id); });
 }
@@ -241,21 +260,32 @@ namespace
 const ECS::Scene &GateScene(const SystemContext &ctx) { return ctx.world.scene; }
 const ECS::Scene &GateScene(const RenderContext &ctx) { return ctx.scene; }
 
+// Whether the dispatch is a replayed step. Drawing is never replayed.
+bool Replaying(const SystemContext &ctx) { return ctx.replaying; }
+bool Replaying(const RenderContext &) { return false; }
+
+/// Which flagged entries a dispatch leaves out.
+struct Skips
+{
+    bool activeOnly = false; ///< The world is not the active one.
+    bool liveOnly = false;   ///< The step is a replay.
+};
+
 /// Whether @p entry runs this dispatch: not muted, not gated out by the world
-/// role, and holding at least one of the components it requires.
+/// role or a replay, and holding at least one of the components it requires.
 ///
 /// One predicate for both the repeating phases and the one-shot ones. They must
 /// agree about what "would run" means: a one-shot marks every entry it reaches
 /// as having had its moment, and an entry the two disagreed about would either
 /// be marked without running or run twice.
 template <typename Entry>
-bool ShouldRun(const Entry &entry, bool skipActiveOnly, const ECS::Scene &gateScene)
+bool ShouldRun(const Entry &entry, Skips skips, const ECS::Scene &gateScene)
 {
     if (!entry.enabled)
     {
         return false;
     }
-    if (skipActiveOnly && entry.activeOnly)
+    if ((skips.activeOnly && entry.activeOnly) || (skips.liveOnly && entry.liveOnly))
     {
         return false;
     }
@@ -298,7 +328,7 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
     for (std::size_t i : phase.sorted)
     {
         const typename Phase<Ctx>::Entry &entry = phase.entries[i];
-        if (!ShouldRun(entry, skipActiveOnly, gateScene))
+        if (!ShouldRun(entry, Skips{.activeOnly = skipActiveOnly, .liveOnly = Replaying(ctx)}, gateScene))
         {
             continue;
         }
@@ -337,13 +367,15 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,
                                                       std::string_view name,
                                                       std::function<void(SystemContext &)> fn)
 {
-    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/ true);
+    const bool fixedStep = phase == SystemPhase::FixedUpdate || phase == SystemPhase::PostFixedUpdate;
+    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/ true,
+               /*supportsLiveOnly=*/ fixedStep);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false);
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false, /*supportsLiveOnly=*/ false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
@@ -419,7 +451,7 @@ void SystemRegistry::RunOnce(SystemPhase phase, SystemContext ctx)
         // would leave a muted or gated system waiting to fire at whatever
         // unrelated drain next runs this phase.
         entry.ran = true;
-        if (!ShouldRun(entry, /*skipActiveOnly=*/ !ctx.isActiveWorld, gateScene))
+        if (!ShouldRun(entry, Skips{.activeOnly = !ctx.isActiveWorld}, gateScene))
         {
             continue;
         }

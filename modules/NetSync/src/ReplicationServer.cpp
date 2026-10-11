@@ -411,6 +411,12 @@ NetId ReplicationServer::BindNetId(ECS::Entity entity, NetId netId)
         return InvalidNetId;
     }
 
+    // Every machine knows a character by this id, and steps characters in its
+    // order, so two that touch are swept in the same order everywhere.
+    if (_physics != nullptr)
+    {
+        _physics->SetCharacterOrderKey(entity, netId.value);
+    }
     return netId;
 }
 

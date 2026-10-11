@@ -58,7 +58,8 @@ void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world,
 /// @brief Hand a finished content-set scan to @p session: its hash, and its paths
 /// as the manifest for whichever replication half the session has.
 ///
-/// **The one call a session makes when the scan lands**, and one call rather than
+/// **The one call a session makes, straight after Host() or Join() and before its
+/// first step**, and one call rather than
 /// two on purpose. The hash and the manifest are the same fact — "this is the
 /// content both machines agreed on" — and a caller that sets the hash without
 /// installing the manifest leaves blueprint replication with no caller at all.

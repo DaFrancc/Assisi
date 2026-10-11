@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "ReplicationInternal.hpp"
@@ -20,6 +21,28 @@
 
 namespace Assisi::NetSync
 {
+namespace
+{
+
+/// @p received, with each component that lies within one wire step of @p local
+/// replaced by @p local's. The wire cannot tell those two apart, so taking the
+/// received one is only rounding: a body at rest on the floor would be pulled a
+/// millimetre into it every snapshot and stood back up between them, a tremble
+/// with nothing behind it.
+glm::vec3 WithinRoundingKept(glm::vec3 received, glm::vec3 local, float step)
+{
+    for (glm::length_t axis = 0; axis < 3; ++axis)
+    {
+        if (std::abs(received[axis] - local[axis]) <= step)
+        {
+            received[axis] = local[axis];
+        }
+    }
+    return received;
+}
+
+} // namespace
+
 void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
     _bodies.erase(netId);
@@ -70,14 +93,19 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
     // folding in the cosmetic offset would flatter the number.
+    //
+    // A character is measured at its feet, which is what the host sends, and
+    // not at its inner body: Jolt moves that copy of the capsule on its own
+    // schedule, centimetres off the feet, and every correction would read the
+    // gap as an error to smooth away, drawn as a bob.
+    const bool character = _scene.Has<Physics::Character>(entity);
     const Physics::Pose simulated = _physics->GetBodyPose(entity);
-    const glm::vec3 simulatedPosition = simulated.position;
+    const glm::vec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
 
     // A character's capsule never turns: where it faces is its Transform, which
     // its controls turn. The one this machine controls keeps the facing its own
     // controls gave it, since the host's is the same turn arriving a round trip
     // late; any other faces where the host says.
-    const bool character = _scene.Has<Physics::Character>(entity);
     const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
     const glm::quat simulatedRotation =
         character && transform != nullptr ? transform->rotation : simulated.rotation;
@@ -139,7 +167,8 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     }
     else
     {
-        _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, state.position},
+        correctedPosition = WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
+        _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
                                   Physics::BodyState{.linearVelocity = state.linearVelocity,
                                                      .angularVelocity = state.angularVelocity,
                                                      .asleep = state.asleep});
@@ -185,7 +214,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     }
 
     record.asleep       = state.asleep;
-    record.restPosition = state.position;
+    record.restPosition = correctedPosition;
     record.restRotation = state.rotation;
 }
 
@@ -553,6 +582,7 @@ void ReplicationClient::Reset()
     }
 
     _feedback          = ClockFeedback{};
+    _echo              = CommandEcho{};
     _handshake         = ServerHello{};
     _corrections       = CorrectionStats{};
     _lastAppliedTick   = 0;

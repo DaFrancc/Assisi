@@ -9,6 +9,7 @@
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
@@ -74,6 +75,14 @@ constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 // on the Moon component: authoring a second moon's texture is a feature nobody
 // has asked for, and a path in a level file is a path that can rot there.
 constexpr const char *kMoonTexture = "textures/moon.jpg";
+
+// The blueprint instance @p camera belongs to, or none for a camera in no
+// instance or no camera at all.
+ECS::InstanceId ViewerInstance(const ECS::Scene &scene, ECS::Entity camera)
+{
+    const ECS::BlueprintMember *member = camera == ECS::NullEntity ? nullptr : scene.Get<ECS::BlueprintMember>(camera);
+    return member != nullptr ? member->instanceId : ECS::InstanceId{};
+}
 } // namespace
 
 bool SceneRenderer::Initialize(const InitParams &params)
@@ -360,7 +369,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                   .culler = &_meshCuller,
                                   .cullBuilder = &_cullBuilder,
                                   .lodSelector = &_lodSelector,
-                                  .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit});
+                                  .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit,
+                                  .viewerInstance = ViewerInstance(scene, _viewingCamera)});
 
     if (prepass)
     {

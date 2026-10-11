@@ -90,8 +90,7 @@ public:
     /// registered and simply wait. Holding them is required, not tidy:
     /// `ClientHello` is sent exactly once and never resent, so a server that
     /// received one while its own hash was pending could neither verify it nor
-    /// safely drop it. Hashing is a job, so this normally lands a frame or two
-    /// after hosting starts.
+    /// safely drop it.
     void SetContentSetHash(std::uint64_t hash);
 
     /// @brief Whether SetContentSetHash has been called. Hosting is not reachable

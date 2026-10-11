@@ -1633,11 +1633,30 @@ private:
         JPH::Vec3 BoostTakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
     };
 
-    /// Keyed by entity index, and ordered rather than hashed: characters are
-    /// stepped in this order, and one that depended on the iteration order of an
-    /// unordered_map would simulate differently between two runs of the same
-    /// level.
+    /// Keyed by entity index, and ordered rather than hashed: one that depended
+    /// on the iteration order of an unordered_map would simulate differently
+    /// between two runs of the same level. Not the order characters step in;
+    /// see stepOrder.
     std::map<std::uint32_t, CharacterRecord> characters;
+
+    /// A key PhysicsWorld::SetCharacterOrderKey gave one entity.
+    struct OrderKey
+    {
+        std::uint64_t key = 0;
+        /// The keyed entity's, so an index reused by another entity is unkeyed.
+        std::uint32_t generation = 0;
+    };
+
+    /// By entity index. Apart from the characters, so a key given before the
+    /// character exists, or kept while it is rebuilt, still applies.
+    std::map<std::uint32_t, OrderKey> characterOrderKeys;
+
+    /// Every character in the order a step sweeps them: keyed ones by key,
+    /// then the rest by entity index. Two characters that meet end up where
+    /// they do partly because of which swept first, so two machines whose
+    /// entity indices differ must still agree on it. Rebuilt by
+    /// OrderCharacters at the start of every step.
+    std::vector<CharacterRecord *> stepOrder;
 
     /// What every character collides against every other one through. A
     /// character is not in the broad phase, so without this registry two of them
@@ -1654,6 +1673,14 @@ public:
 
         void Add(JPH::CharacterVirtual *character) { _characters.push_back(character); }
         void Remove(const JPH::CharacterVirtual *character) { std::erase(_characters, character); }
+
+        /// Replaces the registry with @p characters, in that order: the order a
+        /// sweep meets the others in, which must not depend on when each was
+        /// built.
+        void Assign(std::span<JPH::CharacterVirtual *const> characters)
+        {
+            _characters.assign(characters.begin(), characters.end());
+        }
 
         void CollideCharacter(const JPH::CharacterVirtual *character, JPH::RMat44Arg centerOfMassTransform,
                               const JPH::CollideShapeSettings &collideShapeSettings, JPH::RVec3Arg baseOffset,
@@ -1683,6 +1710,17 @@ private:
     /// Reads every character's CharacterIntent and sweeps it by one step,
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
+
+    /// Where a character falls in stepOrder: unkeyed after keyed, then the key
+    /// or the entity index.
+    using StepOrderKey = std::pair<bool, std::uint64_t>;
+    StepOrderKey StepOrderOf(const CharacterRecord &record) const;
+
+    /// Rebuilds stepOrder, and puts the character registry in the same order.
+    void OrderCharacters();
+
+    /// One character's part of StepCharacters.
+    void StepCharacter(CharacterRecord &record, float deltaTime);
 
     /// How a character meets the ground at the start of its step.
     struct GroundContact

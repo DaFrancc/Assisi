@@ -1532,12 +1532,12 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     // The session-scoped identity, from whichever side is looking. It is the only
     // name the two machines share — an entity handle means nothing across a
     // connection — so "which one is this on the other screen" has no other answer.
-    if (_netSession != nullptr && _netSession->IsActive())
+    if (_networkedPlay != nullptr && _networkedPlay->Session().IsActive())
     {
         Assisi::NetSync::NetId netId = Assisi::NetSync::InvalidNetId;
-        if (const Assisi::NetSync::ReplicationServer *server = _netSession->Server())
+        if (const Assisi::NetSync::ReplicationServer *server = _networkedPlay->Session().Server())
             netId = server->NetIdOf(_selectedEntity);
-        else if (const Assisi::NetSync::ReplicationClient *client = _netSession->Client())
+        else if (const Assisi::NetSync::ReplicationClient *client = _networkedPlay->Session().Client())
             netId = client->NetIdOf(_selectedEntity);
 
         if (netId != Assisi::NetSync::InvalidNetId)
@@ -1586,7 +1586,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         // an observed fact — unlike the local Replicated marker above.
         if (const auto *claim = _scene->Get<Assisi::NetSync::ControlledBy>(_selectedEntity))
         {
-            const bool mine = _netSession != nullptr && _netSession->ControlsEntity(_selectedEntity);
+            const bool mine = _networkedPlay != nullptr && _networkedPlay->Session().ControlsEntity(_selectedEntity);
             ImGui::TextDisabled("Controlled by client %u%s", claim->client, mine ? " (you)" : "");
             if (ImGui::IsItemHovered())
             {

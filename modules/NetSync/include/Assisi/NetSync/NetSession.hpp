@@ -164,9 +164,9 @@ public:
     /// A **host** cannot be reached until it has one — every ServerHello is
     /// withheld until then — and a **client** cannot answer one. Both are
     /// deliberate: the two hellos are each sent exactly once, so one sent with a
-    /// placeholder is a join with no correct outcome. Computing the hash is a job
-    /// (App::ContentSetHashJob), so this normally lands a frame or two after
-    /// hosting or joining starts, and whichever side was waiting completes then.
+    /// placeholder is a join with no correct outcome. A host or join sets it
+    /// straight after Host() or Join(), before the session's first step
+    /// (App::ApplyContentSet).
     void SetContentSetHash(std::uint64_t hash);
 
     /// @brief Whether SetContentSetHash has been called on whichever half this
@@ -187,14 +187,24 @@ public:
     /// tick is applied on this tick rather than the next one.
     void Poll();
 
-    /// @brief Send what this tick produced. Call at the *end* of the fixed
+    /// @brief Decide which tick this fixed step is, after Poll() and before
+    /// anything steps, and return it. Every system of the step runs at it.
+    ///
+    /// The same tick on every machine: a host's is @p localTick, the count of
+    /// its own steps; a synchronized client's is the tick its command for this
+    /// step is stamped with, which the host steps the command on. A client not
+    /// yet synchronized has no such tick and keeps its own. So a client's tick
+    /// jumps once, forward or back, when it first hears from the host.
+    std::uint64_t BeginStep(std::uint64_t localTick);
+
+    /// @brief Send what this step produced. Call at the *end* of the fixed
     /// step, after the simulation: a snapshot describes the world at the end of
     /// the tick it is stamped with.
     ///
-    /// @param localInput A client passes the input it sampled this tick; it is
-    ///   stamped with the clock's command tick and sent redundantly. A host
-    ///   ignores this — its own input needs no round trip.
-    void Tick(std::uint64_t simTick, const InputCommand *localInput = nullptr);
+    /// @param localInput A client passes the input it sampled this step; it is
+    ///   stamped with the step's tick and sent redundantly. A host ignores this
+    ///   — its own input needs no round trip.
+    void Tick(const InputCommand *localInput = nullptr);
 
     /// @brief Write this frame's rendered pose for every mirror: interpolation
     /// for the ones nothing simulates, decaying visual offsets for the ones the
@@ -339,7 +349,8 @@ private:
     std::vector<Net::NetEvent>     _events;
     InputCommandBuffer _inputBuffer;
     std::string _lastError;
-    std::uint64_t _simTick = 0;
+    std::uint64_t _simTick = 0; ///< The step's tick, from BeginStep.
+    bool _stepBegun = false;    ///< BeginStep ran and Tick has not yet.
 };
 
 } // namespace Assisi::NetSync

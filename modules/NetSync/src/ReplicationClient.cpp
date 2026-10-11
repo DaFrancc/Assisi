@@ -38,6 +38,25 @@ void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect
 
 } // namespace
 
+void ReplicationClient::KeyCharacterOrder(ECS::Entity entity, NetId netId)
+{
+    // The host keys its characters by the same id, so the two step any pair of
+    // characters in the same order whatever their local indices.
+    if (_physics != nullptr)
+    {
+        _physics->SetCharacterOrderKey(entity, netId.value);
+    }
+}
+
+bool CommandEcho::Applied(std::uint64_t tick) const
+{
+    if (tick > serverTick || tick > lastAppliedCommandTick || serverTick - tick >= kStarvedMaskTicks)
+    {
+        return false;
+    }
+    return (starvedMask & (std::uint64_t{1} << (serverTick - tick))) == 0;
+}
+
 ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection,
                                      Physics::PhysicsWorld *physics)
     : _transport(transport), _scene(scene), _physics(physics), _connection(connection)
@@ -545,6 +564,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // The binding the whole scheme rests on: member i *is* base + i, so
             // the server never sends a member list.
             _entityByNetId.insert_or_assign(NetId{entry.base.value + member}, members[member]);
+            KeyCharacterOrder(members[member], NetId{entry.base.value + member});
         }
         if (localInstance.IsValid())
         {
@@ -596,6 +616,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             if (it == _entityByNetId.end())
                 continue; // a run may name ids this client never had
 
+            if (_physics != nullptr)
+            {
+                _physics->ClearCharacterOrderKey(it->second);
+            }
             _scene.Destroy(it->second);
             _entityByNetId.erase(it);
             DestroyMirrorBody(netId);
@@ -756,6 +780,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // server's crate" from "our crate".
             (void)_scene.Add<Mirrored>(entity, Mirrored{});
             it = _entityByNetId.emplace(netId, entity).first;
+            KeyCharacterOrder(entity, netId);
             ++_structureRevision;
         }
         else if (isSpawn)
@@ -879,6 +904,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     ++_snapshotsApplied;
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
+    _echo          = CommandEcho{.serverTick = header.serverTick,
+                                 .lastAppliedCommandTick = header.lastAppliedCommandTick,
+                                 .starvedMask = header.starvedMask};
 
     // After the state, never before: a handler for an event about an entity
     // spawned in this same packet must find that entity already there, and the

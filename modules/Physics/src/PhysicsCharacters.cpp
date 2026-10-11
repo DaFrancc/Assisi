@@ -30,11 +30,14 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <map>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Physics
 {
@@ -170,78 +173,112 @@ float Approach(float from, float to, float maxDelta)
 
 } // namespace
 
+PhysicsWorld::Impl::StepOrderKey PhysicsWorld::Impl::StepOrderOf(const CharacterRecord &record) const
+{
+    const std::map<std::uint32_t, OrderKey>::const_iterator it = characterOrderKeys.find(record.entity.index);
+    if (it != characterOrderKeys.end() && it->second.generation == record.entity.generation)
+    {
+        return {false, it->second.key};
+    }
+    return {true, record.entity.index};
+}
+
+void PhysicsWorld::Impl::OrderCharacters()
+{
+    stepOrder.clear();
+    for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
+    {
+        stepOrder.push_back(&entry.second);
+    }
+    std::sort(stepOrder.begin(), stepOrder.end(), [this](const CharacterRecord *a, const CharacterRecord *b)
+              { return StepOrderOf(*a) < StepOrderOf(*b); });
+
+    std::vector<JPH::CharacterVirtual *> crowd;
+    crowd.reserve(stepOrder.size());
+    for (const CharacterRecord *record : stepOrder)
+    {
+        crowd.push_back(record->character.GetPtr());
+    }
+    characterVsCharacter.Assign(crowd);
+}
+
 void PhysicsWorld::Impl::StepCharacters(float deltaTime)
 {
-    for (auto &[id, record] : characters)
+    OrderCharacters();
+    for (CharacterRecord *record : stepOrder)
     {
-        (void)id;
-        JPH::CharacterVirtual &character = *record.character;
+        StepCharacter(*record, deltaTime);
+    }
+}
 
-        // The intent as gameplay left it. A jump is a request, so it is taken
-        // here and cleared; the rest is held for as long as it is wanted.
-        CharacterIntent intent;
-        if (const CharacterIntent *written = scene.Get<CharacterIntent>(record.entity); written != nullptr)
-        {
-            intent = *written;
-        }
-        if (intent.jump)
-        {
-            scene.GetMut<CharacterIntent>(record.entity)->jump = false;
-        }
-        if (!IsFinite(intent.move))
-        {
-            intent.move = glm::vec3(0.f);
-        }
-        if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
-        {
-            record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
-        }
+void PhysicsWorld::Impl::StepCharacter(CharacterRecord &record, float deltaTime)
+{
+    JPH::CharacterVirtual &character = *record.character;
 
-        // Before anything reads the velocity, which is relative to the base
-        // only while the base still carries it.
-        if (record.base != ECS::NullEntity && !StillCarried(record))
-        {
-            ReleaseRider(record);
-        }
+    // The intent as gameplay left it. A jump is a request, so it is taken
+    // here and cleared; the rest is held for as long as it is wanted.
+    CharacterIntent intent;
+    if (const CharacterIntent *written = scene.Get<CharacterIntent>(record.entity); written != nullptr)
+    {
+        intent = *written;
+    }
+    if (intent.jump)
+    {
+        scene.GetMut<CharacterIntent>(record.entity)->jump = false;
+    }
+    if (!IsFinite(intent.move))
+    {
+        intent.move = glm::vec3(0.f);
+    }
+    if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
+    {
+        record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
+    }
 
-        // A base driven by its Transform takes its new speed before this step,
-        // and a velocity relative to it would take that change along.
-        if (record.base != ECS::NullEntity && record.withGround)
-        {
-            character.SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
-        }
+    // Before anything reads the velocity, which is relative to the base
+    // only while the base still carries it.
+    if (record.base != ECS::NullEntity && !StillCarried(record))
+    {
+        ReleaseRider(record);
+    }
 
-        GroundContact contact = SenseGround(record);
+    // A base driven by its Transform takes its new speed before this step,
+    // and a velocity relative to it would take that change along.
+    if (record.base != ECS::NullEntity && record.withGround)
+    {
+        character.SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
+    }
 
-        // From this step on the velocity is relative to the base boarded, and
-        // the sweep below already sees it as still.
-        if (!RideIntentBase(record, intent.base, contact.velocity, contact.groundVelocity))
-        {
-            BoardBestCarrier(record, contact.standing, contact.velocity, contact.groundVelocity);
-        }
+    GroundContact contact = SenseGround(record);
 
-        // Standing on other ground, a rider steers against that ground and so
-        // stays with it — unless its carrier's footing says the carrier wins,
-        // when it stays still in the carrier's frame and slides over it.
-        const Carrier *carrier = record.base == ECS::NullEntity ? nullptr : scene.Get<Carrier>(record.base);
-        if (carrier != nullptr && carrier->footing == CarrierFooting::Carrier)
-        {
-            contact.groundVelocity = JPH::Vec3::sZero();
-        }
+    // From this step on the velocity is relative to the base boarded, and
+    // the sweep below already sees it as still.
+    if (!RideIntentBase(record, intent.base, contact.velocity, contact.groundVelocity))
+    {
+        BoardBestCarrier(record, contact.standing, contact.velocity, contact.groundVelocity);
+    }
 
-        // After boarding, so the step that walks from a dock onto a deck still
-        // remembers the dock.
-        if (contact.standing)
-        {
-            record.lastGroundVelocity = contact.groundVelocity + BaseVelocityAt(record);
-        }
+    // Standing on other ground, a rider steers against that ground and so
+    // stays with it — unless its carrier's footing says the carrier wins,
+    // when it stays still in the carrier's frame and slides over it.
+    const Carrier *carrier = record.base == ECS::NullEntity ? nullptr : scene.Get<Carrier>(record.base);
+    if (carrier != nullptr && carrier->footing == CarrierFooting::Carrier)
+    {
+        contact.groundVelocity = JPH::Vec3::sZero();
+    }
 
-        const bool jumping = MoveCharacter(record, intent, contact, deltaTime);
+    // After boarding, so the step that walks from a dock onto a deck still
+    // remembers the dock.
+    if (contact.standing)
+    {
+        record.lastGroundVelocity = contact.groundVelocity + BaseVelocityAt(record);
+    }
 
-        if (record.base != ECS::NullEntity)
-        {
-            RecordRiderPose(record, jumping, deltaTime);
-        }
+    const bool jumping = MoveCharacter(record, intent, contact, deltaTime);
+
+    if (record.base != ECS::NullEntity)
+    {
+        RecordRiderPose(record, jumping, deltaTime);
     }
 }
 
@@ -484,6 +521,65 @@ void PhysicsWorld::ReplayCharacter(ECS::Entity entity, const CharacterIntent &in
                      /*writeRotation=*/ false);
     ECS::SnapTransform(_impl->scene, entity);
     _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
+}
+
+void PhysicsWorld::SetCharacterOrderKey(ECS::Entity entity, std::uint64_t key)
+{
+    _impl->characterOrderKeys.insert_or_assign(entity.index, Impl::OrderKey{.key = key, .generation = entity.generation});
+}
+
+void PhysicsWorld::ClearCharacterOrderKey(ECS::Entity entity)
+{
+    const std::map<std::uint32_t, Impl::OrderKey>::iterator it = _impl->characterOrderKeys.find(entity.index);
+    if (it != _impl->characterOrderKeys.end() && it->second.generation == entity.generation)
+    {
+        _impl->characterOrderKeys.erase(it);
+    }
+}
+
+void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, float deltaTime)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::StepCharacters called while the world is stepping");
+
+    // As Update runs them: the stance each asks for taken at the reconcile
+    // before the step, then the sweeps in step order with denormals flushed.
+    std::vector<Impl::CharacterRecord *> stepped;
+    for (const ECS::Entity entity : entities)
+    {
+        Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+        if (record == nullptr)
+        {
+            continue;
+        }
+        const CharacterIntent *intent = _impl->scene.Get<CharacterIntent>(entity);
+        if (intent != nullptr && intent->stance != record->stance)
+        {
+            (void)_impl->ApplyStance(*record, intent->stance);
+        }
+        stepped.push_back(record);
+    }
+
+    _impl->OrderCharacters();
+    {
+        const JPH::FPFlushDenormals flushDenormals;
+        for (Impl::CharacterRecord *record : _impl->stepOrder)
+        {
+            if (std::find(stepped.begin(), stepped.end(), record) != stepped.end())
+            {
+                _impl->StepCharacter(*record, deltaTime);
+            }
+        }
+    }
+
+    for (Impl::CharacterRecord *record : stepped)
+    {
+        const JPH::RVec3 feet = record->character->GetPosition();
+        _impl->WritePose(record->entity,
+                         Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                         /*writeRotation=*/ false);
+        ECS::SnapTransform(_impl->scene, record->entity);
+        _impl->WriteCharacterState(record->entity, _impl->BuildCharacterState(*record));
+    }
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const

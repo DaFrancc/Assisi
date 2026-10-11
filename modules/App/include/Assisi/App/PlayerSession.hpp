@@ -42,6 +42,16 @@ void PublishPlayerActions();
 /// a connection that has gone quiet should not leave one running into a wall.
 inline constexpr std::uint32_t kInputHoldTicks = 6;
 
+struct PlayerInput;
+
+/// @brief Hands a remote player's character the controls the host steps it on
+/// this tick: @p command when one came, otherwise what it held, released once
+/// @p starvedTicks, the steps in a row with no command, passes kInputHoldTicks.
+///
+/// The one rule for it, so a client stepping a tick again steps it on what the
+/// host did.
+void RelayHeldCommand(PlayerInput &controls, const NetSync::InputCommand *command, std::uint32_t starvedTicks);
+
 /// @brief A world's players, for one network session.
 class PlayerSession
 {
@@ -50,8 +60,10 @@ public:
     /// session and before Host() or Join().
     ///
     /// Publishes the player actions, and has a leaving player's character
-    /// despawned whole: every member of its blueprint, camera and all.
-    void Attach(NetSync::NetSession &session, World &world);
+    /// despawned whole: every member of its blueprint, camera and all. A host
+    /// gives itself a character only when @p hostPlays; a dedicated server
+    /// does not.
+    void Attach(NetSync::NetSession &session, World &world, bool hostPlays);
 
     /// @brief This fixed step's part, after the session has polled and before
     /// the world's systems run.
@@ -80,6 +92,9 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> _starved;
 
     std::optional<NetSync::InputCommand> _local;
+
+    /// Whether the host is a player too. See Attach.
+    bool _hostPlays = true;
 };
 
 } // namespace Assisi::App

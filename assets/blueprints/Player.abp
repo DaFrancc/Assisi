@@ -88,6 +88,51 @@
         }
       },
       "name": "Camera"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "hiddenFromOwnCamera": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000b",
+            "path": "prim://cylinder"
+          }
+        },
+        "Parent": {
+          "parent": "Player"
+        },
+        "Replicated": {
+          "excluded": [
+            "Transform"
+          ]
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.9,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.9,
+            0.3
+          ]
+        }
+      },
+      "name": "Body"
     }
   ],
   "systems": [

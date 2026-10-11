@@ -22,6 +22,7 @@ target_sources(Assisi-App
     "include/Assisi/App/PlayerSystems.hpp"
     "include/Assisi/App/ResourceStore.hpp"
     "include/Assisi/App/SceneCamera.hpp"
+    "include/Assisi/App/StepWorld.hpp"
     "include/Assisi/App/PhysicsSystems.hpp"
     "include/Assisi/App/MotionSystems.hpp"
     "include/Assisi/App/SystemCatalog.hpp"
@@ -36,6 +37,7 @@ target_sources(Assisi-App
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/PlayerSession.cpp>
+    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/NetworkedPlay.cpp>
     "src/CameraBenchmark.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraCapture.cpp"
@@ -51,6 +53,7 @@ target_sources(Assisi-App
     "src/PlayerSystems.cpp"
     "src/SceneCamera.cpp"
     "src/StartupScene.cpp"
+    "src/StepWorld.cpp"
     "src/PerfCapture.cpp"
     "src/MotionSystems.cpp"
     "src/PhysicsSystems.cpp"

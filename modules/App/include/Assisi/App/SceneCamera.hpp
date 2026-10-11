@@ -30,6 +30,11 @@ struct SceneView
     Runtime::Transform pose;
 
     Runtime::Camera camera;
+
+    /// The camera's entity, which says whose eyes these are: a mesh set
+    /// MeshRenderer::hiddenFromOwnCamera is not drawn through a camera of its own
+    /// blueprint instance.
+    ECS::Entity entity = ECS::NullEntity;
 };
 
 /// @brief The first active Camera in @p scene, with the Transform it sits at.

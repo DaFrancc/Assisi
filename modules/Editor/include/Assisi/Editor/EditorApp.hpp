@@ -25,6 +25,7 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -44,7 +45,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #if defined(ASSISI_NETWORKING)
-#include <Assisi/App/PlayerSession.hpp>
+#include <Assisi/App/NetworkedPlay.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -330,10 +331,9 @@ class EditorApp : public Assisi::App::Application
     /// game shows. Reads the camera's *world* pose, since a player's camera is
     /// parented to the character it is attached to.
     ///
-    /// @return false while editing, or when no active camera is in the scene — in
-    ///         which case @p world and @p camera are untouched and the editor's own
-    ///         view is the fallback.
-    [[nodiscard]] bool PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
+    /// @return empty while editing, or when no active camera is in the scene, in
+    ///         which case the editor's own view is the fallback.
+    [[nodiscard]] std::optional<Assisi::App::SceneView> PlayView() const;
 
     /// @brief Lends the cursor to the editor mid-session and gives it back: F8
     /// toggles, and clicking the game — but not a panel — ends the loan.
@@ -354,7 +354,7 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief Where the viewport is looking from, whichever camera that is.
     ///
-    /// PlayViewCamera's answer when it has one, the editor's own otherwise. Use
+    /// PlayView's answer when it has one, the editor's own otherwise. Use
     /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
     /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
     /// only for moving the editor camera itself.
@@ -484,9 +484,7 @@ class EditorApp : public Assisi::App::Application
     /// Both describe a gap between what was marked and what clients will see.
     void DrawHostAuthoringWarnings();
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
-    void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
-    void BeginNetStep();           // after polling, before the systems: players and their controls
-    void TickNetSession();         // end of the fixed step: snapshots (host) or input (client)
+    void PollNetSession(float dt); // top of the fixed step: the wire, the step's tick, players, join progress
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 #endif                             // ASSISI_NETWORKING
 
@@ -1547,14 +1545,17 @@ class EditorApp : public Assisi::App::Application
     NetIntent _netIntent = NetIntent::Standalone;
     JoinPhase _joinPhase = JoinPhase::None;
 
+    /// The tick the current fixed step is, which every system sees: the
+    /// process's own count, or a network session's, which is the same tick on
+    /// every machine in it.
+    std::uint64_t _stepTick = 0;
+
 #if defined(ASSISI_NETWORKING)
-    /// The networked session, when there is one. Created on Host/Join and
-    /// destroyed on Disconnect (and before any level load), because it holds a
-    /// reference to the scene it replicates and a level load replaces that
-    /// scene wholesale.
-    std::unique_ptr<Assisi::NetSync::NetSession> _netSession;
-    /// The session's players: a character for each, and their controls.
-    Assisi::App::PlayerSession _playerSession;
+    /// The world played over the network, when it is: its session and its
+    /// players. Created on Host/Join and destroyed on Disconnect (and before any
+    /// level load), because it holds a reference to the world it replicates and
+    /// a level load replaces that world's scene wholesale.
+    std::unique_ptr<Assisi::App::NetworkedPlay> _networkedPlay;
     /// UI state for the network panel, kept here rather than in statics so two
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};
@@ -1563,11 +1564,6 @@ class EditorApp : public Assisi::App::Application
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
 
-    /// The content-set scan, kicked when a session starts. Until it lands, a host
-    /// sends no ServerHello and a client sends no ClientHello, and the join
-    /// timeout does not run — a first scan of a large asset tree is not a dead
-    /// host, and timing out on it would read as one.
-    Assisi::App::ContentSetHashJob _contentSetHash;
     /// Seconds spent waiting for a host's ServerHello. A join that never gets
     /// one would otherwise sit in Play forever with an empty world and no
     /// explanation.

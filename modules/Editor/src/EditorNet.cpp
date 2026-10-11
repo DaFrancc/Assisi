@@ -101,7 +101,7 @@ std::string LevelStem(const std::string &virtualPath)
 
 bool EditorApp::IsNetSessionActive() const
 {
-    return _netSession && _netSession->IsActive();
+    return _networkedPlay && _networkedPlay->Session().IsActive();
 }
 
 Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
@@ -126,8 +126,8 @@ void EditorApp::FailJoin(std::string reason)
 {
     _netError = reason;
     Assisi::Core::Log::Error("Editor: join failed - {}", reason);
-    if (_netSession)
-        _netSession->AbortJoin(std::move(reason));
+    if (_networkedPlay)
+        _networkedPlay->Session().AbortJoin(std::move(reason));
     _joinPhase = JoinPhase::None;
     // Out through the same door as everything else: leaving a bad join is Stop,
     // not a second mechanism.
@@ -153,10 +153,10 @@ void EditorApp::StripReplicatedEntities()
 
 void EditorApp::BuildJoinedWorld()
 {
-    if (!_netSession || !_netSession->IsAwaitingLevel() || _scene == nullptr)
+    if (!_networkedPlay || !_networkedPlay->Session().IsAwaitingLevel() || _scene == nullptr)
         return;
 
-    const Assisi::NetSync::ServerHello *hello = _netSession->Handshake();
+    const Assisi::NetSync::ServerHello *hello = _networkedPlay->Session().Handshake();
     const Assisi::NetSync::LevelIdentity level = hello->level;
 
     // --- Which file, and is it the same file? -------------------------------
@@ -221,7 +221,7 @@ void EditorApp::BuildJoinedWorld()
     _assetBrowserMeta = nullptr;
 
     // Only now, because from here a NetId has somewhere to land.
-    _netSession->ConfirmLevelReady();
+    _networkedPlay->ConfirmLevelReady();
     _joinPhase = JoinPhase::Live;
     _netError.clear();
     Assisi::Core::Log::Info("Editor: joined - built '{}' and answered the handshake.", level.path);
@@ -332,40 +332,23 @@ void EditorApp::ShutdownPieClients()
 
 void EditorApp::ShutdownNetSession()
 {
-    if (!_netSession)
+    if (!_networkedPlay)
         return;
 
-    // Disconnect() drops a client's mirrored entities; flush so they are gone
-    // before anything iterates the scene again.
-    _netSession->Disconnect();
-    if (_scene)
-        _scene->FlushDestroyed();
-    _netSession.reset();
-    if (_world != nullptr)
-    {
-        _playerSession.Detach(*_world);
-    }
+    // Leaving takes a client's mirrors with it, flushed before anything walks the
+    // scene again.
+    _networkedPlay.reset();
     Assisi::Core::Log::Info("Editor: network session closed.");
 }
 
 void EditorApp::PollNetSession(float dt)
 {
-    if (!_netSession)
+    if (!_networkedPlay)
         return;
 
-    // Before Poll, so a hello that has been waiting on the scan goes out on the
-    // same frame it landed.
-    if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
-    {
-        Assisi::Core::Log::Info("Editor: content set hashed ({}, {} files).", Assisi::Core::ToHex64(content.hash),
-                                content.paths.size());
-        // Here rather than at Host/Join, because this is where the list the
-        // handshake hashed exists. The same call the headless path makes.
-        if (_world != nullptr)
-            Assisi::App::ApplyContentSet(*_netSession, *_world, std::move(content));
-    }
-
-    _netSession->Poll();
+    // Whether or not anything steps: the wire is read either way, and the tick
+    // it decides is what every system and the end-of-step send agree on.
+    _stepTick = _networkedPlay->BeginStep(GetSimTick(), IsSimulating());
 
     if (_netIntent == NetIntent::Standalone)
         return;
@@ -374,17 +357,17 @@ void EditorApp::PollNetSession(float dt)
     // all of them into an Offline session, and the play session goes with it. The
     // client's world *was* the host's world — there is nothing left to look at
     // once the stream stops.
-    if (!_netSession->IsActive())
+    if (!_networkedPlay->Session().IsActive())
     {
         if (_netError.empty())
-            _netError = _netSession->LastError().empty() ? "the session ended" : _netSession->LastError();
+            _netError = _networkedPlay->Session().LastError().empty() ? "the session ended" : _networkedPlay->Session().LastError();
         _pendingStopPlay = true;
         return;
     }
 
     if (_joinPhase == JoinPhase::Connecting)
     {
-        if (_netSession->IsAwaitingLevel())
+        if (_networkedPlay->Session().IsAwaitingLevel())
         {
             // Marshalled, not done here: building the world frees and re-resolves
             // GPU assets this frame's draws may already reference.
@@ -392,11 +375,6 @@ void EditorApp::PollNetSession(float dt)
             _pendingJoinBuild = true;
             return;
         }
-
-        // The timeout clock only runs once both sides can answer: a first scan of
-        // a large asset tree is not a dead host, but timing out on it reads as one.
-        if (!_netSession->HasContentSetHash())
-            return;
 
         _joinElapsed += dt;
         if (_joinElapsed >= kJoinTimeoutSeconds)
@@ -406,21 +384,7 @@ void EditorApp::PollNetSession(float dt)
 
 double EditorApp::SimulationSeconds(double frameSeconds)
 {
-    return _netSession ? frameSeconds * _netSession->TimeScale() : frameSeconds;
-}
-
-void EditorApp::BeginNetStep()
-{
-    // Only once the session can say who this machine is: before then a client
-    // has no player, and a world told it is networked drives nothing.
-    if (_netSession && _netSession->IsActive() && _world != nullptr)
-        _playerSession.BeginStep(*_netSession, *_world, GetSimTick());
-}
-
-void EditorApp::TickNetSession()
-{
-    if (_netSession)
-        _netSession->Tick(GetSimTick(), _playerSession.LocalCommand());
+    return _networkedPlay ? frameSeconds * _networkedPlay->TimeScale() : frameSeconds;
 }
 
 void EditorApp::SmoothNetView()
@@ -428,8 +392,8 @@ void EditorApp::SmoothNetView()
     // Must run from OnRender, after the physics writeback: it decays a bodied
     // mirror's visual offset onto the pose the writeback just wrote, so running
     // first means writing an offset the writeback then erases.
-    if (_netSession)
-        _netSession->SmoothView(ImGui::GetIO().DeltaTime);
+    if (_networkedPlay)
+        _networkedPlay->Session().SmoothView(ImGui::GetIO().DeltaTime);
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +506,7 @@ void EditorApp::DrawNetworkWindow()
     const auto active = [this] { return IsNetSessionActive(); };
 
     // ---- status line -------------------------------------------------------
-    ImGui::TextUnformatted(_netSession ? _netSession->StatusText().c_str() : "Offline");
+    ImGui::TextUnformatted(_networkedPlay ? _networkedPlay->Session().StatusText().c_str() : "Offline");
     ImGui::Separator();
 
     // ---- controls ----------------------------------------------------------
@@ -593,19 +557,19 @@ void EditorApp::DrawNetworkWindow()
     }
 
     // ---- live stats --------------------------------------------------------
-    const Assisi::NetSync::SessionStats stats = _netSession->Stats();
+    const Assisi::NetSync::SessionStats stats = _networkedPlay->Session().Stats();
 
     ImGui::Separator();
 
     // Which level the two ends agreed on. Worth a line of its own: everything
     // that goes wrong with a join goes wrong here first, and it is otherwise
     // unanswerable from inside the editor.
-    if (const Assisi::NetSync::ServerHello *hello = _netSession->Handshake();
-        hello != nullptr && _netSession->IsClient())
+    if (const Assisi::NetSync::ServerHello *hello = _networkedPlay->Session().Handshake();
+        hello != nullptr && _networkedPlay->Session().IsClient())
     {
         LabelledValue("Level", hello->level.path.empty() ? "<none>" : hello->level.path);
     }
-    else if (_netSession->IsHost())
+    else if (_networkedPlay->Session().IsHost())
     {
         LabelledValue("Level", _world != nullptr && !_world->levelPath.empty() ? _world->levelPath : "<unsaved>");
     }
@@ -613,10 +577,10 @@ void EditorApp::DrawNetworkWindow()
     // Where this session actually is. "It says Hosting" and "a client can reach
     // it at this address" are different claims, and only the second is what
     // someone on the other machine types into their Join field.
-    LabelledValue("Endpoint", _netSession->IsHost() ? std::format("listening on :{}", _netPort)
+    LabelledValue("Endpoint", _networkedPlay->Session().IsHost() ? std::format("listening on :{}", _netPort)
                                                     : std::format("{}:{}", _netAddress.data(), _netPort));
 
-    if (_netSession->IsHost())
+    if (_networkedPlay->Session().IsHost())
         DrawHostAuthoringWarnings();
 
     ImGui::TextUnformatted("Ping");
@@ -626,7 +590,7 @@ void EditorApp::DrawNetworkWindow()
     LabelledValue("Bandwidth in", std::format("{:.1f} kB/s", stats.inBytesPerSec / 1024.f));
     LabelledValue("Bandwidth out", std::format("{:.1f} kB/s", stats.outBytesPerSec / 1024.f));
 
-    if (_netSession->IsHost())
+    if (_networkedPlay->Session().IsHost())
     {
         // A minimal authoritative disturbance, so "does the correction stream
         // work" is one click rather than a level built for the purpose. Host-side
@@ -803,7 +767,7 @@ void EditorApp::DrawNetworkWindow()
         // mirror, one to heal it. A resync button with nothing broken to heal
         // proves nothing about whether it works.
         if (ImGui::Button("Force full resync"))
-            _netSession->RequestKeyframe();
+            _networkedPlay->Session().RequestKeyframe();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Ask the host to re-send everything from scratch, without waiting for the "
                               "periodic sweep.");

@@ -162,6 +162,12 @@ struct SystemContext
     /// is unavailable, so systems call it without checking first. Null only in
     /// hosts that run systems without an application (tests).
     Steam::Services *steam = nullptr;
+
+    /// True while a client steps again a tick it has already stepped, to bring
+    /// what it predicted in line with what the host sent. A fixed-step system
+    /// then runs exactly as it did live, unless it is declared `liveOnly`, which
+    /// is skipped. Always false in the per-frame and one-shot phases.
+    bool replaying = false;
 };
 
 /// @brief Passed to render systems (Render phase only).
@@ -262,6 +268,14 @@ class SystemRegistry
         /// there logs an error and changes nothing.
         SystemHandle &ActiveWorldOnly();
 
+        /// @brief Skip this system on a replayed step (SystemContext::replaying).
+        ///
+        /// For a fixed-step system whose effect lies outside the components a
+        /// replay puts back, such as one that adds or removes components: run
+        /// again for a tick it already ran, it would do it twice. Meaningless
+        /// outside FixedUpdate and PostFixedUpdate, which are all a replay runs.
+        SystemHandle &LiveOnly();
+
         /// @brief Skip this system while the scene holds none of @p Ts.
         ///
         /// What makes it affordable to install a system that a given world may
@@ -285,22 +299,25 @@ class SystemRegistry
 
         /// Records a dependency: @p before selects the before-list over the after-list.
         using AddDependency = std::function<void(bool before, std::string_view name)>;
-        /// Marks the entry active-world-only. Null for render-phase handles.
-        using SetActiveOnly = std::function<void()>;
+        /// Marks the entry with one flag. Null where the flag means nothing: a
+        /// render-phase handle takes neither.
+        using SetFlag = std::function<void()>;
         /// Appends one component id to the entry's activation gate.
         using AddRequirement = std::function<void(Core::Reflect::ComponentId)>;
 
         /// Non-template half of RequireAny, so the fold above stays a one-liner.
         void Require(Core::Reflect::ComponentId id);
 
-        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly, AddRequirement addRequirement)
+        SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setLiveOnly,
+                     AddRequirement addRequirement)
             : _addDependency(std::move(addDependency)), _setActiveOnly(std::move(setActiveOnly)),
-              _addRequirement(std::move(addRequirement))
+            _setLiveOnly(std::move(setLiveOnly)), _addRequirement(std::move(addRequirement))
         {
         }
 
         AddDependency _addDependency;
-        SetActiveOnly _setActiveOnly;
+        SetFlag _setActiveOnly;
+        SetFlag _setLiveOnly;
         AddRequirement _addRequirement;
     };
 
@@ -400,6 +417,8 @@ class SystemRegistry
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool activeOnly = false;
+            /// Set by SystemHandle::LiveOnly(). Always false for render entries.
+            bool liveOnly = false;
             /// Cleared by SetEnabled to skip this system at dispatch while leaving
             /// everything else about it in place — the editor's per-system mute.
             bool enabled = true;
@@ -442,9 +461,11 @@ class SystemRegistry
 
     /// @brief Append a system to @p phase and return a handle bound to its slot.
     /// @p supportsActiveOnly is false for the render phase, whose handles reject
-    /// ActiveWorldOnly().
+    /// ActiveWorldOnly(); @p supportsLiveOnly is true only for the fixed-step
+    /// phases, whose handles alone take LiveOnly().
     template <typename Ctx>
-    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly);
+    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly,
+                     bool supportsLiveOnly);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>

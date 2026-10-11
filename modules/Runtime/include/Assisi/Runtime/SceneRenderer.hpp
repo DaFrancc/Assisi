@@ -273,6 +273,11 @@ public:
     /// and merely never folds it back into the still layers.
     void SetSimulationSeconds(double seconds) { _simulationSeconds = seconds; }
 
+    /// @brief The camera entity the next Render() looks through, or NullEntity
+    /// for a camera that is not one, such as the editor's. A mesh set
+    /// hiddenFromOwnCamera in the same blueprint instance as it is not drawn.
+    void SetViewingCamera(ECS::Entity camera) { _viewingCamera = camera; }
+
     [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
 
     /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
@@ -512,6 +517,8 @@ private:
     uint64_t _lastMoverTick = 0;
     // See SetSimulationSeconds.
     double _simulationSeconds = 0.0;
+    // See SetViewingCamera.
+    ECS::Entity _viewingCamera = ECS::NullEntity;
     // Entities that lost their Transform or MeshRenderer since the last look,
     // kept for the capacity.
     std::vector<ECS::Entity> _removedEntities;

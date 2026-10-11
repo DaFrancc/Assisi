@@ -113,29 +113,4 @@ ContentSet BuildContentSet()
     return set;
 }
 
-void ContentSetHashJob::Start(Core::JobSystem &jobs)
-{
-    if (_running || _task.IsValid())
-        return;
-
-    _running = true;
-    _task    = jobs.Run(Core::Pool::Worker, []() -> ContentSet { return BuildContentSet(); });
-}
-
-bool ContentSetHashJob::Poll(ContentSet &out)
-{
-    if (!_running || !_task.IsValid() || !_task.IsComplete())
-        return false;
-
-    out      = _task.Get();
-    _running = false;
-    return true;
-}
-
-void ContentSetHashJob::Reset()
-{
-    _task    = {};
-    _running = false;
-}
-
 } // namespace Assisi::App

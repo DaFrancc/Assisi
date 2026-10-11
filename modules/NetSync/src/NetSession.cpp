@@ -2,6 +2,7 @@
 
 #include <Assisi/NetSync/NetSession.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
@@ -217,18 +218,13 @@ void NetSession::Poll()
     }
 }
 
-void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
+std::uint64_t NetSession::BeginStep(std::uint64_t localTick)
 {
-    _simTick = simTick;
-
-    if (_server)
-    {
-        _server->Tick(simTick);
-        return;
-    }
+    _simTick = localTick;
+    _stepBegun = true;
 
     if (!_client || !_client->IsSynchronized())
-        return;
+        return _simTick;
 
     _clock->Tick();
 
@@ -237,11 +233,29 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
         _transport->GetConnectionStats(_connection, transportStats) ? transportStats.pingMs : 0;
     _clock->OnSnapshot(_client->Feedback(), pingMs);
 
-    // Input is stamped with the *clock's* tick, not the local sim tick: the
-    // whole job of the clock is to run far enough ahead that this command lands
-    // just before the server simulates that tick.
+    // The clock's tick, not the local one: the whole job of the clock is to run
+    // far enough ahead that this step's command lands just before the server
+    // steps the same tick, and the step is that tick on both machines.
+    _simTick = _clock->CommandTick();
+    return _simTick;
+}
+
+void NetSession::Tick(const InputCommand *localInput)
+{
+    ASSISI_ASSERT(_stepBegun, "NetSession::Tick without BeginStep: the step has no tick");
+    _stepBegun = false;
+
+    if (_server)
+    {
+        _server->Tick(_simTick);
+        return;
+    }
+
+    if (!_client || !_client->IsSynchronized())
+        return;
+
     InputCommand command = localInput != nullptr ? *localInput : InputCommand{};
-    command.tick         = _clock->CommandTick();
+    command.tick         = _simTick;
     _client->RecordPrediction(command.tick);
     _inputBuffer.Push(command);
     _client->SendInput(_inputBuffer);

@@ -67,6 +67,10 @@ struct SystemDefinition
     /// One InputContext, N resident worlds — a system that reads input must not
     /// apply the same keypresses in every one.
     bool activeWorldOnly = false;
+
+    /// Skipped when a client steps a tick again. Only on FixedUpdate and
+    /// PostFixedUpdate systems, which reflectgen enforces.
+    bool liveOnly = false;
 };
 
 /// @brief The process-wide table of declared systems.

@@ -22,17 +22,15 @@
 /// the editor/game integration, which is separate work.
 
 #include <Assisi/App/Application.hpp>
-#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/World.hpp>
-#include <Assisi/ECS/Entity.hpp>
 #if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetSession.hpp>
+#    include <Assisi/App/NetworkedPlay.hpp>
 #endif
 
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
+#include <string_view>
 
 namespace Game
 {
@@ -86,6 +84,20 @@ private:
     /// see Assisi::App::SystemPhase::Begin.
     [[nodiscard]] Assisi::App::SystemContext WorldStartContext();
 
+    /// @brief The context a fixed step of @p dt at @p tick runs under.
+    [[nodiscard]] Assisi::App::SystemContext StepContext(float dt, std::uint64_t tick);
+
+    /// Installs the systems the level at @p level names, and those its
+    /// blueprints need, into the world it was just loaded into. False, having
+    /// logged why, when the file cannot be read or names one this build lacks.
+    [[nodiscard]] bool InstallLevelSystems(std::string_view level);
+
+    /// Host only: `spawnCount` replicated entities bobbing in place, so the
+    /// world is in motion with no level at all. Delta replication is only
+    /// interesting against change; a static world converges once and then
+    /// proves nothing for the rest of the run.
+    void SpawnDemoMovers();
+
     /// Client only: build the world the host's handshake names — resolve the
     /// level, check its content hash, load it, and strip the entities the host
     /// owns — then answer the handshake. The headless twin of the editor's
@@ -104,21 +116,12 @@ private:
     /// instances should arrive as instances rather than as loose entities.
     Assisi::App::World _world;
 
-    /// The content-set scan, kicked when this process starts hosting or joining.
-    /// Until it lands a host sends no ServerHello and a client sends no
-    /// ClientHello — see NetSession::SetContentSetHash.
-    Assisi::App::ContentSetHashJob _contentSetHash;
-
     /// Constructed only in a networked role, so offline mode never initializes
     /// GameNetworkingSockets — and without networking built there is no such
     /// role, so the member goes too. Offline headless simulation still works.
 #if defined(ASSISI_NETWORKING)
-    std::unique_ptr<Assisi::NetSync::NetSession> _session;
+    std::unique_ptr<Assisi::App::NetworkedPlay> _play;
 #endif
-
-    /// Host only: the entities it moves each tick, so the demo world is
-    /// actually in motion.
-    std::vector<Assisi::ECS::Entity> _moving;
 
     double _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;

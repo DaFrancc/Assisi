@@ -70,6 +70,14 @@ struct BodyQuantization
     std::uint32_t angularVelocityBits = 11;
 
     bool operator==(const BodyQuantization &) const = default;
+
+    /// @brief The distance between two positions the wire can tell apart, per
+    /// component (m): a received position is the true one to within half of it.
+    [[nodiscard]] float PositionStep() const
+    {
+        const std::uint64_t levels = (std::uint64_t{1} << positionBits) - 1u;
+        return 2.f * positionExtent / static_cast<float>(levels);
+    }
 };
 
 /// @brief How a client hides the jump when a correction snaps its simulation.

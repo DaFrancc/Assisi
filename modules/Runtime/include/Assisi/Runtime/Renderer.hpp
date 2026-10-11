@@ -12,6 +12,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -101,6 +102,10 @@ struct DrawSceneParams
     /// shade; it is timed as `depth-prepass` rather than `draw-scene`, so the
     /// lit pass that follows keeps the name it has always been measured under.
     Assisi::Render::MeshPassStage stage = Assisi::Render::MeshPassStage::Lit;
+
+    /// The blueprint instance the camera belongs to: an entity of the same
+    /// instance whose MeshRenderer is hiddenFromOwnCamera is not drawn. Invalid hides nothing.
+    Assisi::ECS::InstanceId viewerInstance;
 };
 
 /// @brief The GPU timer DrawScene opens around its draws for @p stage.

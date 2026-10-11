@@ -116,6 +116,10 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         {
             handle.ActiveWorldOnly();
         }
+        if (definition->liveOnly)
+        {
+            handle.LiveOnly();
+        }
     }
 }
 

@@ -101,8 +101,22 @@ void ApplyCommand(PlayerInput &controls, const NetSync::InputCommand &command)
 
 void PublishPlayerActions() { NetSync::SetInputActionNames(PlayerActionNames()); }
 
-void PlayerSession::Attach(NetSync::NetSession &session, World &world)
+void RelayHeldCommand(PlayerInput &controls, const NetSync::InputCommand *command, std::uint32_t starvedTicks)
 {
+    if (command != nullptr)
+    {
+        ApplyCommand(controls, *command);
+    }
+    else if (starvedTicks > kInputHoldTicks)
+    {
+        controls.move = {0.f, 0.f};
+        controls.held = PlayerButtons{};
+    }
+}
+
+void PlayerSession::Attach(NetSync::NetSession &session, World &world, bool hostPlays)
+{
+    _hostPlays = hostPlays;
     PublishPlayerActions();
     session.SetDespawner([&world](ECS::Entity entity) { DespawnWhole(world, entity); });
     _warned.clear();
@@ -138,7 +152,11 @@ void PlayerSession::GivePlayers(NetSync::NetSession &session, World &world)
 {
     NetSync::ReplicationServer &server = *session.Server();
 
-    std::vector<NetSync::ClientId> players{NetSync::HostClientId};
+    std::vector<NetSync::ClientId> players;
+    if (_hostPlays)
+    {
+        players.push_back(NetSync::HostClientId);
+    }
     for (const NetSync::ReadyClient &ready : session.ReadyClients())
     {
         players.push_back(ready.client);
@@ -189,16 +207,7 @@ void PlayerSession::RelayControls(NetSync::NetSession &session, World &world, st
             {
                 (void)world.scene.Add<PlayerInput>(entity);
             }
-            PlayerInput &controls = *world.scene.GetMut<PlayerInput>(entity);
-            if (command != nullptr)
-            {
-                ApplyCommand(controls, *command);
-            }
-            else if (starved > kInputHoldTicks)
-            {
-                controls.move = {0.f, 0.f};
-                controls.held = PlayerButtons{};
-            }
+            RelayHeldCommand(*world.scene.GetMut<PlayerInput>(entity), command, starved);
         }
     }
 }

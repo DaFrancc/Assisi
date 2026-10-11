@@ -4,13 +4,14 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/App/PlayerSession.hpp>
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -18,11 +19,12 @@
 #endif
 
 #include <chrono>
-#include <cmath>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -49,6 +51,13 @@ double NowSeconds()
 
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
+
+/// The `--spawn` demo movers: a row this far apart (m), each bobbing up and
+/// down once per period (s), each a fixed part of a cycle (turns) behind the
+/// one before, so they never move in step.
+constexpr float kDemoMoverSpacing = 2.f;
+constexpr float kDemoMoverPeriodSeconds = 5.f;
+constexpr float kDemoMoverPhaseStep = 0.16f;
 
 } // namespace
 
@@ -99,7 +108,7 @@ void ServerApp::OnStart()
             return;
         }
 
-        if (!Assisi::App::LoadLevelSim(_world, _options.level))
+        if (!Assisi::App::LoadLevelSim(_world, _options.level) || !InstallLevelSystems(_options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
             RefuseStart();
@@ -135,11 +144,7 @@ void ServerApp::OnStart()
 #else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _session          = std::make_unique<NetSync::NetSession>(_world.scene, &_world.physics, config);
-
-    // Triggered by hosting or joining, never by the level load above: a process
-    // that only simulates has nothing to compare with anybody.
-    _contentSetHash.Start(Jobs());
+    _play             = std::make_unique<Assisi::App::NetworkedPlay>(_world, config);
 
     if (_options.role == ServerRole::Host)
     {
@@ -160,30 +165,17 @@ void ServerApp::OnStart()
         // Host logs its own reason (the port is taken, the transport would not come
         // up). What it cannot do is reach the exit code, and a supervisor restarting
         // a server that cannot bind is watching for exactly this.
-        if (!_session->Host(_options.port, std::move(level)))
+        // Dedicated: the players who join get characters, and the server none.
+        if (!_play->Host(_options.port, std::move(level), Assisi::App::HostRole::Dedicated))
         {
             RefuseStart();
             return;
         }
 
-        // A demo world that actually moves. Delta replication is only
-        // interesting against change; a static level converges once and then
-        // proves nothing for the rest of the run.
-        for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
-        {
-            const ECS::Entity entity = _world.scene.Create();
-            ECS::Transform transform;
-            transform.position = {static_cast<float>(i) * 2.f, 0.f, 0.f};
-            (void)_world.scene.Add<ECS::Transform>(entity, transform);
-            (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
-            _moving.push_back(entity);
-        }
-
-        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _moving.size());
+        SpawnDemoMovers();
+        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _options.spawnCount);
     }
-    // Deferred, exactly like the editor's join: this process has a level to load
-    // before a NetId has anywhere to land.
-    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
+    else if (!_play->Join(_options.address, _options.port))
     {
         RefuseStart();
     }
@@ -193,7 +185,7 @@ void ServerApp::OnStart()
 void ServerApp::BuildJoinedWorld()
 {
 #if defined(ASSISI_NETWORKING)
-    const NetSync::ServerHello *hello = _session->Handshake();
+    const NetSync::ServerHello *hello = _play->Session().Handshake();
     if (hello == nullptr)
         return;
 
@@ -203,7 +195,7 @@ void ServerApp::BuildJoinedWorld()
     const auto fail = [this](std::string reason)
                       {
                           Log::Error("Client: join failed - {}", reason);
-                          _session->AbortJoin(std::move(reason));
+                          _play->Session().AbortJoin(std::move(reason));
                           RefuseStart();
                       };
 
@@ -217,7 +209,7 @@ void ServerApp::BuildJoinedWorld()
         return;
     }
 
-    if (!Assisi::App::LoadLevelSim(_world, hello->level.path))
+    if (!Assisi::App::LoadLevelSim(_world, hello->level.path) || !InstallLevelSystems(hello->level.path))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;
@@ -229,81 +221,90 @@ void ServerApp::BuildJoinedWorld()
     const Assisi::App::StrippedEntities stripped =
         Assisi::App::StripReplicatedEntities(_world.scene);
 
-    _session->ConfirmLevelReady();
+    // The world was begun empty, before the join; this is its level's start.
+    BeginWorld(WorldStartContext(), Assisi::App::SimulateFrom::Begin);
+    SettleWorld(WorldStartContext(), /*assetsPending=*/ false);
+
+    _play->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
               "handshake.",
               hello->level.path, stripped.entities, stripped.orphans);
 #endif // ASSISI_NETWORKING
 }
 
+bool ServerApp::InstallLevelSystems(std::string_view level)
+{
+    const std::expected<std::vector<std::string>, Assisi::Runtime::LevelError> names =
+        Assisi::Runtime::SceneSerializer::ReadLevelSystems(level);
+    return names.has_value() && Assisi::App::WorldManager::ApplySystems(_world, *names, level);
+}
+
+void ServerApp::SpawnDemoMovers()
+{
+    if (_options.spawnCount == 0)
+    {
+        return;
+    }
+
+    // Moved by the Oscillate system, inside the step like everything else that
+    // moves, so the snapshot after it sees this tick's pose.
+    if (!Assisi::App::SystemCatalog::Instance().Install(_world, std::vector<std::string>{"Oscillate"}, "demo movers"))
+    {
+        return;
+    }
+    for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
+    {
+        const ECS::Entity entity = _world.scene.Create();
+        const glm::vec3 origin{static_cast<float>(i) * kDemoMoverSpacing, 0.f, 0.f};
+        (void)_world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = origin});
+        (void)_world.scene.Add<Assisi::Runtime::Oscillator>(
+            entity, Assisi::Runtime::Oscillator{.origin = origin,
+                                                .axis = {0.f, 1.f, 0.f},
+                                                .amplitude = 1.f,
+                                                .periodSeconds = kDemoMoverPeriodSeconds,
+                                                .phase = static_cast<float>(i) * kDemoMoverPhaseStep});
+#if defined(ASSISI_NETWORKING)
+        (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
+#endif
+    }
+}
+
 void ServerApp::OnFixedUpdate(float dt)
 {
-    // Every step is marked, here as in the windowed hosts, though nothing here
-    // is drawn.
-    const ECS::FixedStepScope step(_world.scene);
+    std::uint64_t stepTick = GetSimTick();
 
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
+    if (_play)
     {
-        // Before Poll, so a hello that has been waiting on the scan goes out on
-        // the same tick the scan finished rather than the next one.
-        if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
-        {
-            Assisi::Core::Log::Info("Content set hashed: {} ({} files).", Assisi::Core::ToHex64(content.hash),
-                                    content.paths.size());
-            // The same call the windowed path makes, for the same reason: a
-            // dedicated server is where instances most want to arrive as
-            // instances. Nothing here is presentation.
-            Assisi::App::ApplyContentSet(*_session, _world, std::move(content));
-        }
-
-        _session->Poll();
+        stepTick = _play->BeginStep(stepTick, /*stepping=*/ true);
 
         // The handshake named a level; build it before answering. Nothing here
         // is GPU-bound, so unlike the editor this needs no marshalling.
-        if (_session->IsAwaitingLevel())
+        if (_play->Session().IsAwaitingLevel())
             BuildJoinedWorld();
 
-        // A host that went away, or a rejected handshake: Poll turns both into
-        // an Offline session, and a client with no stream has nothing to do.
-        if (_options.role == ServerRole::Client && !_session->IsActive())
+        // A host that went away, or a rejected handshake: the read turns both
+        // into an Offline session, and a client with no stream has nothing to do.
+        if (_options.role == ServerRole::Client && !_play->Session().IsActive())
         {
             Log::Warn("Client: session ended ({}).",
-                      _session->LastError().empty() ? "closed by the host" : _session->LastError());
+                      _play->Session().LastError().empty() ? "closed by the host" : _play->Session().LastError());
             RequestClose();
             return;
         }
     }
 #endif // ASSISI_NETWORKING
 
-    _world.physics.Update(dt);
-
-    // Immediately after the step, before the snapshot below: a mirror woken by a
-    // contact the server never had has to be put back before anything reads it.
-#if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->AfterPhysicsStep();
-#endif
-
-    // Move the demo world. Writes go through GetMut because that is what stamps
-    // the change tick the delta is computed from — a write through a plain
-    // Get would replicate nothing and report no error.
-    const auto phase = static_cast<float>(GetSimTick()) * 0.02f;
-    for (std::size_t i = 0; i < _moving.size(); ++i)
-    {
-        if (ECS::Transform *transform = _world.scene.GetMut<ECS::Transform>(_moving[i]))
-            transform->position.y = std::sin(phase + static_cast<float>(i));
-    }
+    Assisi::App::StepWorld(StepContext(dt, stepTick));
 
     // After the simulation: a snapshot describes the world at the end of the
-    // tick it is stamped with. A headless client has no devices to sample, so
-    // it sends an empty command — enough to exercise the input path and give
-    // the server something to measure its buffer depth against.
+    // tick it is stamped with. A headless client with no player sends an empty
+    // command, enough to give the host something to measure its buffer by.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->Tick(GetSimTick());
+    if (_play)
+        _play->EndStep();
 #endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
@@ -313,8 +314,8 @@ void ServerApp::OnFixedUpdate(float dt)
 double ServerApp::SimulationSeconds(double frameSeconds)
 {
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        return frameSeconds * _session->TimeScale();
+    if (_play)
+        return frameSeconds * _play->TimeScale();
 #endif
     return frameSeconds;
 }
@@ -329,8 +330,8 @@ void ServerApp::OnUpdate([[maybe_unused]] float dt)
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->SmoothView(dt);
+    if (_play)
+        _play->Session().SmoothView(dt);
 #endif
 
     ReportStatus();
@@ -351,14 +352,14 @@ void ServerApp::ReportStatus()
     _lastReportTick              = tick;
 
 #if defined(ASSISI_NETWORKING)
-    if (!_session || !_session->IsActive())
+    if (!_play || !_play->Session().IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
         return;
     }
 
-    const NetSync::SessionStats stats = _session->Stats();
-    if (_session->IsHost())
+    const NetSync::SessionStats stats = _play->Session().Stats();
+    if (_play->Session().IsHost())
     {
         Log::Info("Server: tick {} ({:.1f} Hz), {} client(s), {} snapshots, {} bytes sent", tick, tickRate,
                   stats.clientCount, stats.snapshotsSent, stats.bytesSent);
@@ -366,7 +367,7 @@ void ServerApp::ReportStatus()
     else
     {
         Log::Info("Client: tick {} ({:.1f} Hz), {}, {} entities, {} applied, {} rejected, server tick {}", tick,
-                  tickRate, _session->StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
+                  tickRate, _play->Session().StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
 #else
@@ -394,12 +395,16 @@ void ServerApp::InstallQueuedSystems()
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
-    // No window, so no input, no action map and no UI, as this host passes to
-    // every other phase. dt and the tick are zero: a one-shot runs outside any
-    // frame.
+    // dt and the tick are zero: a one-shot runs outside any frame.
+    return StepContext(0.f, 0);
+}
+
+Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
+{
+    // No window, so no input, no action map and no UI, in every phase.
     return {.world         = _world,
-            .dt            = 0.f,
-            .simTick       = 0,
+            .dt            = dt,
+            .simTick       = tick,
             .input         = nullptr,
             .actions       = nullptr,
             .events        = GetEvents(),
@@ -412,9 +417,9 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
 void ServerApp::OnShutdown()
 {
 #if defined(ASSISI_NETWORKING)
-    if (_session && _session->IsClient())
+    if (_play && _play->Session().IsClient())
     {
-        const NetSync::SessionStats stats = _session->Stats();
+        const NetSync::SessionStats stats = _play->Session().Stats();
         Log::Info("Client: stopped after {} ticks - {} snapshots applied, {} rejected, {} entities mirrored.",
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
@@ -426,7 +431,7 @@ void ServerApp::OnShutdown()
 
 #if defined(ASSISI_NETWORKING)
     // Before the scene and physics world it holds a reference to.
-    _session.reset();
+    _play.reset();
 #endif
 }
 

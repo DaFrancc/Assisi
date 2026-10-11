@@ -64,8 +64,10 @@ void Pump(NetSession &host, NetSession &client, std::uint64_t &tick, std::int32_
     {
         host.Poll();
         client.Poll();
-        host.Tick(tick);
-        client.Tick(tick);
+        (void)host.BeginStep(tick);
+        (void)client.BeginStep(tick);
+        host.Tick();
+        client.Tick();
         client.SmoothView(1.f / 60.f);
         ++tick;
         std::this_thread::sleep_for(std::chrono::milliseconds{2});
@@ -200,7 +202,8 @@ TEST_CASE("an offline session is inert")
     // Every loop hook must be safe to call unconditionally — an application
     // should not have to guard each one on "am I networked".
     session.Poll();
-    session.Tick(0);
+    CHECK(session.BeginStep(7) == 7);
+    session.Tick();
     session.SmoothView(1.f / 60.f);
     CHECK(session.ConsumeInput(Net::ConnectionId{1}, 0) == nullptr);
     CHECK(session.Stats().role == SessionRole::Offline);

@@ -11,11 +11,15 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -23,15 +27,16 @@
 
 #include <nlohmann/json.hpp>
 
-#include <Assisi/App/BlueprintReplication.hpp>
-#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/PlayerComponents.hpp>
+#include <Assisi/App/NetworkedPlay.hpp>
 #include <Assisi/App/PlayerSession.hpp>
-#include <Assisi/App/PlayerSystems.hpp>
+#include <Assisi/App/StepWorld.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -115,33 +120,54 @@ constexpr std::uint32_t kMaxStepsPerFrame = 4;
 /// clock and tick, since a client runs a little faster or slower than the host.
 struct Machine
 {
+    /// Runs the systems the editor's play runs a player with.
+    Machine()
+    {
+        REQUIRE(App::WorldManager::ApplySystems(world, std::vector<std::string>{"LocalPlayer", "CharacterCommand"},
+                                                "players"));
+    }
+
     App::World world{Physics::NoCollisionAssets()};
-    NetSync::NetSession session{world.scene, &world.physics};
-    App::PlayerSession players;
+    App::NetworkedPlay play{world};
     Core::EventQueue events;
     App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
+    /// The tick each step was, in order: the session's, not the local count.
+    std::vector<std::uint64_t> stepTicks;
+    /// Called after each step with its tick, to watch what the step did.
+    std::function<void(std::uint64_t)> afterStep;
     std::uint64_t tick = 0;
+    /// While above zero, a step sends nothing and counts this down: the
+    /// commands for those ticks never reach the host.
+    std::int32_t silentSteps = 0;
 };
 
-/// One fixed step on @p machine, in the order the editor runs it.
-void Step(Machine &machine, std::uint64_t tick)
+/// One fixed step on @p machine, as every program runs one.
+void Step(Machine &machine, std::uint64_t localTick)
 {
-    machine.session.Poll();
-    if (machine.session.IsActive())
+    const std::uint64_t tick = machine.play.BeginStep(localTick, /*stepping=*/ true);
+
+    // A client here has its world already: it is the same empty one the host
+    // started from, plus whatever the test put in it.
+    if (machine.play.Session().IsAwaitingLevel())
     {
-        machine.players.BeginStep(machine.session, machine.world, tick);
+        machine.play.ConfirmLevelReady();
     }
 
-    App::SystemContext ctx{machine.world, kStep, tick, nullptr, nullptr, machine.events, true, nullptr};
-    {
-        const ECS::FixedStepScope step(machine.world.scene);
-        App::LocalPlayerSystem(ctx);
-        App::CharacterCommandSystem(ctx);
-        machine.world.physics.Update(kStep);
-    }
+    App::StepWorld(App::SystemContext{machine.world, kStep, tick, nullptr, nullptr, machine.events, true, nullptr});
     machine.world.scene.FlushDestroyed();
-    machine.session.AfterPhysicsStep();
-    machine.session.Tick(tick, machine.players.LocalCommand());
+    if (machine.silentSteps > 0)
+    {
+        --machine.silentSteps;
+    }
+    else
+    {
+        machine.play.EndStep();
+    }
+    machine.stepTicks.push_back(tick);
+    if (machine.afterStep)
+    {
+        machine.afterStep(tick);
+    }
 }
 
 template <typename T> std::int32_t Count(ECS::Scene &scene)
@@ -191,7 +217,7 @@ float PitchOfEye(ECS::Scene &scene, ECS::Entity character)
 /// The host's player for @p client.
 ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
 {
-    for (const ECS::Entity entity : host.session.Server()->ControlledEntities(client))
+    for (const ECS::Entity entity : host.play.Session().Server()->ControlledEntities(client))
     {
         if (host.world.scene.Has<App::Player>(entity))
         {
@@ -230,13 +256,13 @@ struct Session
             for (const std::unique_ptr<Machine> &machine : machines)
             {
                 const std::uint32_t steps =
-                    machine->clock.Advance(static_cast<double>(kStep) * machine->session.TimeScale());
+                    machine->clock.Advance(static_cast<double>(kStep) * machine->play.Session().TimeScale());
                 for (std::uint32_t step = 0; step < steps; ++step)
                 {
                     Step(*machine, ++machine->tick);
                 }
                 // Once a frame, after the steps, as the editor draws.
-                machine->session.SmoothView(kStep);
+                machine->play.Session().SmoothView(kStep);
             }
             next += frame;
             std::this_thread::sleep_until(next);
@@ -249,11 +275,11 @@ struct Session
     }
 };
 
-std::uint16_t HostOnFreePort(NetSync::NetSession &session)
+std::uint16_t HostOnFreePort(App::NetworkedPlay &play)
 {
     for (std::uint16_t port = 27240; port < 27280; ++port)
     {
-        if (session.Host(port))
+        if (play.Host(port, NetSync::LevelIdentity{}, App::HostRole::Player))
         {
             return port;
         }
@@ -281,22 +307,42 @@ constexpr float kStartsApart = 4.f;
 /// Further than a character walking for kLongWalkFrames falls short of (m).
 constexpr float kLongWalkDistance = 1.f;
 
-} // namespace
+/// Steps a host runs alone before anyone joins, so its count of steps and a
+/// client's own are well apart.
+constexpr std::int32_t kHostHeadStart = 100;
 
-TEST_CASE("A client's own character moves the moment it is asked, and the host's answers never pull it back")
+/// Frames that see the host step past every tick a client has stepped, and a
+/// snapshot about it arrive: the client's lead and the trip back, with room.
+constexpr std::int32_t kCatchUpFrames = 30;
+
+/// Steps in a row a client sends nothing: past the host's hold, so the host
+/// holds some and lets go of the rest.
+constexpr std::int32_t kSilentSteps = static_cast<std::int32_t>(App::kInputHoldTicks) + 2;
+
+/// Frames walked before a gap in commands, so the host holds a walk.
+constexpr std::int32_t kWalkBeforeGap = 30;
+
+/// How far off the floor another player walking on it may be drawn (m): a
+/// position crosses the wire rounded to about two millimetres.
+constexpr float kMostDrawnOffFloor = 0.005f;
+
+/// A quarter turn to the left (rad), which faces a character at the start
+/// further along x from one at the start nearer the origin.
+constexpr float kQuarterTurn = 1.5707963f;
+
+/// Closer than this (m), two characters' capsules are pressed together: two
+/// radii and the padding between them, with a little room.
+constexpr float kPressing = 0.7f;
+
+/// The most another player pressing against this one may be drawn above or
+/// below where this machine has it (m): well under the two millimetres a
+/// position is rounded to on the wire.
+constexpr float kMostShakeWhilePressing = 0.0005f;
+
+/// A host and @p client on a floor, a start each for the host to make their
+/// characters at, @p client joined and settled.
+void JoinOnFloor(Session &session, Machine &host, Machine &client)
 {
-    // The host's answer for a tick arrives a round trip after the client
-    // stepped it, from before the host had the client's latest commands. Taken
-    // as it comes, it puts the character back where it stood, and it walks
-    // only once the host has seen it asked to.
-    const std::filesystem::path root = FreshRoot();
-    WritePlayerBlueprint(root);
-    const App::ContentSet content = App::BuildContentSet();
-
-    Session session;
-    Machine &host = session.Add();
-    Machine &client = session.Add();
-
     // A floor on both machines, as a level puts one there.
     for (const std::unique_ptr<Machine> &machine : session.machines)
     {
@@ -319,20 +365,32 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
         (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
     }
 
-    for (const std::unique_ptr<Machine> &machine : session.machines)
-    {
-        machine->players.Attach(machine->session, machine->world);
-    }
-    const std::uint16_t port = HostOnFreePort(host.session);
-    REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.session.LastError());
-    App::ApplyContentSet(host.session, host.world, content);
-    REQUIRE_MESSAGE(client.session.Join("127.0.0.1", port), client.session.LastError());
-    App::ApplyContentSet(client.session, client.world, content);
+    const std::uint16_t port = HostOnFreePort(host.play);
+    REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.play.Session().LastError());
+    REQUIRE_MESSAGE(client.play.Join("127.0.0.1", port), client.play.Session().LastError());
     session.Run(kJoinSteps);
+}
+
+} // namespace
+
+TEST_CASE("A client's own character moves the moment it is asked, and the host's answers never pull it back")
+{
+    // The host's answer for a tick arrives a round trip after the client
+    // stepped it, from before the host had the client's latest commands. Taken
+    // as it comes, it puts the character back where it stood, and it walks
+    // only once the host has seen it asked to.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+
+    JoinOnFloor(session, host, client);
 
     const ECS::Entity own = LocalPlayerOf(client.world.scene);
     REQUIRE(own != ECS::NullEntity);
-    const std::uint64_t correctionsBefore = client.session.Client()->Corrections().applied;
+    const std::uint64_t correctionsBefore = client.play.Session().Client()->Corrections().applied;
 
     // Where the client simulates it, a frame at a time: its Transform, without
     // the offset that only hides a correction from view.
@@ -349,7 +407,7 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
     simulated.push_back(client.world.scene.Get<ECS::Transform>(own)->position);
 
     // The host answered all along, and agreed every time.
-    const NetSync::ReplicationClient::CorrectionStats &corrections = client.session.Client()->Corrections();
+    const NetSync::ReplicationClient::CorrectionStats &corrections = client.play.Session().Client()->Corrections();
     REQUIRE(corrections.applied > correctionsBefore);
     CHECK(corrections.predictionsKept > 0);
     CHECK(corrections.predictionsReplayed == 0);
@@ -374,7 +432,6 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
 {
     const std::filesystem::path root = FreshRoot();
     WritePlayerBlueprint(root);
-    const App::ContentSet content = App::BuildContentSet();
 
     Session session;
     Machine &host = session.Add();
@@ -389,24 +446,18 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
     (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
 
-    for (const std::unique_ptr<Machine> &machine : session.machines)
-    {
-        machine->players.Attach(machine->session, machine->world);
-    }
-    const std::uint16_t port = HostOnFreePort(host.session);
-    REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.session.LastError());
-    App::ApplyContentSet(host.session, host.world, content);
+    const std::uint16_t port = HostOnFreePort(host.play);
+    REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.play.Session().LastError());
     for (Machine *client : {&first, &second})
     {
-        REQUIRE_MESSAGE(client->session.Join("127.0.0.1", port), client->session.LastError());
-        App::ApplyContentSet(client->session, client->world, content);
+        REQUIRE_MESSAGE(client->play.Join("127.0.0.1", port), client->play.Session().LastError());
     }
 
     session.Run(kJoinSteps);
 
     // A character each, made at the start and handed over.
-    const NetSync::ClientId firstId = first.session.LocalClientId();
-    const NetSync::ClientId secondId = second.session.LocalClientId();
+    const NetSync::ClientId firstId = first.play.Session().LocalClientId();
+    const NetSync::ClientId secondId = second.play.Session().LocalClientId();
     REQUIRE(firstId.IsValid());
     REQUIRE(secondId.IsValid());
     const ECS::Entity hostsOwn = PlayerOf(host, NetSync::HostClientId);
@@ -430,7 +481,7 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
 
     // The client's clock has settled: it never jumped after joining, and the
     // host holds about the cushion of its commands it asks for.
-    const NetSync::SessionStats settled = first.session.Stats();
+    const NetSync::SessionStats settled = first.play.Session().Stats();
     CHECK(settled.clockCorrections == 0);
     CHECK(settled.inputBufferDepth >= kCushionLow);
     CHECK(settled.inputBufferDepth <= kCushionHigh);
@@ -490,7 +541,7 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     const glm::quat facing = first.world.scene.Get<ECS::Transform>(firstsOwn)->rotation;
     CHECK(std::abs(glm::dot(host.world.scene.Get<ECS::Transform>(firstsOnHost)->rotation, facing)) ==
           doctest::Approx(1.f).epsilon(kFacingTolerance));
-    const ECS::Entity firstsOnSecond = second.session.Client()->EntityOf(host.session.Server()->NetIdOf(firstsOnHost));
+    const ECS::Entity firstsOnSecond = second.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(firstsOnHost));
     REQUIRE(firstsOnSecond != ECS::NullEntity);
     CHECK(std::abs(glm::dot(second.world.scene.Get<ECS::Transform>(firstsOnSecond)->rotation, facing)) ==
           doctest::Approx(1.f).epsilon(kFacingTolerance));
@@ -502,7 +553,7 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
 
     // The first leaves: its character goes, camera and all, here and for the
     // one still playing.
-    first.session.Disconnect();
+    first.play.Session().Disconnect();
     session.Run(kLeaveSteps);
 
     CHECK(PlayerOf(host, firstId) == ECS::NullEntity);
@@ -511,4 +562,235 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     CHECK(Count<Runtime::Camera>(host.world.scene) == 2);
     CHECK(Count<App::Player>(second.world.scene) == 2);
     CHECK(Count<Runtime::Camera>(second.world.scene) == 2);
+}
+
+TEST_CASE("A remote player's controls are held through a short gap in commands and released after it")
+{
+    App::PlayerInput controls;
+    NetSync::InputCommand command;
+    command.moveY = 1.f;
+    command.actionBits = 0b1u;
+    App::RelayHeldCommand(controls, &command, 0);
+    REQUIRE(controls.move.y == 1.f);
+    REQUIRE(controls.pressed.bits == 0b1u);
+
+    App::RelayHeldCommand(controls, nullptr, App::kInputHoldTicks);
+    CHECK(controls.move.y == 1.f);
+    CHECK(controls.held.bits == 0b1u);
+
+    App::RelayHeldCommand(controls, nullptr, App::kInputHoldTicks + 1);
+    CHECK(controls.move.y == 0.f);
+    CHECK(controls.held.bits == 0u);
+    // A press the step has not used yet still counts: it happened.
+    CHECK(controls.pressed.bits == 0b1u);
+}
+
+TEST_CASE("A client's systems step at the host's tick, so a system of the tick alone agrees with the host's")
+{
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+
+    // An oscillator each, never sent: each machine moves its own from the tick.
+    std::map<std::uint64_t, float> hostHeights;
+    std::map<std::uint64_t, float> clientHeights;
+    const std::array<std::map<std::uint64_t, float> *, 2> heights{&hostHeights, &clientHeights};
+    for (std::size_t i = 0; i < session.machines.size(); ++i)
+    {
+        Machine &machine = *session.machines[i];
+        REQUIRE(App::SystemCatalog::Instance().Install(machine.world, std::vector<std::string>{"Oscillate"}, "test"));
+        const ECS::Entity bob = machine.world.scene.Create();
+        (void)machine.world.scene.Add<ECS::Transform>(bob);
+        (void)machine.world.scene.Add<Runtime::Oscillator>(bob);
+        std::map<std::uint64_t, float> &recorded = *heights[i];
+        ECS::Scene &scene = machine.world.scene;
+        machine.afterStep = [&recorded, &scene, bob](std::uint64_t tick)
+                            { recorded[tick] = scene.Get<ECS::Transform>(bob)->position.y; };
+    }
+
+    for (std::int32_t i = 0; i < kHostHeadStart; ++i)
+    {
+        Step(host, ++host.tick);
+    }
+    JoinOnFloor(session, host, client);
+    session.Run(kCatchUpFrames);
+
+    // Ahead of the host, by the lead its commands need, rather than behind it
+    // by the steps the host ran before it joined.
+    const std::uint64_t clientTick = client.stepTicks.back();
+    CHECK(clientTick > host.stepTicks.back());
+    CHECK(client.tick < host.tick);
+
+    session.Run(kCatchUpFrames);
+    REQUIRE(hostHeights.contains(clientTick));
+    CHECK(clientHeights.at(clientTick) == hostHeights.at(clientTick));
+}
+
+TEST_CASE("The host steps a gap in a client's commands on held then released controls, and tells the client which")
+{
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    const ECS::Entity onHost = PlayerOf(host, client.play.Session().LocalClientId());
+    REQUIRE(own != ECS::NullEntity);
+    REQUIRE(onHost != ECS::NullEntity);
+
+    std::map<std::uint64_t, float> hostWalk;
+    host.afterStep = [&host, &hostWalk, onHost](std::uint64_t tick)
+                     {
+                         if (const App::PlayerInput *controls = host.world.scene.Get<App::PlayerInput>(onHost))
+                         {
+                             hostWalk[tick] = controls->move.y;
+                         }
+                     };
+    const std::function<void()> walk = [&client, own]
+                                       {
+                                           if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))
+                                           {
+                                               controls->move = {0.f, 1.f};
+                                           }
+                                       };
+
+    session.Run(kWalkBeforeGap, walk);
+    const std::size_t gapFrom = client.stepTicks.size();
+    client.silentSteps = kSilentSteps;
+    session.Run(kSilentSteps + kCatchUpFrames, walk);
+    REQUIRE(client.stepTicks.size() > gapFrom + static_cast<std::size_t>(kSilentSteps));
+
+    const NetSync::CommandEcho &echo = client.play.Session().Client()->Echo();
+    CHECK(echo.Applied(client.stepTicks[gapFrom - 1]));
+    CHECK(echo.Applied(client.stepTicks[gapFrom + static_cast<std::size_t>(kSilentSteps)]));
+    for (std::int32_t k = 0; k < kSilentSteps; ++k)
+    {
+        const std::uint64_t tick = client.stepTicks[gapFrom + static_cast<std::size_t>(k)];
+        CAPTURE(k);
+        REQUIRE(hostWalk.contains(tick));
+        // Held while the gap is short, let go once it is not.
+        const bool held = k < static_cast<std::int32_t>(App::kInputHoldTicks);
+        CHECK(hostWalk.at(tick) == (held ? 1.f : 0.f));
+        CHECK_FALSE(echo.Applied(tick));
+    }
+}
+
+TEST_CASE("Every player reaches a client as a whole blueprint, the host's own included")
+{
+    // The host makes its own player on its first step. Sent before the host
+    // could name blueprints on the wire, its members arrived as loose entities,
+    // and the camera, whose Transform the blueprint supplies, with none at all.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    CHECK(client.world.instances.Size() == 2);
+    CHECK(Count<App::Player>(client.world.scene) == 2);
+    for (auto [entity, member] : client.world.scene.Query<ECS::BlueprintMember>())
+    {
+        (void)member;
+        CAPTURE(entity.index);
+        CHECK(client.world.scene.Has<ECS::Transform>(entity));
+    }
+}
+
+TEST_CASE("Another player pressing against this one does not tremble up and down with the wire's rounding")
+{
+    // Standing on the floor, the other player's height differs from the host's
+    // only by how a position is rounded to cross the wire. Taken as a correction
+    // every snapshot, that rounding pulled it a millimetre down and the floor
+    // stood it back up: a tremble, most visible while it pushes and barely moves.
+    // The shove itself, sideways, is the host's to resolve and is not this.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    const ECS::Entity clientOwn = LocalPlayerOf(client.world.scene);
+    const ECS::Entity hostOnClient =
+        client.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(hostOwn));
+    REQUIRE(hostOnClient != ECS::NullEntity);
+    REQUIRE(clientOwn != ECS::NullEntity);
+
+    // The host starts beside the client, further along x, and turns to walk at it.
+    bool turned = false;
+    float largestWhilePressing = 0.f;
+    std::int32_t framesPressing = 0;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        if (App::PlayerInput *controls = host.world.scene.GetMut<App::PlayerInput>(hostOwn))
+        {
+            controls->move = {0.f, 1.f};
+            if (!turned)
+            {
+                controls->lookYaw = kQuarterTurn;
+                turned = true;
+            }
+        }
+        const glm::vec3 pusher = client.world.scene.Get<ECS::Transform>(hostOnClient)->position;
+        const glm::vec3 pushed = client.world.scene.Get<ECS::Transform>(clientOwn)->position;
+        if (glm::length(glm::vec2(pusher.x - pushed.x, pusher.z - pushed.z)) < kPressing)
+        {
+            ++framesPressing;
+            if (const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient))
+            {
+                largestWhilePressing = std::max(largestWhilePressing, std::abs(offset->position.y));
+            }
+        }
+    });
+
+    REQUIRE(framesPressing > kLongWalkFrames / 2);
+    CHECK(largestWhilePressing < kMostShakeWhilePressing);
+}
+
+TEST_CASE("Another player walking is drawn at its feet, without bobbing above the floor")
+{
+    // A correction is measured against where this machine had the character.
+    // Taken from the capsule Jolt moves on its own rather than from the feet the
+    // host sends, every correction read a few centimetres up or down as an error
+    // and drew it eased away: the other player bobbed while it walked, and most
+    // visibly while it pushed against someone and barely moved.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    const ECS::Entity hostOnClient =
+        client.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(hostOwn));
+    REQUIRE(hostOnClient != ECS::NullEntity);
+
+    float highestDrawn = 0.f;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        if (App::PlayerInput *controls = host.world.scene.GetMut<App::PlayerInput>(hostOwn))
+        {
+            controls->move = {0.f, 1.f};
+        }
+        const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient);
+        const float drawn = client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y +
+                            (offset != nullptr ? offset->position.y : 0.f);
+        highestDrawn = std::max(highestDrawn, std::abs(drawn));
+    });
+
+    CHECK(highestDrawn < kMostDrawnOffFloor);
 }

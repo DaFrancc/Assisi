@@ -18,7 +18,6 @@
 #include <ostream>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -26,7 +25,6 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -39,7 +37,6 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
-#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -587,34 +584,19 @@ TEST_CASE("Blueprint over the wire: an unsorted manifest is declined rather than
     CHECK(fixture.guest.instances.Size() == 0);
 }
 
-TEST_CASE("Content set: the scan job delivers the paths it hashed")
+TEST_CASE("Content set: the scan lists every blueprint, sorted, and hashes the same files the same way")
 {
     const std::filesystem::path root = FreshRoot();
     Write(root, "car.abp", CarFile());
     Write(root, "b_second.abp", CarFile());
 
-    Core::JobSystem jobs;
-    App::ContentSetHashJob job;
-    job.Start(jobs);
+    const App::ContentSet first = App::BuildContentSet();
+    REQUIRE(first.paths.size() == 2);
+    CHECK(std::is_sorted(first.paths.begin(), first.paths.end()));
 
-    // Poll until it lands; the scan is a worker job with no completion callback.
-    App::ContentSet delivered;
-    for (int i = 0; i < 2000 && !job.Poll(delivered); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    // The manifest and the hash have to come from one scan. Rebuilt separately,
-    // a file that changed in between would leave the index naming a file the far
-    // side never agreed to — which is why the job carries both rather than the
-    // caller rescanning for the paths.
-    const App::ContentSet direct = App::BuildContentSet();
-    CHECK(delivered.hash == direct.hash);
-    CHECK(delivered.paths == direct.paths);
-    REQUIRE(delivered.paths.size() == 2);
-    CHECK(std::is_sorted(delivered.paths.begin(), delivered.paths.end()));
-
-    // Delivered exactly once.
-    App::ContentSet again;
-    CHECK_FALSE(job.Poll(again));
+    const App::ContentSet again = App::BuildContentSet();
+    CHECK(again.hash == first.hash);
+    CHECK(again.paths == first.paths);
 }
 
 TEST_CASE("Join: every target answers the host's level the same way")

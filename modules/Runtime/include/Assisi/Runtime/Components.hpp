@@ -83,6 +83,13 @@ struct MeshRenderer
     /// that casts when the original does not is a visible desync.
     AFIELD() bool castsShadows = true;
 
+    /// Whether this mesh is left out when seen through a camera of its own
+    /// blueprint instance, and drawn through every other. For a player's body:
+    /// looking out through its own camera the player does not see the inside of
+    /// its head, and everyone else sees the player. Its shadow is still cast for
+    /// its owner too. A mesh in no instance, or a camera in none, is drawn.
+    AFIELD() bool hiddenFromOwnCamera = false;
+
     AFIELD(transient) const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
     AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
 };
