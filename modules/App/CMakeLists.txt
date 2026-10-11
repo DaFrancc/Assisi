@@ -17,7 +17,10 @@ target_sources(Assisi-App
     "include/Assisi/App/InputSetup.hpp"
     "include/Assisi/App/LevelRuntime.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
+    "include/Assisi/App/PlayerComponents.hpp"
     "include/Assisi/App/PlayerSettings.hpp"
+    "include/Assisi/App/PlayerSystems.hpp"
+    "include/Assisi/App/ResourceStore.hpp"
     "include/Assisi/App/SceneCamera.hpp"
     "include/Assisi/App/PhysicsSystems.hpp"
     "include/Assisi/App/MotionSystems.hpp"
@@ -32,6 +35,7 @@ target_sources(Assisi-App
     "src/AudioSystems.cpp"
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
+    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/PlayerSession.cpp>
     "src/CameraBenchmark.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraCapture.cpp"
@@ -44,6 +48,7 @@ target_sources(Assisi-App
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
     "src/PlayerSettings.cpp"
+    "src/PlayerSystems.cpp"
     "src/SceneCamera.cpp"
     "src/StartupScene.cpp"
     "src/PerfCapture.cpp"
@@ -105,6 +110,8 @@ assisi_reflect(
     include/Assisi/App/AppConfig.hpp
     include/Assisi/App/AudioSystems.hpp
     include/Assisi/App/PhysicsSystems.hpp
+    include/Assisi/App/PlayerComponents.hpp
+    include/Assisi/App/PlayerSystems.hpp
     include/Assisi/App/MotionSystems.hpp
     include/Assisi/App/SystemRegistry.hpp
 )

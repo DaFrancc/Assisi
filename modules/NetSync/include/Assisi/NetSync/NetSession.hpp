@@ -72,6 +72,7 @@ struct SessionStats
     std::uint32_t inputBufferDepth  = 0;
     std::uint32_t clockCorrections  = 0;
     std::uint32_t clockLead         = 0;
+    float clockRate = 1.f; ///< How fast the client runs to steer its lead; 1 is real time.
 
     // Correction stream (client). Totals, not rates: a rate needs a clock and a
     // window, and whoever is drawing this already has both.
@@ -79,6 +80,8 @@ struct SessionStats
     std::uint64_t correctionBytes    = 0;
     float divergenceMean     = 0.f;         ///< Metres, averaged over every correction so far.
     float divergenceMax      = 0.f;         ///< Metres, worst since the session began.
+    std::uint64_t predictionsKept     = 0; ///< Host answers for the client's own character that agreed.
+    std::uint64_t predictionsReplayed = 0; ///< ...and the ones that did not, replayed from the host's.
     std::uint64_t mirrorsResurrected = 0;
 
     // Host.
@@ -243,6 +246,21 @@ public:
     /// @brief The session id of a connected client. Host only.
     [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId client) const;
 
+    /// @brief How fast this process should run its fixed steps against real
+    /// time: a client's clock steers the server's queue of its commands with it.
+    /// 1 for a host, which is the authority and never runs fast or slow, and for
+    /// a client its clock has not heard from yet.
+    [[nodiscard]] double TimeScale() const;
+
+    /// @brief Every client whose handshake verified, in the order they joined.
+    /// Empty unless hosting.
+    [[nodiscard]] std::vector<ReadyClient> ReadyClients() const;
+
+    /// @brief How a leaving client's entities are despawned; see
+    /// ReplicationServer::SetDespawner. Kept across Host() calls, so it can be
+    /// set once when the session is made.
+    void SetDespawner(Despawner despawner);
+
     /// @brief Ask the authority for something.
     ///
     /// The same call in both roles, which is the point: a client sends it over
@@ -313,6 +331,7 @@ private:
     std::unique_ptr<ReplicationServer>  _server;
     std::unique_ptr<ReplicationClient>  _client;
     std::unique_ptr<NetClock>           _clock;
+    Despawner _despawner; ///< Handed to every server this session hosts.
 
     SessionRole _role       = SessionRole::Offline;
     Net::ConnectionId _connection = Net::InvalidConnection;

@@ -19,11 +19,13 @@
 
 #include "PhysicsInternal.hpp"
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 
+#include <Jolt/Core/FPFlushDenormals.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -52,6 +54,13 @@ JPH::RefConst<JPH::Shape> MakeCharacterShape(float radius, float halfHeight)
 float CharacterHalfHeight(float radius, float halfHeight)
 {
     return glm::max(halfHeight, JPH::cDefaultConvexRadius) + glm::max(radius, JPH::cDefaultConvexRadius);
+}
+
+CollisionFilter CharacterFilter(const Character &character)
+{
+    const bool ownChannel = character.channel == CollisionChannel::Character ||
+                            static_cast<std::uint32_t>(character.channel) >= kFirstGameChannel;
+    return CollisionFilter{character.collidesWith, ownChannel ? character.channel : CollisionChannel::Character};
 }
 
 JPH::Vec3 ApplyFriction(JPH::Vec3Arg velocity, float friction, float stopSpeed, float deltaTime)
@@ -163,8 +172,6 @@ float Approach(float from, float to, float maxDelta)
 
 void PhysicsWorld::Impl::StepCharacters(float deltaTime)
 {
-    const JPH::Vec3 worldGravity = physicsSystem.GetGravity();
-
     for (auto &[id, record] : characters)
     {
         (void)id;
@@ -190,12 +197,6 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
         }
 
-        // The crouch speed applies to the stance the character reached, not the
-        // one it asked for, so one held under a ledge walks crouched.
-        const float speed =
-            record.stance == Stance::Crouching ? record.walkSpeed * record.crouchSpeedScale : record.walkSpeed;
-        const glm::vec3 wishVelocity = intent.move * speed;
-
         // Before anything reads the velocity, which is relative to the base
         // only while the base still carries it.
         if (record.base != ECS::NullEntity && !StillCarried(record))
@@ -210,29 +211,13 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
             character.SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
         }
 
-        // Fold in the motion of whatever is underfoot before reading it, or a
-        // character on a platform rides last step's velocity. A base reads as
-        // still: its motion is the carry's.
-        character.UpdateGroundVelocity();
-
-        // Pushes first, so a kick upward is what lifts it off the ground below
-        // and everything after steers from the velocity it was left with.
-        JPH::Vec3 currentVelocity = character.GetLinearVelocity() + record.push;
-        record.push = JPH::Vec3::sZero();
-        JPH::Vec3 groundVelocity = character.GetGroundVelocity();
-
-        // "Standing" for movement purposes is narrower than Jolt's OnGround: a
-        // character that has just jumped is still touching the floor for a step,
-        // and taking the ground's velocity there would swallow the jump whole.
-        const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
-        const float risingSpeed = (currentVelocity - groundVelocity).Dot(kCharacterUp);
-        const bool standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
+        GroundContact contact = SenseGround(record);
 
         // From this step on the velocity is relative to the base boarded, and
         // the sweep below already sees it as still.
-        if (!RideIntentBase(record, intent.base, currentVelocity, groundVelocity))
+        if (!RideIntentBase(record, intent.base, contact.velocity, contact.groundVelocity))
         {
-            BoardBestCarrier(record, standing, currentVelocity, groundVelocity);
+            BoardBestCarrier(record, contact.standing, contact.velocity, contact.groundVelocity);
         }
 
         // Standing on other ground, a rider steers against that ground and so
@@ -241,118 +226,264 @@ void PhysicsWorld::Impl::StepCharacters(float deltaTime)
         const Carrier *carrier = record.base == ECS::NullEntity ? nullptr : scene.Get<Carrier>(record.base);
         if (carrier != nullptr && carrier->footing == CarrierFooting::Carrier)
         {
-            groundVelocity = JPH::Vec3::sZero();
+            contact.groundVelocity = JPH::Vec3::sZero();
         }
 
         // After boarding, so the step that walks from a dock onto a deck still
         // remembers the dock.
-        if (standing)
+        if (contact.standing)
         {
-            record.lastGroundVelocity = groundVelocity + BaseVelocityAt(record);
-        }
-        const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
-        const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
-
-        if (standing)
-        {
-            record.timeSinceGrounded = 0.f;
-            record.jumpedSinceGrounded = false;
-        }
-        else
-        {
-            record.timeSinceGrounded += deltaTime;
+            record.lastGroundVelocity = contact.groundVelocity + BaseVelocityAt(record);
         }
 
-        // A request is live on the step it arrives and for jumpBufferTime after,
-        // so a character with no buffer at all still jumps on the step it was
-        // asked — the buffer lengthens the request rather than creating it.
-        if (intent.jump)
-        {
-            record.jumpBufferRemaining = record.jumpBufferTime;
-        }
-        const bool pending = intent.jump || record.jumpBufferRemaining > 0.f;
-
-        // A jump may fire late (coyote time) but only once per time in the air:
-        // without the flag, a character that jumped inside the coyote window
-        // would still be inside it on the next step and jump again.
-        const bool mayJump = !record.jumpedSinceGrounded && record.timeSinceGrounded <= record.coyoteTime;
-        const bool jumping = pending && mayJump;
-        if (jumping)
-        {
-            record.jumpedSinceGrounded = true;
-            record.jumpBufferRemaining = 0.f;
-        }
-        else
-        {
-            record.jumpBufferRemaining = glm::max(record.jumpBufferRemaining - deltaTime, 0.f);
-        }
-
-        const float eyeTarget = record.stance == Stance::Crouching ? record.crouchEyeHeight : record.standingEyeHeight;
-        record.eyeHeight = Approach(record.eyeHeight, eyeTarget, record.eyeSpeed * deltaTime);
-
-        // Steering is done relative to the ground, so a character walking on a
-        // moving platform accelerates from a standstill *on the platform* rather
-        // than having to out-accelerate the platform's own speed to stay put —
-        // and friction holds it still on the platform rather than in the world.
-        const JPH::Vec3 reference = standing ? groundVelocity : JPH::Vec3::sZero();
-        const JPH::Vec3 relative = currentVelocity - reference;
-        JPH::Vec3 relativeHorizontal = relative - kCharacterUp * relative.Dot(kCharacterUp);
-
-        JPH::Vec3 wish{wishVelocity.x, wishVelocity.y, wishVelocity.z};
-        wish -= kCharacterUp * wish.Dot(kCharacterUp);
-        if (standing)
-        {
-            // Walking into a slope too steep to climb must not press the
-            // character into it — the component heading uphill is dropped, so
-            // what is left slides along.
-            wish = character.CancelVelocityTowardsSteepSlopes(wish);
-        }
-
-        if (jumping)
-        {
-            relativeHorizontal = record.bunnyHop == BunnyHopPolicy::Boost
-                                     ? record.BoostTakeOff(relativeHorizontal, wish)
-                                     : LimitSpeed(relativeHorizontal, record.TakeOffSpeedLimit());
-        }
-
-        // A character that jumps this step has already left the ground as far
-        // as movement goes: it takes no friction and steers by the air rules.
-        // That is what lets a jump on the landing step keep its speed.
-        const bool grounded = standing && !jumping;
-        const JPH::Vec3 steered = record.Steer(relativeHorizontal, wish, grounded, deltaTime);
-
-        JPH::Vec3 newVelocity = reference - kCharacterUp * reference.Dot(kCharacterUp) + steered +
-                                kCharacterUp * (standing ? groundUpSpeed : currentUpSpeed);
-        if (jumping)
-        {
-            newVelocity += kCharacterUp * record.jumpSpeed;
-        }
-
-        const JPH::Vec3 gravity = worldGravity * record.gravityScale;
-        newVelocity += gravity * deltaTime;
-        character.SetLinearVelocity(newVelocity);
-
-        JPH::CharacterVirtual::ExtendedUpdateSettings settings;
-        settings.mWalkStairsStepUp = kCharacterUp * record.maxStepHeight;
-
-        // Held down to the floor by as much as it can climb: a stair walked up
-        // has to be walkable back down, and without this the character leaves
-        // the ground at every descending edge and arrives as a series of little
-        // falls.
-        settings.mStickToFloorStepDown = -kCharacterUp * record.maxStepHeight;
-
-        // Its own hitboxes ride inside it, and what IgnoreCollision excepted
-        // does not stop it.
-        const FilterLayerFilter layerFilter{layers, record.queryFilter};
-        const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
-
-        character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, bodyFilter, {}, tempAlloc);
+        const bool jumping = MoveCharacter(record, intent, contact, deltaTime);
 
         if (record.base != ECS::NullEntity)
         {
             RecordRiderPose(record, jumping, deltaTime);
         }
     }
+}
+
+PhysicsWorld::Impl::GroundContact PhysicsWorld::Impl::SenseGround(CharacterRecord &record)
+{
+    JPH::CharacterVirtual &character = *record.character;
+
+    // Fold in the motion of whatever is underfoot before reading it, or a
+    // character on a platform rides last step's velocity. A base reads as
+    // still: its motion is the carry's.
+    character.UpdateGroundVelocity();
+
+    // Pushes first, so a kick upward is what lifts it off the ground below
+    // and everything after steers from the velocity it was left with.
+    GroundContact contact;
+    contact.velocity = character.GetLinearVelocity() + record.push;
+    record.push = JPH::Vec3::sZero();
+    contact.groundVelocity = character.GetGroundVelocity();
+
+    // "Standing" for movement purposes is narrower than Jolt's OnGround: a
+    // character that has just jumped is still touching the floor for a step,
+    // and taking the ground's velocity there would swallow the jump whole.
+    const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+    const float risingSpeed = (contact.velocity - contact.groundVelocity).Dot(kCharacterUp);
+    contact.standing = onGround && risingSpeed < kMaxRisingSpeedWhileGrounded;
+    return contact;
+}
+
+bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterIntent &intent,
+                                       const GroundContact &contact, float deltaTime)
+{
+    JPH::CharacterVirtual &character = *record.character;
+    const bool standing = contact.standing;
+    const JPH::Vec3 currentVelocity = contact.velocity;
+    const JPH::Vec3 groundVelocity = contact.groundVelocity;
+    record.lastIntent = intent;
+
+    // The crouch speed applies to the stance the character reached, not the
+    // one it asked for, so one held under a ledge walks crouched.
+    const float speed =
+        record.stance == Stance::Crouching ? record.walkSpeed * record.crouchSpeedScale : record.walkSpeed;
+    const glm::vec3 wishVelocity = intent.move * speed;
+
+    const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
+    const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
+
+    if (standing)
+    {
+        record.timeSinceGrounded = 0.f;
+        record.jumpedSinceGrounded = false;
+    }
+    else
+    {
+        record.timeSinceGrounded += deltaTime;
+    }
+
+    // A request is live on the step it arrives and for jumpBufferTime after,
+    // so a character with no buffer at all still jumps on the step it was
+    // asked — the buffer lengthens the request rather than creating it.
+    if (intent.jump)
+    {
+        record.jumpBufferRemaining = record.jumpBufferTime;
+    }
+    const bool pending = intent.jump || record.jumpBufferRemaining > 0.f;
+
+    // A jump may fire late (coyote time) but only once per time in the air:
+    // without the flag, a character that jumped inside the coyote window
+    // would still be inside it on the next step and jump again.
+    const bool mayJump = !record.jumpedSinceGrounded && record.timeSinceGrounded <= record.coyoteTime;
+    const bool jumping = pending && mayJump;
+    if (jumping)
+    {
+        record.jumpedSinceGrounded = true;
+        record.jumpBufferRemaining = 0.f;
+    }
+    else
+    {
+        record.jumpBufferRemaining = glm::max(record.jumpBufferRemaining - deltaTime, 0.f);
+    }
+
+    const float eyeTarget = record.stance == Stance::Crouching ? record.crouchEyeHeight : record.standingEyeHeight;
+    record.eyeHeight = Approach(record.eyeHeight, eyeTarget, record.eyeSpeed * deltaTime);
+
+    // Steering is done relative to the ground, so a character walking on a
+    // moving platform accelerates from a standstill *on the platform* rather
+    // than having to out-accelerate the platform's own speed to stay put —
+    // and friction holds it still on the platform rather than in the world.
+    const JPH::Vec3 reference = standing ? groundVelocity : JPH::Vec3::sZero();
+    const JPH::Vec3 relative = currentVelocity - reference;
+    JPH::Vec3 relativeHorizontal = relative - kCharacterUp * relative.Dot(kCharacterUp);
+
+    JPH::Vec3 wish{wishVelocity.x, wishVelocity.y, wishVelocity.z};
+    wish -= kCharacterUp * wish.Dot(kCharacterUp);
+    if (standing)
+    {
+        // Walking into a slope too steep to climb must not press the
+        // character into it — the component heading uphill is dropped, so
+        // what is left slides along.
+        wish = character.CancelVelocityTowardsSteepSlopes(wish);
+    }
+
+    if (jumping)
+    {
+        relativeHorizontal = record.bunnyHop == BunnyHopPolicy::Boost
+                                 ? record.BoostTakeOff(relativeHorizontal, wish)
+                                 : LimitSpeed(relativeHorizontal, record.TakeOffSpeedLimit());
+    }
+
+    // A character that jumps this step has already left the ground as far
+    // as movement goes: it takes no friction and steers by the air rules.
+    // That is what lets a jump on the landing step keep its speed.
+    const bool grounded = standing && !jumping;
+    const JPH::Vec3 steered = record.Steer(relativeHorizontal, wish, grounded, deltaTime);
+
+    JPH::Vec3 newVelocity = reference - kCharacterUp * reference.Dot(kCharacterUp) + steered +
+                            kCharacterUp * (standing ? groundUpSpeed : currentUpSpeed);
+    if (jumping)
+    {
+        newVelocity += kCharacterUp * record.jumpSpeed;
+    }
+
+    const JPH::Vec3 gravity = physicsSystem.GetGravity() * record.gravityScale;
+    newVelocity += gravity * deltaTime;
+    character.SetLinearVelocity(newVelocity);
+
+    JPH::CharacterVirtual::ExtendedUpdateSettings settings;
+    settings.mWalkStairsStepUp = kCharacterUp * record.maxStepHeight;
+
+    // Held down to the floor by as much as it can climb: a stair walked up
+    // has to be walkable back down, and without this the character leaves
+    // the ground at every descending edge and arrives as a series of little
+    // falls.
+    settings.mStickToFloorStepDown = -kCharacterUp * record.maxStepHeight;
+
+    // Its own hitboxes ride inside it, and what IgnoreCollision excepted
+    // does not stop it.
+    const FilterLayerFilter layerFilter{layers, record.queryFilter};
+    const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
+
+    character.ExtendedUpdate(deltaTime, gravity, settings, {}, layerFilter, bodyFilter, {}, tempAlloc);
+    return jumping;
+}
+
+void PhysicsWorld::Impl::PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity)
+{
+    const JPH::RVec3 position(feet.x, feet.y, feet.z);
+    record.character->SetPosition(position);
+    record.character->SetLinearVelocity(JPH::Vec3(velocity.x, velocity.y, velocity.z));
+    physicsSystem.GetBodyInterface().SetPosition(SlotFor(record.entity)->body, position,
+                                                 JPH::EActivation::Activate);
+    const FilterLayerFilter layerFilter{layers, record.queryFilter};
+    const OwnerBodiesFilter bodyFilter{*this, record.entity, /*exceptions=*/ true};
+    record.character->RefreshContacts({}, layerFilter, bodyFilter, {}, tempAlloc);
+    WritePose(record.entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), feet}, /*writeRotation=*/ false);
+    ECS::SnapTransform(scene, record.entity);
+}
+
+void PhysicsWorld::SetCharacterPushable(ECS::Entity entity, bool pushable)
+{
+    if (Impl::CharacterRecord *record = _impl->FindCharacter(entity); record != nullptr)
+    {
+        record->pushable = pushable;
+    }
+}
+
+CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
+{
+    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+    if (record == nullptr)
+    {
+        return CharacterFrame{};
+    }
+    const JPH::RVec3 position = record->character->GetPosition();
+    const JPH::Vec3 velocity = record->character->GetLinearVelocity();
+    return CharacterFrame{.intent = record->lastIntent,
+                          .position = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+                          .velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+                          .facing = record->facing,
+                          .timeSinceGrounded = record->timeSinceGrounded,
+                          .jumpBufferRemaining = record->jumpBufferRemaining,
+                          .eyeHeight = record->eyeHeight,
+                          .stance = record->stance,
+                          .jumpedSinceGrounded = record->jumpedSinceGrounded};
+}
+
+void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &frame)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::RewindCharacter called while the world is stepping");
+    if (!IsFinite(frame.position) || !IsFinite(frame.velocity))
+    {
+        Core::Log::Warn("PhysicsWorld: a rewind of character {} (gen {}) is not a number and is ignored.",
+                        entity.index, entity.generation);
+        return;
+    }
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+    if (record == nullptr)
+    {
+        return;
+    }
+
+    // The stance first: in the air a change of stance moves the feet, and the
+    // frame's feet are the ones that count.
+    (void)_impl->ApplyStance(*record, frame.stance);
+    _impl->PlaceCharacter(*record, frame.position, frame.velocity);
+
+    record->lastIntent = frame.intent;
+    record->facing = frame.facing;
+    record->timeSinceGrounded = frame.timeSinceGrounded;
+    record->jumpBufferRemaining = frame.jumpBufferRemaining;
+    record->eyeHeight = frame.eyeHeight;
+    record->jumpedSinceGrounded = frame.jumpedSinceGrounded;
+    _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
+}
+
+void PhysicsWorld::ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing,
+                                   float deltaTime)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ReplayCharacter called while the world is stepping");
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+    if (record == nullptr)
+    {
+        return;
+    }
+
+    // As Update runs it: the stance asked for at the reconcile before the step,
+    // and the sweep with denormals flushed.
+    if (intent.stance != record->stance)
+    {
+        (void)_impl->ApplyStance(*record, intent.stance);
+    }
+    record->facing = facing;
+    {
+        const JPH::FPFlushDenormals flushDenormals;
+        const Impl::GroundContact contact = _impl->SenseGround(*record);
+        (void)_impl->MoveCharacter(*record, intent, contact, deltaTime);
+    }
+
+    const JPH::RVec3 feet = record->character->GetPosition();
+    _impl->WritePose(entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                     /*writeRotation=*/ false);
+    ECS::SnapTransform(_impl->scene, entity);
+    _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const
@@ -692,7 +823,7 @@ void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
 
     // The sweep must not be stopped by sensors; the inner body still is seen by
     // them.
-    queryFilter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character}.Without(CollisionChannel::Trigger);
+    queryFilter = CharacterFilter(tuning).Without(CollisionChannel::Trigger);
 
     jumpSpeed = tuning.jumpSpeed;
     walkSpeed = tuning.walkSpeed;
@@ -768,8 +899,7 @@ bool PhysicsWorld::Impl::BuildCharacterVirtual(CharacterRecord &record, const Ch
     // tunnels through it. It keeps the Character's full mask, Trigger included,
     // which is what lets a trigger volume find it.
     settings.mInnerBodyShape = record.standingShape;
-    settings.mInnerBodyLayer =
-        LayerFor(CollisionFilter{tuning.collidesWith, CollisionChannel::Character}, BodyMotion::Kinematic);
+    settings.mInnerBodyLayer = LayerFor(CharacterFilter(tuning), BodyMotion::Kinematic);
 
     // The entity rides in the character's user data, which Jolt copies onto the
     // inner body, so a contact or a cast that finds a character names it exactly
@@ -828,7 +958,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     BodySlot &slot = SlotAt(entity);
     slot = BodySlot{};
     slot.body = record.character->GetInnerBodyID();
-    slot.filter = CollisionFilter{tuning.collidesWith, CollisionChannel::Character};
+    slot.filter = CharacterFilter(tuning);
     slot.generation = entity.generation;
     slot.motion = BodyMotion::Kinematic;
     slot.kind = SlotKind::Character;
@@ -854,6 +984,11 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
                          crouchHalfHeight != record.crouchHalfHeight;
 
     record.Retune(tuning);
+
+    // Before either path: a resize builds the inner body on the new layer
+    // already, and other characters read what this one is from here.
+    const CollisionFilter filter = CharacterFilter(tuning);
+    slot.filter = filter;
 
     JPH::CharacterVirtual &character = *record.character;
     if (resized)
@@ -899,9 +1034,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
     character.SetMass(tuning.mass);
     character.SetMaxStrength(tuning.options.Has(CharacterOption::PushesBodies) ? tuning.pushStrength : 0.f);
 
-    const CollisionFilter filter{tuning.collidesWith, CollisionChannel::Character};
     physicsSystem.GetBodyInterface().SetObjectLayer(slot.body, LayerFor(filter, BodyMotion::Kinematic));
-    slot.filter = filter;
 }
 
 bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)

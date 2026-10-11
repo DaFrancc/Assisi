@@ -24,8 +24,8 @@ Give an entity a **`Character`** and a `Transform`; the other two come with it.
 The entity's `Transform` is at the character's **feet**. The physics step reads
 the intent and writes the state itself, so nothing else has to run for a
 character to move. The `blueprints/Player.abp` blueprint is a complete example,
-with a camera and keyboard and mouse control through the `CharacterLook`,
-`CharacterInput` and `CharacterEye` systems.
+with a camera and keyboard and mouse control; [Players](players.md) explains
+how a person's controls reach it.
 
 A `Character` cannot also have a `Collider` or a `RigidBody`: it already is a
 body.

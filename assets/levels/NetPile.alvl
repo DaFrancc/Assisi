@@ -23,6 +23,84 @@
     },
     {
       "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            -4.0,
+            0.0,
+            6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart2"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            4.0,
+            0.0,
+            6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart3"
+    },
+    {
+      "components": {
         "Collider": {
           "halfExtents": [
             0.5,

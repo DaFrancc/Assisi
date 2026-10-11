@@ -12,6 +12,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #if defined(ASSISI_NETWORKING)
+#    include <Assisi/App/PlayerSession.hpp>
 #    include <Assisi/NetSync/NetComponents.hpp>
 #    include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
@@ -74,6 +75,9 @@ void ServerApp::OnStart()
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
     NetSync::LoadNetworkConfig();
+    // Same reason: which bit of a player's controls is which button is in the
+    // hash too, and a windowed peer has published it.
+    Assisi::App::PublishPlayerActions();
 #endif
 
     if (!_options.level.empty())
@@ -304,6 +308,15 @@ void ServerApp::OnFixedUpdate(float dt)
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
+}
+
+double ServerApp::SimulationSeconds(double frameSeconds)
+{
+#if defined(ASSISI_NETWORKING)
+    if (_session)
+        return frameSeconds * _session->TimeScale();
+#endif
+    return frameSeconds;
 }
 
 void ServerApp::OnUpdate([[maybe_unused]] float dt)

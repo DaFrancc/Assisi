@@ -910,6 +910,35 @@ TEST_CASE("input flows the other way and is bounded on arrival")
     }
 }
 
+TEST_CASE("a client is told of the starvation since its last snapshot, not since it joined")
+{
+    // The clock grows its lead for every starved tick it is told of. Told the
+    // total since joining, a client that starved once before its first command
+    // arrived would keep growing its lead to the ceiling for the rest of the
+    // session, and every player would answer their keys half a second late.
+    constexpr std::uint64_t kAhead = 3;
+    constexpr std::int32_t kSteps = 30;
+
+    Harness harness;
+    harness.Step(4);
+    REQUIRE(harness.client.IsSynchronized());
+
+    InputCommandBuffer buffer;
+    for (std::int32_t i = 0; i < kSteps; ++i)
+    {
+        InputCommand command;
+        command.tick = harness.tick + kAhead;
+        buffer.Push(command);
+        harness.client.SendInput(buffer);
+        // The first few find nothing: the command for this tick has not been
+        // sent yet.
+        (void)harness.server.ConsumeInput(harness.serverSide(), harness.tick);
+        harness.Step();
+    }
+
+    CHECK(harness.client.Feedback().starvedTicks == 0);
+}
+
 TEST_CASE("the snapshot rate is clamped to a divisor of the tick rate")
 {
     ReplicationConfig config;

@@ -389,6 +389,10 @@ JPH::RefConst<JPH::Shape> MakeCharacterShape(float radius, float halfHeight);
 /// @ref MakeCharacterShape builds.
 float CharacterHalfHeight(float radius, float halfHeight);
 
+/// What @p character is and meets: its own channel, or Character when it asks
+/// for another of the engine's, and its mask.
+CollisionFilter CharacterFilter(const Character &character);
+
 /// Below this horizontal speed friction stops the character outright (m/s).
 /// Dividing by a speed this small to keep the direction would amplify rounding
 /// into a velocity that wanders.
@@ -1518,6 +1522,11 @@ private:
         JPH::RefConst<JPH::Shape> standingShape;
         JPH::RefConst<JPH::Shape> crouchingShape;
 
+        /// The intent its most recent step consumed, a replayed one included.
+        /// The step clears a jump from CharacterIntent, so this is the only
+        /// record of it afterwards.
+        CharacterIntent lastIntent;
+
         /// The way it is looking, from its Transform at the start of the step.
         /// The capsule itself is never turned; only BunnyHopPolicy::Boost reads
         /// this.
@@ -1596,6 +1605,10 @@ private:
         /// lets go of.
         bool basedByIntent = false;
 
+        /// Cleared by PhysicsWorld::SetCharacterPushable: nothing pushes it,
+        /// whatever its options say.
+        bool pushable = true;
+
         /// Riding, but standing on other ground that it moves with rather than
         /// the base (CarrierFooting::Ground): the base's change of speed is not
         /// passed on to it.
@@ -1630,7 +1643,35 @@ private:
     /// character is not in the broad phase, so without this registry two of them
     /// would each sweep through a world the other is not part of and walk
     /// straight through each other.
-    JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
+    ///
+    /// Jolt's own registry meets every pair, whatever their channels; this one
+    /// applies the same two-way rule as every other pair, so characters a game
+    /// keeps apart by channel pass through each other.
+    class CharacterCrowd final : public JPH::CharacterVsCharacterCollision
+    {
+public:
+        explicit CharacterCrowd(const Impl &owner) : _owner(owner) {}
+
+        void Add(JPH::CharacterVirtual *character) { _characters.push_back(character); }
+        void Remove(const JPH::CharacterVirtual *character) { std::erase(_characters, character); }
+
+        void CollideCharacter(const JPH::CharacterVirtual *character, JPH::RMat44Arg centerOfMassTransform,
+                              const JPH::CollideShapeSettings &collideShapeSettings, JPH::RVec3Arg baseOffset,
+                              JPH::CollideShapeCollector &collector) const override;
+
+        void CastCharacter(const JPH::CharacterVirtual *character, JPH::RMat44Arg centerOfMassTransform,
+                           JPH::Vec3Arg direction, const JPH::ShapeCastSettings &shapeCastSettings,
+                           JPH::RVec3Arg baseOffset, JPH::CastShapeCollector &collector) const override;
+
+private:
+        /// Whether @p a and @p b admit each other's channels.
+        [[nodiscard]] bool Meet(const JPH::CharacterVirtual &a, const JPH::CharacterVirtual &b) const;
+
+        std::vector<JPH::CharacterVirtual *> _characters;
+        const Impl &_owner;
+    };
+
+    CharacterCrowd characterVsCharacter{*this};
 
     CharacterRecord *FindCharacter(ECS::Entity entity);
     const CharacterRecord *FindCharacter(ECS::Entity entity) const;
@@ -1642,6 +1683,29 @@ private:
     /// Reads every character's CharacterIntent and sweeps it by one step,
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
+
+    /// How a character meets the ground at the start of its step.
+    struct GroundContact
+    {
+        JPH::Vec3 velocity = JPH::Vec3::sZero();       ///< Its own, with any push taken in.
+        JPH::Vec3 groundVelocity = JPH::Vec3::sZero(); ///< What is underfoot.
+        bool standing = false;                         ///< On walkable ground and not rising off it.
+    };
+
+    /// Reads the ground under @p record and takes in its pending push.
+    GroundContact SenseGround(CharacterRecord &record);
+
+    /// The character's own part of a step: its timers, eye height, steering,
+    /// gravity and sweep, under @p intent from @p contact. Nothing here touches
+    /// another body's state, which is what lets a replay run it alone.
+    /// @return whether it jumped.
+    bool MoveCharacter(CharacterRecord &record, const CharacterIntent &intent, const GroundContact &contact,
+                       float deltaTime);
+
+    /// Puts @p record's character and its inner body at @p feet with
+    /// @p velocity, finds what it touches there, and writes and snaps its
+    /// Transform.
+    void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
 
     /// The carrier under @p record that it may ride: the owner of its ground
     /// body, when that is a body with a Carrier and the character

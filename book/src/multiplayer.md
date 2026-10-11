@@ -62,6 +62,45 @@ When two machines connect, they first compare a fingerprint of every replicable
 component's layout. If the builds differ, they refuse to connect rather than
 misreading each other's data. **Host and clients must run the same build.**
 
+## Players
+
+Each person in a session controls their own character, and sees everyone
+else's. The host hands out the characters:
+
+- **The host keeps the level's own player.** The first character in the level
+  marked `Player` (see [Players](players.md)) becomes the host's.
+- **Everyone who joins gets a new one**, made at a **`PlayerStart`**. Give an
+  entity a `PlayerStart` and a `Transform`, and set its `blueprint` to the
+  player blueprint to make, `blueprints/Player.abp` by default. With several
+  starts, players are spread over them in the order they joined. A level with
+  no start gives late joiners nothing, and the log says so.
+- **A player who leaves takes their character with them**, camera and all.
+
+`levels/NetPile.alvl` has three starts. To try it, open it, pick **Host + 2
+clients** and press **Run**: each window walks its own character, and sees the
+other two.
+
+Only a player's controls cross the network, never what they do: each machine
+sends its own player's buttons, movement and turning every fixed step, and the
+host moves that player's character with them. Your own character moves as soon
+as you press a key, without waiting for the host.
+
+That is called **prediction**: your machine works out where your character will
+be, and the host, which has the final say, checks it. The host's answer for a
+step arrives a little after you took it. Your machine compares it with where it
+had your character at that same step:
+
+- **Within 2 cm**, your machine's result stands and nothing moves. Small
+  differences like rounding never make your view jitter.
+- **Further off**, for example because something only the host knew about
+  pushed you, your character is put where the host had it, and every input you
+  have sent since is replayed on top. The picture eases across over a tenth of a
+  second instead of jumping.
+
+The 2 cm is `predictionTolerance` in `assets/config/network.json`. The editor's
+network panel counts how many of the host's answers were kept and how many were
+replayed. On a quiet level, almost all of them should be kept.
+
 ## Running a dedicated server
 
 The editor binary can also run as a server with no window:

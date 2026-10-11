@@ -341,6 +341,10 @@ void EditorApp::ShutdownNetSession()
     if (_scene)
         _scene->FlushDestroyed();
     _netSession.reset();
+    if (_world != nullptr)
+    {
+        _playerSession.Detach(*_world);
+    }
     Assisi::Core::Log::Info("Editor: network session closed.");
 }
 
@@ -400,10 +404,23 @@ void EditorApp::PollNetSession(float dt)
     }
 }
 
+double EditorApp::SimulationSeconds(double frameSeconds)
+{
+    return _netSession ? frameSeconds * _netSession->TimeScale() : frameSeconds;
+}
+
+void EditorApp::BeginNetStep()
+{
+    // Only once the session can say who this machine is: before then a client
+    // has no player, and a world told it is networked drives nothing.
+    if (_netSession && _netSession->IsActive() && _world != nullptr)
+        _playerSession.BeginStep(*_netSession, *_world, GetSimTick());
+}
+
 void EditorApp::TickNetSession()
 {
     if (_netSession)
-        _netSession->Tick(GetSimTick());
+        _netSession->Tick(GetSimTick(), _playerSession.LocalCommand());
 }
 
 void EditorApp::SmoothNetView()
@@ -764,6 +781,11 @@ void EditorApp::DrawNetworkWindow()
         ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
                            static_cast<double>(stats.divergenceMax) * 1000.0);
 
+        // How often the host disagreed with where this client put its own
+        // character. Every replay is a correction the player may feel.
+        LabelledValue("Predictions kept", std::format("{}", stats.predictionsKept));
+        LabelledValue("Predictions replayed", std::format("{}", stats.predictionsReplayed));
+
         // Silent churn otherwise: a client-side cleanup system running over
         // mirrors would destroy and re-receive them forever with no signal.
         if (stats.mirrorsResurrected > 0)
@@ -825,6 +847,7 @@ void EditorApp::DrawNetworkWindow()
 
         LabelledValue("Clock lead", std::format("{} ticks", stats.clockLead));
         LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
+        LabelledValue("Clock rate", std::format("{:.3f}x", stats.clockRate));
 
         if (_joinPhase == JoinPhase::Connecting)
             // %f takes a double through varargs, so the float promotes either

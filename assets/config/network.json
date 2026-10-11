@@ -15,6 +15,7 @@
   "rotationCorrectionTime": 0.05,
   "snapBelowDistance": 0.02,
   "hardSnapDistance": 2.5,
+  "predictionTolerance": 0.02,
   "relevancyRadius": 60.0,
   "relevancyExitRadius": 75.0,
   "relevancyDwellTicks": 30,

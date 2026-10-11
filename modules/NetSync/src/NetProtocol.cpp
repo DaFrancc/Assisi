@@ -7,6 +7,9 @@
 #include <Assisi/NetSync/BodyState.hpp>
 
 #include <format>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace Assisi::NetSync
 {
@@ -19,8 +22,8 @@ constexpr std::uint32_t kMessageTypeBits = 5;
 
 /// A protocol summary is a diagnostic string, not a payload. Bounding it keeps
 /// a hostile handshake from asking us to allocate megabytes before we have
-/// decided to trust the peer at all.
-constexpr std::size_t kMaxSummaryBytes = 512;
+/// decided to trust the peer at all. Room for the names of all 32 input bits.
+constexpr std::size_t kMaxSummaryBytes = 4096;
 
 /// Same reasoning for the handshake's level path: it is read before the peer has
 /// been trusted, and no legitimate path is anywhere near this long.
@@ -35,6 +38,28 @@ namespace
 /// Readable on purpose, and the same reason `ProtocolLayoutDescription` is: when
 /// two builds refuse to pair, diffing two descriptions names the field, where a
 /// 64-bit mismatch never could.
+/// The names SetInputActionNames was given.
+std::vector<std::string> &ActionNameStore()
+{
+    static std::vector<std::string> names;
+    return names;
+}
+
+/// The input bits' names, as the text the handshake hash is taken over. Each
+/// name is closed by a separator, so moving a letter across a boundary is a
+/// different text.
+std::string InputActionDescription()
+{
+    std::string text = "input";
+    for (const std::string &name : ActionNameStore())
+    {
+        text += ' ';
+        text += name;
+        text += ';';
+    }
+    return text;
+}
+
 std::string QuantizationDescription()
 {
     const BodyQuantization &q = Quantization();
@@ -65,7 +90,7 @@ std::uint64_t NetProtocolHash()
         hash *= Core::kFnvPrime;
     }
 
-    const std::string quantization = QuantizationDescription();
+    const std::string quantization = QuantizationDescription() + InputActionDescription();
     for (const char byte : quantization)
     {
         hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
@@ -74,13 +99,17 @@ std::uint64_t NetProtocolHash()
     return hash;
 }
 
+void SetInputActionNames(std::vector<std::string> names) { ActionNameStore() = std::move(names); }
+
+const std::vector<std::string> &InputActionNames() { return ActionNameStore(); }
+
 std::string NetProtocolSummary()
 {
     // The quantization goes in the summary, not just the hash: a refused
     // connection should say which field the two builds disagree about, and this
     // string is what a rejection carries.
-    return std::format("{} net={} {} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
-                       QuantizationDescription(), Core::ToHex64(NetProtocolHash()));
+    return std::format("{} net={} {} {} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
+                       QuantizationDescription(), InputActionDescription(), Core::ToHex64(NetProtocolHash()));
 }
 
 void WriteMessageType(MessageType type, Core::BitWriter &writer)

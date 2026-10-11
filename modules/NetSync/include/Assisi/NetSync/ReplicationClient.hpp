@@ -29,6 +29,7 @@
 #include <deque>
 #include <memory>
 #include <span>
+#include <unordered_set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -291,6 +292,8 @@ public:
     {
         std::uint64_t applied      = 0;
         std::uint64_t bytesApplied = 0;
+        std::uint64_t predictionsKept     = 0; ///< Own-character answers near enough to what was predicted.
+        std::uint64_t predictionsReplayed = 0; ///< ...and the ones that were not, replayed from the host's.
         double divergenceSum = 0.0;
         float divergenceMax = 0.f;
         float         divergenceMean() const
@@ -322,6 +325,16 @@ public:
     /// hesitation.
     void EnforceSleep();
 
+    /// @brief Remember where each character this client controls stands after
+    /// the step whose command is stamped @p commandTick. Call once per fixed
+    /// step, after the step.
+    ///
+    /// The host's state for that tick arrives a round trip later and is
+    /// compared with this. Within ViewSmoothing::predictionTolerance the
+    /// client's own result stands and nothing moves; beyond it the character is
+    /// put where the host had it and stepped again through every command since.
+    void RecordPrediction(std::uint64_t commandTick);
+
     /// @brief Mirrors that were destroyed locally and had to be recreated when
     /// the server next mentioned them.
     ///
@@ -345,7 +358,33 @@ public:
 
 private:
     bool ApplySnapshot(Core::BitReader &reader);
-    void ApplyBodyState(const BodyState &state);
+
+    /// Applies the host's @p state for one body, as it stood after its step
+    /// @p serverTick.
+    void ApplyBodyState(const BodyState &state, std::uint64_t serverTick);
+
+    /// Where this client predicted its own character would be after one step.
+    struct PredictedFrame
+    {
+        Physics::CharacterFrame frame;
+        std::uint64_t tick = 0; ///< The command tick of that step.
+    };
+
+    using PredictionHistory = std::deque<PredictedFrame>;
+
+    /// Ticks of prediction kept per character: more than the furthest a client
+    /// runs ahead of the host, so the host's answer for a tick still finds it.
+    static constexpr std::size_t kPredictionHistoryTicks = 64;
+
+    /// Puts @p entity where the host had it at @p serverTick, with the timers
+    /// @p history holds for then, and steps it again through every later frame
+    /// of @p history, rewriting each with where it lands now.
+    void ReplayOwnCharacter(ECS::Entity entity, PredictionHistory &history, const BodyState &state,
+                            std::uint64_t serverTick);
+
+    /// Whether @p entity is a character this client predicts: one it controls
+    /// that is not riding anything, whose motion is its base's to give.
+    [[nodiscard]] bool PredictsCharacter(ECS::Entity entity) const;
 
     /// Mark one mirror as body-corrected once the components just applied to it
     /// describe a body. The physics world builds the body itself from those
@@ -491,6 +530,7 @@ private:
     /// the mirror stops being body-corrected.
     Core::Reflect::ComponentId _colliderComponentId = Core::Reflect::kInvalidComponentId;
     Core::Reflect::ComponentId _characterComponentId = Core::Reflect::kInvalidComponentId;
+    Core::Reflect::ComponentId _transformComponentId = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
 
@@ -515,6 +555,15 @@ private:
     std::unordered_map<ECS::InstanceId, NetId>           _baseByInstanceId;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
+
+    /// For each character this client predicts, oldest first.
+    std::unordered_map<NetId, PredictionHistory> _predictions;
+
+    /// The mirrors whose Transform the server sends. Only these are
+    /// interpolated: one whose Transform is kept back is the client's own to
+    /// move, and interpolating it would write an old copy of the client's own
+    /// pose back over it every frame.
+    std::unordered_set<NetId> _sentTransforms;
     std::vector<PendingRef>                              _pendingRefs;
 
     /// Samples kept per entity. Three straddles the render time with one spare

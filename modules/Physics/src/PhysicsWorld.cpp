@@ -800,22 +800,13 @@ void PhysicsWorld::ApplyCorrection(ECS::Entity entity, const Pose &pose, const B
     if (slot == nullptr)
         return;
 
-    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-
     if (slot->kind == Impl::SlotKind::Character)
     {
-        Impl::CharacterRecord &record = *_impl->FindCharacter(entity);
-        const JPH::RVec3 position(pose.position.x, pose.position.y, pose.position.z);
-        record.character->SetPosition(position);
-        record.character->SetLinearVelocity(JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
-        bodies.SetPosition(slot->body, position, JPH::EActivation::Activate);
-        const FilterLayerFilter layerFilter{_impl->layers, record.queryFilter};
-        const Impl::OwnerBodiesFilter bodyFilter{*_impl, entity, /*exceptions=*/ true};
-        record.character->RefreshContacts({}, layerFilter, bodyFilter, {}, _impl->tempAlloc);
-        _impl->WritePose(entity, pose, /*writeRotation=*/ false);
-        ECS::SnapTransform(_impl->scene, entity);
+        _impl->PlaceCharacter(*_impl->FindCharacter(entity), pose.position, linearVelocity);
         return;
     }
+
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
     // A static body can be *placed*, it just has no motion to place it with.
     // Refusing the whole call for one would be a trap: a correction for a body

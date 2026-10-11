@@ -411,3 +411,67 @@ TEST_CASE("the control index survives an entity coming back from the dead")
     CHECK(harness.server.ControlledEntities(id)[0] == pawn);
     CHECK(harness.server.ControllerOf(pawn) == id);
 }
+
+TEST_CASE("a client is ready from its verified hello until it leaves")
+{
+    ControlHarness harness;
+    const std::size_t first = harness.AddPeer();
+
+    // Registered, but its hello has not been answered yet: there is nobody to
+    // give a player to.
+    CHECK(harness.server.ReadyClients().empty());
+
+    const std::size_t second = harness.AddPeer();
+    harness.Step(4);
+
+    const std::vector<ReadyClient> ready = harness.server.ReadyClients();
+    REQUIRE(ready.size() == 2);
+    // In the order they joined, so whoever hands out players does so the same
+    // way every time.
+    CHECK(ready[0].connection == harness.peers[first].serverSide);
+    CHECK(ready[0].client == harness.server.ClientIdOf(harness.peers[first].serverSide));
+    CHECK(ready[1].connection == harness.peers[second].serverSide);
+    CHECK(ready[1].client == harness.server.ClientIdOf(harness.peers[second].serverSide));
+
+    harness.DropPeer(first);
+    const std::vector<ReadyClient> left = harness.server.ReadyClients();
+    REQUIRE(left.size() == 1);
+    CHECK(left[0].connection == harness.peers[second].serverSide);
+}
+
+TEST_CASE("a disconnect despawns through the despawner it was given")
+{
+    ControlHarness harness;
+    const std::size_t peer = harness.AddPeer();
+    harness.Step(4);
+
+    // A pawn with a part that is not itself controlled, the way a character
+    // and its camera are one blueprint.
+    const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
+    const ECS::Entity part = SpawnReplicated(harness.serverScene);
+    const ECS::Entity kept = SpawnReplicated(harness.serverScene);
+    const ClientId id     = harness.server.ClientIdOf(harness.peers[peer].serverSide);
+    harness.server.SetControl(pawn, id);
+    harness.server.SetControl(kept, id, /*despawnOnDisconnect=*/ false);
+
+    std::vector<ECS::Entity> despawned;
+    harness.server.SetDespawner(
+        [&harness, &despawned, part](ECS::Entity entity)
+    {
+        despawned.push_back(entity);
+        harness.serverScene.Destroy(entity);
+        harness.serverScene.Destroy(part);
+    });
+    harness.Step(4);
+
+    harness.DropPeer(peer);
+    harness.Step(2);
+
+    // Only what was meant to go, and through the despawner, which took the part
+    // with it.
+    REQUIRE(despawned.size() == 1);
+    CHECK(despawned[0] == pawn);
+    CHECK_FALSE(harness.serverScene.IsAlive(pawn));
+    CHECK_FALSE(harness.serverScene.IsAlive(part));
+    CHECK(harness.serverScene.IsAlive(kept));
+}

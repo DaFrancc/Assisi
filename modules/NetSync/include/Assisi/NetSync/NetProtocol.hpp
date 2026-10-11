@@ -255,6 +255,18 @@ inline constexpr std::uint32_t kNetProtocolVersion = 9;
 /// human-readable companion to NetProtocolHash.
 [[nodiscard]] std::string NetProtocolSummary();
 
+/// @brief Names the bits of `InputCommand::actionBits`, entry N for bit N, and
+/// folds them into NetProtocolHash.
+///
+/// Process-wide, like the quantization, and for the same reason: two builds
+/// that read bit 3 as different actions decode each other's input perfectly
+/// well into the wrong buttons. Set it before hosting or joining. An empty name
+/// is a bit nobody uses.
+void SetInputActionNames(std::vector<std::string> names);
+
+/// @brief What SetInputActionNames last set; empty until then.
+[[nodiscard]] const std::vector<std::string> &InputActionNames();
+
 /// @brief How a `ServerHello`'s level path should be read.
 enum class LevelAddressing : std::uint8_t
 {

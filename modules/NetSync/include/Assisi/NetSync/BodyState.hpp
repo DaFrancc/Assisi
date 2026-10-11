@@ -135,6 +135,13 @@ struct ViewSmoothing
     /// Past this, drop the offset and let the correction show. Smoothing a
     /// teleport reads worse than admitting it.
     float hardSnapDistance = 2.5f;
+
+    /// How far the host's position for this client's own character may be from
+    /// where the client predicted it at the same tick and the client's still
+    /// stands (m). Larger than a quantized position can miss by, so agreement is
+    /// never taken for a miss; small enough that a real disagreement is never
+    /// kept for long.
+    float predictionTolerance = 0.02f;
 };
 
 /// @brief The parameters this process encodes and decodes body state with.

@@ -199,6 +199,10 @@ void EditorApp::StartPlay(NetIntent intent)
     // that scene is now the play scene — the one the editor already treats as
     // disposable.
     _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
+    if (_world != nullptr)
+    {
+        _playerSession.Attach(*_netSession, *_world);
+    }
 
     // Triggered by hosting or joining, never by a level load: pressing Play alone
     // hashes nothing. Rescanned each time, because the content on disk may have

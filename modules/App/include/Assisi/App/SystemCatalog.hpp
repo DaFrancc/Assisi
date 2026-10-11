@@ -28,6 +28,7 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <span>
@@ -206,5 +207,9 @@ void DrainSystemInstalls(SystemContext ctx);
 /// agreement). Anything that gives one of them its own reader, or its own
 /// predicate, re-opens that window.
 [[nodiscard]] bool LevelSystemsAreDeclared(std::string_view virtualPath);
+
+/// @brief LevelSystemsAreDeclared for a level that is not an asset, read where
+/// it lies: the snapshot a play-in-editor host writes beside the executable.
+[[nodiscard]] bool LevelFileSystemsAreDeclared(const std::filesystem::path &path);
 
 } // namespace Assisi::App

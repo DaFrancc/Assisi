@@ -35,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -1110,6 +1111,38 @@ TEST_CASE("a bodied entity that withholds its Transform sends no body state eith
     CHECK(harness.client.Corrections().applied == 0);
 }
 
+TEST_CASE("a mirror whose Transform is not sent keeps the one the client gives it")
+{
+    // A player's camera: sent so it exists on every machine, its Transform kept
+    // back because where it looks is each machine's own. Interpolating it would
+    // write an old copy of the client's own pose back over it every frame, and
+    // its view could never move.
+    PhysicsHarness harness;
+    harness.Step(4);
+
+    const ECS::Entity eye = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(eye, ECS::Transform{});
+    Replicated marker;
+    marker.excluded.Set(OrdinalOfType(typeid(ECS::Transform)));
+    (void)harness.serverScene.Add<Replicated>(eye, marker);
+    harness.Step(10);
+
+    const ECS::Entity mirror = MirrorOf(harness, eye);
+    REQUIRE(mirror != ECS::NullEntity);
+    // The client's own, as a blueprint the client expands itself gives it one.
+    ECS::Transform own;
+    own.rotation = glm::angleAxis(glm::radians(10.f), glm::vec3(1.f, 0.f, 0.f));
+    (void)harness.clientScene.Add<ECS::Transform>(mirror, own);
+    harness.Step(10);
+
+    const glm::quat lookedUp = glm::angleAxis(glm::radians(30.f), glm::vec3(1.f, 0.f, 0.f));
+    harness.clientScene.GetMut<ECS::Transform>(mirror)->rotation = lookedUp;
+    harness.Step(10);
+
+    CHECK(std::abs(glm::dot(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, lookedUp)) ==
+          doctest::Approx(1.f));
+}
+
 TEST_CASE("a walking character arrives on the client simulated, carrying its velocity")
 {
     PhysicsHarness harness;
@@ -1131,6 +1164,282 @@ TEST_CASE("a walking character arrives on the client simulated, carrying its vel
     REQUIRE(harness.serverScene.Get<Physics::CharacterState>(walker)->velocity.x > 1.f);
     CHECK(harness.clientScene.Get<Physics::CharacterState>(mirror)->velocity.x > 1.f);
     CHECK(PoseError(harness, walker) < 0.1f);
+}
+
+namespace
+{
+
+/// A character standing on the shared floor, sent to the client.
+ECS::Entity SpawnStanding(PhysicsHarness &harness)
+{
+    SpawnSharedFloor(harness);
+    const ECS::Entity character = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
+    (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
+    (void)harness.serverScene.Add<Replicated>(character, Replicated{});
+    harness.Step(30);
+    return character;
+}
+
+/// How far apart two facings are: 1 the same, 0 a half turn.
+float Agreement(const glm::quat &a, const glm::quat &b) { return std::abs(glm::dot(a, b)); }
+
+/// A half turn about up.
+const glm::quat kTurnedRound = glm::angleAxis(glm::radians(180.f), glm::vec3(0.f, 1.f, 0.f));
+
+/// Closer than a quantized rotation can miss by.
+constexpr float kSameFacing = 0.999f;
+
+} // namespace
+
+TEST_CASE("a character that turns on the server turns on the client")
+{
+    // A character's capsule never turns; its facing is its Transform. A correction
+    // that only places the body leaves every other player facing where it spawned.
+    PhysicsHarness harness;
+    harness.Step(4);
+    const ECS::Entity character = SpawnStanding(harness);
+
+    harness.serverScene.GetMut<ECS::Transform>(character)->rotation = kTurnedRound;
+    harness.Step(30);
+
+    const ECS::Entity mirror = MirrorOf(harness, character);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(Agreement(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, kTurnedRound) > kSameFacing);
+}
+
+TEST_CASE("a character the client controls keeps the facing it gave itself")
+{
+    // The host's facing for it is the client's own turn arriving a round trip
+    // late; taking it would pull the view back with every correction.
+    PhysicsHarness harness;
+    harness.Step(4);
+    const ECS::Entity character = SpawnStanding(harness);
+    harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(10);
+
+    const ECS::Entity mirror = MirrorOf(harness, character);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.client.ControlsEntity(mirror));
+    // A character never sleeps, so corrections keep arriving the whole time.
+    harness.clientScene.GetMut<ECS::Transform>(mirror)->rotation = kTurnedRound;
+    harness.Step(30);
+    REQUIRE(harness.client.Corrections().applied > 0);
+
+    CHECK(Agreement(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, kTurnedRound) > kSameFacing);
+}
+
+namespace
+{
+
+/// How many ticks the client's own character runs ahead of the host's copy.
+constexpr std::uint32_t kLeadTicks = 3;
+
+/// Ticks the two copies walk in step before the case looks at them.
+constexpr std::uint32_t kAgreeingTicks = 10;
+
+/// How far the host moves its copy sideways behind the client's back (m).
+constexpr float kHostShove = 0.5f;
+
+/// How near a replayed prediction lands to where it should (m): the host's
+/// velocity arrives rounded to a few centimetres a second, and the replay
+/// carries that over its few steps.
+constexpr float kReplayedNear = 0.01f;
+
+/// Where another player stands in the client's character's way.
+constexpr glm::vec3 kOtherPlayerAhead{1.5f, 0.f, 0.f};
+
+/// Ticks of walking into the other player: long enough to reach it, push it
+/// along and be stopped.
+constexpr std::uint32_t kPushTicks = 90;
+
+/// Further than the other player is pushed when it is pushed at all (m).
+constexpr float kPushedFar = 0.5f;
+
+/// How far ahead of the host's a client's mirror of another player may be: a
+/// quantized position, not a shove (m).
+constexpr float kMirrorNearHost = 0.01f;
+
+/// The most a client's own character may move back in a tick (m): rounding,
+/// not a pull.
+constexpr float kMostBackPerTick = 0.001f;
+
+/// Both machines walking the same character the same way, the client
+/// kLeadTicks ahead, with each machine's step and the wire between them run
+/// by hand so a case decides when a snapshot lands.
+struct PredictionRig
+{
+    PhysicsHarness harness;
+    ECS::Entity character{ECS::NullEntity};
+    ECS::Entity mirror{ECS::NullEntity};
+    ECS::Entity otherPlayer{ECS::NullEntity};
+    glm::vec3 move{1.f, 0.f, 0.f};
+
+    PredictionRig() : PredictionRig(std::nullopt) {}
+
+    /// With @p other, another player's character stands there: the host's
+    /// to move, and on the client a mirror like any other.
+    explicit PredictionRig(std::optional<glm::vec3> other)
+    {
+        harness.Step(4);
+        character = SpawnStanding(harness);
+        if (other.has_value())
+        {
+            otherPlayer = harness.serverScene.Create();
+            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *other});
+            (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
+            (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
+        }
+        harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+        harness.Step(30);
+        mirror = MirrorOf(harness, character);
+        REQUIRE(mirror != ECS::NullEntity);
+        REQUIRE(harness.client.ControlsEntity(mirror));
+        Deliver();
+
+        // The client's first commands, sent before the host reaches them.
+        for (std::uint32_t i = 0; i < kLeadTicks; ++i)
+        {
+            StepClient(harness.tick + i);
+        }
+    }
+
+    /// Hands every message waiting on the wire to its side.
+    void Deliver()
+    {
+        std::vector<Net::NetEvent> events;
+        harness.transport->Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == harness.pair.first)
+                harness.server.HandleMessage(harness.pair.first, event.payload);
+            else if (event.connection == harness.pair.second)
+                harness.client.HandleMessage(event.payload);
+        }
+    }
+
+    /// The client's step for command @p tick, and its record of where that
+    /// left its character.
+    void StepClient(std::uint64_t tick)
+    {
+        harness.clientScene.GetMut<Physics::CharacterIntent>(mirror)->move = move;
+        harness.clientPhysics.Update(kFixedStep);
+        harness.client.RecordPrediction(tick);
+    }
+
+    /// One tick on both machines: the host's step and snapshot, and the
+    /// client's step kLeadTicks further on. Nothing is delivered.
+    void StepBoth()
+    {
+        harness.serverScene.GetMut<Physics::CharacterIntent>(character)->move = move;
+        harness.serverPhysics.Update(kFixedStep);
+        StepClient(harness.tick + kLeadTicks);
+        harness.server.Tick(harness.tick++);
+    }
+
+    [[nodiscard]] glm::vec3 ClientPosition() const
+    {
+        return harness.clientScene.Get<ECS::Transform>(mirror)->position;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a correction that agrees with the client's prediction leaves its character alone")
+{
+    // The host's answer for a tick arrives a round trip after the client stepped
+    // it. Snapping to it puts the character back where it was that long ago.
+    PredictionRig rig;
+    const std::uint64_t correctionsBefore = rig.harness.client.Corrections().applied;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        const glm::vec3 before = rig.ClientPosition();
+        rig.Deliver();
+        CHECK(rig.ClientPosition() == before);
+    }
+
+    // It walked the whole time, so the corrections were about a moving character.
+    CHECK(rig.harness.client.Corrections().applied > correctionsBefore);
+    CHECK(rig.ClientPosition().x > 0.1f);
+}
+
+TEST_CASE("a correction the client got wrong is replayed from the host's state, not snapped to the past")
+{
+    PredictionRig rig;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+    }
+
+    // Something only the host knows of moves its copy sideways.
+    const glm::vec3 shove{0.f, 0.f, kHostShove};
+    const Physics::Pose hostPose = rig.harness.serverPhysics.GetBodyPose(rig.character);
+    rig.harness.serverPhysics.ApplyCorrection(
+        rig.character, Physics::Pose{hostPose.rotation, hostPose.position + shove},
+        Physics::BodyState{.linearVelocity = rig.harness.serverPhysics.GetBodyState(rig.character).linearVelocity});
+
+    // Corrected to where the host has it now, plus the steps the client has
+    // taken since: still ahead, and over by the shove.
+    const std::uint64_t correctionsBefore = rig.harness.client.Corrections().applied;
+    glm::vec3 before{0.f};
+    for (std::uint32_t i = 0; i < kAgreeingTicks && rig.harness.client.Corrections().applied == correctionsBefore; ++i)
+    {
+        rig.StepBoth();
+        before = rig.ClientPosition();
+        rig.Deliver();
+    }
+    REQUIRE(rig.harness.client.Corrections().applied > correctionsBefore);
+    CHECK(glm::length(rig.ClientPosition() - (before + shove)) < kReplayedNear);
+
+    // Eased across rather than jumped: one frame later it is drawn nearer
+    // where it was than where it went.
+    rig.harness.client.SmoothView(0.0, kFixedStep);
+    CHECK(glm::length(RenderedPosition(rig.harness.clientScene, rig.mirror) - before) < kHostShove / 2.f);
+
+    SUBCASE("and the replay is what the next agreeing correction is compared with")
+    {
+        for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+        {
+            rig.StepBoth();
+            const glm::vec3 settled = rig.ClientPosition();
+            rig.Deliver();
+            CHECK(rig.ClientPosition() == settled);
+        }
+    }
+}
+
+TEST_CASE("a client walking its character into another player does not shove that player's mirror")
+{
+    // Shoved here, the mirror would be put back by the host's next word, into
+    // the way of the character that shoved it, which would be pushed back in
+    // turn: a jitter every snapshot for as long as the two touch.
+    PredictionRig rig(kOtherPlayerAhead);
+    const ECS::Entity otherMirror = MirrorOf(rig.harness, rig.otherPlayer);
+    REQUIRE(otherMirror != ECS::NullEntity);
+
+    float mostBack = 0.f;
+    float mostAheadOfHost = 0.f;
+    glm::vec3 last = rig.ClientPosition();
+    for (std::uint32_t i = 0; i < kPushTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        const glm::vec3 now = rig.ClientPosition();
+        mostBack = std::max(mostBack, last.x - now.x);
+        const float onClient = rig.harness.clientScene.Get<ECS::Transform>(otherMirror)->position.x;
+        const float onHost = rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x;
+        mostAheadOfHost = std::max(mostAheadOfHost, onClient - onHost);
+        last = now;
+    }
+
+    // It walked into the other player and pushed it, on the host.
+    REQUIRE(rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x > kOtherPlayerAhead.x + kPushedFar);
+    CHECK(mostAheadOfHost < kMirrorNearHost);
+    CHECK(mostBack < kMostBackPerTick);
 }
 
 TEST_CASE("a Collider with no RigidBody replicates as a Transform, not as a body")

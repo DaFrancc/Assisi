@@ -71,6 +71,7 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
     // So a handler's NetContext can reach back out to send further messages.
     _server->SetOwningSession(this);
+    _server->SetDespawner(_despawner);
     // Before any connection can arrive, since it is carried in every hello.
     _server->SetLevelIdentity(std::move(level));
     _role = SessionRole::Host;
@@ -241,6 +242,7 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
     // just before the server simulates that tick.
     InputCommand command = localInput != nullptr ? *localInput : InputCommand{};
     command.tick         = _clock->CommandTick();
+    _client->RecordPrediction(command.tick);
     _inputBuffer.Push(command);
     _client->SendInput(_inputBuffer);
 }
@@ -309,6 +311,25 @@ bool NetSession::ControlsEntity(ECS::Entity entity) const
 ClientId NetSession::ClientIdOf(Net::ConnectionId client) const
 {
     return _server ? _server->ClientIdOf(client) : InvalidClientId;
+}
+
+double NetSession::TimeScale() const
+{
+    if (!_client || !_clock || !_clock->HasFeedback())
+        return 1.0;
+    return _clock->Rate();
+}
+
+std::vector<ReadyClient> NetSession::ReadyClients() const
+{
+    return _server ? _server->ReadyClients() : std::vector<ReadyClient>{};
+}
+
+void NetSession::SetDespawner(Despawner despawner)
+{
+    _despawner = std::move(despawner);
+    if (_server)
+        _server->SetDespawner(_despawner);
 }
 
 std::string NetSession::StatusText() const
@@ -412,6 +433,8 @@ SessionStats NetSession::Stats() const
         stats.correctionBytes    = corrections.bytesApplied;
         stats.divergenceMean     = corrections.divergenceMean();
         stats.divergenceMax      = corrections.divergenceMax;
+        stats.predictionsKept     = corrections.predictionsKept;
+        stats.predictionsReplayed = corrections.predictionsReplayed;
         stats.mirrorsResurrected = _client->MirrorsResurrected();
         stats.eventsDispatched   = _client->EventsDispatched();
         stats.eventsUnhandled    = _client->EventsUnhandled();
@@ -420,6 +443,7 @@ SessionStats NetSession::Stats() const
         {
             stats.clockCorrections = _clock->CorrectionCount();
             stats.clockLead        = _clock->Lead();
+            stats.clockRate        = static_cast<float>(_clock->Rate());
         }
 
         Net::ConnectionStats transportStats;

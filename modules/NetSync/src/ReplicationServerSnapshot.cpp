@@ -260,7 +260,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     header.serverTick       = _simTick;
     header.baselineTick     = connection.ackedTick;
     header.inputBufferDepth = static_cast<std::uint32_t>(connection.input.Depth());
-    header.starvedTicks     = static_cast<std::uint32_t>(connection.input.StarvedTicks());
+    header.starvedTicks     = static_cast<std::uint32_t>(connection.input.StarvedTicks() - connection.starvedReported);
+    connection.starvedReported = connection.input.StarvedTicks();
     // Complete when the acked set already covers everything this connection is
     // *told* about — "am I done joining?" for a filtered connection. Measured
     // against the previous ack rather than this snapshot, because that is the
