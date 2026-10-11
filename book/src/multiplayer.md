@@ -83,9 +83,23 @@ other two.
 Only a player's controls cross the network, never what they do: each machine
 sends its own player's buttons, movement and turning every fixed step, and the
 host moves that player's character with them. Your own character moves as soon
-as you press a key, without waiting for the host. It can be pulled back a little
-when the host disagrees, since the engine does not yet replay your input on top
-of a correction.
+as you press a key, without waiting for the host.
+
+That is called **prediction**: your machine works out where your character will
+be, and the host, which has the final say, checks it. The host's answer for a
+step arrives a little after you took it. Your machine compares it with where it
+had your character at that same step:
+
+- **Within 2 cm**, your machine's result stands and nothing moves. Small
+  differences like rounding never make your view jitter.
+- **Further off**, for example because something only the host knew about
+  pushed you, your character is put where the host had it, and every input you
+  have sent since is replayed on top. The picture eases across over a tenth of a
+  second instead of jumping.
+
+The 2 cm is `predictionTolerance` in `assets/config/network.json`. The editor's
+network panel counts how many of the host's answers were kept and how many were
+replayed. On a quiet level, almost all of them should be kept.
 
 ## Running a dedicated server
 
