@@ -233,6 +233,8 @@ struct Session
                 {
                     Step(*machine, ++machine->tick);
                 }
+                // Once a frame, after the steps, as the editor draws.
+                machine->session.SmoothView(kStep);
             }
             next += frame;
             std::this_thread::sleep_until(next);

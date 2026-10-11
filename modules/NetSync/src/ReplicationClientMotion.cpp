@@ -281,6 +281,10 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
         if (_bodies.contains(netId))
             continue;
 
+        // Only a Transform the server sends is the server's to move.
+        if (!_sentTransforms.contains(netId))
+            continue;
+
         const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
         if (transform == nullptr)
             continue;
@@ -300,6 +304,7 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
     // Entities that went away take their history with them.
     std::erase_if(_transformHistory,
                   [this](const auto &entry) { return !_entityByNetId.contains(entry.first); });
+    std::erase_if(_sentTransforms, [this](NetId netId) { return !_entityByNetId.contains(netId); });
 }
 
 void ReplicationClient::Interpolate(double serverTimeTicks)
@@ -403,6 +408,7 @@ void ReplicationClient::Reset()
     // The mirrors' bodies go with the entities destroyed above.
     _bodies.clear();
     _transformHistory.clear();
+    _sentTransforms.clear();
     _pendingRefs.clear();
 
     // Every instance retires at once — the wholesale form of what the despawn

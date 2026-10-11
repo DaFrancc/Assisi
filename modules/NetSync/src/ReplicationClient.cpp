@@ -45,6 +45,7 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
     _colliderComponentId                           = registry.IdOf(typeid(Physics::Collider));
     _characterComponentId                           = registry.IdOf(typeid(Physics::Character));
+    _transformComponentId                           = registry.IdOf(typeid(ECS::Transform));
 
     // A mirror's joints break when the server says so, by removing them. One
     // broken here as well would leave the two simulations disagreeing.
@@ -792,6 +793,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             {
                 DestroyMirrorBody(netId);
             }
+            if (componentId == _transformComponentId)
+            {
+                _sentTransforms.erase(netId);
+            }
 
             removed.push_back(componentId);
             ++_structureRevision;
@@ -817,6 +822,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             void *component = EnsureComponent(_scene, entity, *meta);
             if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, nullptr, &context))
                 return false;
+            if (componentId == _transformComponentId)
+                _sentTransforms.insert(netId);
             // This counter is the only signal a presentation layer gets that it
             // must re-resolve what it derives from component data — MeshRenderer's
             // GPU pointers above all.

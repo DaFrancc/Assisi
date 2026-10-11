@@ -29,6 +29,7 @@
 #include <deque>
 #include <memory>
 #include <span>
+#include <unordered_set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -491,6 +492,7 @@ private:
     /// the mirror stops being body-corrected.
     Core::Reflect::ComponentId _colliderComponentId = Core::Reflect::kInvalidComponentId;
     Core::Reflect::ComponentId _characterComponentId = Core::Reflect::kInvalidComponentId;
+    Core::Reflect::ComponentId _transformComponentId = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
 
@@ -515,6 +517,12 @@ private:
     std::unordered_map<ECS::InstanceId, NetId>           _baseByInstanceId;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
+
+    /// The mirrors whose Transform the server sends. Only these are
+    /// interpolated: one whose Transform is kept back is the client's own to
+    /// move, and interpolating it would write an old copy of the client's own
+    /// pose back over it every frame.
+    std::unordered_set<NetId> _sentTransforms;
     std::vector<PendingRef>                              _pendingRefs;
 
     /// Samples kept per entity. Three straddles the render time with one spare

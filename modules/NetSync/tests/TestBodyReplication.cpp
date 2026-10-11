@@ -1110,6 +1110,38 @@ TEST_CASE("a bodied entity that withholds its Transform sends no body state eith
     CHECK(harness.client.Corrections().applied == 0);
 }
 
+TEST_CASE("a mirror whose Transform is not sent keeps the one the client gives it")
+{
+    // A player's camera: sent so it exists on every machine, its Transform kept
+    // back because where it looks is each machine's own. Interpolating it would
+    // write an old copy of the client's own pose back over it every frame, and
+    // its view could never move.
+    PhysicsHarness harness;
+    harness.Step(4);
+
+    const ECS::Entity eye = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(eye, ECS::Transform{});
+    Replicated marker;
+    marker.excluded.Set(OrdinalOfType(typeid(ECS::Transform)));
+    (void)harness.serverScene.Add<Replicated>(eye, marker);
+    harness.Step(10);
+
+    const ECS::Entity mirror = MirrorOf(harness, eye);
+    REQUIRE(mirror != ECS::NullEntity);
+    // The client's own, as a blueprint the client expands itself gives it one.
+    ECS::Transform own;
+    own.rotation = glm::angleAxis(glm::radians(10.f), glm::vec3(1.f, 0.f, 0.f));
+    (void)harness.clientScene.Add<ECS::Transform>(mirror, own);
+    harness.Step(10);
+
+    const glm::quat lookedUp = glm::angleAxis(glm::radians(30.f), glm::vec3(1.f, 0.f, 0.f));
+    harness.clientScene.GetMut<ECS::Transform>(mirror)->rotation = lookedUp;
+    harness.Step(10);
+
+    CHECK(std::abs(glm::dot(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, lookedUp)) ==
+          doctest::Approx(1.f));
+}
+
 TEST_CASE("a walking character arrives on the client simulated, carrying its velocity")
 {
     PhysicsHarness harness;
