@@ -326,6 +326,19 @@ constexpr std::int32_t kWalkBeforeGap = 30;
 /// position crosses the wire rounded to about two millimetres.
 constexpr float kMostDrawnOffFloor = 0.005f;
 
+/// A quarter turn to the left (rad), which faces a character at the start
+/// further along x from one at the start nearer the origin.
+constexpr float kQuarterTurn = 1.5707963f;
+
+/// Closer than this (m), two characters' capsules are pressed together: two
+/// radii and the padding between them, with a little room.
+constexpr float kPressing = 0.7f;
+
+/// The most another player pressing against this one may be drawn above or
+/// below where this machine has it (m): well under the two millimetres a
+/// position is rounded to on the wire.
+constexpr float kMostShakeWhilePressing = 0.0005f;
+
 /// A host and @p client on a floor, a start each for the host to make their
 /// characters at, @p client joined and settled.
 void JoinOnFloor(Session &session, Machine &host, Machine &client)
@@ -689,6 +702,60 @@ TEST_CASE("Every player reaches a client as a whole blueprint, the host's own in
         CAPTURE(entity.index);
         CHECK(client.world.scene.Has<ECS::Transform>(entity));
     }
+}
+
+TEST_CASE("Another player pressing against this one does not tremble up and down with the wire's rounding")
+{
+    // Standing on the floor, the other player's height differs from the host's
+    // only by how a position is rounded to cross the wire. Taken as a correction
+    // every snapshot, that rounding pulled it a millimetre down and the floor
+    // stood it back up: a tremble, most visible while it pushes and barely moves.
+    // The shove itself, sideways, is the host's to resolve and is not this.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    const ECS::Entity clientOwn = LocalPlayerOf(client.world.scene);
+    const ECS::Entity hostOnClient =
+        client.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(hostOwn));
+    REQUIRE(hostOnClient != ECS::NullEntity);
+    REQUIRE(clientOwn != ECS::NullEntity);
+
+    // The host starts beside the client, further along x, and turns to walk at it.
+    bool turned = false;
+    float largestWhilePressing = 0.f;
+    std::int32_t framesPressing = 0;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        if (App::PlayerInput *controls = host.world.scene.GetMut<App::PlayerInput>(hostOwn))
+        {
+            controls->move = {0.f, 1.f};
+            if (!turned)
+            {
+                controls->lookYaw = kQuarterTurn;
+                turned = true;
+            }
+        }
+        const glm::vec3 pusher = client.world.scene.Get<ECS::Transform>(hostOnClient)->position;
+        const glm::vec3 pushed = client.world.scene.Get<ECS::Transform>(clientOwn)->position;
+        if (glm::length(glm::vec2(pusher.x - pushed.x, pusher.z - pushed.z)) < kPressing)
+        {
+            ++framesPressing;
+            if (const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient))
+            {
+                largestWhilePressing = std::max(largestWhilePressing, std::abs(offset->position.y));
+            }
+        }
+    });
+
+    REQUIRE(framesPressing > kLongWalkFrames / 2);
+    CHECK(largestWhilePressing < kMostShakeWhilePressing);
 }
 
 TEST_CASE("Another player walking is drawn at its feet, without bobbing above the floor")

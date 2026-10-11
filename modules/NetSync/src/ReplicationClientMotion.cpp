@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "ReplicationInternal.hpp"
@@ -20,6 +21,28 @@
 
 namespace Assisi::NetSync
 {
+namespace
+{
+
+/// @p received, with each component that lies within one wire step of @p local
+/// replaced by @p local's. The wire cannot tell those two apart, so taking the
+/// received one is only rounding: a body at rest on the floor would be pulled a
+/// millimetre into it every snapshot and stood back up between them, a tremble
+/// with nothing behind it.
+glm::vec3 WithinRoundingKept(glm::vec3 received, glm::vec3 local, float step)
+{
+    for (glm::length_t axis = 0; axis < 3; ++axis)
+    {
+        if (std::abs(received[axis] - local[axis]) <= step)
+        {
+            received[axis] = local[axis];
+        }
+    }
+    return received;
+}
+
+} // namespace
+
 void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
     _bodies.erase(netId);
@@ -144,7 +167,8 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     }
     else
     {
-        _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, state.position},
+        correctedPosition = WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
+        _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
                                   Physics::BodyState{.linearVelocity = state.linearVelocity,
                                                      .angularVelocity = state.angularVelocity,
                                                      .asleep = state.asleep});
@@ -190,7 +214,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     }
 
     record.asleep       = state.asleep;
-    record.restPosition = state.position;
+    record.restPosition = correctedPosition;
     record.restRotation = state.rotation;
 }
 
