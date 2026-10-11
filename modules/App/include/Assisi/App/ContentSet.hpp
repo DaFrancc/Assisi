@@ -18,8 +18,6 @@
 /// to expand any blueprint identically, so a blueprint can be named on the wire
 /// by its index in the sorted list rather than by path.
 
-#include <Assisi/Core/JobSystem.hpp>
-
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -50,9 +48,12 @@ struct ContentSet
 
 /// @brief Scans the asset root and hashes it.
 ///
-/// Blocking, and deliberately not called on the main thread: run it as a job
-/// (Core::Pool::Worker) at the moment hosting or joining starts. It is never
-/// triggered by a level load, so a single-player game never pays for it.
+/// Blocking, and called on the main thread the moment hosting or joining
+/// starts, before the session's first step. It has to be done by then: until a
+/// host holds the list it cannot name a blueprint on the wire, and an instance
+/// spawned in that window, such as the host's own player, would be sent as
+/// loose entities for good. It is never triggered by a level load, so a
+/// single-player game never pays for it.
 ///
 /// Each file is hashed through Core::HashTextFileNormalized, not by raw bytes:
 /// git checks text out as CRLF on Windows, so raw bytes make a Windows checkout
@@ -66,44 +67,5 @@ struct ContentSet
 /// A file that cannot be read is folded in as a zero hash rather than skipped:
 /// skipping it would let two machines with different unreadable files agree.
 [[nodiscard]] ContentSet BuildContentSet();
-
-/// @brief A content-set hash being computed off the main thread, and the poll
-/// that delivers it once.
-///
-/// **Hashing is asynchronous**, and triggered by hosting or joining — never by a
-/// level load, so a single-player game never pays for it. A client that tries to
-/// connect before its scan finishes joins in appearance only: the connection
-/// waits on the hash and completes when it arrives, and the server cannot be
-/// reached without one, so there is no race to lose (§9).
-class ContentSetHashJob
-{
-public:
-    /// @brief Kicks the scan, unless one is already running or has landed.
-    void Start(Core::JobSystem &jobs);
-
-    /// @brief Delivers the scanned set exactly once, the first poll after it
-    /// lands.
-    ///
-    /// The whole set, not just the hash. `paths` is the manifest blueprint
-    /// replication is named by, and it has to be *this* vector rather than one
-    /// rebuilt at install time: a file that changed in between would produce a
-    /// different list, and the index the far side reads would name a different
-    /// file (BlueprintReplication.hpp). Carrying it here is what lets the caller
-    /// hand both halves the list the handshake actually hashed.
-    ///
-    /// @return true (with @p out written) on that one call; false otherwise.
-    bool Poll(ContentSet &out);
-
-    /// @brief Whether a scan has been kicked and not yet delivered.
-    [[nodiscard]] bool IsRunning() const { return _running; }
-
-    /// @brief Forgets any result so the next Start rescans. Call when leaving a
-    /// session: the content on disk may have moved on since.
-    void Reset();
-
-private:
-    Core::Task<ContentSet> _task;
-    bool _running = false;
-};
 
 } // namespace Assisi::App

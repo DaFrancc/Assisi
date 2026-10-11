@@ -164,9 +164,9 @@ public:
     /// A **host** cannot be reached until it has one — every ServerHello is
     /// withheld until then — and a **client** cannot answer one. Both are
     /// deliberate: the two hellos are each sent exactly once, so one sent with a
-    /// placeholder is a join with no correct outcome. Computing the hash is a job
-    /// (App::ContentSetHashJob), so this normally lands a frame or two after
-    /// hosting or joining starts, and whichever side was waiting completes then.
+    /// placeholder is a join with no correct outcome. A host or join sets it
+    /// straight after Host() or Join(), before the session's first step
+    /// (App::ApplyContentSet).
     void SetContentSetHash(std::uint64_t hash);
 
     /// @brief Whether SetContentSetHash has been called on whichever half this

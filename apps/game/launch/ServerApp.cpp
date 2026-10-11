@@ -8,7 +8,6 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -147,10 +146,6 @@ void ServerApp::OnStart()
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
     _session          = std::make_unique<NetSync::NetSession>(_world.scene, &_world.physics, config);
 
-    // Triggered by hosting or joining, never by the level load above: a process
-    // that only simulates has nothing to compare with anybody.
-    _contentSetHash.Start(Jobs());
-
     if (_options.role == ServerRole::Host)
     {
         // What joining clients are told to load. A host with no level file
@@ -184,7 +179,14 @@ void ServerApp::OnStart()
     else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
     {
         RefuseStart();
+        return;
     }
+
+    // Before the first step, on this thread, as the editor does: an instance
+    // spawned before the host could name blueprints on the wire would be sent as
+    // loose entities for good. Hosting or joining scans; simulating alone never
+    // does, having nothing to compare with anybody.
+    Assisi::App::ApplyContentSet(*_session, _world, Assisi::App::BuildContentSet());
 #endif // ASSISI_NETWORKING
 }
 
@@ -284,18 +286,6 @@ void ServerApp::OnFixedUpdate(float dt)
 #if defined(ASSISI_NETWORKING)
     if (_session)
     {
-        // Before Poll, so a hello that has been waiting on the scan goes out on
-        // the same tick the scan finished rather than the next one.
-        if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
-        {
-            Assisi::Core::Log::Info("Content set hashed: {} ({} files).", Assisi::Core::ToHex64(content.hash),
-                                    content.paths.size());
-            // The same call the windowed path makes, for the same reason: a
-            // dedicated server is where instances most want to arrive as
-            // instances. Nothing here is presentation.
-            Assisi::App::ApplyContentSet(*_session, _world, std::move(content));
-        }
-
         _session->Poll();
 
         // The handshake named a level; build it before answering. Nothing here

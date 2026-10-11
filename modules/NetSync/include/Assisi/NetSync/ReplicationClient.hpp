@@ -96,9 +96,7 @@ public:
     ///
     /// **The `ClientHello` is withheld until this is set.** The hello is sent
     /// exactly once and never resent, so one carrying a placeholder hash is a
-    /// refused join no retry can fix. Computing the hash is a job, so a client
-    /// that connects before its scan finishes joins in appearance only, and
-    /// completes when the hash arrives.
+    /// refused join no retry can fix.
     void SetContentSetHash(std::uint64_t hash);
 
     /// @brief Whether the content-set hash has been supplied.

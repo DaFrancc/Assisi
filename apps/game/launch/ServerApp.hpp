@@ -117,11 +117,6 @@ private:
     /// instances should arrive as instances rather than as loose entities.
     Assisi::App::World _world;
 
-    /// The content-set scan, kicked when this process starts hosting or joining.
-    /// Until it lands a host sends no ServerHello and a client sends no
-    /// ClientHello — see NetSession::SetContentSetHash.
-    Assisi::App::ContentSetHashJob _contentSetHash;
-
     /// Constructed only in a networked role, so offline mode never initializes
     /// GameNetworkingSockets — and without networking built there is no such
     /// role, so the member goes too. Offline headless simulation still works.

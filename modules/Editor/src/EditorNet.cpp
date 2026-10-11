@@ -353,18 +353,6 @@ void EditorApp::PollNetSession(float dt)
     if (!_netSession)
         return;
 
-    // Before Poll, so a hello that has been waiting on the scan goes out on the
-    // same frame it landed.
-    if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
-    {
-        Assisi::Core::Log::Info("Editor: content set hashed ({}, {} files).", Assisi::Core::ToHex64(content.hash),
-                                content.paths.size());
-        // Here rather than at Host/Join, because this is where the list the
-        // handshake hashed exists. The same call the headless path makes.
-        if (_world != nullptr)
-            Assisi::App::ApplyContentSet(*_netSession, *_world, std::move(content));
-    }
-
     _netSession->Poll();
 
     // Straight after the poll, whether or not anything steps: the session's
@@ -396,11 +384,6 @@ void EditorApp::PollNetSession(float dt)
             _pendingJoinBuild = true;
             return;
         }
-
-        // The timeout clock only runs once both sides can answer: a first scan of
-        // a large asset tree is not a dead host, but timing out on it reads as one.
-        if (!_netSession->HasContentSetHash())
-            return;
 
         _joinElapsed += dt;
         if (_joinElapsed >= kJoinTimeoutSeconds)

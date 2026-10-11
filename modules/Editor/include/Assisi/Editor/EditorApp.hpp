@@ -1568,11 +1568,6 @@ class EditorApp : public Assisi::App::Application
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
 
-    /// The content-set scan, kicked when a session starts. Until it lands, a host
-    /// sends no ServerHello and a client sends no ClientHello, and the join
-    /// timeout does not run — a first scan of a large asset tree is not a dead
-    /// host, and timing out on it would read as one.
-    Assisi::App::ContentSetHashJob _contentSetHash;
     /// Seconds spent waiting for a host's ServerHello. A join that never gets
     /// one would otherwise sit in Play forever with an empty world and no
     /// explanation.

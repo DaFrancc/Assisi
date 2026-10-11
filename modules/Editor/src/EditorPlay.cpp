@@ -13,6 +13,8 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #if defined(ASSISI_NETWORKING)
+#include <Assisi/App/BlueprintReplication.hpp>
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
@@ -204,12 +206,6 @@ void EditorApp::StartPlay(NetIntent intent)
         _playerSession.Attach(*_netSession, *_world);
     }
 
-    // Triggered by hosting or joining, never by a level load: pressing Play alone
-    // hashes nothing. Rescanned each time, because the content on disk may have
-    // moved on since the last session.
-    _contentSetHash.Reset();
-    _contentSetHash.Start(Jobs());
-
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
@@ -231,6 +227,15 @@ void EditorApp::StartPlay(NetIntent intent)
         _netSession.reset();
         StopPlay();
         return;
+    }
+
+    // Before the session's first step, on this thread: a host that spawned its
+    // own player before it could name blueprints on the wire would send that
+    // player as loose entities for good. Scanned on every Host or Join, never on
+    // Play alone, because the content on disk may have moved on since.
+    if (_world != nullptr)
+    {
+        Assisi::App::ApplyContentSet(*_netSession, *_world, Assisi::App::BuildContentSet());
     }
 
     _netError.clear();
