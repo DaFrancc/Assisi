@@ -101,6 +101,13 @@ The 2 cm is `predictionTolerance` in `assets/config/network.json`. The editor's
 network panel counts how many of the host's answers were kept and how many were
 replayed. On a quiet level, almost all of them should be kept.
 
+Every machine runs the level's systems, and every machine numbers its steps the
+host's way: `ctx.simTick` is the same on every machine for the same step. A
+client runs a little ahead of the host, so its step 500 happens slightly before
+the host's, but a system that works from the tick alone, like `Oscillate`, puts
+things in the same place on both. A client's tick jumps once, when it first
+hears from the host.
+
 ## Running a dedicated server
 
 The editor binary can also run as a server with no window:
@@ -115,6 +122,10 @@ The editor binary can also run as a server with no window:
 
 `--connect` takes an IP address, not a host name. `--server` runs the same
 headless simulation with no networking at all.
+
+A headless process runs the level's `Begin`, `Loaded`, `FixedUpdate` and
+`PostFixedUpdate` systems. It has no frames to draw, so `Update` systems don't
+run.
 
 Remember the first rule from [Input](input.md): on a server there's no keyboard
 or mouse, so `ctx.input` is `nullptr`.
