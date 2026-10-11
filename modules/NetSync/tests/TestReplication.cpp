@@ -365,7 +365,7 @@ TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire
     CHECK(harness.client.SnapshotsRejected() == 0);
 }
 
-TEST_CASE("a replicable component with only transient fields arrives by presence alone")
+TEST_CASE("a replicable component with no fields arrives by presence alone")
 {
     Harness harness;
     harness.Step(4);
@@ -422,7 +422,7 @@ TEST_CASE("a norep field still round-trips to disk")
 {
     // norep is a *wire* exclusion, not a serialization one. The JSON codec is
     // untouched, which is what makes it usable for authored server-side data
-    // rather than only for runtime scratch (that is what transient is for).
+    // rather than only for runtime scratch (which is not reflected at all).
     const Core::Reflect::ComponentMeta *meta =
         Core::Reflect::ComponentRegistry::Instance().ById(
             Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Test::Health)));

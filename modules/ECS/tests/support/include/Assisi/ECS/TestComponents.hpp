@@ -143,7 +143,7 @@ struct Line
     AFIELD() Core::PooledString text;
     AFIELD() std::array<uint8_t, 2> marks {};
     AFIELD() Tone tone = Tone::Plain;
-    AFIELD(transient) float scratch = 0.f;
+    float scratch = 0.f;
 };
 
 /// @brief Structs held every way a component can hold one: alone, in a list,

@@ -2,7 +2,7 @@
 #pragma once
 
 // Fixture header for reflectgen's golden tests. Exercises the scalar, glm,
-// enum, AssetPath/ShortString and path-vector field types, a transient field, a
+// enum, AssetPath/ShortString and path-vector field types, an unannotated member, a
 // tracked (change-detection) component, a replicable component with a norep
 // field, an empty component, requires/excludes rules, namespaced components, comment stripping,
 // nested-brace initializers, and EntityRef include emission. AssetId,
@@ -65,7 +65,7 @@ struct SampleAllTypes
     AFIELD() Assisi::Core::AssetPath assetPath; // fixed-capacity path, serialized as a string
     AFIELD() Assisi::Core::ShortString label; // fixed-capacity name, serialized as a string
     AFIELD() std::vector<Assisi::Core::AssetPath> paths; // list of paths -> JSON string array
-    AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
+    float runtimeCache = 0.0f; // no AFIELD: must not appear anywhere in the output
 };
 
 // Distinct component to prove the EntityRef include is emitted once an

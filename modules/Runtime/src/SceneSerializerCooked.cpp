@@ -55,7 +55,7 @@ bool IsCodecLossless(const Core::Reflect::ComponentMeta &meta)
 {
     for (const Core::Reflect::FieldMeta &field : meta.fields)
     {
-        if (field.norep && !field.transient)
+        if (field.norep)
         {
             return false;
         }

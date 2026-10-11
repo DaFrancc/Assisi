@@ -59,7 +59,7 @@ using ECS::Transform;
 ///     list of `.amat` GUIDs: entry `i` overrides slot `i`; a nil or absent
 ///     entry means "use the material the mesh imported for that slot". Shorter
 ///     than the mesh's slot count is fine.
-///   - `meshBuffer` / `materials` are **transient** non-owning pointers resolved
+///   - `meshBuffer` / `materials` are unreflected non-owning pointers resolved
 ///     from those GUIDs by the asset cache at load time; the referenced GPU
 ///     resources must outlive the component. `materials` holds one resolved
 ///     Material per mesh slot (override or mesh default); a slot with no entry
@@ -90,8 +90,8 @@ struct MeshRenderer
     /// its owner too. A mesh in no instance, or a camera in none, is drawn.
     AFIELD() bool hiddenFromOwnCamera = false;
 
-    AFIELD(transient) const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
-    AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
+    const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
+    std::vector<const Assisi::Render::Material *> materials;
 };
 
 /// @brief The SkinnedMesh::boundMeshId of a component no skeleton is bound to.
@@ -119,15 +119,15 @@ inline constexpr uint32_t kUnboundMesh = 0;
 ACOMP(replicable, requires = {MeshRenderer})
 struct SkinnedMesh
 {
-    AFIELD(transient) Assisi::Render::MeshBuffer posed;
-    AFIELD(transient) std::vector<Geometry::JointTransform> pose;
-    AFIELD(transient) std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
-    AFIELD(transient) std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
-    AFIELD(transient) uint64_t paletteHash = 0; ///< Of `palette`'s bytes; 0 before the first evaluation.
-    AFIELD(transient) uint32_t boundMeshId = kUnboundMesh; ///< The MeshBuffer::Id the vectors are sized for.
+    Assisi::Render::MeshBuffer posed;
+    std::vector<Geometry::JointTransform> pose;
+    std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
+    std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
+    uint64_t paletteHash = 0; ///< Of `palette`'s bytes; 0 before the first evaluation.
+    uint32_t boundMeshId = kUnboundMesh; ///< The MeshBuffer::Id the vectors are sized for.
     /// Whether the last evaluation changed the palette, which moves the mesh's
     /// shadow though its transform stays where it was.
-    AFIELD(transient) bool poseChanged = false;
+    bool poseChanged = false;
 };
 
 /// @brief What plays one animation, the base's or a layer's: the clips it
@@ -244,12 +244,12 @@ struct LayerState
 ACOMP(replicable, requires = {SkinnedMesh})
 struct AnimationPlayer
 {
-    AFIELD(transient) AnimationTrack track; ///< What `animation` plays.
-    AFIELD(transient) std::vector<LayerState> layerStates; ///< One per layer, in order.
+    AnimationTrack track; ///< What `animation` plays.
+    std::vector<LayerState> layerStates; ///< One per layer, in order.
     /// The pose as the base left it last frame, before the layers wrote over
     /// it: what a joint a layer took goes back to before the base plays again,
     /// so no layer builds on what it wrote itself.
-    AFIELD(transient) std::vector<Geometry::JointTransform> underLayers;
+    std::vector<Geometry::JointTransform> underLayers;
     AFIELD() std::vector<AnimationLayer> layers;
     AFIELD() Core::AssetId animation;
     AFIELD() glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
@@ -296,7 +296,7 @@ struct AnimatorRun
 ACOMP(replicable, requires = {AnimationPlayer})
 struct Animator
 {
-    AFIELD(transient) AnimatorRun run;
+    AnimatorRun run;
     AFIELD() std::vector<ClipBinding> clips;
     AFIELD() Core::AssetId machine;
 };

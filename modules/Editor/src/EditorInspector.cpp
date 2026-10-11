@@ -783,10 +783,6 @@ bool EditorApp::EditStructFields(void *object, const Assisi::Core::Reflect::Stru
     for (std::size_t fieldIndex = 0; fieldIndex < spec.fields.size(); ++fieldIndex)
     {
         const FieldMeta &field = spec.fields[fieldIndex];
-        if (field.transient)
-        {
-            continue;
-        }
 
         // Bounds and radio name siblings in the struct itself, which is where
         // reflectgen resolved them.
@@ -1030,8 +1026,6 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
     for (std::size_t fieldIndex = 0; fieldIndex < meta.fields.size(); ++fieldIndex)
     {
         const FieldMeta &field = meta.fields[fieldIndex];
-        if (field.transient)
-            continue;
         anyEditable = true;
 
         // Hide or grey an AFIELD(radio) listener whose sibling enum is not at one

@@ -215,7 +215,10 @@ Put these inside `AFIELD(...)`:
 | Option | What it does |
 |---|---|
 | `min = 0`, `max = 10` | Limits the value in the editor. A bound can also name another field: `max = outerAngle`. |
-| `transient` | Not saved to the level. For values you compute at runtime. |
+
+A value you compute at runtime and never want saved, like a cache, is a plain
+member with no `AFIELD` at all. An option the list doesn't have fails the build,
+so a typo can't quietly do nothing.
 
 And inside `ACOMP(...)`:
 

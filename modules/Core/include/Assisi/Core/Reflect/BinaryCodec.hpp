@@ -15,10 +15,9 @@
 /// @code
 ///   [ ComponentId varint ][ field-changed bitmask ][ payloads of set fields ]
 /// @endcode
-/// The bitmask carries exactly one bit per *wire* field — non-transient and
-/// non-`norep`, in declaration order — so its width is part of the protocol
-/// hash, and a field flipping to `transient` or `norep` is a protocol change,
-/// correctly.
+/// The bitmask carries exactly one bit per *wire* field — every field but a
+/// `norep` one, in declaration order — so its width is part of the protocol
+/// hash, and a field flipping to `norep` is a protocol change, correctly.
 ///
 /// **There is no separate "full snapshot" format.** Full state is a delta against
 /// the empty baseline: pass `kAllFields`. That is the Quake 3 unification — spawn,
@@ -69,13 +68,12 @@ using FieldMask = std::uint64_t;
 
 /// @brief Whether @p field occupies a slot in the wire's field mask.
 ///
-/// Two exclusions, for two different reasons: `transient` fields are runtime-only
-/// and serialize nowhere, `norep` fields serialize to disk but never to the
-/// network (see FieldMeta::norep). Both shift every later codec index, which is
-/// why both are folded into the protocol hash.
+/// A `norep` field serializes to disk but never to the network (see
+/// FieldMeta::norep). Leaving one out shifts every later codec index, which is
+/// why it is folded into the protocol hash.
 [[nodiscard]] constexpr bool IsWireField(const FieldMeta &field)
 {
-    return !field.transient && !field.norep;
+    return !field.norep;
 }
 
 /// @brief Every field set — a full-state block (a delta against the empty
@@ -245,17 +243,9 @@ bool SkipMessageBody(BitReader &reader);
 // way to write the same file — which would cost the byte-identical output the
 // cook depends on.
 //
-// The field filter is `transient` alone. `IsWireField` also drops `norep`, which
-// means "to disk but never to the network" — exactly backwards here, where the
-// destination *is* disk. Nothing can currently declare one (reflectgen rejects
-// AFIELD(norep) outside a replicable component, and an asset type cannot be
-// replicable), so this is the filter that stays correct if that ever changes.
-
-/// @brief Whether @p field is encoded into a cooked asset block.
-[[nodiscard]] constexpr bool IsAssetField(const FieldMeta &field)
-{
-    return !field.transient;
-}
+// Every field is encoded. `IsWireField` drops `norep`, which means "to disk but
+// never to the network" — exactly backwards here, where the destination *is*
+// disk.
 
 /// @brief The canonical layout text for one asset type: its name, then every
 /// encoded field's index, name, type and quantization.
@@ -300,15 +290,15 @@ bool ReadAsset(const AssetTypeMeta &meta, void *instance, BitReader &reader);
 // mismatch is called.
 
 /// @brief The canonical layout text for one struct: its name, then every
-/// non-transient field, with nested structs' fields indented beneath the field
-/// that holds them.
+/// field, with nested structs' fields indented beneath the field that holds
+/// them.
 [[nodiscard]] std::string StructLayoutDescription(const StructSpec &spec);
 
 /// @brief FNV-1a 64 of StructLayoutDescription. Moves when any field anywhere
 /// beneath the struct is added, removed, renamed, retyped or reordered.
 [[nodiscard]] std::uint64_t StructLayoutHash(const StructSpec &spec);
 
-/// @brief Writes every non-transient field of @p instance, nested structs and
+/// @brief Writes every field of @p instance, nested structs and
 /// containers included, in declaration order.
 ///
 /// @return false if a field's type cannot be encoded — loud, as WriteAsset is.

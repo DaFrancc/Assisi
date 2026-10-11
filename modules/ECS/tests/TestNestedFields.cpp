@@ -59,7 +59,8 @@ void CheckLine(const ECS::Poem &read, const ECS::Line &line, std::string_view te
     CHECK(read.pool.View(line.text) == text);
     CHECK(line.marks == std::array<uint8_t, 2>{3, 9});
     CHECK(line.tone == tone);
-    // Transient inside a struct, as on a component: carried by neither codec.
+    // A member with no AFIELD inside a struct, as on a component: carried by
+    // neither codec.
     CHECK(line.scratch == 0.f);
 }
 
@@ -137,7 +138,8 @@ TEST_CASE("A generated struct's table is reached from hand-written code")
     const Core::Reflect::StructSpec *line = Core::Reflect::StructTraits<ECS::Line>::Spec();
     REQUIRE(line != nullptr);
     CHECK(line->name == "Line");
-    CHECK(line->fields.size() == 4);
+    // text, marks and tone; `scratch` has no AFIELD.
+    CHECK(line->fields.size() == 3);
 
     // A field of a nested struct is part of the component's protocol text.
     const std::string text = Core::Reflect::ProtocolLayoutDescription(std::span{&PoemMeta(), 1});

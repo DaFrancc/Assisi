@@ -5,7 +5,9 @@
 /// @brief Marker macros consumed by reflectgen and compiled away at build time.
 ///
 /// ACOMP(...)  — marks a struct as a reflected component.
-/// AFIELD(...) — marks a field for reflection and serialization.
+/// AFIELD(...) — marks a field for reflection and serialization. A member that
+///               is never saved or sent — a cache, a resolved pointer — has no
+///               AFIELD at all.
 ///
 /// Both accept a comma-separated list of flags and key=value pairs:
 ///   ACOMP()
@@ -15,7 +17,6 @@
 ///   ACOMP(requires = {A, B})     -- adding it adds A and B with defaults if absent
 ///   ACOMP(excludes = {C})        -- it and C cannot share an entity
 ///   AFIELD()
-///   AFIELD(transient)            -- excluded from serialization
 ///   AFIELD(norep)                -- saved to disk, never sent over the network
 ///   AFIELD(min=0.0, max=100.0)   -- editor clamp hints
 ///
@@ -79,9 +80,8 @@
 /// ECS::Scene enforces the rules on every add and remove.
 ///
 /// reflectgen hard-fails on ACOMP(replicable, transient) (nothing to encode), on
-/// AASSET(replicable) (assets are not entities), on AFIELD(transient, norep)
-/// (redundant), and on AFIELD(norep) in a component that is not replicable (the
-/// annotation would mean nothing).
+/// AASSET(replicable) (assets are not entities), and on AFIELD(norep) in a
+/// component that is not replicable (the annotation would mean nothing).
 ///
 /// Radio (declarative editor visibility driven by a sibling field's value):
 ///   AFIELD(radioBroadcast)       -- marks an AENUM enum or bool field as a broadcaster
@@ -176,9 +176,8 @@
 /// Addressing is *data*: a message about an entity carries a NetId field, rather
 /// than being "called on" anything. See Assisi/Core/Reflect/MessageMeta.hpp.
 ///
-/// reflectgen hard-fails on AFIELD(norep) and AFIELD(transient) inside an AMSG —
-/// a message exists only to cross the wire, so a field that never crosses it
-/// does nothing, and there is no persistent form to be excluded from.
+/// reflectgen hard-fails on AFIELD(norep) inside an AMSG — a message exists
+/// only to cross the wire, so a field that never crosses it does nothing.
 #define AMSG(...)
 
 /// AMSG_HANDLER() — marks a declaration as the handler for one message type.

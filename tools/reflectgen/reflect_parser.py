@@ -294,7 +294,7 @@ def parse_annot_args(content: str, where: str) -> AnnotArgs:
 # Every argument each annotation accepts: bare flags, and keys written
 # `key = value`. ACOMP and AASSET share a set: the combinations that mean
 # nothing for an asset are refused later, each with its own reason.
-_AFIELD_FLAGS = frozenset({'norep', 'transient', 'subject', 'controlled', 'radioBroadcast'})
+_AFIELD_FLAGS = frozenset({'norep', 'subject', 'controlled', 'radioBroadcast'})
 _AFIELD_KEYS  = frozenset({'min', 'max', 'radioListen', 'bitmask'})
 _ACOMP_FLAGS  = frozenset({'replicable', 'tracked', 'transient'})
 _ACOMP_KEYS   = frozenset({'requires', 'excludes'})
@@ -1511,12 +1511,9 @@ def _resolve_struct_fields(fields: list, structs: _StructScope) -> None:
 
     A spelling already in TYPES keeps its own enumerator, so the AssetPath and
     AssetId vectors are untouched by this and their wire format does not move.
-    A transient field serializes nowhere, so it needs no descriptor — and it is
-    the one place a container of something unreflectable is legal, like the
-    resolved material pointers a MeshRenderer caches.
     """
     for f in fields:
-        if f.args.has('transient') or f.cpp_type in TYPES:
+        if f.cpp_type in TYPES:
             continue
         f.container = split_container(f.cpp_type)
         if f.container is not None:

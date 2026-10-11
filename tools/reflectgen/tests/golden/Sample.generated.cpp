@@ -46,7 +46,6 @@ static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllT
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::assetPath)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::label)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::paths)>);
-static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::runtimeCache)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRef::target)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleTransient::ignored)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::mode)>);
@@ -173,8 +172,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { .name = "m", .type = Assisi::Core::Reflect::FieldType::Mat4, .offset = offsetof(T, m) },
             { .name = "assetPath", .type = Assisi::Core::Reflect::FieldType::AssetPath, .offset = offsetof(T, assetPath) },
             { .name = "label", .type = Assisi::Core::Reflect::FieldType::String, .offset = offsetof(T, label) },
-            { .name = "paths", .type = Assisi::Core::Reflect::FieldType::AssetPathVector, .offset = offsetof(T, paths) },
-            { .name = "runtimeCache", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, runtimeCache), .transient = true }
+            { .name = "paths", .type = Assisi::Core::Reflect::FieldType::AssetPathVector, .offset = offsetof(T, paths) }
         },
         .typeIndex = typeid(T),
         .tracksChanges = true

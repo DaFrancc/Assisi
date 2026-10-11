@@ -345,12 +345,12 @@ namespace
 {
 
 /// A value struct as reflectgen would describe it: a float, an enum, and a
-/// transient field no codec may carry.
+/// member with no field entry, which no codec may carry.
 struct Inner
 {
     float weight = 0.f;
     Colour colour = Colour::Red;
-    float scratch = 0.f; ///< transient
+    float scratch = 0.f; ///< Not a field.
 
     bool operator==(const Inner &) const = default;
 };
@@ -393,12 +393,6 @@ const StructSpec &InnerSpec(bool renamed = false)
         weight.offset = OffsetOf(&Inner::weight);
         built.fields.push_back(weight);
         built.fields.push_back(ColourField("colour", OffsetOf(&Inner::colour), FieldMeta{.type = FieldType::Enum}));
-        FieldMeta scratch;
-        scratch.name = "scratch";
-        scratch.type = FieldType::Float;
-        scratch.offset = OffsetOf(&Inner::scratch);
-        scratch.transient = true;
-        built.fields.push_back(scratch);
         return built;
     }();
     static const StructSpec other = []
@@ -481,8 +475,8 @@ TEST_CASE("ContainerCodec: a struct round-trips alone, in a vector and in an arr
     REQUIRE(ReadComponent(meta, &decoded, reader));
     REQUIRE(reader.Ok());
 
-    // The transient field inside the struct stays behind, as one on the
-    // component itself would.
+    // The member with no field entry stays behind, as one on the component
+    // itself would.
     source.single.scratch = 0.f;
     CHECK(SameNested(decoded, source));
 }
@@ -521,7 +515,7 @@ TEST_CASE("ContainerCodec: a nested struct's fields are in the layout text")
     CHECK(text.find("grid array<array<i16,3>,2>") != std::string::npos);
     CHECK(text.find("weight f32") != std::string::npos);
     CHECK(text.find("Green=7") != std::string::npos);
-    CHECK(text.find("scratch") == std::string::npos); // transient
+    CHECK(text.find("scratch") == std::string::npos); // not a field
 
     // Renaming a field inside the struct is a protocol change, though nothing
     // on the component itself moved.

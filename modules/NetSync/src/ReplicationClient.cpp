@@ -859,7 +859,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             std::size_t site = 0;
             for (const Core::Reflect::FieldMeta &field : meta->fields)
             {
-                if (field.transient || field.type != Core::Reflect::FieldType::EntityRef)
+                if (field.type != Core::Reflect::FieldType::EntityRef)
                     continue;
                 if (site >= refSites.size())
                     break;

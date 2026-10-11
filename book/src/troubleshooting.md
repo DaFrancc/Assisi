@@ -51,7 +51,7 @@ rebuilt the editor.
 Same checks as above, with `ACOMP()` instead of `ASYSTEM`.
 
 **My component's field isn't in the inspector, or isn't saved.**
-It's missing `AFIELD()`, or it's marked `AFIELD(transient)`.
+It's missing `AFIELD()`.
 
 **I change an object's position in code, but it doesn't move.**
 You're writing through `Get`. Use `GetMut`, or ask the query for `Mut<T>`. See

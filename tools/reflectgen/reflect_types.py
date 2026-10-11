@@ -345,7 +345,7 @@ _COMPONENT_MASK_TYPES = {
 # codec, which an asset's home module (e.g. Geometry) does not link. Forbid it.
 _ENTITY_REF_TYPES = {'ECS::Entity', 'Assisi::ECS::Entity'}
 
-# reflectgen is default-deny: any non-transient AFIELD whose type is not in
+# reflectgen is default-deny: any AFIELD whose type is not in
 # TYPES is a hard generation error (see _check_unsupported), because emitting a
 # stub that silently drops that field on every save is worse than failing the
 # build. This dict is optional colour on that failure: a known-unsupported type

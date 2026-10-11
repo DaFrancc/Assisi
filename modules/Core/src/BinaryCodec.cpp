@@ -290,10 +290,6 @@ std::size_t MinStructBits(const StructSpec &spec)
     std::size_t bits = 0;
     for (const FieldMeta &field : spec.fields)
     {
-        if (field.transient)
-        {
-            continue;
-        }
         // An array's elements are all there, so they count; a growing
         // container's count prefix is its floor, which MinWireBits gives.
         const ContainerSpec *array = field.type == FieldType::Array ? field.container : nullptr;
@@ -353,17 +349,13 @@ FieldMeta ElementMeta(const FieldMeta &field, const ContainerSpec &spec, bool ke
 bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &writer, const CodecContext *context);
 bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, const CodecContext *context);
 
-/// Every field of an ASTRUCT at @p address, in order. Only `transient` is
-/// skipped: a struct's fields are one value, and reflectgen refuses `norep`
-/// inside one, so the wire and a cooked file carry the same fields.
+/// Every field of an ASTRUCT at @p address, in order. A struct's fields are one
+/// value, and reflectgen refuses `norep` inside one, so the wire and a cooked
+/// file carry the same fields.
 bool WriteStructFields(const StructSpec &spec, const std::byte *address, BitWriter &writer, const CodecContext *context)
 {
     for (const FieldMeta &field : spec.fields)
     {
-        if (field.transient)
-        {
-            continue;
-        }
         if (!WriteField(field, address + field.offset, writer, context))
         {
             return false;
@@ -378,10 +370,6 @@ bool ReadStructFields(const StructSpec &spec, std::byte *address, BitReader &rea
 {
     for (const FieldMeta &field : spec.fields)
     {
-        if (field.transient)
-        {
-            continue;
-        }
         if (!ReadField(field, address + field.offset, reader, context))
         {
             return false;
@@ -1091,8 +1079,14 @@ FieldType LeafElementType(const FieldMeta &field)
 /// between the two would let a field type change be a protocol change on one
 /// side of the wire and not the other.
 /// Whether a field belongs in the layout text, which differs between the wire
-/// and a cooked asset — see IsAssetField.
+/// and a cooked asset — see IsWireField.
 using FieldFilter = bool (*)(const FieldMeta &);
+
+/// The cooked-asset filter: a document holds every field.
+constexpr bool IsAssetField(const FieldMeta &)
+{
+    return true;
+}
 
 /// How far one level of struct nesting indents its fields in the layout text.
 constexpr std::string_view kNestIndent = "  ";
@@ -1465,9 +1459,6 @@ bool WriteAsset(const AssetTypeMeta &meta, const void *instance, BitWriter &writ
 
     for (const FieldMeta &field : meta.fields)
     {
-        if (!IsAssetField(field))
-            continue;
-
         if (!WriteField(field, FieldAddress(instance, field.offset), writer, nullptr))
         {
             // Refused rather than skipped, as WriteComponent does: a field left
@@ -1501,9 +1492,6 @@ bool ReadAsset(const AssetTypeMeta &meta, void *instance, BitReader &reader)
 
     for (const FieldMeta &field : meta.fields)
     {
-        if (!IsAssetField(field))
-            continue;
-
         if (!ReadField(field, FieldAddress(instance, field.offset), reader, nullptr))
         {
             Log::Error("BinaryCodec: cannot decode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
@@ -1545,9 +1533,9 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
         text += meta.replicable ? " replicated" : " local";
         text += '\n';
 
-        // Only wire fields, and their codec index — so making a field transient
-        // or norep shifts every later index and changes the hash, which is
-        // correct: it changes the mask width and the payload order.
+        // Only wire fields, and their codec index — so making a field norep
+        // shifts every later index and changes the hash, which is correct: it
+        // changes the mask width and the payload order.
         AppendFields(text, meta.fields, IsWireField);
     }
     return text;

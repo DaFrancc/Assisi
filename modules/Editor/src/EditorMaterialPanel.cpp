@@ -626,9 +626,6 @@ void EditorApp::DrawMaterialEditor()
     bool channelsChanged = false;
     for (const Assisi::Core::Reflect::FieldMeta &field : meta->fields)
     {
-        if (field.transient)
-            continue;
-
         void *fp = reinterpret_cast<char *>(&_materialEditorData) + field.offset;
         ImGui::PushID(field.name.c_str());
 

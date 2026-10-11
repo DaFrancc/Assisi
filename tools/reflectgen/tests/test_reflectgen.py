@@ -7,7 +7,7 @@ code. These tests defend it against silent regex regressions: a checked-in
 golden output for a fixture header covering the scalar, glm, enum, string and
 path field types plus the annotation edge cases, and targeted behavioural cases
 for everything the fixture does not reach (comment stripping, namespace capture,
-transient exclusion, the unsupported-type hard fail, EntityRef include emission,
+unannotated members, the unsupported-type hard fail, EntityRef include emission,
 AssetId, messages, handlers, systems).
 
 Run directly (`python test_reflectgen.py`) or via ctest. To adopt a deliberate
@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # tools/reflectgen (so `import reflectgen` works)
 
 import reflectgen  # noqa: E402
+import reflect_codegen  # noqa: E402
 import reflect_parser  # noqa: E402
 
 FIXTURES = HERE / "fixtures"
@@ -105,24 +106,20 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(fields["paths"], "std::vector<Assisi::Core::AssetPath>")
         self.assertEqual(self.by_name["SampleRef"].fields[0].cpp_type, "ECS::Entity")
 
-    def test_transient_flag_is_captured(self):
-        fields = {f.name: f for f in self.by_name["SampleAllTypes"].fields}
-        self.assertTrue(fields["runtimeCache"].args.has("transient"))
-        self.assertFalse(fields["f"].args.has("transient"))
+    def test_a_member_without_afield_is_not_a_field(self):
+        fields = {f.name for f in self.by_name["SampleAllTypes"].fields}
+        self.assertNotIn("runtimeCache", fields)
+        self.assertIn("f", fields)
 
     def test_empty_component_has_no_fields(self):
         self.assertEqual(self.by_name["SampleEmpty"].fields, [])
 
 
 class CodegenTest(unittest.TestCase):
-    def test_transient_field_is_excluded_from_serialization(self):
+    def test_a_member_without_afield_is_never_serialized(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
-        # It appears in the field-metadata table (marked transient=true)...
-        self.assertIn('"runtimeCache", .type = Assisi::Core::Reflect::FieldType::Float', cpp)
-        # ...but never in the serialize/deserialize bodies.
-        self.assertNotIn("c.runtimeCache", cpp)
-        self.assertNotIn("comp.runtimeCache", cpp)
+        self.assertNotIn("runtimeCache", cpp)
 
     def test_asset_path_vector_serializes_as_a_string_array(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
@@ -507,25 +504,18 @@ class ParserEdgeCaseTest(unittest.TestCase):
         fields = [f.name for f in components[0].fields]
         self.assertEqual(fields, ["a"])  # 'z' and 'nested' are not AFIELD
 
-    def test_pointer_field_marked_transient_is_stripped_and_excluded(self):
+    def test_a_pointer_field_has_its_star_stripped(self):
         components = _parse_source(
             "namespace N {\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) Foo* cache = nullptr; AFIELD() int32_t a = 0; };\n"
+            "struct C { AFIELD() Foo* cache = nullptr; AFIELD() int32_t a = 0; };\n"
             "}\n"
         )
         cache = next(f for f in components[0].fields if f.name == "cache")
-        self.assertEqual(cache.cpp_type, "Foo")  # '*' stripped
-        self.assertTrue(cache.args.has("transient"))
-
-        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        # In the metadata table (unknown type, transient), but never (de)serialized.
-        self.assertIn(".offset = offsetof(T, cache), .transient = true", cpp)
-        self.assertNotIn("c.cache", cpp)
-        self.assertNotIn("comp.cache", cpp)
+        self.assertEqual(cache.cpp_type, "Foo")
 
     def test_unknown_type_is_a_hard_error(self):
-        # reflectgen is default-deny: a non-transient field whose type is in
+        # reflectgen is default-deny: a field whose type is in
         # neither TYPES nor anything else is a hard generation error, not a
         # silent skip — a skipped field drops on every save. Both the standalone
         # check and generate_cpp (which enforces it) must raise.
@@ -537,16 +527,6 @@ class ParserEdgeCaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             reflectgen.generate_cpp(components, "N/C.hpp")
 
-    def test_transient_unknown_type_is_still_allowed(self):
-        # Transient fields are never serialized, so an unknown type is fine.
-        components = _parse_source(
-            "namespace N {\nACOMP()\n"
-            "struct C { AFIELD(transient) SomeType data = {}; AFIELD() int32_t a = 0; };\n}\n"
-        )
-        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
-        self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)  # in the meta table
-        self.assertNotIn("c.data", cpp)  # but never (de)serialized
-
     def test_an_instance_view_field_is_a_hard_error(self):
         # A stored view is a member list that goes stale — the failure the
         # blueprint design exists to prevent, so this has no escape hatch.
@@ -557,19 +537,6 @@ class ParserEdgeCaseTest(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(components, "N/C.hpp")
         self.assertIn("may not hold an InstanceView", str(caught.exception))
-
-    def test_a_transient_instance_view_field_is_still_a_hard_error(self):
-        # A field spelling InstanceView<> outright, marked AFIELD(transient):
-        # generate_cpp still raises. The spelling is literal, so the plain
-        # substring check is what fires; the exception is not matched, so this
-        # does not pin *which* check refused it.
-        components = _parse_source(
-            "namespace N {\nACOMP()\n"
-            "struct C { AFIELD(transient) InstanceView<Car> car = {}; "
-            "AFIELD() int32_t a = 0; };\n}\n"
-        )
-        with self.assertRaises(ValueError):
-            reflectgen.generate_cpp(components, "N/C.hpp")
 
     def test_an_instance_id_field_is_the_supported_way(self):
         # The id is what may be kept, so the ban above has a legal alternative to
@@ -587,9 +554,9 @@ class InstanceViewStorageBanTest(unittest.TestCase):
     """The ban is on *storing a view*, not on spelling one.
 
     Every spelling of the same type is refused — an alias, an alias of an alias,
-    a struct that holds one — and neither `AFIELD(transient)` nor
-    `ACOMP(transient)` is a way through, though both excuse an unknown type at
-    the serialization check.
+    a struct that holds one — and `ACOMP(transient)` is no way through, though
+    it excuses an unknown type at the serialization check. The ban runs before
+    that check, so it is the ban's message a stored view gets.
 
     Two layers enforce it. The generator resolves the spellings it can see, in
     the header it is reading; and the generated file asserts the ban to the
@@ -612,7 +579,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "namespace N {\n"
             "using CarView = Assisi::Runtime::InstanceView<Assisi::Blueprints::Car>;\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "struct C { AFIELD() CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
             "CarView",
         )
 
@@ -624,7 +591,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
             "using CarHandle = CarView;\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) CarHandle car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "struct C { AFIELD() CarHandle car = {}; AFIELD() int32_t a = 0; };\n}\n",
             "CarHandle",
         )
 
@@ -633,7 +600,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "namespace N {\n"
             "typedef Assisi::Runtime::InstanceView<Car> CarView;\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "struct C { AFIELD() CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
             "CarView",
         )
 
@@ -655,7 +622,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "namespace N {\n"
             "struct Holder { Assisi::Runtime::InstanceView<Car> v; };\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) Holder held = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "struct C { AFIELD() Holder held = {}; AFIELD() int32_t a = 0; };\n}\n",
             "Holder",
         )
 
@@ -668,7 +635,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "struct Outer { Inner i; };\n"
             "struct Inner { Assisi::Runtime::InstanceView<Car> v; };\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) Outer o = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "struct C { AFIELD() Outer o = {}; AFIELD() int32_t a = 0; };\n}\n",
             "Outer",
             "Inner",
         )
@@ -680,7 +647,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "namespace N {\n"
             "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) std::vector<CarView> cars = {}; "
+            "struct C { AFIELD() std::vector<CarView> cars = {}; "
             "AFIELD() int32_t a = 0; };\n}\n",
             "CarView",
         )
@@ -692,7 +659,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
             "namespace N {\n"
             "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
             "AMSG(event, reliable)\n"
-            "struct Boom { AFIELD(transient) CarView car = {}; AFIELD() uint32_t t = 0; };\n}\n"
+            "struct Boom { AFIELD() CarView car = {}; AFIELD() uint32_t t = 0; };\n}\n"
         )
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
@@ -700,61 +667,49 @@ class InstanceViewStorageBanTest(unittest.TestCase):
 
     def test_a_lookalike_name_is_not_banned(self):
         # The ban must not become a substring superstition: a type whose name
-        # merely starts the same way is an ordinary transient field, and an
-        # unrelated alias stays an unrelated alias.
+        # merely starts the same way is no view, and an unrelated alias stays an
+        # unrelated alias. Asked of the ban alone, since neither type has codegen.
         components = _parse_source(
             "namespace N {\n"
             "using Meters = float;\n"
             "struct InstanceViewport { int32_t w = 0; };\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) InstanceViewport vp = {}; "
-            "AFIELD(transient) Meters depth = 0.f; AFIELD() int32_t a = 0; };\n}\n"
+            "struct C { AFIELD() InstanceViewport vp = {}; "
+            "AFIELD() Meters depth = 0.f; AFIELD() int32_t a = 0; };\n}\n"
         )
-        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
-        self.assertIn("vp", cpp)
+        reflect_codegen._check_no_instance_views(components, "N/C.hpp")  # must not raise
 
     def test_generated_code_asserts_the_ban_at_compile_time(self):
         # The layer that closes the spellings a regex cannot see. An alias
         # declared in another header reaches the generator as an ordinary word,
-        # so the generated file hands the question to the compiler — for
-        # transient fields too, because the objection is to storing it at all.
+        # so the generated file hands the question to the compiler for every
+        # field.
         components = _parse_source(
             "namespace N {\nACOMP()\n"
-            "struct C { AFIELD() int32_t a = 0; AFIELD(transient) Opaque cache = {}; };\n}\n"
+            "struct C { AFIELD() int32_t a = 0; AFIELD() float b = 0.f; };\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         self.assertIn("struct InstanceView;", cpp)  # declared, never defined
         self.assertIn("decltype(N::C::a)", cpp)
-        self.assertIn("decltype(N::C::cache)", cpp)
+        self.assertIn("decltype(N::C::b)", cpp)
 
 
 class UnsupportedTypeTest(unittest.TestCase):
     """The UNSUPPORTED_TYPES guard must hard-fail rather than silently skip."""
 
-    def _component(self, cpp_type: str, transient: bool):
-        args = reflectgen.AnnotArgs()
-        if transient:
-            args.flags.add("transient")
+    def _component(self, cpp_type: str):
         return reflectgen.ComponentInfo(
             name="Bad",
             namespaces=["N"],
             args=reflectgen.AnnotArgs(),
-            fields=[reflectgen.FieldInfo(name="blob", cpp_type=cpp_type, args=args)],
+            fields=[reflectgen.FieldInfo(name="blob", cpp_type=cpp_type, args=reflectgen.AnnotArgs())],
         )
 
-    def test_non_transient_unsupported_field_raises(self):
+    def test_unsupported_field_raises(self):
         reflectgen.UNSUPPORTED_TYPES["std::string"] = "no string codegen yet"
         try:
             with self.assertRaises(ValueError):
-                reflectgen._check_unsupported([self._component("std::string", transient=False)], "Bad.hpp")
-        finally:
-            del reflectgen.UNSUPPORTED_TYPES["std::string"]
-
-    def test_transient_unsupported_field_is_exempt(self):
-        reflectgen.UNSUPPORTED_TYPES["std::string"] = "no string codegen yet"
-        try:
-            # A transient field is never (de)serialized, so an unsupported type is fine.
-            reflectgen._check_unsupported([self._component("std::string", transient=True)], "Bad.hpp")
+                reflectgen._check_unsupported([self._component("std::string")], "Bad.hpp")
         finally:
             del reflectgen.UNSUPPORTED_TYPES["std::string"]
 
@@ -773,7 +728,7 @@ class AssetTypeTest(unittest.TestCase):
         "    AFIELD() float MetallicFactor = 1.f;\n"
         "    AFIELD() Assisi::Core::AssetPath BaseColorTexture;\n"
         "    AFIELD() std::vector<Assisi::Core::AssetPath> layers;\n"
-        "    AFIELD(transient) int32_t cache = 0;\n"
+        "    int32_t cache = 0;\n"
         "};\n}\n"
     )
 
@@ -794,10 +749,8 @@ class AssetTypeTest(unittest.TestCase):
         self.assertIn("void* out_ptr", cpp)
         self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
         self.assertIn('ReadFloat(j, _comp, "MetallicFactor", a.MetallicFactor)', cpp)
-        # Transient field is in the meta table but never (de)serialized.
-        self.assertIn('"cache", .type = Assisi::Core::Reflect::FieldType::Int32', cpp)
-        self.assertNotIn("a.cache", cpp)
-        self.assertNotIn("c.cache", cpp)
+        # A member with no AFIELD is not reflected at all.
+        self.assertNotIn("cache", cpp)
 
     def test_aasset_emits_construct_and_destroy_hooks(self):
         cpp = reflectgen.generate_cpp(_parse_source(self._MAT), "Assisi/Geometry/MaterialData.hpp")
@@ -882,7 +835,7 @@ class ReplicationAnnotationTest(unittest.TestCase):
 
     def test_norep_field_is_flagged_but_still_serialized_to_disk(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
-        # In the metadata table with norep = true (transient = false)...
+        # In the metadata table with norep = true...
         self.assertIn('{ .name = "serverOnly", .type = Assisi::Core::Reflect::FieldType::Int32, '
                       '.offset = offsetof(T, serverOnly), .norep = true }', cpp)
         # ...and in both JSON bodies, because norep is a *wire* exclusion only.
@@ -907,12 +860,6 @@ class ReplicationAnnotationTest(unittest.TestCase):
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
         self.assertIn("silently do nothing", str(caught.exception))
 
-    def test_norep_with_transient_is_rejected(self):
-        src = ("namespace N {\nACOMP(replicable)\n"
-               "struct C { AFIELD(transient, norep) int32_t a = 0; };\n}\n")
-        with self.assertRaises(ValueError) as caught:
-            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
-        self.assertIn("Drop norep", str(caught.exception))
 
 
 class EnumTest(unittest.TestCase):
@@ -1406,9 +1353,13 @@ class UnknownArgumentTest(unittest.TestCase):
         src = ("namespace N {\nACOMP(replicable, tracked, requires = {D}, excludes = {F})\n"
                "struct C {\n"
                "    AFIELD(norep, min = 0, max = 10) int32_t a = 0;\n"
-               "    AFIELD(transient) float cache = 0.f;\n"
                "};\n}\n")
         self.assertEqual(len(_parse_source(src)), 1)
+
+    def test_the_removed_transient_field_flag_is_refused(self):
+        # A member that is never saved or sent has no AFIELD at all.
+        message = self._refused("namespace N {\nACOMP()\nstruct C { AFIELD(transient) float cache = 0.f; };\n}\n")
+        self.assertIn("'transient' is not a registered argument for AFIELD", message)
 
 
 def _parse_full(source: str):
@@ -1496,13 +1447,6 @@ class MessageGrammarTest(unittest.TestCase):
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("only to cross the wire", str(caught.exception))
 
-    def test_transient_in_a_message_is_rejected(self):
-        src = ("namespace N {\nAMSG(intent, reliable)\n"
-               "struct Boom { AFIELD(transient) uint32_t t = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
-        with self.assertRaises(ValueError) as caught:
-            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
-        self.assertIn("no persistent form", str(caught.exception))
 
     def test_an_event_naming_no_entity_must_say_so(self):
         # Relevancy scopes an event by the entity it is about. With no entity

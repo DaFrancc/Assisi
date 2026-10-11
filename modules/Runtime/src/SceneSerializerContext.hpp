@@ -178,8 +178,7 @@ template <typename Fn> void ForEachRefLeavingSet(ECS::Scene &scene, std::span<co
 
             for (const Core::Reflect::FieldMeta &field : meta->fields)
             {
-                // A transient field is not written at all, so it loses nothing here.
-                if (field.type != Core::Reflect::FieldType::EntityRef || field.transient)
+                if (field.type != Core::Reflect::FieldType::EntityRef)
                     continue;
 
                 const auto target =
