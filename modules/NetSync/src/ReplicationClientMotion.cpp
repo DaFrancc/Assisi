@@ -71,7 +71,16 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // folding in the cosmetic offset would flatter the number.
     const Physics::Pose simulated = _physics->GetBodyPose(entity);
     const glm::vec3 simulatedPosition = simulated.position;
-    const glm::quat simulatedRotation = simulated.rotation;
+
+    // A character's capsule never turns: where it faces is its Transform, which
+    // its controls turn. The one this machine controls keeps the facing its own
+    // controls gave it, since the host's is the same turn arriving a round trip
+    // late; any other faces where the host says.
+    const bool character = _scene.Has<Physics::Character>(entity);
+    const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
+    const glm::quat simulatedRotation =
+        character && transform != nullptr ? transform->rotation : simulated.rotation;
+    const glm::quat targetRotation = character && ControlsEntity(entity) ? simulatedRotation : state.rotation;
     const float divergence                            = glm::length(simulatedPosition - state.position);
 
     ++_corrections.applied;
@@ -92,9 +101,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
                               Physics::BodyState{.linearVelocity = state.linearVelocity,
                                                  .angularVelocity = state.angularVelocity,
                                                  .asleep = state.asleep});
+    if (character && targetRotation != simulatedRotation)
+    {
+        _scene.GetMut<ECS::Transform>(entity)->rotation = targetRotation;
+    }
 
     record.positionError = renderedPosition - state.position;
-    record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
+    record.rotationError = glm::normalize(renderedRotation * glm::inverse(targetRotation));
 
     const ViewSmoothing &smoothing = Smoothing();
     const float carried   = glm::length(record.positionError);

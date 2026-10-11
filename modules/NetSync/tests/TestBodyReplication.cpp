@@ -1133,6 +1133,69 @@ TEST_CASE("a walking character arrives on the client simulated, carrying its vel
     CHECK(PoseError(harness, walker) < 0.1f);
 }
 
+namespace
+{
+
+/// A character standing on the shared floor, sent to the client.
+ECS::Entity SpawnStanding(PhysicsHarness &harness)
+{
+    SpawnSharedFloor(harness);
+    const ECS::Entity character = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
+    (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
+    (void)harness.serverScene.Add<Replicated>(character, Replicated{});
+    harness.Step(30);
+    return character;
+}
+
+/// How far apart two facings are: 1 the same, 0 a half turn.
+float Agreement(const glm::quat &a, const glm::quat &b) { return std::abs(glm::dot(a, b)); }
+
+/// A half turn about up.
+const glm::quat kTurnedRound = glm::angleAxis(glm::radians(180.f), glm::vec3(0.f, 1.f, 0.f));
+
+/// Closer than a quantized rotation can miss by.
+constexpr float kSameFacing = 0.999f;
+
+} // namespace
+
+TEST_CASE("a character that turns on the server turns on the client")
+{
+    // A character's capsule never turns; its facing is its Transform. A correction
+    // that only places the body leaves every other player facing where it spawned.
+    PhysicsHarness harness;
+    harness.Step(4);
+    const ECS::Entity character = SpawnStanding(harness);
+
+    harness.serverScene.GetMut<ECS::Transform>(character)->rotation = kTurnedRound;
+    harness.Step(30);
+
+    const ECS::Entity mirror = MirrorOf(harness, character);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(Agreement(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, kTurnedRound) > kSameFacing);
+}
+
+TEST_CASE("a character the client controls keeps the facing it gave itself")
+{
+    // The host's facing for it is the client's own turn arriving a round trip
+    // late; taking it would pull the view back with every correction.
+    PhysicsHarness harness;
+    harness.Step(4);
+    const ECS::Entity character = SpawnStanding(harness);
+    harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(10);
+
+    const ECS::Entity mirror = MirrorOf(harness, character);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.client.ControlsEntity(mirror));
+    // A character never sleeps, so corrections keep arriving the whole time.
+    harness.clientScene.GetMut<ECS::Transform>(mirror)->rotation = kTurnedRound;
+    harness.Step(30);
+    REQUIRE(harness.client.Corrections().applied > 0);
+
+    CHECK(Agreement(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, kTurnedRound) > kSameFacing);
+}
+
 TEST_CASE("a Collider with no RigidBody replicates as a Transform, not as a body")
 {
     PhysicsHarness harness;
