@@ -404,6 +404,11 @@ void EditorApp::PollNetSession(float dt)
     }
 }
 
+double EditorApp::SimulationSeconds(double frameSeconds)
+{
+    return _netSession ? frameSeconds * _netSession->TimeScale() : frameSeconds;
+}
+
 void EditorApp::BeginNetStep()
 {
     // Only once the session can say who this machine is: before then a client
@@ -837,6 +842,7 @@ void EditorApp::DrawNetworkWindow()
 
         LabelledValue("Clock lead", std::format("{} ticks", stats.clockLead));
         LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
+        LabelledValue("Clock rate", std::format("{:.3f}x", stats.clockRate));
 
         if (_joinPhase == JoinPhase::Connecting)
             // %f takes a double through varargs, so the float promotes either

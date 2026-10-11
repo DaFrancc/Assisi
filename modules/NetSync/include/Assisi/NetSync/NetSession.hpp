@@ -72,6 +72,7 @@ struct SessionStats
     std::uint32_t inputBufferDepth  = 0;
     std::uint32_t clockCorrections  = 0;
     std::uint32_t clockLead         = 0;
+    float clockRate = 1.f; ///< How fast the client runs to steer its lead; 1 is real time.
 
     // Correction stream (client). Totals, not rates: a rate needs a clock and a
     // window, and whoever is drawing this already has both.
@@ -242,6 +243,12 @@ public:
 
     /// @brief The session id of a connected client. Host only.
     [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId client) const;
+
+    /// @brief How fast this process should run its fixed steps against real
+    /// time: a client's clock steers the server's queue of its commands with it.
+    /// 1 for a host, which is the authority and never runs fast or slow, and for
+    /// a client its clock has not heard from yet.
+    [[nodiscard]] double TimeScale() const;
 
     /// @brief Every client whose handshake verified, in the order they joined.
     /// Empty unless hosting.

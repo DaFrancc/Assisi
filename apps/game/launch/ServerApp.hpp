@@ -72,6 +72,8 @@ public:
 protected:
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
+    /// Real time, or a client's clock's rate of it, as a joined editor runs.
+    [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
     void OnUpdate(float dt) override;
     void OnShutdown() override;
     void FlushDeferred() override;

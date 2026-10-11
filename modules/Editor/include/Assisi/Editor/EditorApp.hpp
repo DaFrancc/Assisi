@@ -242,6 +242,11 @@ class EditorApp : public Assisi::App::Application
 
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
+#if defined(ASSISI_NETWORKING)
+    /// Real time, or a client's clock's rate of it: a joined editor runs its
+    /// fixed steps a little fast or slow to keep its commands arriving in time.
+    [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
+#endif
     void OnUpdate(float dt) override;
     void OnRender(Assisi::Render::RenderFrame &frame) override;
     void OnRenderOverlays(Assisi::Render::RenderFrame &frame) override;

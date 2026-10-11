@@ -312,6 +312,13 @@ ClientId NetSession::ClientIdOf(Net::ConnectionId client) const
     return _server ? _server->ClientIdOf(client) : InvalidClientId;
 }
 
+double NetSession::TimeScale() const
+{
+    if (!_client || !_clock || !_clock->HasFeedback())
+        return 1.0;
+    return _clock->Rate();
+}
+
 std::vector<ReadyClient> NetSession::ReadyClients() const
 {
     return _server ? _server->ReadyClients() : std::vector<ReadyClient>{};
@@ -433,6 +440,7 @@ SessionStats NetSession::Stats() const
         {
             stats.clockCorrections = _clock->CorrectionCount();
             stats.clockLead        = _clock->Lead();
+            stats.clockRate        = static_cast<float>(_clock->Rate());
         }
 
         Net::ConnectionStats transportStats;

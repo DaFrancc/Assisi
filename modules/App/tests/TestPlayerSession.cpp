@@ -12,6 +12,7 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +25,7 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/PlayerSession.hpp>
 #include <Assisi/App/PlayerSystems.hpp>
@@ -58,6 +60,16 @@ constexpr std::int32_t kLeaveSteps = 90;
 /// wire quantized.
 constexpr double kFacingTolerance = 1e-3;
 
+/// The host's queue of a settled client's commands: within a tick of the
+/// cushion of two the client's clock aims for.
+constexpr std::uint32_t kCushionLow = 1;
+constexpr std::uint32_t kCushionHigh = 3;
+
+/// Frames for a settled client's controls to reach the host over loopback:
+/// the cushion, a frame for the step that samples them, and slack for the
+/// transport's own thread.
+constexpr std::int32_t kMostFramesForControls = 6;
+
 std::filesystem::path FreshRoot()
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi_players";
@@ -74,7 +86,8 @@ nlohmann::json Pose(float y)
     return {{"position", {0.f, y, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}};
 }
 
-/// A player: a character with a camera, both sent to every client.
+/// A player: a character with a camera, both sent to every client, the camera
+/// without its Transform, which is each machine's own.
 void WritePlayerBlueprint(const std::filesystem::path &root)
 {
     const nlohmann::json body = {{"Transform", Pose(0.f)},
@@ -84,7 +97,7 @@ void WritePlayerBlueprint(const std::filesystem::path &root)
     const nlohmann::json eye = {{"Transform", Pose(1.5f)},
         {"Camera", {{"isActive", true}}},
         {"Parent", {{"parent", "Player"}}},
-        {"Replicated", nlohmann::json::object()}};
+        {"Replicated", {{"excluded", {"Transform"}}}}};
     const nlohmann::json file = {{"version", 2},
         {"entities", nlohmann::json::array({{{"name", "Player"}, {"components", body}},
                                                {{"name", "Eye"}, {"components", eye}}})}};
@@ -93,13 +106,19 @@ void WritePlayerBlueprint(const std::filesystem::path &root)
     REQUIRE(out.good());
 }
 
-/// One machine: its world, its session and its players.
+/// The most fixed steps one machine runs in a frame, as the hosts cap them.
+constexpr std::uint32_t kMaxStepsPerFrame = 4;
+
+/// One machine: its world, its session, its players, and its own fixed-step
+/// clock and tick, since a client runs a little faster or slower than the host.
 struct Machine
 {
     App::World world{Physics::NoCollisionAssets()};
     NetSync::NetSession session{world.scene, &world.physics};
     App::PlayerSession players;
     Core::EventQueue events;
+    App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
+    std::uint64_t tick = 0;
 };
 
 /// One fixed step on @p machine, in the order the editor runs it.
@@ -151,6 +170,22 @@ ECS::Entity LocalPlayerOf(ECS::Scene &scene)
     return found;
 }
 
+/// How far up the camera parented to @p character looks, in radians; 0 when
+/// it has none.
+float PitchOfEye(ECS::Scene &scene, ECS::Entity character)
+{
+    for (auto [entity, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
+    {
+        (void)camera;
+        if (parent.parent == character)
+        {
+            const glm::vec3 forward = scene.Get<ECS::Transform>(entity)->rotation * glm::vec3(0.f, 0.f, -1.f);
+            return std::asin(glm::clamp(forward.y, -1.f, 1.f));
+        }
+    }
+    return 0.f;
+}
+
 /// The host's player for @p client.
 ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
 {
@@ -164,12 +199,12 @@ ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
     return ECS::NullEntity;
 }
 
-/// Machines and the loop that runs them, with every machine stepped on the
-/// same tick, as their clocks keep them.
+/// Machines and the loop that runs them: a frame every step's worth of real
+/// time, in which each machine runs as many fixed steps as its session's time
+/// scale gives it, as the hosts run them.
 struct Session
 {
     std::vector<std::unique_ptr<Machine>> machines;
-    std::uint64_t tick = 0;
 
     Machine &Add()
     {
@@ -177,25 +212,36 @@ struct Session
         return *machines.back();
     }
 
-    /// Runs @p steps fixed steps. Real time passes: these are real sockets, and
-    /// the transport does its wire work on its own thread.
-    template <typename Before> void Run(std::int32_t steps, Before before)
+    /// Runs @p frames frames. Real time has to match: these are real sockets,
+    /// and a client's clock measures the trip in milliseconds and leads by it
+    /// in ticks, so ticks run faster than real time read as commands arriving
+    /// late.
+    template <typename Before> void Run(std::int32_t frames, Before before)
     {
-        for (std::int32_t i = 0; i < steps; ++i)
+        using Clock = std::chrono::steady_clock;
+        const Clock::duration frame =
+            std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(kStep));
+        Clock::time_point next = Clock::now();
+        for (std::int32_t i = 0; i < frames; ++i)
         {
             before();
             for (const std::unique_ptr<Machine> &machine : machines)
             {
-                Step(*machine, tick);
+                const std::uint32_t steps =
+                    machine->clock.Advance(static_cast<double>(kStep) * machine->session.TimeScale());
+                for (std::uint32_t step = 0; step < steps; ++step)
+                {
+                    Step(*machine, ++machine->tick);
+                }
             }
-            ++tick;
-            std::this_thread::sleep_for(std::chrono::milliseconds{2});
+            next += frame;
+            std::this_thread::sleep_until(next);
         }
     }
 
-    void Run(std::int32_t steps)
+    void Run(std::int32_t frames)
     {
-        Run(steps, [] {});
+        Run(frames, [] {});
     }
 };
 
@@ -271,16 +317,34 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     REQUIRE(first.world.scene.Get<NetSync::ControlledBy>(firstsOwn) != nullptr);
     CHECK(first.world.scene.Get<NetSync::ControlledBy>(firstsOwn)->client == firstId.value);
 
-    // The first client walks forward; nobody else touches anything.
+    // The client's clock has settled: it never jumped after joining, and the
+    // host holds about the cushion of its commands it asks for.
+    const NetSync::SessionStats settled = first.session.Stats();
+    CHECK(settled.clockCorrections == 0);
+    CHECK(settled.inputBufferDepth >= kCushionLow);
+    CHECK(settled.inputBufferDepth <= kCushionHigh);
+
+    // The first client walks forward; nobody else touches anything. Its
+    // controls reach the host within a few frames.
     const glm::vec3 before = host.world.scene.Get<ECS::Transform>(firstsOnHost)->position;
+    std::int32_t frames = 0;
+    std::int32_t arrived = -1;
     session.Run(kWalkSteps,
-                [&first, firstsOwn]
+                [&]
     {
         if (App::PlayerInput *controls = first.world.scene.GetMut<App::PlayerInput>(firstsOwn))
         {
             controls->move = {0.f, 1.f};
         }
+        const App::PlayerInput *onHost = host.world.scene.Get<App::PlayerInput>(firstsOnHost);
+        if (arrived < 0 && onHost != nullptr && onHost->move.y > 0.f)
+        {
+            arrived = frames;
+        }
+        ++frames;
     });
+    CHECK(arrived >= 0);
+    CHECK(arrived <= kMostFramesForControls);
 
     // Its controls arrived on its own character on the host, and only there.
     REQUIRE(host.world.scene.Get<App::PlayerInput>(firstsOnHost) != nullptr);
@@ -296,16 +360,19 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     const glm::vec3 after = host.world.scene.Get<ECS::Transform>(firstsOnHost)->position;
     CHECK(glm::length(after - before) > 0.f);
 
-    // It turns round; the other client sees it face the other way.
+    // It turns round and looks up; the other client sees it face the other way,
+    // and its view stays its own.
     const float turn = glm::radians(180.f);
+    const float lookUp = glm::radians(20.f);
     bool turned = false;
     session.Run(kWalkSteps,
-                [&first, firstsOwn, turn, &turned]
+                [&first, firstsOwn, turn, lookUp, &turned]
     {
         App::PlayerInput *controls = first.world.scene.GetMut<App::PlayerInput>(firstsOwn);
         if (controls != nullptr && !turned)
         {
             controls->lookYaw = turn;
+            controls->lookPitch = lookUp;
             turned = true;
         }
     });
@@ -316,6 +383,11 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     REQUIRE(firstsOnSecond != ECS::NullEntity);
     CHECK(std::abs(glm::dot(second.world.scene.Get<ECS::Transform>(firstsOnSecond)->rotation, facing)) ==
           doctest::Approx(1.f).epsilon(kFacingTolerance));
+
+    // The look up is the first client's alone: its own camera keeps it, and the
+    // other client's copy of that camera is not sent it.
+    CHECK(PitchOfEye(first.world.scene, firstsOwn) == doctest::Approx(lookUp).epsilon(kFacingTolerance));
+    CHECK(PitchOfEye(second.world.scene, firstsOnSecond) == doctest::Approx(0.f).epsilon(kFacingTolerance));
 
     // The first leaves: its character goes, camera and all, here and for the
     // one still playing.

@@ -310,6 +310,15 @@ void ServerApp::OnFixedUpdate(float dt)
         RequestClose();
 }
 
+double ServerApp::SimulationSeconds(double frameSeconds)
+{
+#if defined(ASSISI_NETWORKING)
+    if (_session)
+        return frameSeconds * _session->TimeScale();
+#endif
+    return frameSeconds;
+}
+
 void ServerApp::OnUpdate([[maybe_unused]] float dt)
 {
     // Write the render pose for remote entities. A headless client renders
