@@ -32,6 +32,7 @@ add_executable(Assisi-App-Tests
   TestLevelSystemsPrecheck.cpp
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
+  TestPlayerSystems.cpp
   TestSceneCamera.cpp
   TestShippedLevels.cpp
   TestStartupScene.cpp
@@ -49,7 +50,7 @@ add_executable(Assisi-App-Tests
 # plain conditional keeps SOURCES a list of real filenames, which is what that
 # property is being read as.
 if (ASSISI_ENABLE_NETWORKING)
-  target_sources(Assisi-App-Tests PRIVATE TestBlueprintReplication.cpp)
+  target_sources(Assisi-App-Tests PRIVATE TestBlueprintReplication.cpp TestPlayerSession.cpp)
 endif()
 
 Assisi_apply_test_defaults(Assisi-App-Tests)

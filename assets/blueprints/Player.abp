@@ -29,6 +29,8 @@
           "stopSpeed": 1.905,
           "walkSpeed": 3.62
         },
+        "Player": {},
+        "Replicated": {},
         "Transform": {
           "position": [
             0.0,
@@ -61,6 +63,7 @@
         "Parent": {
           "parent": "Player"
         },
+        "Replicated": {},
         "Transform": {
           "position": [
             0.0,
@@ -84,9 +87,11 @@
     }
   ],
   "systems": [
-    "CharacterLook",
-    "CharacterEye",
-    "CharacterInput"
+    "LocalPlayer",
+    "PlayerCamera",
+    "PlayerGather",
+    "CharacterCommand",
+    "CharacterEye"
   ],
   "version": 2
 }

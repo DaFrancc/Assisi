@@ -12,6 +12,7 @@
 /// different places) needs both simulating.
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/App/ResourceStore.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -122,6 +123,10 @@ struct World
     /// instance is. Ids are per world and restart at 1 on every load, because the
     /// table is discarded with the world.
     Runtime::InstanceTable instances;
+
+    /// What the world has one of and no entity carries, such as which network
+    /// client this machine is. Discarded with the world.
+    ResourceStore resources;
 
     /// This world's game systems, installed once from its level's list (see
     /// WorldManager::ApplySystems). Per world rather than per app because a

@@ -341,6 +341,10 @@ void EditorApp::ShutdownNetSession()
     if (_scene)
         _scene->FlushDestroyed();
     _netSession.reset();
+    if (_world != nullptr)
+    {
+        _playerSession.Detach(*_world);
+    }
     Assisi::Core::Log::Info("Editor: network session closed.");
 }
 
@@ -400,10 +404,18 @@ void EditorApp::PollNetSession(float dt)
     }
 }
 
+void EditorApp::BeginNetStep()
+{
+    // Only once the session can say who this machine is: before then a client
+    // has no player, and a world told it is networked drives nothing.
+    if (_netSession && _netSession->IsActive() && _world != nullptr)
+        _playerSession.BeginStep(*_netSession, *_world, GetSimTick());
+}
+
 void EditorApp::TickNetSession()
 {
     if (_netSession)
-        _netSession->Tick(GetSimTick());
+        _netSession->Tick(GetSimTick(), _playerSession.LocalCommand());
 }
 
 void EditorApp::SmoothNetView()

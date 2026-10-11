@@ -1080,6 +1080,10 @@ void EditorApp::OnFixedUpdate(float dt)
     // why it takes dt.
 #if defined(ASSISI_NETWORKING)
     PollNetSession(dt);
+    if (IsSimulating())
+    {
+        BeginNetStep();
+    }
 #endif
 
     // **The play state is a flat switch: while it is not Playing, nothing steps

@@ -44,6 +44,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #if defined(ASSISI_NETWORKING)
+#include <Assisi/App/PlayerSession.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -479,6 +480,7 @@ class EditorApp : public Assisi::App::Application
     void DrawHostAuthoringWarnings();
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
+    void BeginNetStep();           // after polling, before the systems: players and their controls
     void TickNetSession();         // end of the fixed step: snapshots (host) or input (client)
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 #endif                             // ASSISI_NETWORKING
@@ -1546,6 +1548,8 @@ class EditorApp : public Assisi::App::Application
     /// reference to the scene it replicates and a level load replaces that
     /// scene wholesale.
     std::unique_ptr<Assisi::NetSync::NetSession> _netSession;
+    /// The session's players: a character for each, and their controls.
+    Assisi::App::PlayerSession _playerSession;
     /// UI state for the network panel, kept here rather than in statics so two
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};
