@@ -487,9 +487,9 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
 
     CHECK(visible.bytes * hidden.snapshots > hidden.bytes * visible.snapshots);
     // The strong form: what remains is the snapshot header and the despawn
-    // being resent. A single quantized body state is well over ten bytes, so a
-    // per-snapshot average below that cannot contain one.
-    CHECK(hidden.bytes < hidden.snapshots * 10u);
+    // being resent. A single quantized body state of a falling body is over
+    // twenty bytes, so a per-snapshot average below twelve cannot contain one.
+    CHECK(hidden.bytes < hidden.snapshots * 12u);
 }
 
 TEST_CASE("re-entering before the despawn acks sends full state, not a delta")

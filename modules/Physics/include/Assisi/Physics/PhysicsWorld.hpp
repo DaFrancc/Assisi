@@ -641,6 +641,31 @@ public:
     /// them here. Pushes and carriers take no part.
     void ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing, float deltaTime);
 
+    /// @brief Gives @p entity's character its place in the order characters
+    /// step in: by @p key, before every character without one, which step by
+    /// entity index.
+    ///
+    /// Which of two touching characters sweeps first decides part of where both
+    /// end up. Machines that must step them alike give each the same key, such
+    /// as the id a network session names it by, since their entity indices
+    /// differ. May be given before the character exists, and outlives its
+    /// rebuilds; ends with ClearCharacterOrderKey or when another entity takes
+    /// the index.
+    void SetCharacterOrderKey(ECS::Entity entity, std::uint64_t key);
+
+    /// @brief Takes back what SetCharacterOrderKey gave @p entity.
+    void ClearCharacterOrderKey(ECS::Entity entity);
+
+    /// @brief Steps the characters of @p entities by @p deltaTime exactly as
+    /// Update steps them, and nothing else. Writes and snaps their Transforms.
+    /// Not while the world is stepping.
+    ///
+    /// They step in Update's order and meet each other, so two of them pushing
+    /// each other or one riding a base step as they did live. Everything else
+    /// stays where it is: bodies are not solved and the scene is not
+    /// reconciled, so a base the characters ride is wherever it now stands.
+    void StepCharacters(std::span<const ECS::Entity> entities, float deltaTime);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> _impl;

@@ -6,6 +6,7 @@
 #include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/StartupScene.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -376,21 +377,7 @@ void GameApp::StepWorlds(float dt)
                 return;
             }
 
-            // Apply forces this tick, then simulate them, then react to what the
-            // step actually did. The phase decides which side of the step a
-            // system lands on; ordering within a phase cannot substitute for it.
-            // Everything inside the scope is one fixed step to the render blend.
-            const ECS::FixedStepScope step(world.scene);
-            world.systems.Run(SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
-
-            {
-                ASSISI_PROFILE_SCOPE("physics-step");
-                world.physics.Update(dt);
-            }
-
-            world.systems.Run(SystemPhase::PostFixedUpdate,
-                              {world, dt, GetSimTick(), HasPresentation() ? &GetInput() : nullptr, &GetActions(),
-                               GetEvents(), /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+            StepWorld(WorldContext(world, dt, GetSimTick()));
         });
 }
 

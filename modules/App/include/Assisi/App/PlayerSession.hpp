@@ -42,6 +42,16 @@ void PublishPlayerActions();
 /// a connection that has gone quiet should not leave one running into a wall.
 inline constexpr std::uint32_t kInputHoldTicks = 6;
 
+struct PlayerInput;
+
+/// @brief Hands a remote player's character the controls the host steps it on
+/// this tick: @p command when one came, otherwise what it held, released once
+/// @p starvedTicks, the steps in a row with no command, passes kInputHoldTicks.
+///
+/// The one rule for it, so a client stepping a tick again steps it on what the
+/// host did.
+void RelayHeldCommand(PlayerInput &controls, const NetSync::InputCommand *command, std::uint32_t starvedTicks);
+
 /// @brief A world's players, for one network session.
 class PlayerSession
 {

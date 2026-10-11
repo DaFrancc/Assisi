@@ -232,6 +232,28 @@ TEST_CASE("InputCommandQueue reports starvation and drops commands that arrive t
     CHECK(queue.StarvedTicks() == 2);
 }
 
+TEST_CASE("InputCommandQueue remembers which recent ticks had no command, a late one included")
+{
+    InputCommandQueue queue;
+
+    CHECK(queue.Accept(MakeCommand(5)));
+    REQUIRE(queue.Consume(5) != nullptr);
+    CHECK(queue.Consume(6) == nullptr);
+
+    // Arrives after 6 was stepped without it: accepted, then dropped on the way
+    // to 7, so 6 stays a tick the host had nothing for.
+    CHECK(queue.Accept(MakeCommand(6)));
+    CHECK(queue.Accept(MakeCommand(7)));
+    REQUIRE(queue.Consume(7) != nullptr);
+
+    // Bit i is tick 7 - i.
+    CHECK(queue.StarvedMaskAt(7) == 0b010u);
+    CHECK(queue.LastAppliedTick() == 7);
+
+    // Counted from a later tick, the same history is further back.
+    CHECK(queue.StarvedMaskAt(9) == 0b01000u);
+}
+
 TEST_CASE("InputCommandQueue refuses a command flood far in the future")
 {
     InputCommandQueue queue;

@@ -22,6 +22,13 @@ constexpr std::uint32_t kMaxCommandsPerPacket = 32;
 /// queue, and in both cases the excess is worthless by the time it is due.
 constexpr std::uint64_t kMaxQueueLookahead = 64;
 
+/// @p mask with every tick moved @p ticks further back; what falls off the end
+/// is forgotten. A shift of the full width or more is undefined, not zero.
+std::uint64_t ShiftedBack(std::uint64_t mask, std::uint64_t ticks)
+{
+    return ticks >= kStarvedMaskTicks ? 0u : mask << ticks;
+}
+
 } // namespace
 
 void WriteInputCommand(const InputCommand &command, Core::BitWriter &writer)
@@ -177,6 +184,15 @@ bool InputCommandQueue::Accept(const InputCommand &command)
     return true;
 }
 
+std::uint64_t InputCommandQueue::StarvedMaskAt(std::uint64_t tick) const
+{
+    if (tick < _lastConsumedTick)
+    {
+        return 0;
+    }
+    return ShiftedBack(_starvedMask, tick - _lastConsumedTick);
+}
+
 const InputCommand *InputCommandQueue::Consume(std::uint64_t tick)
 {
     // Anything older than the tick being simulated arrived too late to matter;
@@ -185,9 +201,13 @@ const InputCommand *InputCommandQueue::Consume(std::uint64_t tick)
     while (!_commands.empty() && _commands.front().tick < tick)
         _commands.pop_front();
 
+    _starvedMask      = StarvedMaskAt(tick);
+    _lastConsumedTick = tick;
+
     if (_commands.empty() || _commands.front().tick != tick)
     {
         ++_starvedTicks;
+        _starvedMask |= 1u;
         return nullptr;
     }
 
@@ -206,6 +226,8 @@ void InputCommandQueue::Clear()
     _lastAppliedTick = 0;
     _hasApplied      = false;
     _starvedTicks    = 0;
+    _starvedMask      = 0;
+    _lastConsumedTick = 0;
 }
 
 } // namespace Assisi::NetSync

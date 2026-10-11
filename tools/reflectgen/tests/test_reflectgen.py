@@ -1891,6 +1891,24 @@ class SystemTest(unittest.TestCase):
             self._systems("ASYSTEM(Update) void TickSystem(SystemContext &ctx);\n")
         self.assertIn("name", str(caught.exception))
 
+    def test_a_live_only_fixed_step_system_is_live_only_and_nothing_else(self):
+        for phase in ("FixedUpdate", "PostFixedUpdate"):
+            with self.subTest(phase=phase):
+                found = self._systems(
+                    "ASYSTEM(%s, name = \"Tick\", liveOnly) void TickSystem(SystemContext &ctx);\n" % phase)
+                self.assertTrue(found[0].live_only)
+                self.assertFalse(found[0].active_world_only)
+
+    def test_live_only_is_refused_outside_the_fixed_step(self):
+        # Only a fixed step is ever run again for a tick it already ran, so the
+        # flag anywhere else says nothing and reads as though it did.
+        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "PostUpdate"):
+            with self.subTest(phase=phase):
+                with self.assertRaises(ValueError) as caught:
+                    self._systems(
+                        "ASYSTEM(%s, name = \"Tick\", liveOnly) void TickSystem(SystemContext &ctx);\n" % phase)
+                self.assertIn("liveOnly", str(caught.exception))
+
     def test_every_game_phase_is_accepted(self):
         # The phase list is a literal tuple, and a phase missing from it is
         # rejected at build time with no hint that the enum has one more — so the

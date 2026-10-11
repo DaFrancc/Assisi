@@ -9,6 +9,7 @@
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Chiara/Profile.hpp>
@@ -1070,6 +1071,10 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
+
+    // The process's own count, unless a session below says the step is another.
+    _stepTick = GetSimTick();
+
     // **Never gate this on IsSimulating().** It is false while Paused and during
     // the frames a join spends building its world, and both are states where the
     // wire must still be read: a join that stops polling never receives the
@@ -1118,24 +1123,7 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
-                // Everything inside the scope is one fixed step to the render blend.
-                const Assisi::ECS::FixedStepScope step(world.scene);
-                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate, WorldContext(world, dt, GetSimTick()));
-
-                {
-                    // Jolt's whole step, including its internal job dispatch:
-                    // everything under `fixed-update` that is not a named ECS system.
-                    ASSISI_PROFILE_SCOPE("physics-step");
-                    world.physics.Update(dt);
-                }
-
-                // The other half of the tick: what reacts to the step that just
-                // ran. Inside this loop rather than with the per-frame phases, so
-                // a frame that runs several steps runs this for every one of
-                // them rather than only the last.
-                world.systems.Run(Assisi::App::SystemPhase::PostFixedUpdate,
-                                  {world, dt, GetSimTick(), &GetInput(), &GetActions(), GetEvents(),
-                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds, GetUi()});
+                Assisi::App::StepWorld(WorldContext(world, dt, _stepTick));
             });
     }
 
@@ -1391,7 +1379,7 @@ void EditorApp::OnUpdate(float dt)
 
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
-    Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, GetSimTick());
+    Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, _stepTick);
     editorCtx.isActiveWorld = true;
     _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
@@ -1410,7 +1398,7 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                const Assisi::App::SystemContext ctx = WorldContext(world, dt, GetSimTick());
+                const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);

@@ -207,6 +207,7 @@ class SystemInfo:
     after:           list   # system names this must run after
     before:          list   # system names this must run before
     active_world_only: bool
+    live_only:       bool   # skipped on a replayed step; fixed-step phases only
     header:          str    # source header, for diagnostics
 
     @property
@@ -395,7 +396,9 @@ _ASYSTEM_RE = re.compile(
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
                    'PostUpdate', 'Render')
-_ASYSTEM_FLAGS  = {'activeWorldOnly'}
+_ASYSTEM_FLAGS  = {'activeWorldOnly', 'liveOnly'}
+# The phases a replay runs again, and so the only ones liveOnly can mean anything on.
+_ASYSTEM_FIXED_STEP_PHASES = ('FixedUpdate', 'PostFixedUpdate')
 _ASYSTEM_KEYS   = {'name', 'after', 'before'}
 
 # Both AMSG positional arguments, in the order the grammar fixes.
@@ -994,7 +997,7 @@ def find_systems(text: str, path: Path) -> list:
 
         name              = ''
         after, before     = [], []
-        active_world_only = False
+        flags             = set()
 
         for arg in args[1:]:
             arg = arg.strip()
@@ -1033,12 +1036,21 @@ def find_systems(text: str, path: Path) -> list:
                     f"{', '.join(sorted(_ASYSTEM_FLAGS))}. Note that RequireAny is deliberately not "
                     f"part of ASYSTEM — a gate reflectgen cannot verify, and too tight a one is a "
                     f"system that silently never runs.")
-            active_world_only = True
+            flags.add(arg)
+
+        active_world_only = 'activeWorldOnly' in flags
+        live_only         = 'liveOnly' in flags
 
         if active_world_only and phase == 'Render':
             raise ValueError(
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
                 f"being drawn and nothing else, so the flag would say nothing.")
+
+        if live_only and phase not in _ASYSTEM_FIXED_STEP_PHASES:
+            raise ValueError(
+                f"{where} is a {phase} system with liveOnly. Only "
+                f"{' and '.join(_ASYSTEM_FIXED_STEP_PHASES)} run again when a client replays a "
+                f"tick, so the flag would say nothing anywhere else.")
 
         # Mandatory, with no default derived from the function name. The name is
         # what a level file says, so it is part of the content format: deriving it
@@ -1056,7 +1068,8 @@ def find_systems(text: str, path: Path) -> list:
         systems.append(SystemInfo(function=match.group('fn'),
                                   namespaces=_namespaces_at(text, match.start()),
                                   name=name, phase=phase, after=after, before=before,
-                                  active_world_only=active_world_only, header=str(path)))
+                                  active_world_only=active_world_only, live_only=live_only,
+                                  header=str(path)))
     return systems
 
 

@@ -37,6 +37,26 @@
 namespace Assisi::NetSync
 {
 
+/// @brief What the server stepped this client's player on, as of one snapshot.
+///
+/// A tick the server had a command for ran on that command; one it had none
+/// for ran on the controls it held, or released (App::RelayHeldCommand). A
+/// client stepping a tick again steps it on the same.
+struct CommandEcho
+{
+    /// The snapshot's tick, which bit 0 of `starvedMask` is.
+    std::uint64_t serverTick = 0;
+    /// The newest tick stepped on a command from this client; zero before one.
+    std::uint64_t lastAppliedCommandTick = 0;
+    /// Bit i set: tick `serverTick - i` was stepped with no command.
+    std::uint64_t starvedMask = 0;
+
+    /// Whether the server had a command for @p tick. False for a tick after
+    /// `serverTick` or too far before it to be in the mask, which the server
+    /// has not said anything about.
+    [[nodiscard]] bool Applied(std::uint64_t tick) const;
+};
+
 /// @brief The receiving half. Applies snapshots into a local scene.
 class ReplicationClient
 {
@@ -171,6 +191,10 @@ public:
 
     /// @brief The clock feedback from the most recent snapshot, for NetClock.
     [[nodiscard]] const ClockFeedback &Feedback() const { return _feedback; }
+
+    /// @brief Which of this client's commands the server applied, from the
+    /// most recent snapshot.
+    [[nodiscard]] const CommandEcho &Echo() const { return _echo; }
 
     /// @brief The last server tick applied.
     [[nodiscard]] std::uint64_t LastAppliedTick() const { return _lastAppliedTick; }
@@ -392,6 +416,9 @@ private:
     /// what is kept here is only that the mirror is simulated rather than
     /// interpolated.
     void SyncMirrorBody(NetId netId, ECS::Entity entity);
+
+    /// Steps @p entity's character, if it is one, in @p netId's place.
+    void KeyCharacterOrder(ECS::Entity entity, NetId netId);
     void SendAck(std::uint64_t serverTick);
     void SendHello();
 
@@ -573,6 +600,7 @@ private:
     double _interpolationDelayTicks = 6.0; ///< Replaced at handshake from snapshotHz.
 
     ClockFeedback _feedback;
+    CommandEcho _echo;
     ServerHello _handshake;
     CorrectionStats _corrections;
     std::string _rejectMessage;

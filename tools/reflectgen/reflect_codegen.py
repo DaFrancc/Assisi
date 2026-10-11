@@ -840,6 +840,7 @@ static const bool _reflectgen_system_{system.function} = []() -> bool
         {names(system.after)},
         {names(system.before)},
         {str(system.active_world_only).lower()},
+        {str(system.live_only).lower()},
     }});
     return true;
 }}();

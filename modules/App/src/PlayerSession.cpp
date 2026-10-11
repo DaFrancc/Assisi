@@ -101,6 +101,19 @@ void ApplyCommand(PlayerInput &controls, const NetSync::InputCommand &command)
 
 void PublishPlayerActions() { NetSync::SetInputActionNames(PlayerActionNames()); }
 
+void RelayHeldCommand(PlayerInput &controls, const NetSync::InputCommand *command, std::uint32_t starvedTicks)
+{
+    if (command != nullptr)
+    {
+        ApplyCommand(controls, *command);
+    }
+    else if (starvedTicks > kInputHoldTicks)
+    {
+        controls.move = {0.f, 0.f};
+        controls.held = PlayerButtons{};
+    }
+}
+
 void PlayerSession::Attach(NetSync::NetSession &session, World &world)
 {
     PublishPlayerActions();
@@ -189,16 +202,7 @@ void PlayerSession::RelayControls(NetSync::NetSession &session, World &world, st
             {
                 (void)world.scene.Add<PlayerInput>(entity);
             }
-            PlayerInput &controls = *world.scene.GetMut<PlayerInput>(entity);
-            if (command != nullptr)
-            {
-                ApplyCommand(controls, *command);
-            }
-            else if (starved > kInputHoldTicks)
-            {
-                controls.move = {0.f, 0.f};
-                controls.held = PlayerButtons{};
-            }
+            RelayHeldCommand(*world.scene.GetMut<PlayerInput>(entity), command, starved);
         }
     }
 }

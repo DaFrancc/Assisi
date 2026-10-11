@@ -553,6 +553,7 @@ void ReplicationClient::Reset()
     }
 
     _feedback          = ClockFeedback{};
+    _echo              = CommandEcho{};
     _handshake         = ServerHello{};
     _corrections       = CorrectionStats{};
     _lastAppliedTick   = 0;

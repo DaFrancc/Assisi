@@ -1547,6 +1547,11 @@ class EditorApp : public Assisi::App::Application
     NetIntent _netIntent = NetIntent::Standalone;
     JoinPhase _joinPhase = JoinPhase::None;
 
+    /// The tick the current fixed step is, which every system sees: the
+    /// process's own count, or a network session's, which is the same tick on
+    /// every machine in it.
+    std::uint64_t _stepTick = 0;
+
 #if defined(ASSISI_NETWORKING)
     /// The networked session, when there is one. Created on Host/Join and
     /// destroyed on Disconnect (and before any level load), because it holds a

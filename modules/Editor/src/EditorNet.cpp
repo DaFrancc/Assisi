@@ -367,6 +367,10 @@ void EditorApp::PollNetSession(float dt)
 
     _netSession->Poll();
 
+    // Straight after the poll, whether or not anything steps: the session's
+    // tick for this step is what every system and the end-of-step send agree on.
+    _stepTick = _netSession->BeginStep(GetSimTick());
+
     if (_netIntent == NetIntent::Standalone)
         return;
 
@@ -414,13 +418,13 @@ void EditorApp::BeginNetStep()
     // Only once the session can say who this machine is: before then a client
     // has no player, and a world told it is networked drives nothing.
     if (_netSession && _netSession->IsActive() && _world != nullptr)
-        _playerSession.BeginStep(*_netSession, *_world, GetSimTick());
+        _playerSession.BeginStep(*_netSession, *_world, _stepTick);
 }
 
 void EditorApp::TickNetSession()
 {
     if (_netSession)
-        _netSession->Tick(GetSimTick(), _playerSession.LocalCommand());
+        _netSession->Tick(_playerSession.LocalCommand());
 }
 
 void EditorApp::SmoothNetView()

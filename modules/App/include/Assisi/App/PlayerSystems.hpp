@@ -41,7 +41,10 @@ inline constexpr float kMaxPitchDegrees = 89.f;
 ///
 /// Reads the world's LocalClient. Until a session has said who this machine is,
 /// nothing is its player.
-ASYSTEM(FixedUpdate, name = "LocalPlayer", before = "CharacterCommand")
+///
+/// `liveOnly`: it adds and removes components, which a replayed step must not
+/// do again.
+ASYSTEM(FixedUpdate, name = "LocalPlayer", before = "CharacterCommand", liveOnly)
 void LocalPlayerSystem(SystemContext &ctx);
 
 /// @brief Fills in the controls of this machine's player from the keyboard and

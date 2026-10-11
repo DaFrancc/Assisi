@@ -4,13 +4,15 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/App/PlayerSession.hpp>
 #    include <Assisi/NetSync/NetComponents.hpp>
@@ -18,11 +20,12 @@
 #endif
 
 #include <chrono>
-#include <cmath>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -49,6 +52,13 @@ double NowSeconds()
 
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
+
+/// The `--spawn` demo movers: a row this far apart (m), each bobbing up and
+/// down once per period (s), each a fixed part of a cycle (turns) behind the
+/// one before, so they never move in step.
+constexpr float kDemoMoverSpacing = 2.f;
+constexpr float kDemoMoverPeriodSeconds = 5.f;
+constexpr float kDemoMoverPhaseStep = 0.16f;
 
 } // namespace
 
@@ -99,7 +109,7 @@ void ServerApp::OnStart()
             return;
         }
 
-        if (!Assisi::App::LoadLevelSim(_world, _options.level))
+        if (!Assisi::App::LoadLevelSim(_world, _options.level) || !InstallLevelSystems(_options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
             RefuseStart();
@@ -166,20 +176,8 @@ void ServerApp::OnStart()
             return;
         }
 
-        // A demo world that actually moves. Delta replication is only
-        // interesting against change; a static level converges once and then
-        // proves nothing for the rest of the run.
-        for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
-        {
-            const ECS::Entity entity = _world.scene.Create();
-            ECS::Transform transform;
-            transform.position = {static_cast<float>(i) * 2.f, 0.f, 0.f};
-            (void)_world.scene.Add<ECS::Transform>(entity, transform);
-            (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
-            _moving.push_back(entity);
-        }
-
-        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _moving.size());
+        SpawnDemoMovers();
+        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _options.spawnCount);
     }
     // Deferred, exactly like the editor's join: this process has a level to load
     // before a NetId has anywhere to land.
@@ -217,7 +215,7 @@ void ServerApp::BuildJoinedWorld()
         return;
     }
 
-    if (!Assisi::App::LoadLevelSim(_world, hello->level.path))
+    if (!Assisi::App::LoadLevelSim(_world, hello->level.path) || !InstallLevelSystems(hello->level.path))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;
@@ -229,6 +227,10 @@ void ServerApp::BuildJoinedWorld()
     const Assisi::App::StrippedEntities stripped =
         Assisi::App::StripReplicatedEntities(_world.scene);
 
+    // The world was begun empty, before the join; this is its level's start.
+    BeginWorld(WorldStartContext(), Assisi::App::SimulateFrom::Begin);
+    SettleWorld(WorldStartContext(), /*assetsPending=*/ false);
+
     _session->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
               "handshake.",
@@ -236,11 +238,46 @@ void ServerApp::BuildJoinedWorld()
 #endif // ASSISI_NETWORKING
 }
 
+bool ServerApp::InstallLevelSystems(std::string_view level)
+{
+    const std::expected<std::vector<std::string>, Assisi::Runtime::LevelError> names =
+        Assisi::Runtime::SceneSerializer::ReadLevelSystems(level);
+    return names.has_value() && Assisi::App::WorldManager::ApplySystems(_world, *names, level);
+}
+
+void ServerApp::SpawnDemoMovers()
+{
+    if (_options.spawnCount == 0)
+    {
+        return;
+    }
+
+    // Moved by the Oscillate system, inside the step like everything else that
+    // moves, so the snapshot after it sees this tick's pose.
+    if (!Assisi::App::SystemCatalog::Instance().Install(_world, std::vector<std::string>{"Oscillate"}, "demo movers"))
+    {
+        return;
+    }
+    for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
+    {
+        const ECS::Entity entity = _world.scene.Create();
+        const glm::vec3 origin{static_cast<float>(i) * kDemoMoverSpacing, 0.f, 0.f};
+        (void)_world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = origin});
+        (void)_world.scene.Add<Assisi::Runtime::Oscillator>(
+            entity, Assisi::Runtime::Oscillator{.origin = origin,
+                                                .axis = {0.f, 1.f, 0.f},
+                                                .amplitude = 1.f,
+                                                .periodSeconds = kDemoMoverPeriodSeconds,
+                                                .phase = static_cast<float>(i) * kDemoMoverPhaseStep});
+#if defined(ASSISI_NETWORKING)
+        (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
+#endif
+    }
+}
+
 void ServerApp::OnFixedUpdate(float dt)
 {
-    // Every step is marked, here as in the windowed hosts, though nothing here
-    // is drawn.
-    const ECS::FixedStepScope step(_world.scene);
+    std::uint64_t stepTick = GetSimTick();
 
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
@@ -275,10 +312,12 @@ void ServerApp::OnFixedUpdate(float dt)
             RequestClose();
             return;
         }
+
+        stepTick = _session->BeginStep(stepTick);
     }
 #endif // ASSISI_NETWORKING
 
-    _world.physics.Update(dt);
+    Assisi::App::StepWorld(StepContext(dt, stepTick));
 
     // Immediately after the step, before the snapshot below: a mirror woken by a
     // contact the server never had has to be put back before anything reads it.
@@ -287,23 +326,13 @@ void ServerApp::OnFixedUpdate(float dt)
         _session->AfterPhysicsStep();
 #endif
 
-    // Move the demo world. Writes go through GetMut because that is what stamps
-    // the change tick the delta is computed from — a write through a plain
-    // Get would replicate nothing and report no error.
-    const auto phase = static_cast<float>(GetSimTick()) * 0.02f;
-    for (std::size_t i = 0; i < _moving.size(); ++i)
-    {
-        if (ECS::Transform *transform = _world.scene.GetMut<ECS::Transform>(_moving[i]))
-            transform->position.y = std::sin(phase + static_cast<float>(i));
-    }
-
     // After the simulation: a snapshot describes the world at the end of the
     // tick it is stamped with. A headless client has no devices to sample, so
     // it sends an empty command — enough to exercise the input path and give
     // the server something to measure its buffer depth against.
 #if defined(ASSISI_NETWORKING)
     if (_session)
-        _session->Tick(GetSimTick());
+        _session->Tick();
 #endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
@@ -394,12 +423,16 @@ void ServerApp::InstallQueuedSystems()
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
-    // No window, so no input, no action map and no UI, as this host passes to
-    // every other phase. dt and the tick are zero: a one-shot runs outside any
-    // frame.
+    // dt and the tick are zero: a one-shot runs outside any frame.
+    return StepContext(0.f, 0);
+}
+
+Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
+{
+    // No window, so no input, no action map and no UI, in every phase.
     return {.world         = _world,
-            .dt            = 0.f,
-            .simTick       = 0,
+            .dt            = dt,
+            .simTick       = tick,
             .input         = nullptr,
             .actions       = nullptr,
             .events        = GetEvents(),

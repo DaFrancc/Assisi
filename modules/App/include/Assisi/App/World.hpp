@@ -352,7 +352,11 @@ public:
     /// `[[nodiscard]]`: silently discarding the result loads a level that runs
     /// none of its systems. Write the discard down where it is genuinely
     /// meaningless (an empty list).
-    [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names, std::string_view context);
+    ///
+    /// Static: it needs nothing of a manager, and a host that keeps a lone
+    /// world, such as a dedicated server, installs through it too.
+    [[nodiscard]] static bool ApplySystems(World &world, std::span<const std::string> names,
+                                           std::string_view context);
 
     /// @brief Destroys the named world.
     ///
