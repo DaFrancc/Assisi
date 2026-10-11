@@ -781,6 +781,11 @@ void EditorApp::DrawNetworkWindow()
         ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
                            static_cast<double>(stats.divergenceMax) * 1000.0);
 
+        // How often the host disagreed with where this client put its own
+        // character. Every replay is a correction the player may feel.
+        LabelledValue("Predictions kept", std::format("{}", stats.predictionsKept));
+        LabelledValue("Predictions replayed", std::format("{}", stats.predictionsReplayed));
+
         // Silent churn otherwise: a client-side cleanup system running over
         // mirrors would destroy and re-receive them forever with no signal.
         if (stats.mirrorsResurrected > 0)

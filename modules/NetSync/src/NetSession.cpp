@@ -242,6 +242,7 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
     // just before the server simulates that tick.
     InputCommand command = localInput != nullptr ? *localInput : InputCommand{};
     command.tick         = _clock->CommandTick();
+    _client->RecordPrediction(command.tick);
     _inputBuffer.Push(command);
     _client->SendInput(_inputBuffer);
 }
@@ -432,6 +433,8 @@ SessionStats NetSession::Stats() const
         stats.correctionBytes    = corrections.bytesApplied;
         stats.divergenceMean     = corrections.divergenceMean();
         stats.divergenceMax      = corrections.divergenceMax;
+        stats.predictionsKept     = corrections.predictionsKept;
+        stats.predictionsReplayed = corrections.predictionsReplayed;
         stats.mirrorsResurrected = _client->MirrorsResurrected();
         stats.eventsDispatched   = _client->EventsDispatched();
         stats.eventsUnhandled    = _client->EventsUnhandled();

@@ -1228,6 +1228,159 @@ TEST_CASE("a character the client controls keeps the facing it gave itself")
     CHECK(Agreement(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, kTurnedRound) > kSameFacing);
 }
 
+namespace
+{
+
+/// How many ticks the client's own character runs ahead of the host's copy.
+constexpr std::uint32_t kLeadTicks = 3;
+
+/// Ticks the two copies walk in step before the case looks at them.
+constexpr std::uint32_t kAgreeingTicks = 10;
+
+/// How far the host moves its copy sideways behind the client's back (m).
+constexpr float kHostShove = 0.5f;
+
+/// How near a replayed prediction lands to where it should (m): the host's
+/// velocity arrives rounded to a few centimetres a second, and the replay
+/// carries that over its few steps.
+constexpr float kReplayedNear = 0.01f;
+
+/// Both machines walking the same character the same way, the client
+/// kLeadTicks ahead, with each machine's step and the wire between them run
+/// by hand so a case decides when a snapshot lands.
+struct PredictionRig
+{
+    PhysicsHarness harness;
+    ECS::Entity character{ECS::NullEntity};
+    ECS::Entity mirror{ECS::NullEntity};
+    glm::vec3 move{1.f, 0.f, 0.f};
+
+    PredictionRig()
+    {
+        harness.Step(4);
+        character = SpawnStanding(harness);
+        harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+        harness.Step(30);
+        mirror = MirrorOf(harness, character);
+        REQUIRE(mirror != ECS::NullEntity);
+        REQUIRE(harness.client.ControlsEntity(mirror));
+        Deliver();
+
+        // The client's first commands, sent before the host reaches them.
+        for (std::uint32_t i = 0; i < kLeadTicks; ++i)
+        {
+            StepClient(harness.tick + i);
+        }
+    }
+
+    /// Hands every message waiting on the wire to its side.
+    void Deliver()
+    {
+        std::vector<Net::NetEvent> events;
+        harness.transport->Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == harness.pair.first)
+                harness.server.HandleMessage(harness.pair.first, event.payload);
+            else if (event.connection == harness.pair.second)
+                harness.client.HandleMessage(event.payload);
+        }
+    }
+
+    /// The client's step for command @p tick, and its record of where that
+    /// left its character.
+    void StepClient(std::uint64_t tick)
+    {
+        harness.clientScene.GetMut<Physics::CharacterIntent>(mirror)->move = move;
+        harness.clientPhysics.Update(kFixedStep);
+        harness.client.RecordPrediction(tick);
+    }
+
+    /// One tick on both machines: the host's step and snapshot, and the
+    /// client's step kLeadTicks further on. Nothing is delivered.
+    void StepBoth()
+    {
+        harness.serverScene.GetMut<Physics::CharacterIntent>(character)->move = move;
+        harness.serverPhysics.Update(kFixedStep);
+        StepClient(harness.tick + kLeadTicks);
+        harness.server.Tick(harness.tick++);
+    }
+
+    [[nodiscard]] glm::vec3 ClientPosition() const
+    {
+        return harness.clientScene.Get<ECS::Transform>(mirror)->position;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a correction that agrees with the client's prediction leaves its character alone")
+{
+    // The host's answer for a tick arrives a round trip after the client stepped
+    // it. Snapping to it puts the character back where it was that long ago.
+    PredictionRig rig;
+    const std::uint64_t correctionsBefore = rig.harness.client.Corrections().applied;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        const glm::vec3 before = rig.ClientPosition();
+        rig.Deliver();
+        CHECK(rig.ClientPosition() == before);
+    }
+
+    // It walked the whole time, so the corrections were about a moving character.
+    CHECK(rig.harness.client.Corrections().applied > correctionsBefore);
+    CHECK(rig.ClientPosition().x > 0.1f);
+}
+
+TEST_CASE("a correction the client got wrong is replayed from the host's state, not snapped to the past")
+{
+    PredictionRig rig;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+    }
+
+    // Something only the host knows of moves its copy sideways.
+    const glm::vec3 shove{0.f, 0.f, kHostShove};
+    const Physics::Pose hostPose = rig.harness.serverPhysics.GetBodyPose(rig.character);
+    rig.harness.serverPhysics.ApplyCorrection(
+        rig.character, Physics::Pose{hostPose.rotation, hostPose.position + shove},
+        Physics::BodyState{.linearVelocity = rig.harness.serverPhysics.GetBodyState(rig.character).linearVelocity});
+
+    // Corrected to where the host has it now, plus the steps the client has
+    // taken since: still ahead, and over by the shove.
+    const std::uint64_t correctionsBefore = rig.harness.client.Corrections().applied;
+    glm::vec3 before{0.f};
+    for (std::uint32_t i = 0; i < kAgreeingTicks && rig.harness.client.Corrections().applied == correctionsBefore; ++i)
+    {
+        rig.StepBoth();
+        before = rig.ClientPosition();
+        rig.Deliver();
+    }
+    REQUIRE(rig.harness.client.Corrections().applied > correctionsBefore);
+    CHECK(glm::length(rig.ClientPosition() - (before + shove)) < kReplayedNear);
+
+    // Eased across rather than jumped: one frame later it is drawn nearer
+    // where it was than where it went.
+    rig.harness.client.SmoothView(0.0, kFixedStep);
+    CHECK(glm::length(RenderedPosition(rig.harness.clientScene, rig.mirror) - before) < kHostShove / 2.f);
+
+    SUBCASE("and the replay is what the next agreeing correction is compared with")
+    {
+        for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+        {
+            rig.StepBoth();
+            const glm::vec3 settled = rig.ClientPosition();
+            rig.Deliver();
+            CHECK(rig.ClientPosition() == settled);
+        }
+    }
+}
+
 TEST_CASE("a Collider with no RigidBody replicates as a Transform, not as a body")
 {
     PhysicsHarness harness;

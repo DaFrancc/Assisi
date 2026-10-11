@@ -91,7 +91,8 @@ void ApplySmoothing(const NetworkConfig &config)
                                .largeErrorDistance         = config.largeErrorDistance,
                                .rotationCorrectionTime     = config.rotationCorrectionTime,
                                .snapBelowDistance          = config.snapBelowDistance,
-                               .hardSnapDistance           = config.hardSnapDistance};
+                               .hardSnapDistance           = config.hardSnapDistance,
+                               .predictionTolerance        = config.predictionTolerance};
     SetSmoothing(loaded);
     Core::Log::Info("NetSync: correction smoothing - converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
                     "below {:g} m and beyond {:g} m.",

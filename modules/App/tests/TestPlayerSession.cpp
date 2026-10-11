@@ -33,9 +33,11 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -259,7 +261,114 @@ std::uint16_t HostOnFreePort(NetSync::NetSession &session)
     return 0;
 }
 
+/// Frames a client walks for while its character is watched.
+constexpr std::int32_t kLongWalkFrames = 120;
+
+/// The most frames a client's own character may take to start moving once
+/// asked: the step that samples the controls, and one with nothing to step.
+constexpr std::size_t kMostFramesToStart = 2;
+
+/// The most a character walking straight on may move back in one frame (m):
+/// rounding, not a pull towards where the host had it.
+constexpr float kMostBackPerFrame = 0.001f;
+
+/// How far counts as having started to move (m).
+constexpr float kStartedMoving = 0.01f;
+
+/// How far apart two starts are put (m): well clear of two capsules.
+constexpr float kStartsApart = 4.f;
+
+/// Further than a character walking for kLongWalkFrames falls short of (m).
+constexpr float kLongWalkDistance = 1.f;
+
 } // namespace
+
+TEST_CASE("A client's own character moves the moment it is asked, and the host's answers never pull it back")
+{
+    // The host's answer for a tick arrives a round trip after the client
+    // stepped it, from before the host had the client's latest commands. Taken
+    // as it comes, it puts the character back where it stood, and it walks
+    // only once the host has seen it asked to.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+    const App::ContentSet content = App::BuildContentSet();
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+
+    // A floor on both machines, as a level puts one there.
+    for (const std::unique_ptr<Machine> &machine : session.machines)
+    {
+        const ECS::Entity floor = machine->world.scene.Create();
+        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
+        Physics::Collider collider;
+        collider.shape = Physics::ColliderShape::Box;
+        collider.halfExtents = {50.f, 1.f, 50.f};
+        (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
+    }
+
+    // A start each, apart: two characters made on one start push each other
+    // apart, and the host, who sees the other where it is, rightly wins that.
+    App::PlayerStart startAt;
+    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
+    for (const float x : {0.f, kStartsApart})
+    {
+        const ECS::Entity start = host.world.scene.Create();
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = {x, 0.f, 0.f}});
+        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
+    }
+
+    for (const std::unique_ptr<Machine> &machine : session.machines)
+    {
+        machine->players.Attach(machine->session, machine->world);
+    }
+    const std::uint16_t port = HostOnFreePort(host.session);
+    REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.session.LastError());
+    App::ApplyContentSet(host.session, host.world, content);
+    REQUIRE_MESSAGE(client.session.Join("127.0.0.1", port), client.session.LastError());
+    App::ApplyContentSet(client.session, client.world, content);
+    session.Run(kJoinSteps);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    REQUIRE(own != ECS::NullEntity);
+    const std::uint64_t correctionsBefore = client.session.Client()->Corrections().applied;
+
+    // Where the client simulates it, a frame at a time: its Transform, without
+    // the offset that only hides a correction from view.
+    std::vector<glm::vec3> simulated;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        simulated.push_back(client.world.scene.Get<ECS::Transform>(own)->position);
+        if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))
+        {
+            controls->move = {0.f, 1.f};
+        }
+    });
+    simulated.push_back(client.world.scene.Get<ECS::Transform>(own)->position);
+
+    // The host answered all along, and agreed every time.
+    const NetSync::ReplicationClient::CorrectionStats &corrections = client.session.Client()->Corrections();
+    REQUIRE(corrections.applied > correctionsBefore);
+    CHECK(corrections.predictionsKept > 0);
+    CHECK(corrections.predictionsReplayed == 0);
+    const glm::vec3 travelled = simulated.back() - simulated.front();
+    REQUIRE(glm::length(travelled) > kLongWalkDistance);
+    const glm::vec3 ahead = glm::normalize(travelled);
+
+    std::size_t started = simulated.size();
+    for (std::size_t i = 1; i < simulated.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(glm::dot(simulated[i] - simulated[i - 1], ahead) > -kMostBackPerFrame);
+        if (started == simulated.size() && glm::dot(simulated[i] - simulated.front(), ahead) > kStartedMoving)
+        {
+            started = i;
+        }
+    }
+    CHECK(started <= kMostFramesToStart);
+}
 
 TEST_CASE("Each player of a session plays its own character, and takes it with them when they leave")
 {

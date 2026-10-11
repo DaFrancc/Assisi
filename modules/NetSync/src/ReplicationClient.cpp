@@ -865,7 +865,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         BodyState state;
         if (!ReadBodyState(reader, state))
             return false;
-        ApplyBodyState(state);
+        ApplyBodyState(state, header.serverTick);
     }
     if (!reader.Ok())
         return false;

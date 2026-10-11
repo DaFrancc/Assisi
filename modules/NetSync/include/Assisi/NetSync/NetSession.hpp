@@ -80,6 +80,8 @@ struct SessionStats
     std::uint64_t correctionBytes    = 0;
     float divergenceMean     = 0.f;         ///< Metres, averaged over every correction so far.
     float divergenceMax      = 0.f;         ///< Metres, worst since the session began.
+    std::uint64_t predictionsKept     = 0; ///< Host answers for the client's own character that agreed.
+    std::uint64_t predictionsReplayed = 0; ///< ...and the ones that did not, replayed from the host's.
     std::uint64_t mirrorsResurrected = 0;
 
     // Host.
