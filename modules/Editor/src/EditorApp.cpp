@@ -231,15 +231,17 @@ void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) co
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
     // gizmo built from a different camera lands where the cursor is not.
-    if (PlayViewCamera(world, camera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
+        world = view->world;
+        camera = view->camera;
         return;
     }
     world = _cameraWorld;
     camera = _camera;
 }
 
-bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
+std::optional<Assisi::App::SceneView> EditorApp::PlayView() const
 {
     // Only while a play session is live. Editing looks through the editor's own
     // camera whatever the scene says, or placing a camera would take the viewport
@@ -249,23 +251,15 @@ bool EditorApp::PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera
     // point of pausing, and snapping back to the editor camera would undo it.
     if (_playState == PlayState::Editing || _scene == nullptr)
     {
-        return false;
+        return std::nullopt;
     }
 
     // Which camera the scene nominates is the same question the game asks, and
     // App::ActiveSceneCamera is the one answer to it. What is editor-specific is
-    // the gate above: *whether* to ask at all.
-    const std::optional<Assisi::App::SceneView> view = Assisi::App::ActiveSceneCamera(*_scene);
-    if (!view)
-    {
-        // No active camera in the scene: the editor's own view is the fallback,
-        // which is what a level that has not composed a camera yet should get.
-        return false;
-    }
-
-    world = view->world;
-    camera = view->camera;
-    return true;
+    // the gate above: *whether* to ask at all. No active camera in the scene
+    // leaves the editor's own view as the fallback, which is what a level that
+    // has not composed a camera yet should get.
+    return Assisi::App::ActiveSceneCamera(*_scene);
 }
 
 void EditorApp::AdoptLevelCamera()
@@ -1036,15 +1030,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    glm::mat4 playWorld{1.f};
-    Assisi::Runtime::Camera playCamera;
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    if (PlayViewCamera(playWorld, playCamera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _sceneRenderer.Render(frame, *_scene, playWorld, playCamera, _world->propagationTick);
+        _sceneRenderer.SetViewingCamera(view->entity);
+        _sceneRenderer.Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
         return;
     }
 
+    // The editor's camera is nobody's eyes, so it sees every body.
+    _sceneRenderer.SetViewingCamera(Assisi::ECS::NullEntity);
     _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
 }
 
@@ -1056,11 +1051,9 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     }
     // Through the same camera the scene was drawn with, or an overlay would be
     // projected from somewhere the viewport is not looking from.
-    glm::mat4 playWorld{1.f};
-    Assisi::Runtime::Camera playCamera;
-    if (PlayViewCamera(playWorld, playCamera))
+    if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _overlays.Render(frame, *_scene, playWorld, playCamera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, view->world, view->camera, _sceneRenderer);
         return;
     }
 

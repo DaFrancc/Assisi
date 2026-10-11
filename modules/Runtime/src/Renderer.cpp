@@ -7,6 +7,7 @@
 #include <span>
 #include <vector>
 
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
@@ -30,6 +31,18 @@ Assisi::Geometry::LodRange LodRangeFor(const Assisi::Render::MeshBuffer &mesh, u
 
 namespace
 {
+/// Whether @p entity's mesh is left out for its own camera, of @p viewerInstance.
+bool HiddenFromViewer(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity, const MeshRenderer &meshRenderer,
+                      Assisi::ECS::InstanceId viewerInstance)
+{
+    if (!meshRenderer.hiddenFromOwnCamera || !viewerInstance.IsValid())
+    {
+        return false;
+    }
+    const Assisi::ECS::BlueprintMember *member = scene.Get<Assisi::ECS::BlueprintMember>(entity);
+    return member != nullptr && member->instanceId == viewerInstance;
+}
+
 // GPU-driven cull path. Instead of culling + emitting + sorting draws on the CPU,
 // gather every mesh entity into the culler's host tables (deduping meshes into a
 // descriptor table), let the compute pass frustum-cull, select each survivor's
@@ -62,7 +75,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         {
             const glm::mat4 &world = worldMatrix.matrix;
             const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
-            if (mesh == nullptr)
+            if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
             {
                 continue;
             }
@@ -167,7 +180,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
         {
             const glm::mat4 &world = worldMatrix.matrix;
             const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
-            if (mesh == nullptr)
+            if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
             {
                 continue;
             }

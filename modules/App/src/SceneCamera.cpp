@@ -36,7 +36,8 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
         }
 
         found = SceneView{
-            .world = scene.Get<ECS::WorldMatrix>(entity)->matrix, .pose = *transform, .camera = sceneCamera};
+            .world = scene.Get<ECS::WorldMatrix>(entity)->matrix, .pose = *transform, .camera = sceneCamera,
+            .entity = entity};
     }
 
     return found;

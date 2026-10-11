@@ -25,6 +25,7 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -330,10 +331,9 @@ class EditorApp : public Assisi::App::Application
     /// game shows. Reads the camera's *world* pose, since a player's camera is
     /// parented to the character it is attached to.
     ///
-    /// @return false while editing, or when no active camera is in the scene — in
-    ///         which case @p world and @p camera are untouched and the editor's own
-    ///         view is the fallback.
-    [[nodiscard]] bool PlayViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
+    /// @return empty while editing, or when no active camera is in the scene, in
+    ///         which case the editor's own view is the fallback.
+    [[nodiscard]] std::optional<Assisi::App::SceneView> PlayView() const;
 
     /// @brief Lends the cursor to the editor mid-session and gives it back: F8
     /// toggles, and clicking the game — but not a panel — ends the loan.
@@ -354,7 +354,7 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief Where the viewport is looking from, whichever camera that is.
     ///
-    /// PlayViewCamera's answer when it has one, the editor's own otherwise. Use
+    /// PlayView's answer when it has one, the editor's own otherwise. Use
     /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
     /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
     /// only for moving the editor camera itself.

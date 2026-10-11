@@ -545,6 +545,7 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     }
 
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer.SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
     _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
 }
 
