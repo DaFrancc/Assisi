@@ -6,6 +6,8 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
+#include <expected>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -171,9 +173,14 @@ void DrainSystemInstalls(SystemContext ctx)
     }
 }
 
-bool LevelSystemsAreDeclared(std::string_view virtualPath)
+namespace
 {
-    const auto wanted = Runtime::SceneSerializer::ReadLevelSystems(virtualPath);
+
+/// Whether every name in @p wanted, the systems the level at @p where names, is
+/// declared. False for a level that could not be read.
+bool NamesAreDeclared(const std::expected<std::vector<std::string>, Runtime::LevelError> &wanted,
+                      std::string_view where)
+{
     if (!wanted)
         return false;
 
@@ -184,10 +191,22 @@ bool LevelSystemsAreDeclared(std::string_view virtualPath)
     {
         if (SystemCatalog::Instance().Find(name) != nullptr)
             continue;
-        Core::Log::Error("'{}' names system '{}', which this build does not declare.", virtualPath, name);
+        Core::Log::Error("'{}' names system '{}', which this build does not declare.", where, name);
         ok = false;
     }
     return ok;
+}
+
+} // namespace
+
+bool LevelSystemsAreDeclared(std::string_view virtualPath)
+{
+    return NamesAreDeclared(Runtime::SceneSerializer::ReadLevelSystems(virtualPath), virtualPath);
+}
+
+bool LevelFileSystemsAreDeclared(const std::filesystem::path &path)
+{
+    return NamesAreDeclared(Runtime::SceneSerializer::ReadLevelSystemsFromDisk(path), path.string());
 }
 
 std::map<std::string, int32_t, std::less<>> BlueprintSystemCounts(const Runtime::InstanceTable &instances)

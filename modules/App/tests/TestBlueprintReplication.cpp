@@ -38,6 +38,7 @@
 #include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -655,6 +656,44 @@ TEST_CASE("Join: every target answers the host's level the same way")
         CHECK(resolved.error() == App::JoinLevelError::ContentMismatch);
     }
 
+    SUBCASE("a play-in-editor snapshot outside the asset root resolves where it lies")
+    {
+        // Written beside the executable, not under the asset root, so a virtual
+        // path could never reach it: every check has to read it where it is.
+        const std::filesystem::path snapshot = std::filesystem::temp_directory_path() / "assisi_pie_snapshot.alvl";
+        {
+            std::ofstream out(snapshot, std::ios::binary);
+            out << nlohmann::json{{"version", 2}, {"systems", nlohmann::json::array()}}.dump(2);
+            REQUIRE(out.good());
+        }
+        const std::optional<std::uint64_t> hash = Core::HashTextFileNormalized(snapshot);
+        REQUIRE(hash.has_value());
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::AbsolutePath;
+        level.path = snapshot.string();
+        level.contentHash = *hash;
+        const std::expected<std::filesystem::path, App::JoinLevelError> resolved = App::ResolveJoinLevel(level);
+        REQUIRE(resolved.has_value());
+        CHECK(*resolved == snapshot);
+    }
+    SUBCASE("a play-in-editor snapshot naming a system this build lacks is refused")
+    {
+        const std::filesystem::path snapshot = std::filesystem::temp_directory_path() / "assisi_pie_snapshot.alvl";
+        {
+            std::ofstream out(snapshot, std::ios::binary);
+            out << nlohmann::json{{"version", 2}, {"systems", {"NoSuchSystem"}}}.dump(2);
+            REQUIRE(out.good());
+        }
+        const std::optional<std::uint64_t> hash = Core::HashTextFileNormalized(snapshot);
+        REQUIRE(hash.has_value());
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::AbsolutePath;
+        level.path = snapshot.string();
+        level.contentHash = *hash;
+        const std::expected<std::filesystem::path, App::JoinLevelError> resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::SystemsMissing);
+    }
     SUBCASE("a level that matches resolves to the file to load")
     {
         const std::optional<std::uint64_t> hash = App::HashLevelFile("car.abp");

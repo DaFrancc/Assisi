@@ -203,7 +203,12 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
     // The hash proves the file is byte-identical to the host's, which says nothing
     // about whether *this* build declares the systems it names: an older target can
     // match the file exactly and still be unable to run it.
-    if (!LevelSystemsAreDeclared(level.path))
+    // Read the way the file was found: a play-in-editor snapshot is outside the
+    // asset root, where a virtual path cannot reach.
+    const bool declared = level.addressing == NetSync::LevelAddressing::AbsolutePath
+                              ? LevelFileSystemsAreDeclared(file)
+                              : LevelSystemsAreDeclared(level.path);
+    if (!declared)
         return std::unexpected(JoinLevelError::SystemsMissing);
 
     return file;

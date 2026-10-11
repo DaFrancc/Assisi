@@ -191,23 +191,52 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
-LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
-                                          const LoadOptions &options)
+namespace
 {
-    // Both refusals below precede the load, so the caller's scene is untouched.
+
+/// The level document at @p path, read from disk rather than through the asset
+/// system.
+std::expected<nlohmann::json, LevelError> ReadDiskDocument(const std::filesystem::path &path)
+{
     std::ifstream file(path);
     if (!file.is_open())
     {
         Core::Log::Error("SceneSerializer: cannot open '{}' for reading", path.string());
-        return std::unexpected(LevelFailure{.kind = LevelError::FileUnreadable});
+        return std::unexpected(LevelError::FileUnreadable);
     }
 
-    const nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/ false);
+    nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: '{}' is not readable JSON", path.string());
-        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson});
+        return std::unexpected(LevelError::MalformedJson);
     }
+    return doc;
+}
+
+} // namespace
+
+std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSystemsFromDisk(
+    const std::filesystem::path &path)
+{
+    const std::expected<nlohmann::json, LevelError> doc = ReadDiskDocument(path);
+    if (!doc)
+    {
+        return std::unexpected(doc.error());
+    }
+    return ParseSystemNames(*doc);
+}
+
+LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
+                                          const LoadOptions &options)
+{
+    // Both refusals in the read precede the load, so the caller's scene is untouched.
+    const std::expected<nlohmann::json, LevelError> read = ReadDiskDocument(path);
+    if (!read)
+    {
+        return std::unexpected(LevelFailure{.kind = read.error()});
+    }
+    const nlohmann::json &doc = *read;
 
     const std::string pathText = path.string();
     LoadOptions named = options;

@@ -354,6 +354,11 @@ public:
     [[nodiscard]] static std::expected<std::vector<std::string>, LevelError> ReadLevelSystems(
         std::string_view assetPath);
 
+    /// @brief ReadLevelSystems for a level that is not an asset, read where it
+    /// lies, as LoadFromDisk reads it.
+    [[nodiscard]] static std::expected<std::vector<std::string>, LevelError> ReadLevelSystemsFromDisk(
+        const std::filesystem::path &path);
+
     /// @brief Reads a level or blueprint document by virtual path.
     ///
     /// What a document is stored as belongs to the executable: the editor reads
