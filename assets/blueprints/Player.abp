@@ -63,7 +63,11 @@
         "Parent": {
           "parent": "Player"
         },
-        "Replicated": {},
+        "Replicated": {
+          "excluded": [
+            "Transform"
+          ]
+        },
         "Transform": {
           "position": [
             0.0,
