@@ -24,6 +24,9 @@
 /// string C++ cannot check is quoted, which today means a system name in
 /// ASYSTEM. reflectgen refuses the other form in both directions.
 ///
+/// reflectgen refuses any argument an annotation does not register, so a
+/// misspelt flag fails the build instead of quietly doing nothing.
+///
 /// A field holding a set of an AENUM's enumerators is a Core::Bitmask<E, Bits>,
 /// not an annotated integer; reflectgen reads the enum and the width from the
 /// type.
@@ -46,8 +49,7 @@
 ///
 /// **`replicable` grants a capability, not a policy.** It says this type *has* a
 /// wire form; whether a given entity actually sends it is G2 and G4. reflectgen
-/// rejects the spelling `replicated` by name rather than ignoring it — an
-/// unknown flag would parse as nothing and silently un-replicate the component.
+/// rejects the old spelling `replicated` saying what it became.
 ///
 /// **Polarity is deliberate in both directions.** G1 is opt-in because a type
 /// should not acquire a wire form by accident. G4 is opt-out because Transform,

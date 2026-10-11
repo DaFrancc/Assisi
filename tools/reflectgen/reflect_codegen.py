@@ -14,10 +14,10 @@ worse than a build error.
 The spelling is `replicable`, not `replicated`, and the difference is the whole
 point: the annotation grants a *capability* (this type has a wire form), while
 whether any given entity actually sends it is policy decided elsewhere — the
-Replicated marker's exclusion mask, and the game's neverReplicate list. The old
-spelling is rejected by name rather
-than ignored, because "unknown flag" and "this flag changed meaning" are
-different problems for a reader to debug.
+Replicated marker's exclusion mask, and the game's neverReplicate list. The
+parser refuses the old spelling with a message of its own, because "unknown
+flag" and "this flag changed meaning" are different problems for a reader to
+debug.
 """
 
 import re
@@ -485,20 +485,9 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
     reveal. AFIELD(norep) outside a replicable component is the poster child: it
     reads as "keep this off the wire" while nothing about the type is on the wire
     to begin with.
-
-    `replicated` is rejected here by name rather than left to the unknown-flag
-    path, which would ignore it and take the component off the wire in silence.
     """
     for comp in components:
         where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
-
-        if comp.args.has('replicated'):
-            raise ValueError(
-                f"{where} is marked '{'AASSET' if comp.is_asset else 'ACOMP'}(replicated)', which "
-                f"was renamed to 'replicable'. The flag grants a capability — this type *can* "
-                f"cross the wire — while whether a given entity sends it is policy, held by the "
-                f"Replicated marker's exclusion mask and the game's neverReplicate list. Write "
-                f"'replicable'.")
 
         if comp.args.has('replicable'):
             if comp.is_asset:

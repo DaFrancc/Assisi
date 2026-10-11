@@ -868,8 +868,8 @@ class ReplicationAnnotationTest(unittest.TestCase):
         self.assertIn(".replicable = true", cpp)
 
     def test_the_retired_replicated_spelling_is_rejected_by_name(self):
-        # It would otherwise parse as an unknown flag and be silently ignored,
-        # taking the component off the wire without a word.
+        # Refused like any unknown flag, but saying what it became: "unknown"
+        # and "renamed" are different problems for a reader to debug.
         src = "namespace N {\nACOMP(replicated)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
@@ -1366,6 +1366,49 @@ class MalformedMacroTest(unittest.TestCase):
         src = "namespace N {\nACOMP()\nstruct C { AFIELD() SomeUnknownType t; };\n}\n"
         with self.assertRaises(ValueError):
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
+class UnknownArgumentTest(unittest.TestCase):
+    """An argument no annotation reads is refused. Ignored, a misspelt `norep`
+    would put a field on the wire and a misspelt `replicable` keep a component
+    off it, and both would compile."""
+
+    def _refused(self, src: str) -> str:
+        with self.assertRaises(ValueError) as caught:
+            _parse_source(src)
+        return str(caught.exception)
+
+    def test_an_unknown_afield_flag_is_refused(self):
+        message = self._refused("namespace N {\nACOMP(replicable)\nstruct C { AFIELD(nroep) int32_t a = 0; };\n}\n")
+        self.assertIn("'nroep' is not a registered argument for AFIELD", message)
+
+    def test_an_unknown_afield_key_is_refused(self):
+        message = self._refused("namespace N {\nACOMP()\nstruct C { AFIELD(minimum = 0) int32_t a = 0; };\n}\n")
+        self.assertIn("'minimum' is not a registered argument for AFIELD", message)
+
+    def test_an_unknown_acomp_flag_is_refused(self):
+        message = self._refused("namespace N {\nACOMP(replicabel)\nstruct C { AFIELD() int32_t a = 0; };\n}\n")
+        self.assertIn("'replicabel' is not a registered argument for ACOMP", message)
+
+    def test_an_unknown_acomp_key_is_refused(self):
+        message = self._refused("namespace N {\nACOMP(require = {D})\nstruct C { AFIELD() int32_t a = 0; };\n}\n")
+        self.assertIn("'require' is not a registered argument for ACOMP", message)
+
+    def test_an_unknown_aasset_flag_is_refused(self):
+        message = self._refused("namespace N {\nAASSET(cached)\nstruct A { AFIELD() float b = 0.f; };\n}\n")
+        self.assertIn("'cached' is not a registered argument for AASSET", message)
+
+    def test_an_aenum_argument_is_refused(self):
+        message = self._refused("namespace N {\nAENUM(bitmask)\nenum class E : uint8_t { A, B };\n}\n")
+        self.assertIn("AENUM takes no arguments", message)
+
+    def test_every_registered_argument_is_accepted(self):
+        src = ("namespace N {\nACOMP(replicable, tracked, requires = {D}, excludes = {F})\n"
+               "struct C {\n"
+               "    AFIELD(norep, min = 0, max = 10) int32_t a = 0;\n"
+               "    AFIELD(transient) float cache = 0.f;\n"
+               "};\n}\n")
+        self.assertEqual(len(_parse_source(src)), 1)
 
 
 def _parse_full(source: str):
