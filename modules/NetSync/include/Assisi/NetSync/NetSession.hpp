@@ -243,6 +243,15 @@ public:
     /// @brief The session id of a connected client. Host only.
     [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId client) const;
 
+    /// @brief Every client whose handshake verified, in the order they joined.
+    /// Empty unless hosting.
+    [[nodiscard]] std::vector<ReadyClient> ReadyClients() const;
+
+    /// @brief How a leaving client's entities are despawned; see
+    /// ReplicationServer::SetDespawner. Kept across Host() calls, so it can be
+    /// set once when the session is made.
+    void SetDespawner(Despawner despawner);
+
     /// @brief Ask the authority for something.
     ///
     /// The same call in both roles, which is the point: a client sends it over
@@ -313,6 +322,7 @@ private:
     std::unique_ptr<ReplicationServer>  _server;
     std::unique_ptr<ReplicationClient>  _client;
     std::unique_ptr<NetClock>           _clock;
+    Despawner _despawner; ///< Handed to every server this session hosts.
 
     SessionRole _role       = SessionRole::Offline;
     Net::ConnectionId _connection = Net::InvalidConnection;

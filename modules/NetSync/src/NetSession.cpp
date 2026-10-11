@@ -71,6 +71,7 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
     // So a handler's NetContext can reach back out to send further messages.
     _server->SetOwningSession(this);
+    _server->SetDespawner(_despawner);
     // Before any connection can arrive, since it is carried in every hello.
     _server->SetLevelIdentity(std::move(level));
     _role = SessionRole::Host;
@@ -309,6 +310,18 @@ bool NetSession::ControlsEntity(ECS::Entity entity) const
 ClientId NetSession::ClientIdOf(Net::ConnectionId client) const
 {
     return _server ? _server->ClientIdOf(client) : InvalidClientId;
+}
+
+std::vector<ReadyClient> NetSession::ReadyClients() const
+{
+    return _server ? _server->ReadyClients() : std::vector<ReadyClient>{};
+}
+
+void NetSession::SetDespawner(Despawner despawner)
+{
+    _despawner = std::move(despawner);
+    if (_server)
+        _server->SetDespawner(_despawner);
 }
 
 std::string NetSession::StatusText() const

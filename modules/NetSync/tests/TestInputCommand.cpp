@@ -8,10 +8,12 @@
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
+#include <Assisi/NetSync/NetProtocol.hpp>
 
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <string>
 #include <vector>
 
 using namespace Assisi;
@@ -285,4 +287,27 @@ TEST_CASE("a cleared queue behaves like a fresh one")
     // Ticks below the old high-water mark are accepted again — this is the
     // rejoin path, where the session's tick history is gone.
     CHECK(queue.Accept(MakeCommand(1)));
+}
+
+TEST_CASE("the names of the input bits are part of the handshake")
+{
+    // Both ends read bit N as the same action only if they agree on the list, and
+    // nothing else about the build changes when a game reorders it.
+    const std::vector<std::string> before = InputActionNames();
+
+    SetInputActionNames({"Jump", "Crouch", "Aim"});
+    const std::uint64_t first = NetProtocolHash();
+    SetInputActionNames({"Jump", "Crouch", "Aim"});
+    CHECK(NetProtocolHash() == first);
+
+    SetInputActionNames({"Jump", "Crouch", "Sprint"});
+    CHECK(NetProtocolHash() != first);
+    // A refused join says which list it was.
+    CHECK(NetProtocolSummary().find("Sprint") != std::string::npos);
+
+    // The same names in another order are another protocol.
+    SetInputActionNames({"Crouch", "Jump", "Aim"});
+    CHECK(NetProtocolHash() != first);
+
+    SetInputActionNames(before);
 }

@@ -211,7 +211,9 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
             // Both outcomes already have a wire path — despawn rides the
             // acked-set diff, removal rides the presence diff — so nothing new
             // has to be sent for either.
-            if (claim->despawnOnDisconnect)
+            if (claim->despawnOnDisconnect && _despawner)
+                _despawner(entity);
+            else if (claim->despawnOnDisconnect)
                 _scene.Destroy(entity);
             else
                 _scene.Remove<ControlledBy>(entity);
@@ -227,6 +229,22 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
 
     _connectionByClient.erase(client.value);
     _connections.erase(it);
+}
+
+std::vector<ReadyClient> ReplicationServer::ReadyClients() const
+{
+    std::vector<ReadyClient> ready;
+    for (const auto &[id, connection] : _connections)
+    {
+        if (connection.ready)
+            ready.push_back(ReadyClient{id, connection.clientId});
+    }
+
+    // Ids are handed out in joining order and never reused, so sorting by them
+    // is the joining order the map does not keep.
+    std::sort(ready.begin(), ready.end(),
+              [](const ReadyClient &a, const ReadyClient &b) { return a.client < b.client; });
+    return ready;
 }
 
 ClientId ReplicationServer::ClientIdOf(Net::ConnectionId connection) const

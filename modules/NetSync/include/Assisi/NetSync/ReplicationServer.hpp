@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <span>
 #include <unordered_map>
@@ -35,6 +36,17 @@
 
 namespace Assisi::NetSync
 {
+
+/// @brief A connection whose handshake verified, and who it is.
+struct ReadyClient
+{
+    Net::ConnectionId connection = Net::InvalidConnection;
+    ClientId client;
+};
+
+/// @brief Takes away an entity its controller left behind. Given the entity
+/// whose `ControlledBy` asked to be despawned with its client.
+using Despawner = std::function<void(ECS::Entity)>;
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
 ///
@@ -94,6 +106,18 @@ public:
     /// bookkeeping is erased; it needs the leaving client's id to know what to
     /// sweep.
     void RemoveConnection(Net::ConnectionId connection);
+
+    /// @brief How the disconnect sweep despawns an entity, in place of
+    /// destroying that one entity.
+    ///
+    /// The entity a client controls is often one member of a blueprint whose
+    /// other members (a camera, a weapon) belong with it, and the instance table
+    /// that knows them lives above this module. Null restores the default.
+    void SetDespawner(Despawner despawner) { _despawner = std::move(despawner); }
+
+    /// @brief Every connection whose handshake verified, in the order they
+    /// joined.
+    [[nodiscard]] std::vector<ReadyClient> ReadyClients() const;
 
     /// @brief This connection's session identity, or InvalidClientId if it is
     /// not one of ours.
@@ -745,6 +769,9 @@ private:
 
     /// ClientId → the entities it controls. Rebuilt each ReconcileNetIds.
     std::unordered_map<std::uint32_t, std::vector<ECS::Entity>> _controlledByClient;
+
+    /// What the disconnect sweep despawns with; see SetDespawner.
+    Despawner _despawner;
 
     /// The next id a joining connection gets. Starts past the reserved values
     /// and only ever climbs; see ClientId on why ids are never reused.
