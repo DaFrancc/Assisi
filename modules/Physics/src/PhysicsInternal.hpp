@@ -1518,6 +1518,11 @@ private:
         JPH::RefConst<JPH::Shape> standingShape;
         JPH::RefConst<JPH::Shape> crouchingShape;
 
+        /// The intent its most recent step consumed, a replayed one included.
+        /// The step clears a jump from CharacterIntent, so this is the only
+        /// record of it afterwards.
+        CharacterIntent lastIntent;
+
         /// The way it is looking, from its Transform at the start of the step.
         /// The capsule itself is never turned; only BunnyHopPolicy::Boost reads
         /// this.
@@ -1642,6 +1647,29 @@ private:
     /// Reads every character's CharacterIntent and sweeps it by one step,
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
+
+    /// How a character meets the ground at the start of its step.
+    struct GroundContact
+    {
+        JPH::Vec3 velocity = JPH::Vec3::sZero();       ///< Its own, with any push taken in.
+        JPH::Vec3 groundVelocity = JPH::Vec3::sZero(); ///< What is underfoot.
+        bool standing = false;                         ///< On walkable ground and not rising off it.
+    };
+
+    /// Reads the ground under @p record and takes in its pending push.
+    GroundContact SenseGround(CharacterRecord &record);
+
+    /// The character's own part of a step: its timers, eye height, steering,
+    /// gravity and sweep, under @p intent from @p contact. Nothing here touches
+    /// another body's state, which is what lets a replay run it alone.
+    /// @return whether it jumped.
+    bool MoveCharacter(CharacterRecord &record, const CharacterIntent &intent, const GroundContact &contact,
+                       float deltaTime);
+
+    /// Puts @p record's character and its inner body at @p feet with
+    /// @p velocity, finds what it touches there, and writes and snaps its
+    /// Transform.
+    void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
 
     /// The carrier under @p record that it may ride: the owner of its ground
     /// body, when that is a body with a Carrier and the character

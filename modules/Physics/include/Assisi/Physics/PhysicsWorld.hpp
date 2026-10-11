@@ -54,6 +54,25 @@ struct Pose
     glm::vec3 position{0.f};
 };
 
+/// @brief Everything one step of a character reads and leaves behind: enough
+/// to put it back where it was and step it again.
+///
+/// Taken after a step, so @ref intent is what that step consumed and the rest is
+/// where it left the character. A jump is cleared from CharacterIntent by the
+/// step that takes it; here it is kept.
+struct CharacterFrame
+{
+    CharacterIntent intent;
+    glm::vec3 position{0.f}; ///< The feet, in world space.
+    glm::vec3 velocity{0.f};
+    glm::vec3 facing{0.f, 0.f, -1.f}; ///< The way it looked during the step.
+    float timeSinceGrounded = 0.f;
+    float jumpBufferRemaining = 0.f;
+    float eyeHeight = 0.f;
+    Stance stance = Stance::Standing;
+    bool jumpedSinceGrounded = false;
+};
+
 /// @brief What a participant is, and what it interacts with.
 ///
 /// Carried by bodies and by queries alike, because a query is a participant: a
@@ -590,6 +609,28 @@ public:
 
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
+
+    /// @brief Where @p entity's character is now and what its last step
+    /// consumed. A default frame for an entity with no character.
+    [[nodiscard]] CharacterFrame CaptureCharacter(ECS::Entity entity) const;
+
+    /// @brief Puts @p entity's character back into @p frame: its feet, velocity,
+    /// stance, eye height and jump timers. Writes and snaps the Transform, as
+    /// ApplyCorrection does. Not while the world is stepping.
+    ///
+    /// A stance that no longer fits where the character stands is left as it is,
+    /// as standing up under something low is.
+    void RewindCharacter(ECS::Entity entity, const CharacterFrame &frame);
+
+    /// @brief Steps @p entity's character alone by @p deltaTime, under
+    /// @p intent and looking along @p facing, as Update would have stepped it.
+    /// Writes and snaps the Transform. Not while the world is stepping.
+    ///
+    /// Everything else stays where it is now, so the step is against the world as
+    /// it stands rather than as it stood when the step first ran: a character
+    /// replayed next to a moving body or a crowd lands where it would have with
+    /// them here. Pushes and carriers take no part.
+    void ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing, float deltaTime);
 
 private:
     struct Impl;
