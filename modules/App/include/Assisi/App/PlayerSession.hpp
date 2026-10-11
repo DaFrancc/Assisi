@@ -60,8 +60,10 @@ public:
     /// session and before Host() or Join().
     ///
     /// Publishes the player actions, and has a leaving player's character
-    /// despawned whole: every member of its blueprint, camera and all.
-    void Attach(NetSync::NetSession &session, World &world);
+    /// despawned whole: every member of its blueprint, camera and all. A host
+    /// gives itself a character only when @p hostPlays; a dedicated server
+    /// does not.
+    void Attach(NetSync::NetSession &session, World &world, bool hostPlays);
 
     /// @brief This fixed step's part, after the session has polled and before
     /// the world's systems run.
@@ -90,6 +92,9 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> _starved;
 
     std::optional<NetSync::InputCommand> _local;
+
+    /// Whether the host is a player too. See Attach.
+    bool _hostPlays = true;
 };
 
 } // namespace Assisi::App

@@ -114,8 +114,9 @@ void RelayHeldCommand(PlayerInput &controls, const NetSync::InputCommand *comman
     }
 }
 
-void PlayerSession::Attach(NetSync::NetSession &session, World &world)
+void PlayerSession::Attach(NetSync::NetSession &session, World &world, bool hostPlays)
 {
+    _hostPlays = hostPlays;
     PublishPlayerActions();
     session.SetDespawner([&world](ECS::Entity entity) { DespawnWhole(world, entity); });
     _warned.clear();
@@ -151,7 +152,11 @@ void PlayerSession::GivePlayers(NetSync::NetSession &session, World &world)
 {
     NetSync::ReplicationServer &server = *session.Server();
 
-    std::vector<NetSync::ClientId> players{NetSync::HostClientId};
+    std::vector<NetSync::ClientId> players;
+    if (_hostPlays)
+    {
+        players.push_back(NetSync::HostClientId);
+    }
     for (const NetSync::ReadyClient &ready : session.ReadyClients())
     {
         players.push_back(ready.client);

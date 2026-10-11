@@ -13,8 +13,6 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #if defined(ASSISI_NETWORKING)
-#include <Assisi/App/BlueprintReplication.hpp>
-#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #endif
@@ -197,14 +195,16 @@ void EditorApp::StartPlay(NetIntent intent)
             hostLevel = HostLevelIdentity();
     }
 
-    // The session binds the scene it replicates by reference at construction, and
-    // that scene is now the play scene — the one the editor already treats as
-    // disposable.
-    _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
-    if (_world != nullptr)
+    if (_world == nullptr)
     {
-        _playerSession.Attach(*_netSession, *_world);
+        StopPlay();
+        return;
     }
+
+    // The session binds the world it replicates by reference at construction, and
+    // that world's scene is now the play scene — the one the editor already treats
+    // as disposable.
+    _networkedPlay = std::make_unique<Assisi::App::NetworkedPlay>(*_world);
 
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
@@ -212,30 +212,17 @@ void EditorApp::StartPlay(NetIntent intent)
     _netVetoedComponentNames = Assisi::NetSync::NeverReplicate();
 
     const auto port = static_cast<std::uint16_t>(_netPort);
-
-    const bool started = intent == NetIntent::Host
-                             ? _netSession->Host(port, std::move(hostLevel))
-                         // Deferred: the ClientHello waits until this editor
-                         // has built the host's level, because a snapshot
-                         // applied against a world that does not exist yet
-                         // maps NetIds onto whatever is in those slots.
-                             : _netSession->Join(_netAddress.data(), port, /*deferHandshake=*/ true);
+    const bool started =
+        intent == NetIntent::Host
+            ? _networkedPlay->Host(port, std::move(hostLevel), Assisi::App::HostRole::Player)
+            : _networkedPlay->Join(_netAddress.data(), port);
     if (!started)
     {
         // Copy the reason out before dropping the session that holds it.
-        _netError = _netSession->LastError();
-        _netSession.reset();
+        _netError = _networkedPlay->Session().LastError();
+        _networkedPlay.reset();
         StopPlay();
         return;
-    }
-
-    // Before the session's first step, on this thread: a host that spawned its
-    // own player before it could name blueprints on the wire would send that
-    // player as loose entities for good. Scanned on every Host or Join, never on
-    // Play alone, because the content on disk may have moved on since.
-    if (_world != nullptr)
-    {
-        Assisi::App::ApplyContentSet(*_netSession, *_world, Assisi::App::BuildContentSet());
     }
 
     _netError.clear();

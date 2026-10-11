@@ -144,7 +144,7 @@ void ServerApp::OnStart()
 #else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _session          = std::make_unique<NetSync::NetSession>(_world.scene, &_world.physics, config);
+    _play             = std::make_unique<Assisi::App::NetworkedPlay>(_world, config);
 
     if (_options.role == ServerRole::Host)
     {
@@ -165,7 +165,8 @@ void ServerApp::OnStart()
         // Host logs its own reason (the port is taken, the transport would not come
         // up). What it cannot do is reach the exit code, and a supervisor restarting
         // a server that cannot bind is watching for exactly this.
-        if (!_session->Host(_options.port, std::move(level)))
+        // Dedicated: the players who join get characters, and the server none.
+        if (!_play->Host(_options.port, std::move(level), Assisi::App::HostRole::Dedicated))
         {
             RefuseStart();
             return;
@@ -174,26 +175,17 @@ void ServerApp::OnStart()
         SpawnDemoMovers();
         Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _options.spawnCount);
     }
-    // Deferred, exactly like the editor's join: this process has a level to load
-    // before a NetId has anywhere to land.
-    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
+    else if (!_play->Join(_options.address, _options.port))
     {
         RefuseStart();
-        return;
     }
-
-    // Before the first step, on this thread, as the editor does: an instance
-    // spawned before the host could name blueprints on the wire would be sent as
-    // loose entities for good. Hosting or joining scans; simulating alone never
-    // does, having nothing to compare with anybody.
-    Assisi::App::ApplyContentSet(*_session, _world, Assisi::App::BuildContentSet());
 #endif // ASSISI_NETWORKING
 }
 
 void ServerApp::BuildJoinedWorld()
 {
 #if defined(ASSISI_NETWORKING)
-    const NetSync::ServerHello *hello = _session->Handshake();
+    const NetSync::ServerHello *hello = _play->Session().Handshake();
     if (hello == nullptr)
         return;
 
@@ -203,7 +195,7 @@ void ServerApp::BuildJoinedWorld()
     const auto fail = [this](std::string reason)
                       {
                           Log::Error("Client: join failed - {}", reason);
-                          _session->AbortJoin(std::move(reason));
+                          _play->Session().AbortJoin(std::move(reason));
                           RefuseStart();
                       };
 
@@ -233,7 +225,7 @@ void ServerApp::BuildJoinedWorld()
     BeginWorld(WorldStartContext(), Assisi::App::SimulateFrom::Begin);
     SettleWorld(WorldStartContext(), /*assetsPending=*/ false);
 
-    _session->ConfirmLevelReady();
+    _play->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
               "handshake.",
               hello->level.path, stripped.entities, stripped.orphans);
@@ -284,45 +276,35 @@ void ServerApp::OnFixedUpdate(float dt)
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
+    if (_play)
     {
-        _session->Poll();
+        stepTick = _play->BeginStep(stepTick, /*stepping=*/ true);
 
         // The handshake named a level; build it before answering. Nothing here
         // is GPU-bound, so unlike the editor this needs no marshalling.
-        if (_session->IsAwaitingLevel())
+        if (_play->Session().IsAwaitingLevel())
             BuildJoinedWorld();
 
-        // A host that went away, or a rejected handshake: Poll turns both into
-        // an Offline session, and a client with no stream has nothing to do.
-        if (_options.role == ServerRole::Client && !_session->IsActive())
+        // A host that went away, or a rejected handshake: the read turns both
+        // into an Offline session, and a client with no stream has nothing to do.
+        if (_options.role == ServerRole::Client && !_play->Session().IsActive())
         {
             Log::Warn("Client: session ended ({}).",
-                      _session->LastError().empty() ? "closed by the host" : _session->LastError());
+                      _play->Session().LastError().empty() ? "closed by the host" : _play->Session().LastError());
             RequestClose();
             return;
         }
-
-        stepTick = _session->BeginStep(stepTick);
     }
 #endif // ASSISI_NETWORKING
 
     Assisi::App::StepWorld(StepContext(dt, stepTick));
 
-    // Immediately after the step, before the snapshot below: a mirror woken by a
-    // contact the server never had has to be put back before anything reads it.
-#if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->AfterPhysicsStep();
-#endif
-
     // After the simulation: a snapshot describes the world at the end of the
-    // tick it is stamped with. A headless client has no devices to sample, so
-    // it sends an empty command — enough to exercise the input path and give
-    // the server something to measure its buffer depth against.
+    // tick it is stamped with. A headless client with no player sends an empty
+    // command, enough to give the host something to measure its buffer by.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->Tick();
+    if (_play)
+        _play->EndStep();
 #endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
@@ -332,8 +314,8 @@ void ServerApp::OnFixedUpdate(float dt)
 double ServerApp::SimulationSeconds(double frameSeconds)
 {
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        return frameSeconds * _session->TimeScale();
+    if (_play)
+        return frameSeconds * _play->TimeScale();
 #endif
     return frameSeconds;
 }
@@ -348,8 +330,8 @@ void ServerApp::OnUpdate([[maybe_unused]] float dt)
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
 #if defined(ASSISI_NETWORKING)
-    if (_session)
-        _session->SmoothView(dt);
+    if (_play)
+        _play->Session().SmoothView(dt);
 #endif
 
     ReportStatus();
@@ -370,14 +352,14 @@ void ServerApp::ReportStatus()
     _lastReportTick              = tick;
 
 #if defined(ASSISI_NETWORKING)
-    if (!_session || !_session->IsActive())
+    if (!_play || !_play->Session().IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
         return;
     }
 
-    const NetSync::SessionStats stats = _session->Stats();
-    if (_session->IsHost())
+    const NetSync::SessionStats stats = _play->Session().Stats();
+    if (_play->Session().IsHost())
     {
         Log::Info("Server: tick {} ({:.1f} Hz), {} client(s), {} snapshots, {} bytes sent", tick, tickRate,
                   stats.clientCount, stats.snapshotsSent, stats.bytesSent);
@@ -385,7 +367,7 @@ void ServerApp::ReportStatus()
     else
     {
         Log::Info("Client: tick {} ({:.1f} Hz), {}, {} entities, {} applied, {} rejected, server tick {}", tick,
-                  tickRate, _session->StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
+                  tickRate, _play->Session().StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
 #else
@@ -435,9 +417,9 @@ Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
 void ServerApp::OnShutdown()
 {
 #if defined(ASSISI_NETWORKING)
-    if (_session && _session->IsClient())
+    if (_play && _play->Session().IsClient())
     {
-        const NetSync::SessionStats stats = _session->Stats();
+        const NetSync::SessionStats stats = _play->Session().Stats();
         Log::Info("Client: stopped after {} ticks - {} snapshots applied, {} rejected, {} entities mirrored.",
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
@@ -449,7 +431,7 @@ void ServerApp::OnShutdown()
 
 #if defined(ASSISI_NETWORKING)
     // Before the scene and physics world it holds a reference to.
-    _session.reset();
+    _play.reset();
 #endif
 }
 

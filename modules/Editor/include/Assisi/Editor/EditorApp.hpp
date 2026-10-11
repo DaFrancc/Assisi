@@ -45,7 +45,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #if defined(ASSISI_NETWORKING)
-#include <Assisi/App/PlayerSession.hpp>
+#include <Assisi/App/NetworkedPlay.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -484,9 +484,7 @@ class EditorApp : public Assisi::App::Application
     /// Both describe a gap between what was marked and what clients will see.
     void DrawHostAuthoringWarnings();
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
-    void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
-    void BeginNetStep();           // after polling, before the systems: players and their controls
-    void TickNetSession();         // end of the fixed step: snapshots (host) or input (client)
+    void PollNetSession(float dt); // top of the fixed step: the wire, the step's tick, players, join progress
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 #endif                             // ASSISI_NETWORKING
 
@@ -1553,13 +1551,11 @@ class EditorApp : public Assisi::App::Application
     std::uint64_t _stepTick = 0;
 
 #if defined(ASSISI_NETWORKING)
-    /// The networked session, when there is one. Created on Host/Join and
-    /// destroyed on Disconnect (and before any level load), because it holds a
-    /// reference to the scene it replicates and a level load replaces that
-    /// scene wholesale.
-    std::unique_ptr<Assisi::NetSync::NetSession> _netSession;
-    /// The session's players: a character for each, and their controls.
-    Assisi::App::PlayerSession _playerSession;
+    /// The world played over the network, when it is: its session and its
+    /// players. Created on Host/Join and destroyed on Disconnect (and before any
+    /// level load), because it holds a reference to the world it replicates and
+    /// a level load replaces that world's scene wholesale.
+    std::unique_ptr<Assisi::App::NetworkedPlay> _networkedPlay;
     /// UI state for the network panel, kept here rather than in statics so two
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};

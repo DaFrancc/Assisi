@@ -22,10 +22,9 @@
 /// the editor/game integration, which is separate work.
 
 #include <Assisi/App/Application.hpp>
-#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/World.hpp>
 #if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetSession.hpp>
+#    include <Assisi/App/NetworkedPlay.hpp>
 #endif
 
 #include <cstdint>
@@ -121,7 +120,7 @@ private:
     /// GameNetworkingSockets — and without networking built there is no such
     /// role, so the member goes too. Offline headless simulation still works.
 #if defined(ASSISI_NETWORKING)
-    std::unique_ptr<Assisi::NetSync::NetSession> _session;
+    std::unique_ptr<Assisi::App::NetworkedPlay> _play;
 #endif
 
     double _lastReportSeconds = 0.0;

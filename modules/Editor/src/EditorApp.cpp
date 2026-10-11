@@ -1078,10 +1078,6 @@ void EditorApp::OnFixedUpdate(float dt)
     // why it takes dt.
 #if defined(ASSISI_NETWORKING)
     PollNetSession(dt);
-    if (IsSimulating())
-    {
-        BeginNetStep();
-    }
 #endif
 
     // **The play state is a flat switch: while it is not Playing, nothing steps
@@ -1120,19 +1116,13 @@ void EditorApp::OnFixedUpdate(float dt)
             });
     }
 
-    // Between the step and the snapshot, and it has to stay there. A mirrored body
-    // woken by a contact the server never had (client poses differ by whatever the
-    // last correction has not yet removed, and Jolt wakes by island) must be put
-    // back before anything reads it.
-#if defined(ASSISI_NETWORKING)
-    if (_netSession)
-        _netSession->AfterPhysicsStep();
-#endif
-
     // Last: a snapshot describes the world at the *end* of the tick it is stamped
     // with, so it has to be built after everything that moves it.
 #if defined(ASSISI_NETWORKING)
-    TickNetSession();
+    if (_networkedPlay)
+    {
+        _networkedPlay->EndStep();
+    }
 #endif
 }
 
@@ -1348,9 +1338,9 @@ void EditorApp::OnUpdate(float dt)
     // the expander places them — they have to, because that path has to work in a
     // build with no editor in it, and this loop is one.
 #if defined(ASSISI_NETWORKING)
-    if (_netSession != nullptr && _netSession->Client() != nullptr)
+    if (_networkedPlay != nullptr && _networkedPlay->Session().Client() != nullptr)
     {
-        if (const std::uint64_t revision = _netSession->Client()->StructureRevision();
+        if (const std::uint64_t revision = _networkedPlay->Session().Client()->StructureRevision();
             revision != _netStructureRevision)
         {
             _netStructureRevision = revision;

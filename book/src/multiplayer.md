@@ -125,7 +125,9 @@ headless simulation with no networking at all.
 
 A headless process runs the level's `Begin`, `Loaded`, `FixedUpdate` and
 `PostFixedUpdate` systems. It has no frames to draw, so `Update` systems don't
-run.
+run. A dedicated server hands out characters the same way the editor's host
+does, except that the server has none of its own: only the players who join
+get one.
 
 Remember the first rule from [Input](input.md): on a server there's no keyboard
 or mouse, so `ctx.input` is `nullptr`.

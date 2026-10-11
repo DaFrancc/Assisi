@@ -37,6 +37,7 @@ target_sources(Assisi-App
     "src/BlueprintVerbs.cpp"
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/PlayerSession.cpp>
+    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/NetworkedPlay.cpp>
     "src/CameraBenchmark.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraCapture.cpp"
