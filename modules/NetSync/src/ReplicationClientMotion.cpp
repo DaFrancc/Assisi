@@ -70,14 +70,19 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
     // folding in the cosmetic offset would flatter the number.
+    //
+    // A character is measured at its feet, which is what the host sends, and
+    // not at its inner body: Jolt moves that copy of the capsule on its own
+    // schedule, centimetres off the feet, and every correction would read the
+    // gap as an error to smooth away, drawn as a bob.
+    const bool character = _scene.Has<Physics::Character>(entity);
     const Physics::Pose simulated = _physics->GetBodyPose(entity);
-    const glm::vec3 simulatedPosition = simulated.position;
+    const glm::vec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
 
     // A character's capsule never turns: where it faces is its Transform, which
     // its controls turn. The one this machine controls keeps the facing its own
     // controls gave it, since the host's is the same turn arriving a round trip
     // late; any other faces where the host says.
-    const bool character = _scene.Has<Physics::Character>(entity);
     const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
     const glm::quat simulatedRotation =
         character && transform != nullptr ? transform->rotation : simulated.rotation;

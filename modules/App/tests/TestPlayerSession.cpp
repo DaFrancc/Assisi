@@ -11,6 +11,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -320,6 +321,10 @@ constexpr std::int32_t kSilentSteps = static_cast<std::int32_t>(App::kInputHoldT
 
 /// Frames walked before a gap in commands, so the host holds a walk.
 constexpr std::int32_t kWalkBeforeGap = 30;
+
+/// How far off the floor another player walking on it may be drawn (m): a
+/// position crosses the wire rounded to about two millimetres.
+constexpr float kMostDrawnOffFloor = 0.005f;
 
 /// A host and @p client on a floor, a start each for the host to make their
 /// characters at, @p client joined and settled.
@@ -684,4 +689,41 @@ TEST_CASE("Every player reaches a client as a whole blueprint, the host's own in
         CAPTURE(entity.index);
         CHECK(client.world.scene.Has<ECS::Transform>(entity));
     }
+}
+
+TEST_CASE("Another player walking is drawn at its feet, without bobbing above the floor")
+{
+    // A correction is measured against where this machine had the character.
+    // Taken from the capsule Jolt moves on its own rather than from the feet the
+    // host sends, every correction read a few centimetres up or down as an error
+    // and drew it eased away: the other player bobbed while it walked, and most
+    // visibly while it pushed against someone and barely moved.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    const ECS::Entity hostOnClient =
+        client.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(hostOwn));
+    REQUIRE(hostOnClient != ECS::NullEntity);
+
+    float highestDrawn = 0.f;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        if (App::PlayerInput *controls = host.world.scene.GetMut<App::PlayerInput>(hostOwn))
+        {
+            controls->move = {0.f, 1.f};
+        }
+        const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient);
+        const float drawn = client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y +
+                            (offset != nullptr ? offset->position.y : 0.f);
+        highestDrawn = std::max(highestDrawn, std::abs(drawn));
+    });
+
+    CHECK(highestDrawn < kMostDrawnOffFloor);
 }
