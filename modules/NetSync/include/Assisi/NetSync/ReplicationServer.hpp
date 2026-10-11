@@ -460,6 +460,13 @@ private:
         InputCommandQueue input;
         ConnectionDiagnostics diagnostics;
 
+        /// The queue's starved-tick count as of the last snapshot to this
+        /// connection. The snapshot reports the ticks since, which is what the
+        /// client's clock reads it as: the queue's own count is a total since
+        /// joining, and told the total, a clock that starved once would grow
+        /// its lead on every snapshot after.
+        std::uint64_t starvedReported = 0;
+
         /// Sliding one-second window for the input rate limit.
         std::uint64_t rateWindowTick   = 0;
         std::uint32_t packetsInWindow  = 0;
