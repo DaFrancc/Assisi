@@ -52,6 +52,15 @@ TEST_CASE("the components a mirror needs to exist and to draw are replicated")
     }
 }
 
+TEST_CASE("Transform is predicted, so a client's own pose is not set back by the host's older one")
+{
+    const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::ECS::Transform));
+    REQUIRE(meta != nullptr);
+    CHECK(meta->predicted);
+    CHECK(meta->size == sizeof(Assisi::ECS::Transform));
+    CHECK(meta->predictedEquals);
+}
+
 TEST_CASE("Camera does not replicate")
 {
     // The poster child for opt-in: an arriving `isActive` would let the host hand

@@ -6,10 +6,13 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -48,6 +51,170 @@ void ReplicationClient::KeyCharacterOrder(ECS::Entity entity, NetId netId)
     }
 }
 
+bool ReplicationClient::Predicts(ECS::Entity entity) const
+{
+    for (const auto &[netId, confirmed] : _confirmed)
+    {
+        (void)confirmed;
+        if (EntityOf(netId) == entity)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+const ReplicationClient::Confirmed *ReplicationClient::ConfirmedOf(NetId netId) const
+{
+    const std::unordered_map<NetId, Confirmed>::const_iterator found = _confirmed.find(netId);
+    return found == _confirmed.end() ? nullptr : &found->second;
+}
+
+bool ReplicationClient::ReadPredictedComponent(ECS::Entity entity, const Core::Reflect::ComponentMeta &meta,
+                                               Confirmed &confirmed, Core::BitReader &reader,
+                                               const Core::Reflect::CodecContext &context)
+{
+    // A component the entity is only now gaining has nothing of the client's in
+    // it to keep, so the host's copy becomes the live one too.
+    void *created = nullptr;
+    const void *live = meta.getByEntity(&_scene, entity.index, entity.generation);
+    if (live == nullptr)
+    {
+        created = meta.construct(&_scene, entity.index, entity.generation);
+        if (created == nullptr)
+        {
+            return false;
+        }
+        live = created;
+    }
+
+    // The block is a delta against what this client holds of the host's, and
+    // until a copy exists that is the live component.
+    std::vector<std::byte> &copy = confirmed.components[meta.id];
+    if (copy.size() != meta.size)
+    {
+        copy.resize(meta.size);
+        std::memcpy(copy.data(), live, meta.size);
+    }
+    if (!Core::Reflect::ReadComponent(meta, copy.data(), reader, nullptr, &context))
+    {
+        return false;
+    }
+
+    if (created != nullptr)
+    {
+        std::memcpy(created, copy.data(), meta.size);
+        ++_structureRevision;
+    }
+    return true;
+}
+
+void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
+{
+    const ClientId local = _handshake.clientId;
+    std::unordered_set<NetId> predicted;
+    for (const auto &[netId, entity] : _entityByNetId)
+    {
+        if (!_scene.IsAlive(entity))
+        {
+            continue;
+        }
+        const bool controlled = ControlsEntity(entity);
+        const Predicted *given = _scene.Get<Predicted>(entity);
+        const bool givenHere = given != nullptr && local.IsValid() && given->client == local.value;
+        if (!controlled && !givenHere)
+        {
+            continue;
+        }
+        predicted.insert(netId);
+        if (!controlled)
+        {
+            continue;
+        }
+
+        // What it carries comes with it: the camera on a player is the
+        // client's to turn. A member this client never expanded has no
+        // mirror, and is not predicted though its instance is.
+        const ECS::BlueprintMember *member = _scene.Get<ECS::BlueprintMember>(entity);
+        if (member == nullptr || !member->instanceId.IsValid())
+        {
+            continue;
+        }
+        const std::unordered_map<ECS::InstanceId, NetId>::const_iterator base =
+            _baseByInstanceId.find(member->instanceId);
+        if (base == _baseByInstanceId.end())
+        {
+            continue;
+        }
+        const std::unordered_map<NetId, InstanceRecord>::const_iterator record = _instanceRecords.find(base->second);
+        if (record == _instanceRecords.end())
+        {
+            continue;
+        }
+        for (std::uint32_t index = 0; index < record->second.memberCount; ++index)
+        {
+            const NetId memberId{base->second.value + index};
+            if (_entityByNetId.contains(memberId))
+            {
+                predicted.insert(memberId);
+            }
+        }
+    }
+
+    // No longer this client's: the host's word stands again, and its last word
+    // is the confirmed copy.
+    for (std::unordered_map<NetId, Confirmed>::iterator it = _confirmed.begin(); it != _confirmed.end();)
+    {
+        if (predicted.contains(it->first))
+        {
+            ++it;
+            continue;
+        }
+        const ECS::Entity entity = EntityOf(it->first);
+        if (entity != ECS::NullEntity && _scene.IsAlive(entity))
+        {
+            const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+            for (const auto &[componentId, bytes] : it->second.components)
+            {
+                const Core::Reflect::ComponentMeta *meta = registry.ById(componentId);
+                void *live = meta != nullptr ? meta->getMutable(&_scene, entity.index, entity.generation) : nullptr;
+                if (live != nullptr && bytes.size() == meta->size)
+                {
+                    std::memcpy(live, bytes.data(), meta->size);
+                }
+            }
+        }
+        it = _confirmed.erase(it);
+    }
+
+    // Newly this client's: everything it holds of the entity is the host's word
+    // so far. Its interpolation history goes, or the next frame would draw an
+    // old pose over the one the client now moves.
+    for (const NetId netId : predicted)
+    {
+        const std::pair<std::unordered_map<NetId, Confirmed>::iterator, bool> added = _confirmed.try_emplace(netId);
+        if (!added.second)
+        {
+            continue;
+        }
+        Confirmed &confirmed = added.first->second;
+        confirmed.componentTick = serverTick;
+        const ECS::Entity entity = EntityOf(netId);
+        for (const Core::Reflect::ComponentMeta *meta : _predictedComponents)
+        {
+            const void *live = meta->getByEntity(&_scene, entity.index, entity.generation);
+            if (live == nullptr)
+            {
+                continue;
+            }
+            std::vector<std::byte> &copy = confirmed.components[meta->id];
+            copy.resize(meta->size);
+            std::memcpy(copy.data(), live, meta->size);
+        }
+        _transformHistory.erase(netId);
+    }
+}
+
 bool CommandEcho::Applied(std::uint64_t tick) const
 {
     if (tick > serverTick || tick > lastAppliedCommandTick || serverTick - tick >= kStarvedMaskTicks)
@@ -65,6 +232,13 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
     _colliderComponentId                           = registry.IdOf(typeid(Physics::Collider));
     _characterComponentId                           = registry.IdOf(typeid(Physics::Character));
     _transformComponentId                           = registry.IdOf(typeid(ECS::Transform));
+    for (const Core::Reflect::ComponentMeta &meta : registry.All())
+    {
+        if (meta.predicted)
+        {
+            _predictedComponents.push_back(&meta);
+        }
+    }
 
     // A mirror's joints break when the server says so, by removing them. One
     // broken here as well would leave the two simulations disagreeing.
@@ -623,6 +797,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             _scene.Destroy(it->second);
             _entityByNetId.erase(it);
             DestroyMirrorBody(netId);
+            _confirmed.erase(netId);
             ++_structureRevision;
         }
     }
@@ -756,6 +931,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // whose slot may since have been reused.
             _entityByNetId.erase(it);
             DestroyMirrorBody(netId);
+            _confirmed.erase(netId);
             it = _entityByNetId.end();
             if (_mirrorsResurrected == 0)
             {
@@ -792,6 +968,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
         const ECS::Entity entity = it->second;
 
+        // Predicted as of the last snapshot. An entity that becomes predicted
+        // in this one has its block written live like any other, and its
+        // confirmed copy starts from that.
+        Confirmed *confirmed = nullptr;
+        if (const std::unordered_map<NetId, Confirmed>::iterator found = _confirmed.find(netId);
+            found != _confirmed.end())
+        {
+            confirmed = &found->second;
+        }
+
         // Removals come first: a component the server has dropped must go
         // before whatever else this block says about the entity, so a component
         // both removed and re-added in one snapshot ends up added.
@@ -822,6 +1008,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             {
                 _sentTransforms.erase(netId);
             }
+            if (confirmed != nullptr)
+            {
+                confirmed->components.erase(componentId);
+            }
 
             removed.push_back(componentId);
             ++_structureRevision;
@@ -841,6 +1031,19 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 // happens anyway, the rest of the packet is unparseable.
                 reader.Invalidate();
                 return false;
+            }
+
+            if (confirmed != nullptr && meta->predicted)
+            {
+                if (!ReadPredictedComponent(entity, *meta, *confirmed, reader, context))
+                {
+                    return false;
+                }
+                if (componentId == _transformComponentId)
+                {
+                    _sentTransforms.insert(netId);
+                }
+                continue;
             }
 
             refSites.clear();
@@ -872,6 +1075,13 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             }
         }
 
+        // The block was here, so every predicted component is now as the host
+        // had it: sent, or unchanged since what the confirmed copy holds.
+        if (confirmed != nullptr)
+        {
+            confirmed->componentTick = header.serverTick;
+        }
+
         // Everything this entity was told about has landed, so its physics body
         // can be brought in line with it.
         SyncMirrorBody(netId, entity);
@@ -879,6 +1089,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     if (!reader.Ok())
         return false;
+
+    // After the blocks, which may have handed this client control, and before
+    // the body records, so one for an entity predicted from this snapshot on
+    // already lands in its confirmed copy.
+    RecomputePredictedSet(header.serverTick);
 
     // Motion, for everything the server's physics world owns. It follows the
     // entity blocks so the entity and its components already exist: a body built
@@ -890,6 +1105,12 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         BodyState state;
         if (!ReadBodyState(reader, state))
             return false;
+        if (const std::unordered_map<NetId, Confirmed>::iterator found = _confirmed.find(state.netId);
+            found != _confirmed.end())
+        {
+            found->second.body        = state;
+            found->second.physicsTick = header.serverTick;
+        }
         ApplyBodyState(state, header.serverTick);
     }
     if (!reader.Ok())

@@ -4,7 +4,7 @@
 // Fixture header for reflectgen's golden tests. Exercises the scalar, glm,
 // enum, AssetPath/ShortString and path-vector field types, an unannotated member, a
 // tracked (change-detection) component, a replicable component with a norep
-// field, an empty component, requires/excludes rules, namespaced components, comment stripping,
+// field, a predicted component, an empty component, requires/excludes rules, namespaced components, comment stripping,
 // nested-brace initializers, and EntityRef include emission. AssetId,
 // EntityName and InstanceId have their own cases in test_reflectgen.py rather
 // than living here; ComponentMask has none. If you change this header,
@@ -140,6 +140,16 @@ struct SampleReplicated
 {
     AFIELD() float shared = 0.0f;
     AFIELD(norep) int32_t serverOnly = 0;
+};
+
+// ACOMP(predicted): a client keeps its own copy and the host's apart, so the
+// registration carries a size and a field-wise compare, and the file asserts
+// what only the compiler can check.
+ACOMP(replicable, predicted)
+struct SamplePredicted
+{
+    AFIELD() glm::vec3 aim{0.0f};
+    AFIELD() float heat = 0.0f;
 };
 
 // Reflected containers: a flat vector, a vector of an AENUM enum (whose

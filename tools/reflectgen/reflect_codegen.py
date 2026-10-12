@@ -301,13 +301,78 @@ def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
     PropagateTransforms wants its ticks whether or not anything is networked.
     """
     lines = ['.typeIndex = typeid(T)']
+    if comp.args.has('predicted'):
+        lines.append('.size = sizeof(T)')
     if not serializable:
         lines.append('.serializable = false')
     if comp.args.has('tracked') or comp.args.has('replicable'):
         lines.append('.tracksChanges = true')
     if comp.args.has('replicable'):
         lines.append('.replicable = true')
+    if comp.args.has('predicted'):
+        lines.append('.predicted = true')
     return ',\n        '.join(lines)
+
+
+def _equals_name(comp: ComponentInfo) -> str:
+    return f'_reflectgen_{comp.name}_equals'
+
+
+def _field_comparisons(fields: list, path: str) -> list[str]:
+    """A PredictedFieldEqual for every field beneath @p path, a struct's fields
+    one by one rather than the struct as a whole, so no type needs a compare of
+    its own and no byte of padding is ever read. Floats agree within a
+    tolerance there, since two machines do not round them alike."""
+    comparisons = []
+    for f in fields:
+        held = _struct_of(f)
+        if held is not None:
+            comparisons.extend(_field_comparisons(held.fields, f'{path}{f.name}.'))
+        else:
+            comparisons.append(f'Assisi::Core::Reflect::PredictedFieldEqual(lhs.{path}{f.name}, '
+                               f'rhs.{path}{f.name})')
+    return comparisons
+
+
+def _size_asserts(fqn: str, fields: list) -> list[str]:
+    """That @p fqn is exactly its reflected fields, nested structs included.
+
+    A member with no AFIELD would be copied by a byte copy and missed by the
+    field-wise compare, and padding would be the same; both make the sum of the
+    fields' sizes fall short of the type's.
+    """
+    sizes = ' + '.join(f'sizeof(decltype({fqn}::{f.name}))' for f in fields)
+    asserts = [f'static_assert(sizeof({fqn}) == {sizes},\n'
+               f'              "{fqn} holds a member with no AFIELD, or padding: a predicted '
+               f'component must be exactly its fields, largest first");']
+    for f in fields:
+        held = _struct_of(f)
+        if held is not None:
+            asserts.extend(_size_asserts(f'::{held.fqn}', held.fields))
+    return asserts
+
+
+def _gen_predicted_support(comp: ComponentInfo, fqn: str) -> str:
+    """What a predicted component needs beyond its registration: the
+    compile-time checks reflectgen cannot make from spellings, and the
+    field-wise compare its ComponentMeta points at."""
+    comparisons = ' &&\n           '.join(_field_comparisons(comp.fields, ''))
+    asserts = '\n'.join(_size_asserts(fqn, comp.fields))
+    return f"""\
+// ACOMP(predicted): copied as bytes, compared field by field within tolerance.
+static_assert(std::is_trivially_copyable_v<{fqn}>,
+              "{fqn} is ACOMP(predicted), so it must be trivially copyable");
+static_assert(alignof({fqn}) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+              "{fqn} is ACOMP(predicted) and is kept in plain byte storage");
+{asserts}
+bool {_equals_name(comp)}(const void *a, const void *b)
+{{
+    const {fqn} &lhs = *static_cast<const {fqn} *>(a);
+    const {fqn} &rhs = *static_cast<const {fqn} *>(b);
+    return {comparisons};
+}}
+
+"""
 
 
 def _gen_rule_lists(comp: ComponentInfo) -> str:
@@ -496,6 +561,9 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                     f"registers for a ComponentId only and has no serialization hooks, so "
                     f"there is nothing to put on the wire. Pick one.")
 
+        if comp.args.has('predicted'):
+            _check_predicted(comp, where, header_name)
+
         for f in comp.fields:
             if not f.args.has('norep'):
                 continue
@@ -505,6 +573,52 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                     f"{field_where} is marked AFIELD(norep), but '{comp.name}' is not "
                     f"ACOMP(replicable) — nothing about it crosses the wire, so the annotation "
                     f"would silently do nothing. Mark the component replicable, or drop norep.")
+
+
+def _check_predicted(comp: ComponentInfo, where: str, header_name: str) -> None:
+    """Refuse an ACOMP(predicted) a client could not keep two copies of.
+
+    A client keeps the host's copy of a predicted component apart from its own
+    and compares the two with ==. That needs a value it can copy as bytes and
+    whose every field the host sends: no container, no norep field, and no
+    entity or instance reference, which names something on one machine only.
+    """
+    if not comp.args.has('replicable'):
+        raise ValueError(
+            f"{where} is marked ACOMP(predicted) but not replicable. Predicting a component means "
+            f"keeping the host's copy of it apart from the client's own, and a component that is "
+            f"never sent has no host copy. Write ACOMP(replicable, predicted).")
+    if comp.is_asset or comp.args.has('transient'):
+        raise ValueError(f"{where} is marked predicted, which only an ordinary component can be.")
+    if not comp.fields:
+        raise ValueError(f"{where} is marked ACOMP(predicted) but has no fields to predict.")
+    _check_predicted_fields(comp.name, comp.fields, header_name)
+
+
+def _check_predicted_fields(owner: str, fields: list, header_name: str) -> None:
+    """The field half of _check_predicted, recursing into ASTRUCT fields."""
+    for f in fields:
+        field_where = f"{header_name}: field '{owner}::{f.name}' ({f.cpp_type})"
+        if f.container is not None:
+            raise ValueError(
+                f"{field_where} is a container, and its component is ACOMP(predicted): a predicted "
+                f"component is copied as bytes, which a container cannot be.")
+        if f.args.has('norep'):
+            raise ValueError(
+                f"{field_where} is AFIELD(norep), and its component is ACOMP(predicted): the host "
+                f"never sends it, so the client could never hold the host's copy to compare.")
+        spelling = f.cpp_type
+        if spelling in _ENTITY_REF_TYPES or spelling.rsplit('::', 1)[-1] == 'InstanceId':
+            raise ValueError(
+                f"{field_where} names an entity or a blueprint instance, and its component is "
+                f"ACOMP(predicted): the handle names something on one machine only, so the host's "
+                f"copy and the client's could never be compared.")
+        held = _struct_of(f)
+        if held is not None:
+            try:
+                _check_predicted_fields(held.name, held.fields, header_name)
+            except ValueError as inner:
+                raise ValueError(f"{field_where} cannot be predicted: {inner}") from None
 
 
 def _check_messages(messages: list, header_name: str) -> None:
@@ -1026,10 +1140,15 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
     if systems:
         includes.append('#include <Assisi/App/SystemCatalog.hpp>')
+    # The default-constructibility guard each event registration carries, and
+    # the trivially-copyable one each predicted component does.
+    has_predicted = any(c.args.has('predicted') for c in component_infos)
     if events:
         includes.append('#include <Assisi/Core/EventCatalog.hpp>')
-        # The default-constructibility guard each registration carries.
+    if events or has_predicted:
         includes.append('#include <type_traits>')
+    if has_predicted:
+        includes.append('#include <Assisi/Core/Reflect/PredictedCompare.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -1136,9 +1255,14 @@ static const bool {var_name} = []() -> bool
         serialize   = _indent(_gen_serialize(comp.fields), 12)
         deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 
+        predicted_support = ''
+        if comp.args.has('predicted'):
+            predicted_support = _gen_predicted_support(comp, fqn)
+            add_default = add_default + f'        .predictedEquals = &{_equals_name(comp)},\n'
+
         blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
-static const bool {var_name} = []() -> bool
+{predicted_support}static const bool {var_name} = []() -> bool
 {{
     using T = {fqn};
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{

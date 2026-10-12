@@ -159,6 +159,57 @@ public:
     /// before the handshake.
     [[nodiscard]] bool ControlsEntity(ECS::Entity entity) const;
 
+    /// @brief The host's word about one entity this client predicts, kept
+    /// apart from the entity itself, which the client's own steps run ahead.
+    ///
+    /// Two sections, each as new as the snapshot that last carried it: the
+    /// byte budget cuts an entity's component block and its body record
+    /// separately, so either can be older than the other. A tick of 0 means
+    /// that section has not arrived since the entity became predicted.
+    struct Confirmed
+    {
+        /// One component's bytes, by component id.
+        using Components = std::unordered_map<Core::Reflect::ComponentId, std::vector<std::byte>>;
+
+        /// Each ACOMP(predicted) component the entity has, as the host had it.
+        /// A block leaves out what has not changed since the baseline this
+        /// client acked, so what it leaves out keeps its value.
+        Components components;
+        /// The host tick the components are as of.
+        std::uint64_t componentTick = 0;
+        /// The host tick `body` is as of.
+        std::uint64_t physicsTick = 0;
+        /// Where the host had the entity's body, and how it moved.
+        BodyState body;
+    };
+
+    /// @brief Whether this client predicts @p entity: it controls it, it is a
+    /// member of a blueprint instance whose root it controls, or the host gave
+    /// it the entity to predict with `Predicted`.
+    ///
+    /// A predicted entity's ACOMP(predicted) components and body are this
+    /// client's to move; a snapshot writes the host's into ConfirmedOf instead,
+    /// and nothing interpolates them. Worked out after every snapshot.
+    [[nodiscard]] bool Predicts(ECS::Entity entity) const;
+
+    /// @brief The host's word about the predicted entity @p netId, or null for
+    /// one this client does not predict.
+    [[nodiscard]] const Confirmed *ConfirmedOf(NetId netId) const;
+
+    /// @brief The host's copy of one ACOMP(predicted) component of @p netId, or
+    /// null if this client does not predict it or it has no such component.
+    template <typename T> [[nodiscard]] const T *ConfirmedComponent(NetId netId) const
+    {
+        const Confirmed *confirmed = ConfirmedOf(netId);
+        if (confirmed == nullptr)
+        {
+            return nullptr;
+        }
+        const Confirmed::Components::const_iterator found =
+            confirmed->components.find(Core::Reflect::ComponentIdOf<T>());
+        return found == confirmed->components.end() ? nullptr : reinterpret_cast<const T *>(found->second.data());
+    }
+
     /// @brief The session this client belongs to, for handler contexts.
     void SetOwningSession(NetSession *session) { _session = session; }
 
@@ -417,6 +468,19 @@ private:
 
     /// Steps @p entity's character, if it is one, in @p netId's place.
     void KeyCharacterOrder(ECS::Entity entity, NetId netId);
+
+    /// Works out which mirrors this client predicts, as of the snapshot of
+    /// @p serverTick. One that has become predicted starts its confirmed copy
+    /// from its live components, which are the host's word until now; one that
+    /// has stopped takes its confirmed components back, the host's word
+    /// standing again.
+    void RecomputePredictedSet(std::uint64_t serverTick);
+
+    /// Reads one ACOMP(predicted) component of a predicted entity off the wire
+    /// into @p confirmed rather than into the entity. False if the block is
+    /// malformed.
+    bool ReadPredictedComponent(ECS::Entity entity, const Core::Reflect::ComponentMeta &meta, Confirmed &confirmed,
+                                Core::BitReader &reader, const Core::Reflect::CodecContext &context);
     void SendAck(std::uint64_t serverTick);
     void SendHello();
 
@@ -583,6 +647,13 @@ private:
 
     /// For each character this client predicts, oldest first.
     std::unordered_map<NetId, PredictionHistory> _predictions;
+
+    /// The host's word about every entity this client predicts, which is
+    /// exactly the predicted set.
+    std::unordered_map<NetId, Confirmed> _confirmed;
+
+    /// Every ACOMP(predicted) component type, resolved once.
+    std::vector<const Core::Reflect::ComponentMeta *> _predictedComponents;
 
     /// The mirrors whose Transform the server sends. Only these are
     /// interpolated: one whose Transform is kept back is the client's own to

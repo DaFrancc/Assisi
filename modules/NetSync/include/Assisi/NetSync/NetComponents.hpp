@@ -141,6 +141,20 @@ struct ControlledBy
     AFIELD() bool despawnOnDisconnect = true;
 };
 
+/// @brief Lets one client predict an entity it does not control: something
+/// its player carries or pushes, which would otherwise answer a round trip late.
+///
+/// A client predicts the entities it controls, and their blueprint members,
+/// without this. Placed and removed by the host, like ControlledBy, and for the
+/// same reason never authored: a client id names a seat in one session.
+ACOMP(replicable)
+struct Predicted
+{
+    /// @brief The predicting client's session id — a `NetSync::ClientId`
+    /// value, as in ControlledBy.
+    AFIELD() uint32_t client = 0;
+};
+
 /// @brief Marks a locally-created *mirror* of a remote entity: this machine
 /// receives it, it does not own it.
 ///

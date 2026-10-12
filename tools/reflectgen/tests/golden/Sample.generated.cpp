@@ -5,6 +5,8 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/EntityRef.hpp>
+#include <type_traits>
+#include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/Core/Reflect/ContainerJson.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <cstdint>
@@ -54,6 +56,8 @@ static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadi
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::level)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::shared)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::serverOnly)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SamplePredicted::aim)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SamplePredicted::heat)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::numbers)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::modes)>);
 static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleContainers::labels)>);
@@ -579,6 +583,102 @@ static const bool _reflectgen_SampleReplicated = []() -> bool
         .typeIndex = typeid(T),
         .tracksChanges = true,
         .replicable = true
+    });
+    return true;
+}();
+
+// ── SamplePredicted ───────────────────────────────────────────────────────────
+// ACOMP(predicted): copied as bytes, compared field by field within tolerance.
+static_assert(std::is_trivially_copyable_v<Assisi::Runtime::SamplePredicted>,
+              "Assisi::Runtime::SamplePredicted is ACOMP(predicted), so it must be trivially copyable");
+static_assert(alignof(Assisi::Runtime::SamplePredicted) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+              "Assisi::Runtime::SamplePredicted is ACOMP(predicted) and is kept in plain byte storage");
+static_assert(sizeof(Assisi::Runtime::SamplePredicted) == sizeof(decltype(Assisi::Runtime::SamplePredicted::aim)) + sizeof(decltype(Assisi::Runtime::SamplePredicted::heat)),
+              "Assisi::Runtime::SamplePredicted holds a member with no AFIELD, or padding: a predicted component must be exactly its fields, largest first");
+bool _reflectgen_SamplePredicted_equals(const void *a, const void *b)
+{
+    const Assisi::Runtime::SamplePredicted &lhs = *static_cast<const Assisi::Runtime::SamplePredicted *>(a);
+    const Assisi::Runtime::SamplePredicted &rhs = *static_cast<const Assisi::Runtime::SamplePredicted *>(b);
+    return Assisi::Core::Reflect::PredictedFieldEqual(lhs.aim, rhs.aim) &&
+           Assisi::Core::Reflect::PredictedFieldEqual(lhs.heat, rhs.heat);
+}
+
+static const bool _reflectgen_SamplePredicted = []() -> bool
+{
+    using T = Assisi::Runtime::SamplePredicted;
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
+        .name = "SamplePredicted",
+        .serialize = [](const void* ptr) -> nlohmann::json
+        {
+            const auto& c = *static_cast<const T*>(ptr);
+            return nlohmann::json{
+                { "aim", { c.aim.x, c.aim.y, c.aim.z } },
+                { "heat", c.heat },
+            };
+        },
+        .addToScene = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
+        {
+            constexpr const char* _comp = "SamplePredicted";
+            (void)_comp;
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            T comp{};
+            { float _v[3] = { comp.aim.x, comp.aim.y, comp.aim.z }; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "aim", 3, _v)) return false; comp.aim = { _v[0], _v[1], _v[2] }; }
+            if (!Assisi::Core::Reflect::ReadFloat(j, _comp, "heat", comp.heat)) return false;
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = std::move(comp);
+                return true;
+            }
+            (void)scene.Add(e, std::move(comp));
+            return true;
+        },
+        .iterateEntities = [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            for (auto [e, comp] : scene.Query<T>())
+                cb(e.index, e.generation, &comp);
+        },
+        .getByEntity = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        .construct = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        .getMutable = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        .addDefault = [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            (void)scene.Add<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        .predictedEquals = &_reflectgen_SamplePredicted_equals,
+        .fields = {
+            { .name = "aim", .type = Assisi::Core::Reflect::FieldType::Vec3, .offset = offsetof(T, aim) },
+            { .name = "heat", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, heat) }
+        },
+        .typeIndex = typeid(T),
+        .size = sizeof(T),
+        .tracksChanges = true,
+        .replicable = true,
+        .predicted = true
     });
     return true;
 }();

@@ -79,7 +79,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(
             [c.name for c in self.components],
             ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleRules", "SampleTransient", "SampleRadio",
-             "SampleReplicated", "SampleContainers"],
+             "SampleReplicated", "SamplePredicted", "SampleContainers"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -860,6 +860,69 @@ class ReplicationAnnotationTest(unittest.TestCase):
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
         self.assertIn("silently do nothing", str(caught.exception))
 
+
+class PredictedComponentTest(unittest.TestCase):
+    """ACOMP(predicted): a client keeps its own copy live and the host's apart,
+    so the type must be copied and compared as plain bytes-free values. Each
+    shape that cannot be is refused at generation, and the rest at compile time
+    by what the generated file asserts."""
+
+    def _refused(self, body: str, flags: str = "replicable, predicted") -> str:
+        src = (f"namespace N {{\nACOMP({flags})\nstruct C {{ {body} }};\n}}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        return str(caught.exception)
+
+    def test_predicted_without_replicable_is_refused(self):
+        message = self._refused("AFIELD() float a = 0.f;", flags="predicted")
+        self.assertIn("ACOMP(predicted)", message)
+        self.assertIn("replicable", message)
+
+    def test_a_vector_is_refused(self):
+        message = self._refused("AFIELD() std::vector<int32_t> ammo;")
+        self.assertIn("'C::ammo'", message)
+        self.assertIn("container", message)
+
+    def test_a_norep_field_is_refused(self):
+        message = self._refused("AFIELD(norep) int32_t secret = 0;")
+        self.assertIn("'C::secret'", message)
+        self.assertIn("norep", message)
+
+    def test_an_entity_reference_is_refused(self):
+        message = self._refused("AFIELD() ECS::Entity target;")
+        self.assertIn("'C::target'", message)
+        self.assertIn("entity", message)
+
+    def test_a_struct_holding_a_container_is_refused(self):
+        src = ("namespace N {\nASTRUCT()\nstruct Slot { AFIELD() std::vector<int32_t> rounds; };\n"
+               "ACOMP(replicable, predicted)\nstruct C { AFIELD() Slot slot; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("'C::slot'", str(caught.exception))
+
+    def test_an_accepted_component_carries_the_flag_and_a_field_wise_compare(self):
+        src = ("namespace N {\nACOMP(replicable, predicted)\n"
+               "struct Cooldown { AFIELD() float remaining = 0.f; AFIELD() int32_t charges = 0; };\n}\n")
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/Cooldown.hpp")
+        self.assertIn(".predicted = true", cpp)
+        self.assertIn(".size = sizeof(T)", cpp)
+        self.assertIn(".predictedEquals = ", cpp)
+        # Field by field, never memcmp, which would read padding, and through
+        # the compare that gives floats a tolerance.
+        self.assertIn("PredictedFieldEqual(lhs.remaining, rhs.remaining)", cpp)
+        self.assertIn("PredictedFieldEqual(lhs.charges, rhs.charges)", cpp)
+        self.assertIn("#include <Assisi/Core/Reflect/PredictedCompare.hpp>", cpp)
+        self.assertNotIn("memcmp", cpp)
+        # What only the compiler can check: no member the table does not list,
+        # and nothing a byte copy would break.
+        self.assertIn("std::is_trivially_copyable_v<N::Cooldown>", cpp)
+        self.assertIn("sizeof(N::Cooldown) == sizeof(decltype(N::Cooldown::remaining)) + "
+                      "sizeof(decltype(N::Cooldown::charges))", cpp)
+
+    def test_an_unpredicted_component_has_no_compare(self):
+        src = "namespace N {\nACOMP(replicable)\nstruct C { AFIELD() float a = 0.f; };\n}\n"
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertNotIn("predicted", cpp)
 
 
 class EnumTest(unittest.TestCase):

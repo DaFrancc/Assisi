@@ -226,6 +226,7 @@ And inside `ACOMP(...)`:
 |---|---|
 | `tracked` | The engine records when this component changes. You'll rarely need this yourself. |
 | `replicable` | The component *can* be sent over the network. See [Multiplayer basics](multiplayer.md). |
+| `predicted` | On a character you play, your value stays yours and the host's older one is kept to one side. Needs `replicable`. See [Multiplayer basics](multiplayer.md#components-you-predict). |
 | `transient` | Never saved at all: a marker or runtime-only component with no fields to store. |
 | `requires = {A, B}` | Adding this component also adds `A` and `B`, with default values, if the entity doesn't have them. See below. |
 | `excludes = {A}` | This component and `A` can't be on the same entity. See below. |

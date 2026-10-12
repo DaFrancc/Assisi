@@ -425,6 +425,11 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
         if (_bodies.contains(netId))
             continue;
 
+        // A predicted entity's pose is this client's own, ahead of every
+        // sample the host could send.
+        if (_confirmed.contains(netId))
+            continue;
+
         // Only a Transform the server sends is the server's to move.
         if (!_sentTransforms.contains(netId))
             continue;
@@ -552,6 +557,7 @@ void ReplicationClient::Reset()
     // The mirrors' bodies go with the entities destroyed above.
     _bodies.clear();
     _predictions.clear();
+    _confirmed.clear();
     _transformHistory.clear();
     _sentTransforms.clear();
     _pendingRefs.clear();

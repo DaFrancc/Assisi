@@ -296,7 +296,7 @@ def parse_annot_args(content: str, where: str) -> AnnotArgs:
 # nothing for an asset are refused later, each with its own reason.
 _AFIELD_FLAGS = frozenset({'norep', 'subject', 'controlled', 'radioBroadcast'})
 _AFIELD_KEYS  = frozenset({'min', 'max', 'radioListen', 'bitmask'})
-_ACOMP_FLAGS  = frozenset({'replicable', 'tracked', 'transient'})
+_ACOMP_FLAGS  = frozenset({'replicable', 'predicted', 'tracked', 'transient'})
 _ACOMP_KEYS   = frozenset({'requires', 'excludes'})
 
 # Spellings an annotation once accepted, with what replaced them.

@@ -58,6 +58,22 @@ struct PresenceOnly
     int32_t localState = 0;
 };
 
+/// @brief Predicted: a client keeps its own value of it live, ahead of the
+/// host's, and the host's apart — the shape of a game's ammo or cooldown.
+ACOMP(replicable, predicted)
+struct Aim
+{
+    AFIELD() float pitch = 0.f;
+};
+
+/// @brief A second predicted component, so one can change while the other
+/// does not.
+ACOMP(replicable, predicted)
+struct Charge
+{
+    AFIELD() int32_t level = 0;
+};
+
 /// @brief Messages covering every cell of the AMSG grammar, so each combination
 /// of direction, reliability, and independence has something to be true about.
 ///
