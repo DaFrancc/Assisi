@@ -39,8 +39,12 @@ namespace Assisi::ECS
 /// implication, so that dropping `replicable` would not silently take
 /// PropagateTransforms's change signal with it.
 ///
+/// `predicted`: on an entity a client predicts — its own player, the camera
+/// that player carries — the client's pose stays its own, and the host's goes
+/// to the client's confirmed copy instead.
+///
 /// Requires WorldMatrix, which PropagateTransforms writes and renderers read.
-ACOMP(replicable, tracked, requires = {WorldMatrix})
+ACOMP(replicable, predicted, tracked, requires = {WorldMatrix})
 struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};

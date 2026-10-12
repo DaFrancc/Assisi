@@ -76,9 +76,9 @@ enum class Mode : std::uint16_t
     Fast = 4242,
 };
 
-/// One field of every FieldType, in declaration order, plus a transient one the
-/// codec must skip entirely. glm-typed fields are plain float arrays: identical
-/// layout, no glm dependency in Core.
+/// One field of every FieldType, in declaration order, plus a member with no
+/// field entry, which the codec must leave alone. glm-typed fields are plain
+/// float arrays: identical layout, no glm dependency in Core.
 struct AllTypes
 {
     float floatValue = 0.f;
@@ -109,7 +109,7 @@ struct AllTypes
     AssetId assetId;
     std::vector<AssetId> assetIds;
 
-    float notReplicated = 0.f; ///< transient: never on the wire.
+    float notReplicated = 0.f; ///< Not a field: never on the wire.
 
     bool operator==(const AllTypes &) const = default;
 };
@@ -117,14 +117,11 @@ struct AllTypes
 /// Which field of AllTypes an index refers to, in the order MakeAllTypesMeta
 /// registers them.
 ///
-/// The codec addresses fields by position — a change mask is one bit per
-/// non-transient field in declaration order — so tests have to name positions
-/// too. Spelled out here rather than written as literals at each use, because a
-/// field added in the middle silently renumbers every later one, and a test
-/// asserting on the wrong field usually still passes.
-///
-/// Only the non-transient fields get a bit, so `notReplicated` has no entry:
-/// it is registered last precisely so its absence shifts nothing.
+/// The codec addresses fields by position — a change mask is one bit per wire
+/// field in declaration order — so tests have to name positions too. Spelled out
+/// here rather than written as literals at each use, because a field added in
+/// the middle silently renumbers every later one, and a test asserting on the
+/// wrong field usually still passes.
 enum AllTypesField
 {
     FloatValue,
@@ -165,13 +162,12 @@ template <typename T, typename M> std::size_t OffsetOf(M T::*member)
                                     reinterpret_cast<const std::byte *>(&prototype));
 }
 
-FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool transient = false, bool norep = false)
+FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool norep = false)
 {
     FieldMeta field;
     field.name = name;
     field.type = type;
     field.offset = offset;
-    field.transient = transient;
     field.norep = norep;
     return field;
 }
@@ -197,7 +193,7 @@ ComponentMeta MakeGatedMeta()
                        .replicable = true};
 
     meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
-    meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), false, true));
+    meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), /*norep=*/ true));
     return meta;
 }
 
@@ -245,15 +241,12 @@ ComponentMeta MakeAllTypesMeta()
     meta.fields.push_back(Field("paths", FieldType::AssetPathVector, OffsetOf(&AllTypes::paths)));
     meta.fields.push_back(Field("assetId", FieldType::AssetId, OffsetOf(&AllTypes::assetId)));
     meta.fields.push_back(Field("assetIds", FieldType::AssetIdVector, OffsetOf(&AllTypes::assetIds)));
-    // Registered last and transient, so it takes no mask bit and every
-    // AllTypesField index above stays the codec's index for that field.
-    meta.fields.push_back(Field("notReplicated", FieldType::Float, OffsetOf(&AllTypes::notReplicated), true));
 
     // A field added to one list and not the other is the failure this catches:
     // every index below would still compile, and would silently name its
     // neighbour.
-    ASSISI_ASSERT(meta.fields.size() == static_cast<std::size_t>(AllTypesField::Count_) + 1u,
-                  "AllTypesField must name every registered field except the transient one");
+    ASSISI_ASSERT(meta.fields.size() == static_cast<std::size_t>(AllTypesField::Count_),
+                  "AllTypesField must name every registered field");
 
     return meta;
 }
@@ -369,11 +362,12 @@ TEST_CASE("BinaryCodec: a component with every field type round-trips at full st
     CHECK(decoded.assetId == source.assetId);
     CHECK(decoded.assetIds == source.assetIds);
 
-    // The transient field is never on the wire, so the destination keeps its own.
+    // A member with no field entry is never on the wire, so the destination
+    // keeps its own.
     CHECK(decoded.notReplicated == doctest::Approx(0.f));
 }
 
-TEST_CASE("BinaryCodec: the block starts with the component id and a mask of the non-transient fields")
+TEST_CASE("BinaryCodec: the block starts with the component id and a mask of the wire fields")
 {
     const ComponentMeta meta = MakeAllTypesMeta();
     const AllTypes source = MakePopulated();
@@ -382,7 +376,7 @@ TEST_CASE("BinaryCodec: the block starts with the component id and a mask of the
     REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
 
     const std::size_t codecFields = Assisi::Core::Reflect::CountCodecFields(meta);
-    CHECK(codecFields == meta.fields.size() - 1); // the transient one does not count
+    CHECK(codecFields == meta.fields.size());
 
     BitReader reader(writer.Data());
     CHECK(ReadComponentId(reader) == meta.id);
@@ -408,7 +402,7 @@ TEST_CASE("BinaryCodec: a partial mask patches only the named fields")
     const ComponentMeta meta = MakeAllTypesMeta();
     const AllTypes source = MakePopulated();
 
-    // Bits are indexed over the *non-transient* fields in declaration order.
+    // Bits are indexed over the wire fields in declaration order.
     // Four scattered ones, so a codec that walked the mask and the fields out of
     // step would land on the wrong field rather than merely on fewer of them.
     const FieldMask mask = Assisi::Core::Reflect::FieldMaskBit(AllTypesField::FloatValue) |
@@ -660,9 +654,7 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
     }
     SUBCASE("a removed field")
     {
-        // end() - 2: the last entry is the transient one, which is not part of
-        // the protocol at all (see the companion test below).
-        CHECK(hashWith([](ComponentMeta &m) { m.fields.erase(m.fields.end() - 2); }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { m.fields.pop_back(); }) != base);
     }
     SUBCASE("a renamed component")
     {
@@ -672,11 +664,7 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.id = ComponentId{4}; }) != base);
     }
-    SUBCASE("a field turning transient — the mask width changes")
-    {
-        CHECK(hashWith([](ComponentMeta &m) { m.fields[AllTypesField::DoubleValue].transient = true; }) != base);
-    }
-    SUBCASE("a field turning norep — the mask width changes the same way")
+    SUBCASE("a field turning norep — the mask width changes")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.fields[AllTypesField::DoubleValue].norep = true; }) != base);
     }
@@ -709,17 +697,11 @@ TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry
     repadded[0].fields[AllTypesField::FloatValue].offset += 64;
     CHECK(ProtocolHash(repadded) == base);
 
-    // A transient field is not on the wire, so adding or dropping one is not a
-    // protocol change either — only flipping an existing field's transient flag
-    // is, because that moves every later mask bit.
-    std::array<ComponentMeta, 1> withoutTransient{MakeAllTypesMeta()};
-    withoutTransient[0].fields.pop_back();
-    CHECK(ProtocolHash(withoutTransient) == base);
-
-    // Same for a norep field: it is saved to disk, never sent, so gaining one
-    // does not change what two builds must agree on.
+    // A norep field is saved to disk, never sent, so gaining one at the end does
+    // not change what two builds must agree on — only flipping an existing
+    // field's flag does, because that moves every later mask bit.
     std::array<ComponentMeta, 1> withNorep{MakeAllTypesMeta()};
-    withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, false, true));
+    withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, /*norep=*/ true));
     CHECK(ProtocolHash(withNorep) == base);
 
     // An AFIELD bound clamps what an inspector will accept; nothing encodes,
@@ -770,7 +752,7 @@ TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the h
     const std::string description = ProtocolLayoutDescription(table);
     CHECK(description.find("AllTypes") != std::string::npos);
     CHECK(description.find("uint64Value") != std::string::npos);
-    CHECK(description.find("notReplicated") == std::string::npos); // transient: not part of the protocol
+    CHECK(description.find("notReplicated") == std::string::npos); // not a field: not part of the protocol
     CHECK(description.find("AllTypes replicated") != std::string::npos);
 
     const std::array<ComponentMeta, 1> gated{MakeGatedMeta()};

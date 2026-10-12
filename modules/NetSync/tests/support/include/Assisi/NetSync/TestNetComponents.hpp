@@ -50,11 +50,28 @@ struct LocalOnly
 /// @brief Replicable with nothing to send: only its presence crosses the wire.
 ///
 /// The shape of a component whose state every machine computes for itself,
-/// like a skinned mesh's pose. The field is local and must arrive as its default.
+/// like a skinned mesh's pose. The member is not a field: it is local and must
+/// arrive as its default.
 ACOMP(replicable)
 struct PresenceOnly
 {
-    AFIELD(transient) int32_t localState = 0;
+    int32_t localState = 0;
+};
+
+/// @brief Predicted: a client keeps its own value of it live, ahead of the
+/// host's, and the host's apart — the shape of a game's ammo or cooldown.
+ACOMP(replicable, predicted)
+struct Aim
+{
+    AFIELD() float pitch = 0.f;
+};
+
+/// @brief A second predicted component, so one can change while the other
+/// does not.
+ACOMP(replicable, predicted)
+struct Charge
+{
+    AFIELD() int32_t level = 0;
 };
 
 /// @brief Messages covering every cell of the AMSG grammar, so each combination

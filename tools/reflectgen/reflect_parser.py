@@ -291,6 +291,41 @@ def parse_annot_args(content: str, where: str) -> AnnotArgs:
     return args
 
 
+# Every argument each annotation accepts: bare flags, and keys written
+# `key = value`. ACOMP and AASSET share a set: the combinations that mean
+# nothing for an asset are refused later, each with its own reason.
+_AFIELD_FLAGS = frozenset({'norep', 'subject', 'controlled', 'radioBroadcast'})
+_AFIELD_KEYS  = frozenset({'min', 'max', 'radioListen', 'bitmask'})
+_ACOMP_FLAGS  = frozenset({'replicable', 'predicted', 'tracked', 'transient'})
+_ACOMP_KEYS   = frozenset({'requires', 'excludes'})
+
+# Spellings an annotation once accepted, with what replaced them.
+_RETIRED_ACOMP_FLAGS = {
+    'replicated': "was renamed to 'replicable'. The flag grants a capability — this type *can* "
+                  "cross the wire — while whether a given entity sends it is policy, held by the "
+                  "Replicated marker's exclusion mask and the game's neverReplicate list. Write "
+                  "'replicable'.",
+}
+
+
+def _refuse_unknown_args(args: AnnotArgs, annotation: str, flags: frozenset, keys: frozenset,
+                         where: str) -> None:
+    """Refuse an argument the generator does not read.
+
+    Ignoring one would compile and silently do nothing: a misspelt `norep` would
+    put a field on the wire, and a misspelt `replicable` would keep a component
+    off it.
+    """
+    for flag in sorted(args.flags - flags):
+        if annotation == 'ACOMP' and flag in _RETIRED_ACOMP_FLAGS:
+            raise ValueError(f"{where}: '{flag}' {_RETIRED_ACOMP_FLAGS[flag]}")
+        raise ValueError(f"{where}: '{flag}' is not a registered argument for {annotation}. "
+                         f"Flags are {sorted(flags)}.")
+    for key in sorted(set(args.kvs) - keys):
+        raise ValueError(f"{where}: '{key}' is not a registered argument for {annotation}. "
+                         f"Keys are {sorted(keys)}.")
+
+
 _IDENTIFIER_RE = re.compile(r'^[A-Za-z_]\w*$')
 
 # The ACOMP keys whose value is a list of component names.
@@ -1163,7 +1198,9 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
         m = _AFIELD_RE.search(body, i)
         if not m:
             break
-        args = parse_annot_args(m.group(1), f"{source_header}: AFIELD({m.group(1).strip()})")
+        where = f"{source_header}: AFIELD({m.group(1).strip()})"
+        args = parse_annot_args(m.group(1), where)
+        _refuse_unknown_args(args, 'AFIELD', _AFIELD_FLAGS, _AFIELD_KEYS, where)
         rest = body[m.end():]
         declaration = _match_field_decl(rest.lstrip())
         if not declaration:
@@ -1335,6 +1372,9 @@ def _collect_enums(text: str, path: Path) -> dict[str, EnumInfo]:
 
         aenum_m = _AENUM_RE.match(text, i)
         if aenum_m:
+            if aenum_m.group(1).strip():
+                raise ValueError(
+                    f"{path.name}: AENUM takes no arguments (got 'AENUM({aenum_m.group(1).strip()})').")
             # AENUM must be immediately followed (bar whitespace) by an
             # `enum class`/`enum struct` with a body — anything else is a
             # malformed annotation, which is a hard error, not a silent skip.
@@ -1471,12 +1511,9 @@ def _resolve_struct_fields(fields: list, structs: _StructScope) -> None:
 
     A spelling already in TYPES keeps its own enumerator, so the AssetPath and
     AssetId vectors are untouched by this and their wire format does not move.
-    A transient field serializes nowhere, so it needs no descriptor — and it is
-    the one place a container of something unreflectable is legal, like the
-    resolved material pointers a MeshRenderer caches.
     """
     for f in fields:
-        if f.args.has('transient') or f.cpp_type in TYPES:
+        if f.cpp_type in TYPES:
             continue
         f.container = split_container(f.cpp_type)
         if f.container is not None:
@@ -1603,14 +1640,18 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
         # ── ACOMP / AASSET / AENUM ──────────────────────────────────────────
         acomp_m = _ACOMP_RE.match(text, i)
         if acomp_m:
-            pending_acomp = parse_annot_args(acomp_m.group(1), f"{path.name}: ACOMP({acomp_m.group(1).strip()})")
+            where = f"{path.name}: ACOMP({acomp_m.group(1).strip()})"
+            pending_acomp = parse_annot_args(acomp_m.group(1), where)
+            _refuse_unknown_args(pending_acomp, 'ACOMP', _ACOMP_FLAGS, _ACOMP_KEYS, where)
             pending_is_asset = False
             pending_is_struct = False
             i = acomp_m.end()
             continue
         aasset_m = _AASSET_RE.match(text, i)
         if aasset_m:
-            pending_acomp = parse_annot_args(aasset_m.group(1), f"{path.name}: AASSET({aasset_m.group(1).strip()})")
+            where = f"{path.name}: AASSET({aasset_m.group(1).strip()})"
+            pending_acomp = parse_annot_args(aasset_m.group(1), where)
+            _refuse_unknown_args(pending_acomp, 'AASSET', _ACOMP_FLAGS, _ACOMP_KEYS, where)
             pending_is_asset = True
             pending_is_struct = False
             i = aasset_m.end()

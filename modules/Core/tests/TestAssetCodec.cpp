@@ -2,9 +2,9 @@
 
 /// @file TestAssetCodec.cpp
 /// @brief The binary form of a reflected asset type (AASSET): a hand-built
-/// AssetTypeMeta round-trips every value, a transient field never reaches the
-/// blob, and a block written against a different field table is refused rather
-/// than decoded into the wrong fields.
+/// AssetTypeMeta round-trips every value, a member with no field entry never
+/// reaches the blob, and a block written against a different field table is
+/// refused rather than decoded into the wrong fields.
 ///
 /// The meta is built by hand for the reason TestBinaryCodec's is: this suite has
 /// to fail when the *codec* breaks, not when MaterialData gains a field — and
@@ -12,8 +12,8 @@
 /// float arrays the codec actually sees.
 ///
 /// The asset path is deliberately not the component path, and the two
-/// differences are what most of these cases pin: there is no field mask, and the
-/// field filter is `transient` alone rather than `transient || norep`.
+/// differences are what most of these cases pin: there is no field mask, and a
+/// `norep` field is encoded.
 
 #include <doctest/doctest.h>
 
@@ -40,7 +40,6 @@ using Assisi::Core::Reflect::AssetLayoutHash;
 using Assisi::Core::Reflect::AssetTypeMeta;
 using Assisi::Core::Reflect::FieldMeta;
 using Assisi::Core::Reflect::FieldType;
-using Assisi::Core::Reflect::IsAssetField;
 using Assisi::Core::Reflect::ReadAsset;
 using Assisi::Core::Reflect::WriteAsset;
 
@@ -67,7 +66,8 @@ struct Material
     /// the asset filter must not, because here the destination *is* disk.
     std::int32_t editorRevision = 0;
 
-    /// A resolved GPU handle: rebuilt on load, meaningless in a file.
+    /// A resolved GPU handle: rebuilt on load, meaningless in a file, and so
+    /// given no field entry.
     float cachedLod = 0.f;
 
     bool operator==(const Material &) const = default;
@@ -83,14 +83,13 @@ template <typename T, typename M> std::size_t OffsetOf(M T::*member)
                                     reinterpret_cast<const std::byte *>(&prototype));
 }
 
-FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool transient = false, bool norep = false)
+FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool norep = false)
 {
     FieldMeta field;
-    field.name      = name;
-    field.type      = type;
-    field.offset    = offset;
-    field.transient = transient;
-    field.norep     = norep;
+    field.name   = name;
+    field.type   = type;
+    field.offset = offset;
+    field.norep  = norep;
     return field;
 }
 
@@ -116,8 +115,7 @@ AssetTypeMeta MakeMaterialMeta()
     meta.fields.push_back(Field("baseColorTexture", FieldType::AssetId, OffsetOf(&Material::baseColorTexture)));
     meta.fields.push_back(Field("layers", FieldType::AssetIdVector, OffsetOf(&Material::layers)));
     meta.fields.push_back(
-        Field("editorRevision", FieldType::Int32, OffsetOf(&Material::editorRevision), false, /*norep=*/ true));
-    meta.fields.push_back(Field("cachedLod", FieldType::Float, OffsetOf(&Material::cachedLod), /*transient=*/ true));
+        Field("editorRevision", FieldType::Int32, OffsetOf(&Material::editorRevision), /*norep=*/ true));
     return meta;
 }
 
@@ -144,7 +142,7 @@ Material MakeFilledMaterial()
 
 } // namespace
 
-TEST_CASE("Every non-transient field of an asset survives the round trip")
+TEST_CASE("Every field of an asset survives the round trip")
 {
     const AssetTypeMeta meta = MakeMaterialMeta();
     const Material written   = MakeFilledMaterial();
@@ -186,7 +184,7 @@ TEST_CASE("A norep field reaches a cooked asset, unlike the wire")
     CHECK(read.editorRevision == 17);
 }
 
-TEST_CASE("A transient field is absent from a cooked asset")
+TEST_CASE("A member with no field entry is absent from a cooked asset")
 {
     const AssetTypeMeta meta = MakeMaterialMeta();
     const Material written   = MakeFilledMaterial();
@@ -246,10 +244,10 @@ TEST_CASE("The layout hash moves for a change that alters the bits, and not othe
         CHECK(AssetLayoutHash(retyped) != hash);
     }
 
-    SUBCASE("making a field transient moves it, because it leaves the blob")
+    SUBCASE("dropping a field moves it, because it leaves the blob")
     {
-        AssetTypeMeta dropped         = MakeMaterialMeta();
-        dropped.fields[2].transient   = true;
+        AssetTypeMeta dropped = MakeMaterialMeta();
+        dropped.fields.erase(dropped.fields.begin() + 2);
         CHECK(AssetLayoutHash(dropped) != hash);
     }
 
@@ -279,7 +277,6 @@ TEST_CASE("The layout description names the type and its encoded fields")
     CHECK(text.find("Material") != std::string::npos);
     CHECK(text.find("baseColorFactor") != std::string::npos);
     CHECK(text.find("editorRevision") != std::string::npos);
-    // Transient fields are not encoded, so they are not part of the layout.
     CHECK(text.find("cachedLod") == std::string::npos);
 }
 
@@ -297,22 +294,6 @@ TEST_CASE("A truncated block fails rather than returning half a value")
     Material read;
     BitReader reader{cut};
     CHECK_FALSE(ReadAsset(meta, &read, reader));
-}
-
-TEST_CASE("IsAssetField keeps norep and drops transient")
-{
-    const AssetTypeMeta meta = MakeMaterialMeta();
-
-    std::size_t encoded = 0;
-    for (const FieldMeta &field : meta.fields)
-    {
-        if (IsAssetField(field))
-        {
-            ++encoded;
-        }
-    }
-    // Eleven declared, one transient.
-    CHECK(encoded == meta.fields.size() - 1u);
 }
 
 TEST_CASE("The construct and destroy hooks own an instance the caller cannot name")

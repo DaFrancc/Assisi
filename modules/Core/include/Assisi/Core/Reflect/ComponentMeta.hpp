@@ -11,6 +11,7 @@
 /// Generated code fills it with designated initializers, so members sit in
 /// size order and a new one is added without shifting any other.
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -106,6 +107,16 @@ struct ComponentMeta
     /// hooks above it exists for ACOMP(transient) components too.
     std::function<void(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> addDefault{};
 
+    /// @brief Whether two instances of an ACOMP(predicted) component hold the
+    /// same value, field by field, floats within the tolerance
+    /// Reflect::PredictedFieldEqual allows. Null for every other component.
+    ///
+    /// Field by field rather than byte by byte, so padding is never read. A
+    /// predicted component is trivially copyable and exactly its fields, which
+    /// reflectgen asserts, so a copy of `size` bytes and this compare see the
+    /// same value.
+    std::function<bool(const void *lhs, const void *rhs)> predictedEquals{};
+
     std::vector<FieldMeta> fields{};
 
     /// @brief The names ACOMP(requires = {...}) and ACOMP(excludes = {...})
@@ -127,6 +138,10 @@ struct ComponentMeta
     std::vector<ComponentId> requiredBy{};
 
     std::type_index typeIndex;
+
+    /// @brief sizeof the component, for a predicted one; 0 for every other,
+    /// which nothing copies as bytes.
+    std::size_t size = 0;
 
     /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
     /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
@@ -180,6 +195,14 @@ struct ComponentMeta
     /// False for ACOMP(transient) components by construction: reflectgen rejects
     /// `replicable` together with `transient`, since there is nothing to encode.
     bool replicable = false;
+
+    /// @brief Whether a client keeps its own value of this component live and
+    /// the host's apart, on an entity it predicts (ACOMP(predicted)).
+    ///
+    /// Always also replicable. A snapshot writes the host's value into the
+    /// client's confirmed copy rather than over the one its own systems are
+    /// ahead with; see NetSync::ReplicationClient::ConfirmedOf.
+    bool predicted = false;
 };
 
 /// @brief Whether @p meta describes the component type @p T.

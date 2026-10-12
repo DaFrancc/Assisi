@@ -4,7 +4,7 @@
 /// @file SceneSerializer.hpp
 /// @brief JSON-based level file save/load for an ECS Scene.
 ///
-/// All reflected (non-transient) component fields are persisted automatically
+/// All reflected component fields (AFIELD) are persisted automatically
 /// via ComponentRegistry.  Unrecognised component names in a file are skipped
 /// with a warning so old levels remain loadable after component renames.
 ///
@@ -54,11 +54,10 @@
 /// a file that means something other than what it says, and the alternative to
 /// refusing is a silently mis-wired scene.
 ///
-/// ## Transient fields
-/// Fields marked AFIELD(transient) (e.g. GPU handles, raw pointers) are
-/// excluded from serialization.  A component whose fields are all transient is
-/// saved as an empty object `{}` — its presence on the entity is preserved but
-/// no data is restored.
+/// ## Unreflected members
+/// Members with no AFIELD (e.g. GPU handles, raw pointers) are not serialized.
+/// A component with no AFIELD at all is saved as an empty object `{}` — its
+/// presence on the entity is preserved but no data is restored.
 
 #include <cstdint>
 #include <expected>

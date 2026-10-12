@@ -101,6 +101,33 @@ The 2 cm is `predictionTolerance` in `assets/config/network.json`. The editor's
 network panel counts how many of the host's answers were kept and how many were
 replayed. On a quiet level, almost all of them should be kept.
 
+### Components you predict
+
+Your machine predicts your character, everything in its blueprint (its camera,
+for example), and anything the host hands it with a **`Predicted`** component
+naming your client. On those entities, a component marked `predicted` is yours
+to change: when the host's older value for it arrives, your machine keeps that
+value to one side instead of writing it over yours. `Transform` is one, which is
+why your camera turns the moment you move the mouse.
+
+Mark a component of your own `predicted` when your player changes it and has to
+see the change at once, like ammo or a cooldown:
+
+```cpp
+ACOMP(replicable, predicted)
+struct Ammo
+{
+    AFIELD() int32_t rounds = 30;
+    AFIELD() float reloadSecondsLeft = 0.f;
+};
+```
+
+A predicted component has to be a plain value: no lists or maps, no
+`AFIELD(norep)` field, no entity references, and no member without `AFIELD`.
+The build refuses one that breaks a rule. Anything else on your character,
+like a score, can stay plain `replicable`: the host's value is simply written
+over yours.
+
 Every machine runs the level's systems, and every machine numbers its steps the
 host's way: `ctx.simTick` is the same on every machine for the same step. A
 client runs a little ahead of the host, so its step 500 happens slightly before

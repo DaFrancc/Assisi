@@ -4,7 +4,7 @@
 Consumes the parsed model (reflect_parser) and the type table (reflect_types) and
 produces the C++ that registers each component/asset with the reflection
 registries. This is also where default-deny lives: generate_cpp refuses (raises)
-on any non-transient field it cannot serialize, on an EntityRef in an AASSET, on
+on any AFIELD it cannot serialize, on an EntityRef in an AASSET, on
 out-of-range AFIELD bounds, or on a replication annotation that could not mean
 anything (ACOMP(replicable, transient), AFIELD(norep) outside a replicable
 component) — a silently dropped field would lose data on every save, and a
@@ -14,10 +14,10 @@ worse than a build error.
 The spelling is `replicable`, not `replicated`, and the difference is the whole
 point: the annotation grants a *capability* (this type has a wire form), while
 whether any given entity actually sends it is policy decided elsewhere — the
-Replicated marker's exclusion mask, and the game's neverReplicate list. The old
-spelling is rejected by name rather
-than ignored, because "unknown flag" and "this flag changed meaning" are
-different problems for a reader to debug.
+Replicated marker's exclusion mask, and the game's neverReplicate list. The
+parser refuses the old spelling with a message of its own, because "unknown
+flag" and "this flag changed meaning" are different problems for a reader to
+debug.
 """
 
 import re
@@ -226,11 +226,9 @@ def _gen_field_meta(f: FieldInfo, siblings: list) -> str:
     # The struct's field table, from the file that generates it. Describes the
     # leaf of a container, as the enum metadata below does.
     held = _struct_of(f)
-    if held is not None and not f.args.has('transient'):
+    if held is not None:
         parts.append(f'.structSpec = Assisi::Core::Reflect::StructTraits<::{held.fqn}>::Spec()')
 
-    if f.args.has('transient'):
-        parts.append('.transient = true')
     if f.args.has('norep'):
         parts.append('.norep = true')
 
@@ -303,13 +301,78 @@ def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
     PropagateTransforms wants its ticks whether or not anything is networked.
     """
     lines = ['.typeIndex = typeid(T)']
+    if comp.args.has('predicted'):
+        lines.append('.size = sizeof(T)')
     if not serializable:
         lines.append('.serializable = false')
     if comp.args.has('tracked') or comp.args.has('replicable'):
         lines.append('.tracksChanges = true')
     if comp.args.has('replicable'):
         lines.append('.replicable = true')
+    if comp.args.has('predicted'):
+        lines.append('.predicted = true')
     return ',\n        '.join(lines)
+
+
+def _equals_name(comp: ComponentInfo) -> str:
+    return f'_reflectgen_{comp.name}_equals'
+
+
+def _field_comparisons(fields: list, path: str) -> list[str]:
+    """A PredictedFieldEqual for every field beneath @p path, a struct's fields
+    one by one rather than the struct as a whole, so no type needs a compare of
+    its own and no byte of padding is ever read. Floats agree within a
+    tolerance there, since two machines do not round them alike."""
+    comparisons = []
+    for f in fields:
+        held = _struct_of(f)
+        if held is not None:
+            comparisons.extend(_field_comparisons(held.fields, f'{path}{f.name}.'))
+        else:
+            comparisons.append(f'Assisi::Core::Reflect::PredictedFieldEqual(lhs.{path}{f.name}, '
+                               f'rhs.{path}{f.name})')
+    return comparisons
+
+
+def _size_asserts(fqn: str, fields: list) -> list[str]:
+    """That @p fqn is exactly its reflected fields, nested structs included.
+
+    A member with no AFIELD would be copied by a byte copy and missed by the
+    field-wise compare, and padding would be the same; both make the sum of the
+    fields' sizes fall short of the type's.
+    """
+    sizes = ' + '.join(f'sizeof(decltype({fqn}::{f.name}))' for f in fields)
+    asserts = [f'static_assert(sizeof({fqn}) == {sizes},\n'
+               f'              "{fqn} holds a member with no AFIELD, or padding: a predicted '
+               f'component must be exactly its fields, largest first");']
+    for f in fields:
+        held = _struct_of(f)
+        if held is not None:
+            asserts.extend(_size_asserts(f'::{held.fqn}', held.fields))
+    return asserts
+
+
+def _gen_predicted_support(comp: ComponentInfo, fqn: str) -> str:
+    """What a predicted component needs beyond its registration: the
+    compile-time checks reflectgen cannot make from spellings, and the
+    field-wise compare its ComponentMeta points at."""
+    comparisons = ' &&\n           '.join(_field_comparisons(comp.fields, ''))
+    asserts = '\n'.join(_size_asserts(fqn, comp.fields))
+    return f"""\
+// ACOMP(predicted): copied as bytes, compared field by field within tolerance.
+static_assert(std::is_trivially_copyable_v<{fqn}>,
+              "{fqn} is ACOMP(predicted), so it must be trivially copyable");
+static_assert(alignof({fqn}) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
+              "{fqn} is ACOMP(predicted) and is kept in plain byte storage");
+{asserts}
+bool {_equals_name(comp)}(const void *a, const void *b)
+{{
+    const {fqn} &lhs = *static_cast<const {fqn} *>(a);
+    const {fqn} &rhs = *static_cast<const {fqn} *>(b);
+    return {comparisons};
+}}
+
+"""
 
 
 def _gen_rule_lists(comp: ComponentInfo) -> str:
@@ -337,8 +400,8 @@ _ADD_DEFAULT = """\
 
 
 def _is_serializable(f: FieldInfo) -> bool:
-    """A non-transient field reflectgen has codegen for (a TYPES entry or an enum)."""
-    return not f.args.has('transient') and _field_tc(f) is not None
+    """A field reflectgen has codegen for (a TYPES entry or an enum)."""
+    return _field_tc(f) is not None
 
 
 # A message's EntityRef fields, for JSON only.
@@ -390,8 +453,8 @@ def _gen_message_deserialize(fields: list[FieldInfo], name: str) -> str:
 
 
 def _gen_serialize(fields: list[FieldInfo]) -> str:
-    # Default-deny (enforced in generate_cpp) guarantees every non-transient
-    # field has codegen, so there is no unsupported branch to emit.
+    # Default-deny (enforced in generate_cpp) guarantees every field has
+    # codegen, so there is no unsupported branch to emit.
     serializable = [f for f in fields if _is_serializable(f)]
 
     if not serializable:
@@ -467,13 +530,11 @@ def _check_asset_fields(components: list[ComponentInfo], header_name: str) -> No
         if not comp.is_asset:
             continue
         for f in comp.fields:
-            if f.args.has('transient'):
-                continue
             if f.cpp_type in _ENTITY_REF_TYPES:
                 raise ValueError(
                     f"{header_name}: asset '{comp.name}' field '{f.name}' is an "
                     f"EntityRef, which AASSET types cannot serialize (no scene to "
-                    f"resolve against). Remove it or mark it AFIELD(transient).")
+                    f"resolve against). Remove it, or drop its AFIELD to keep it off disk.")
 
 
 def _check_replication(components: list[ComponentInfo], header_name: str) -> None:
@@ -485,20 +546,9 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
     reveal. AFIELD(norep) outside a replicable component is the poster child: it
     reads as "keep this off the wire" while nothing about the type is on the wire
     to begin with.
-
-    `replicated` is rejected here by name rather than left to the unknown-flag
-    path, which would ignore it and take the component off the wire in silence.
     """
     for comp in components:
         where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
-
-        if comp.args.has('replicated'):
-            raise ValueError(
-                f"{where} is marked '{'AASSET' if comp.is_asset else 'ACOMP'}(replicated)', which "
-                f"was renamed to 'replicable'. The flag grants a capability — this type *can* "
-                f"cross the wire — while whether a given entity sends it is policy, held by the "
-                f"Replicated marker's exclusion mask and the game's neverReplicate list. Write "
-                f"'replicable'.")
 
         if comp.args.has('replicable'):
             if comp.is_asset:
@@ -511,19 +561,64 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                     f"registers for a ComponentId only and has no serialization hooks, so "
                     f"there is nothing to put on the wire. Pick one.")
 
+        if comp.args.has('predicted'):
+            _check_predicted(comp, where, header_name)
+
         for f in comp.fields:
             if not f.args.has('norep'):
                 continue
             field_where = f"{header_name}: field '{comp.name}::{f.name}'"
-            if f.args.has('transient'):
-                raise ValueError(
-                    f"{field_where} is marked AFIELD(transient, norep). A transient field is "
-                    f"already excluded from every codec; norep says nothing further. Drop norep.")
             if not comp.args.has('replicable'):
                 raise ValueError(
                     f"{field_where} is marked AFIELD(norep), but '{comp.name}' is not "
                     f"ACOMP(replicable) — nothing about it crosses the wire, so the annotation "
                     f"would silently do nothing. Mark the component replicable, or drop norep.")
+
+
+def _check_predicted(comp: ComponentInfo, where: str, header_name: str) -> None:
+    """Refuse an ACOMP(predicted) a client could not keep two copies of.
+
+    A client keeps the host's copy of a predicted component apart from its own
+    and compares the two with ==. That needs a value it can copy as bytes and
+    whose every field the host sends: no container, no norep field, and no
+    entity or instance reference, which names something on one machine only.
+    """
+    if not comp.args.has('replicable'):
+        raise ValueError(
+            f"{where} is marked ACOMP(predicted) but not replicable. Predicting a component means "
+            f"keeping the host's copy of it apart from the client's own, and a component that is "
+            f"never sent has no host copy. Write ACOMP(replicable, predicted).")
+    if comp.is_asset or comp.args.has('transient'):
+        raise ValueError(f"{where} is marked predicted, which only an ordinary component can be.")
+    if not comp.fields:
+        raise ValueError(f"{where} is marked ACOMP(predicted) but has no fields to predict.")
+    _check_predicted_fields(comp.name, comp.fields, header_name)
+
+
+def _check_predicted_fields(owner: str, fields: list, header_name: str) -> None:
+    """The field half of _check_predicted, recursing into ASTRUCT fields."""
+    for f in fields:
+        field_where = f"{header_name}: field '{owner}::{f.name}' ({f.cpp_type})"
+        if f.container is not None:
+            raise ValueError(
+                f"{field_where} is a container, and its component is ACOMP(predicted): a predicted "
+                f"component is copied as bytes, which a container cannot be.")
+        if f.args.has('norep'):
+            raise ValueError(
+                f"{field_where} is AFIELD(norep), and its component is ACOMP(predicted): the host "
+                f"never sends it, so the client could never hold the host's copy to compare.")
+        spelling = f.cpp_type
+        if spelling in _ENTITY_REF_TYPES or spelling.rsplit('::', 1)[-1] == 'InstanceId':
+            raise ValueError(
+                f"{field_where} names an entity or a blueprint instance, and its component is "
+                f"ACOMP(predicted): the handle names something on one machine only, so the host's "
+                f"copy and the client's could never be compared.")
+        held = _struct_of(f)
+        if held is not None:
+            try:
+                _check_predicted_fields(held.name, held.fields, header_name)
+            except ValueError as inner:
+                raise ValueError(f"{field_where} cannot be predicted: {inner}") from None
 
 
 def _check_messages(messages: list, header_name: str) -> None:
@@ -549,11 +644,6 @@ def _check_messages(messages: list, header_name: str) -> None:
                     f"{where} is marked AFIELD(norep), but '{msg.name}' is a message — it exists "
                     f"only to cross the wire, so a field that never crosses it is a field that "
                     f"does nothing. Remove the field, or remove norep.")
-            if f.args.has('transient'):
-                raise ValueError(
-                    f"{where} is marked AFIELD(transient), but a message has no persistent form "
-                    f"to be excluded from — nothing ever saves one. Remove the field, or remove "
-                    f"transient.")
             if f.args.has('controlled'):
                 if msg.direction != 'intent':
                     raise ValueError(
@@ -858,7 +948,7 @@ def _referenced_structs(owners: list) -> list:
                                                    header=''))
         for f in owner.fields:
             held = _struct_of(f)
-            if held is not None and not f.args.has('transient'):
+            if held is not None:
                 found.setdefault(held.fqn, held)
     return list(found.values())
 
@@ -956,7 +1046,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in component_infos
         if not comp.args.has('transient')  # id-only components serialize nothing
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # AssetId fields (in components or assets) call the Core AssetId JSON helpers,
@@ -966,7 +1055,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in components
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # Likewise ComponentMask fields, which route through the Core mask helpers
@@ -976,7 +1064,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in components
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # The string types read through the Reflect::StringJson helpers. A container
@@ -986,7 +1073,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient') and f.container is None
+        if f.container is None
     )
 
     # Enum fields (de)serialize through a std::int64_t cast, which needs <cstdint>.
@@ -995,7 +1082,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # Bitmask fields are written as the names of their bits, through the
@@ -1005,7 +1091,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # Container fields need the descriptor their FieldMeta points at and the
@@ -1015,7 +1100,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # A struct holding a std::map or std::unordered_map is not standard-layout,
@@ -1028,7 +1112,6 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
-        if not f.args.has('transient')
     )
 
     # Includes are conditional on what the header actually declares. An
@@ -1057,10 +1140,15 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
     if systems:
         includes.append('#include <Assisi/App/SystemCatalog.hpp>')
+    # The default-constructibility guard each event registration carries, and
+    # the trivially-copyable one each predicted component does.
+    has_predicted = any(c.args.has('predicted') for c in component_infos)
     if events:
         includes.append('#include <Assisi/Core/EventCatalog.hpp>')
-        # The default-constructibility guard each registration carries.
+    if events or has_predicted:
         includes.append('#include <type_traits>')
+    if has_predicted:
+        includes.append('#include <Assisi/Core/Reflect/PredictedCompare.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -1167,9 +1255,14 @@ static const bool {var_name} = []() -> bool
         serialize   = _indent(_gen_serialize(comp.fields), 12)
         deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 
+        predicted_support = ''
+        if comp.args.has('predicted'):
+            predicted_support = _gen_predicted_support(comp, fqn)
+            add_default = add_default + f'        .predictedEquals = &{_equals_name(comp)},\n'
+
         blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
-static const bool {var_name} = []() -> bool
+{predicted_support}static const bool {var_name} = []() -> bool
 {{
     using T = {fqn};
     Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{
@@ -1254,8 +1347,7 @@ def _gen_view_ban(owners: list) -> str:
 
     _check_no_instance_views matches spellings, and a spelling can lie: an alias
     declared in a header this one includes arrives at a regex parser as an
-    ordinary word. decltype cannot be fooled that way, so every reflected field —
-    transient ones included, since the objection is to storing a view at all —
+    ordinary word. decltype cannot be fooled that way, so every reflected field
     carries the question to the compiler as well.
 
     The primary template is redeclared rather than included: it is a declaration,
@@ -1294,9 +1386,8 @@ inline constexpr bool _reflectgen_is_instance_view<Assisi::Runtime::InstanceView
 def _check_no_instance_views(components: list[ComponentInfo], header_name: str) -> None:
     """Default-deny an InstanceView field anywhere in a reflected type.
 
-    Stronger than _check_unsupported below, and deliberately so: that one lets a
-    field through once it is marked AFIELD(transient), and skips a transient
-    component's fields entirely. Neither annotation is a way through here,
+    Stronger than _check_unsupported below, and deliberately so: that one skips
+    a transient component's fields entirely, and that is no way through here,
     because the problem is not that a view cannot be serialized — it is that a
     view *stored* anywhere is a member list that goes stale, which is the failure
     the whole blueprint design is built to prevent. A view lives in the scope of
@@ -1423,7 +1514,7 @@ def _check_c_arrays(owners: list, header_name: str, allow_c_arrays: bool) -> Non
         return
     for owner in owners:
         for f in owner.fields:
-            if f.args.has('transient') or f.container is None or not f.container.has_c_array:
+            if f.container is None or not f.container.has_c_array:
                 continue
             raise ValueError(
                 f"{header_name}: field '{owner.name}::{f.name}' is a C array ({f.cpp_type}). "
@@ -1449,9 +1540,7 @@ def _check_structs(components: list, header_name: str) -> None:
                     f"{where} is marked AFIELD(norep), but '{comp.name}' is an ASTRUCT: it "
                     f"travels as one value wherever it is held, so part of it cannot stay off the "
                     f"wire. Put the field on the component that holds the struct.")
-            if f.args.has('transient'):
-                continue
-            spelling = f.container.leaf if f.container is not None else f.cpp_type
+            spelling =f.container.leaf if f.container is not None else f.cpp_type
             if spelling in _ENTITY_REF_TYPES or spelling.rsplit('::', 1)[-1] == 'InstanceId':
                 raise ValueError(
                     f"{where} names an entity or a blueprint instance ({f.cpp_type}), but "
@@ -1496,7 +1585,7 @@ def _string_type_of(f) -> Optional[str]:
 def _pools_of(fields: list) -> list:
     """The names of the StringPool fields among @p fields, directly held."""
     return [f.name for f in fields
-            if not f.args.has('transient') and f.container is None and _string_type_of(f) == 'StringPool']
+            if f.container is None and _string_type_of(f) == 'StringPool']
 
 
 def _unpooled_string(fields: list) -> Optional[str]:
@@ -1508,8 +1597,6 @@ def _unpooled_string(fields: list) -> Optional[str]:
     to whatever holds it.
     """
     for f in fields:
-        if f.args.has('transient'):
-            continue
         if _string_type_of(f) == 'PooledString':
             return f.name
         held = _struct_of(f)
@@ -1571,20 +1658,18 @@ def _inline_string_reason(spelling: str) -> Optional[str]:
 
 
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
-    """Default-deny: fail generation if any non-transient AFIELD has a type
-    reflectgen cannot (de)serialize (i.e. absent from TYPES).
+    """Default-deny: fail generation if any AFIELD has a type reflectgen cannot
+    (de)serialize (i.e. absent from TYPES).
 
     A silently-skipped field round-trips to nothing — every save drops it —
-    which is far worse than a build error. Mark the field AFIELD(transient) if
-    it is runtime-only, or add its codegen to TYPES. UNSUPPORTED_TYPES supplies
-    a richer reason string when one is known.
+    which is far worse than a build error. Drop the AFIELD if the member is
+    runtime-only, or add its codegen to TYPES. UNSUPPORTED_TYPES supplies a
+    richer reason string when one is known.
     """
     for comp in components:
         if comp.args.has('transient'):
             continue  # id-only component: its fields are never serialized
         for f in comp.fields:
-            if f.args.has('transient'):
-                continue
             if f.container is not None:
                 _check_container(f, comp.name, header_name)
                 continue
@@ -1595,5 +1680,5 @@ def _check_unsupported(components: list[ComponentInfo], header_name: str) -> Non
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "
-                    f"Add its codegen to TYPES, mark it AFIELD(transient), or (for an "
+                    f"Add its codegen to TYPES, drop its AFIELD if it is runtime-only, or (for an "
                     f"enum class) annotate it AENUM().")

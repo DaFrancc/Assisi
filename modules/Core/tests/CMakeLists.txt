@@ -49,6 +49,7 @@ add_executable(Assisi-Core-Tests
   TestInternedString.cpp
   TestJobSystem.cpp
   TestPakCodec.cpp
+  TestPredictedCompare.cpp
   TestPakFormat.cpp
   TestPakProvider.cpp
   TestRandomAccessFile.cpp

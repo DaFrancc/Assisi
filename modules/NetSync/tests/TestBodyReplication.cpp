@@ -1111,6 +1111,38 @@ TEST_CASE("a bodied entity that withholds its Transform sends no body state eith
     CHECK(harness.client.Corrections().applied == 0);
 }
 
+TEST_CASE("a mirror the client predicts keeps its own pose while the host's is sent")
+{
+    // A player's camera, with nothing held back: the host sends where it looks,
+    // a round trip after the client looked there. Written or interpolated over
+    // the client's own, the view is pulled back to where it was every snapshot.
+    PhysicsHarness harness;
+    harness.Step(4);
+
+    const ECS::Entity eye = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(eye, ECS::Transform{});
+    (void)harness.serverScene.Add<Replicated>(eye, Replicated{});
+    harness.server.SetControl(eye, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(10);
+
+    const ECS::Entity mirror = MirrorOf(harness, eye);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.client.Predicts(mirror));
+
+    const glm::quat lookedUp = glm::angleAxis(glm::radians(30.f), glm::vec3(1.f, 0.f, 0.f));
+    const glm::quat hostsLate = glm::angleAxis(glm::radians(10.f), glm::vec3(1.f, 0.f, 0.f));
+    harness.clientScene.GetMut<ECS::Transform>(mirror)->rotation = lookedUp;
+    harness.serverScene.GetMut<ECS::Transform>(eye)->rotation = hostsLate;
+    harness.Step(10);
+
+    CHECK(std::abs(glm::dot(harness.clientScene.Get<ECS::Transform>(mirror)->rotation, lookedUp)) ==
+          doctest::Approx(1.f));
+    const ECS::Transform *confirmed =
+        harness.client.ConfirmedComponent<ECS::Transform>(harness.server.NetIdOf(eye));
+    REQUIRE(confirmed != nullptr);
+    CHECK(std::abs(glm::dot(confirmed->rotation, hostsLate)) == doctest::Approx(1.f));
+}
+
 TEST_CASE("a mirror whose Transform is not sent keeps the one the client gives it")
 {
     // A player's camera: sent so it exists on every machine, its Transform kept

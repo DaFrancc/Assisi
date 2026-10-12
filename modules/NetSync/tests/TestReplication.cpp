@@ -365,7 +365,7 @@ TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire
     CHECK(harness.client.SnapshotsRejected() == 0);
 }
 
-TEST_CASE("a replicable component with only transient fields arrives by presence alone")
+TEST_CASE("a replicable component with no fields arrives by presence alone")
 {
     Harness harness;
     harness.Step(4);
@@ -422,7 +422,7 @@ TEST_CASE("a norep field still round-trips to disk")
 {
     // norep is a *wire* exclusion, not a serialization one. The JSON codec is
     // untouched, which is what makes it usable for authored server-side data
-    // rather than only for runtime scratch (that is what transient is for).
+    // rather than only for runtime scratch (which is not reflected at all).
     const Core::Reflect::ComponentMeta *meta =
         Core::Reflect::ComponentRegistry::Instance().ById(
             Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Test::Health)));
@@ -1303,4 +1303,236 @@ TEST_CASE("Reset clears the level-ready gate, so a hash does not join on its own
     // The application saying so still is.
     harness.client.ConfirmLevelReady();
     CHECK(harness.client.IsSynchronized());
+}
+
+// ── Confirmed vs live ─────────────────────────────────────────────────────────
+
+namespace
+{
+
+/// An entity the harness's client controls, as the server has it and as the
+/// client mirrors it.
+struct Controlled
+{
+    ECS::Entity onServer = ECS::NullEntity;
+    ECS::Entity mirror   = ECS::NullEntity;
+    NetId netId          = InvalidNetId;
+};
+
+/// Steps until the client has applied everything the server said.
+constexpr std::uint32_t kSettleSteps = 12;
+
+/// The values the server starts the controlled entity with.
+constexpr float kStartPitch = 0.25f;
+constexpr std::int32_t kStartHealth = 100;
+
+/// A replicated entity carrying two predicted components and a plain
+/// replicable one, handed to the harness's client and caught up on.
+Controlled SpawnControlled(Harness &harness)
+{
+    harness.Step(4);
+    Controlled controlled;
+    controlled.onServer = SpawnReplicated(harness.serverScene, {1.f, 2.f, 3.f});
+    (void)harness.serverScene.Add<Test::Aim>(controlled.onServer, Test::Aim{kStartPitch});
+    (void)harness.serverScene.Add<Test::Charge>(controlled.onServer, Test::Charge{});
+    (void)harness.serverScene.Add<Test::Health>(controlled.onServer, Test::Health{kStartHealth, 0});
+    harness.server.SetControl(controlled.onServer, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(kSettleSteps);
+
+    controlled.netId  = harness.server.NetIdOf(controlled.onServer);
+    controlled.mirror = harness.client.EntityOf(controlled.netId);
+    REQUIRE(controlled.mirror != ECS::NullEntity);
+    REQUIRE(harness.client.ControlsEntity(controlled.mirror));
+    return controlled;
+}
+
+/// A snapshot written by hand, for a packet the server's byte budget only
+/// rarely produces: an entity's block without its body record, or the body
+/// record without the block.
+std::vector<std::byte> HandSnapshot(std::uint64_t serverTick, const NetId *block, const BodyState *body)
+{
+    Core::BitWriter writer;
+    WriteMessageType(MessageType::Snapshot, writer);
+    WriteSnapshotHeader(SnapshotHeader{.serverTick = serverTick}, writer);
+    writer.WriteBool(false);  // no instance records
+    writer.WriteVarUInt32(0); // no despawn runs
+    if (block != nullptr)
+    {
+        writer.WriteBool(true);
+        writer.WriteVarId(*block);
+        writer.WriteBool(false);  // not a spawn
+        writer.WriteVarUInt32(0); // nothing removed
+        writer.WriteBool(false);  // nothing changed
+    }
+    writer.WriteBool(false);
+    if (body != nullptr)
+    {
+        writer.WriteBool(true);
+        WriteBodyState(*body, writer);
+    }
+    writer.WriteBool(false);
+    writer.WriteBool(false); // no events
+    const std::span<const std::byte> bytes = writer.Data();
+    return {bytes.begin(), bytes.end()};
+}
+
+} // namespace
+
+TEST_CASE("a predicted component the client is ahead on is not set back by the host's older value")
+{
+    // The host's value is the client's own change arriving a round trip late,
+    // or the host's guess from before it had the client's commands. Written
+    // over the client's copy, it pulls a cooldown or an aim back every snapshot.
+    Harness harness;
+    const Controlled controlled = SpawnControlled(harness);
+    REQUIRE(harness.client.Predicts(controlled.mirror));
+
+    constexpr float kClientPitch = 5.f;
+    constexpr float kHostPitch   = 1.f;
+    constexpr std::int32_t kClientHealth = 7;
+    constexpr std::int32_t kHostHealth   = 50;
+    harness.clientScene.GetMut<Test::Aim>(controlled.mirror)->pitch = kClientPitch;
+    harness.clientScene.GetMut<Test::Health>(controlled.mirror)->value = kClientHealth;
+    harness.serverScene.GetMut<Test::Aim>(controlled.onServer)->pitch = kHostPitch;
+    harness.serverScene.GetMut<Test::Health>(controlled.onServer)->value = kHostHealth;
+    harness.Step(kSettleSteps);
+
+    CHECK(harness.clientScene.Get<Test::Aim>(controlled.mirror)->pitch == doctest::Approx(kClientPitch));
+    const Test::Aim *confirmed = harness.client.ConfirmedComponent<Test::Aim>(controlled.netId);
+    REQUIRE(confirmed != nullptr);
+    CHECK(confirmed->pitch == doctest::Approx(kHostPitch));
+
+    // Health is replicable and not predicted: the host's word is the client's.
+    CHECK(harness.clientScene.Get<Test::Health>(controlled.mirror)->value == kHostHealth);
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("an entity the client neither controls nor is given to predict takes the host's value")
+{
+    Harness harness;
+    harness.Step(4);
+    const ECS::Entity other = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Aim>(other, Test::Aim{kStartPitch});
+    harness.Step(kSettleSteps);
+    const NetId netId          = harness.server.NetIdOf(other);
+    const ECS::Entity mirror   = harness.client.EntityOf(netId);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK_FALSE(harness.client.Predicts(mirror));
+    CHECK(harness.client.ConfirmedOf(netId) == nullptr);
+
+    constexpr float kHostPitch = 2.f;
+    harness.serverScene.GetMut<Test::Aim>(other)->pitch = kHostPitch;
+    harness.Step(kSettleSteps);
+    CHECK(harness.clientScene.Get<Test::Aim>(mirror)->pitch == doctest::Approx(kHostPitch));
+}
+
+TEST_CASE("the host can give a client an entity to predict that it does not control")
+{
+    // What a carried or pushed object is: the host's to simulate, the client's
+    // to show without waiting for it.
+    Harness harness;
+    harness.Step(4);
+    const ECS::Entity carried = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Aim>(carried, Test::Aim{kStartPitch});
+    (void)harness.serverScene.Add<Predicted>(
+        carried, Predicted{harness.server.ClientIdOf(harness.serverSide()).value});
+    harness.Step(kSettleSteps);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(carried));
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK_FALSE(harness.client.ControlsEntity(mirror));
+    CHECK(harness.client.Predicts(mirror));
+
+    // Taken away, the host's word stands again.
+    (void)harness.serverScene.Remove<Predicted>(carried);
+    harness.Step(kSettleSteps);
+    CHECK_FALSE(harness.client.Predicts(mirror));
+}
+
+TEST_CASE("a section left out of a snapshot does not confirm what it would have carried")
+{
+    // The byte budget cuts an entity's block and its body record separately.
+    // Each tick says how new one section of the confirmed copy is, so each moves
+    // only when its own section arrived.
+    Harness harness;
+    const Controlled controlled = SpawnControlled(harness);
+    const ReplicationClient::Confirmed *before = harness.client.ConfirmedOf(controlled.netId);
+    REQUIRE(before != nullptr);
+    const std::uint64_t componentTick = before->componentTick;
+    const std::uint64_t physicsTick   = before->physicsTick;
+    REQUIRE(componentTick != 0);
+
+    // Far past anything the server has sent, so the client takes it as new.
+    constexpr std::uint64_t kAhead = 1000;
+    const std::uint64_t tick = harness.client.LastAppliedTick() + kAhead;
+
+    SUBCASE("a body record without the block")
+    {
+        const BodyState body{.netId = controlled.netId, .position = {4.f, 5.f, 6.f}, .asleep = true};
+        harness.client.HandleMessage(HandSnapshot(tick, nullptr, &body));
+        REQUIRE(harness.client.LastAppliedTick() == tick);
+
+        const ReplicationClient::Confirmed *after = harness.client.ConfirmedOf(controlled.netId);
+        REQUIRE(after != nullptr);
+        CHECK(after->componentTick == componentTick);
+        CHECK(after->physicsTick == tick);
+        CHECK(after->body.position.x == doctest::Approx(4.f).epsilon(0.01));
+    }
+    SUBCASE("the block without a body record")
+    {
+        harness.client.HandleMessage(HandSnapshot(tick, &controlled.netId, nullptr));
+        REQUIRE(harness.client.LastAppliedTick() == tick);
+
+        const ReplicationClient::Confirmed *after = harness.client.ConfirmedOf(controlled.netId);
+        REQUIRE(after != nullptr);
+        CHECK(after->componentTick == tick);
+        CHECK(after->physicsTick == physicsTick);
+    }
+}
+
+TEST_CASE("a change in a lost snapshot reaches the confirmed copy through the next")
+{
+    // A component a block leaves out is unchanged since the baseline the client
+    // acked, not since the last packet it received: the next block after a loss
+    // carries everything since that baseline, and what it still leaves out is
+    // what the client already holds.
+    Harness harness;
+    const Controlled controlled = SpawnControlled(harness);
+
+    constexpr float kLostPitch = 3.f;
+    constexpr std::int32_t kNextLevel = 2;
+    // A snapshot interval at the default rates, so exactly the one carrying the
+    // change is lost.
+    constexpr std::uint32_t kOneSnapshot = 3;
+    harness.dropServerMessages = true;
+    harness.serverScene.GetMut<Test::Aim>(controlled.onServer)->pitch = kLostPitch;
+    harness.Step(kOneSnapshot);
+    harness.dropServerMessages = false;
+    harness.serverScene.GetMut<Test::Charge>(controlled.onServer)->level = kNextLevel;
+    harness.Step(kSettleSteps);
+
+    const Test::Aim *aim = harness.client.ConfirmedComponent<Test::Aim>(controlled.netId);
+    const Test::Charge *charge = harness.client.ConfirmedComponent<Test::Charge>(controlled.netId);
+    const ECS::Transform *pose = harness.client.ConfirmedComponent<ECS::Transform>(controlled.netId);
+    REQUIRE(aim != nullptr);
+    REQUIRE(charge != nullptr);
+    REQUIRE(pose != nullptr);
+    CHECK(aim->pitch == doctest::Approx(kLostPitch));
+    CHECK(charge->level == kNextLevel);
+    // Never changed, so never sent again: still the host's from the spawn.
+    CHECK(pose->position.y == doctest::Approx(2.f));
+}
+
+TEST_CASE("a despawned predicted entity takes its confirmed copy with it")
+{
+    Harness harness;
+    const Controlled controlled = SpawnControlled(harness);
+    REQUIRE(harness.client.ConfirmedOf(controlled.netId) != nullptr);
+
+    harness.serverScene.Destroy(controlled.onServer);
+    harness.serverScene.FlushDestroyed();
+    harness.Step(kSettleSteps);
+
+    CHECK(harness.client.EntityOf(controlled.netId) == ECS::NullEntity);
+    CHECK(harness.client.ConfirmedOf(controlled.netId) == nullptr);
 }

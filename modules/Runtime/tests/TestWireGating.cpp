@@ -52,6 +52,15 @@ TEST_CASE("the components a mirror needs to exist and to draw are replicated")
     }
 }
 
+TEST_CASE("Transform is predicted, so a client's own pose is not set back by the host's older one")
+{
+    const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::ECS::Transform));
+    REQUIRE(meta != nullptr);
+    CHECK(meta->predicted);
+    CHECK(meta->size == sizeof(Assisi::ECS::Transform));
+    CHECK(meta->predictedEquals);
+}
+
 TEST_CASE("Camera does not replicate")
 {
     // The poster child for opt-in: an arriving `isActive` would let the host hand
@@ -67,15 +76,17 @@ TEST_CASE("MeshRenderer puts its durable ids on the wire and its resolved pointe
     REQUIRE(meta != nullptr);
 
     // mesh + materialOverrides + castsShadows + hiddenFromOwnCamera travel;
-    // meshBuffer + materials are transient process-local pointers, and a resolved
-    // pointer is meaningless in another process even when the id behind it is not.
+    // meshBuffer + materials are process-local pointers and not fields at all,
+    // since a resolved pointer is meaningless in another process even when the
+    // id behind it is not.
     CHECK(Assisi::Core::Reflect::CountCodecFields(*meta) == 4);
     for (const Assisi::Core::Reflect::FieldMeta &field : meta->fields)
     {
         CAPTURE(field.name);
         const bool durable = field.name == "mesh" || field.name == "materialOverrides" ||
                              field.name == "castsShadows" || field.name == "hiddenFromOwnCamera";
-        CHECK(Assisi::Core::Reflect::IsWireField(field) == durable);
+        CHECK(durable);
+        CHECK(Assisi::Core::Reflect::IsWireField(field));
     }
 }
 

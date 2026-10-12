@@ -2,9 +2,9 @@
 #pragma once
 
 // Fixture header for reflectgen's golden tests. Exercises the scalar, glm,
-// enum, AssetPath/ShortString and path-vector field types, a transient field, a
+// enum, AssetPath/ShortString and path-vector field types, an unannotated member, a
 // tracked (change-detection) component, a replicable component with a norep
-// field, an empty component, requires/excludes rules, namespaced components, comment stripping,
+// field, a predicted component, an empty component, requires/excludes rules, namespaced components, comment stripping,
 // nested-brace initializers, and EntityRef include emission. AssetId,
 // EntityName and InstanceId have their own cases in test_reflectgen.py rather
 // than living here; ComponentMask has none. If you change this header,
@@ -65,7 +65,7 @@ struct SampleAllTypes
     AFIELD() Assisi::Core::AssetPath assetPath; // fixed-capacity path, serialized as a string
     AFIELD() Assisi::Core::ShortString label; // fixed-capacity name, serialized as a string
     AFIELD() std::vector<Assisi::Core::AssetPath> paths; // list of paths -> JSON string array
-    AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
+    float runtimeCache = 0.0f; // no AFIELD: must not appear anywhere in the output
 };
 
 // Distinct component to prove the EntityRef include is emitted once an
@@ -140,6 +140,16 @@ struct SampleReplicated
 {
     AFIELD() float shared = 0.0f;
     AFIELD(norep) int32_t serverOnly = 0;
+};
+
+// ACOMP(predicted): a client keeps its own copy and the host's apart, so the
+// registration carries a size and a field-wise compare, and the file asserts
+// what only the compiler can check.
+ACOMP(replicable, predicted)
+struct SamplePredicted
+{
+    AFIELD() glm::vec3 aim{0.0f};
+    AFIELD() float heat = 0.0f;
 };
 
 // Reflected containers: a flat vector, a vector of an AENUM enum (whose

@@ -93,8 +93,9 @@ nlohmann::json Pose(float y)
     return {{"position", {0.f, y, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}};
 }
 
-/// A player: a character with a camera, both sent to every client, the camera
-/// without its Transform, which is each machine's own.
+/// A player: a character with a camera, both sent to every client whole. The
+/// client that plays it predicts both, so the host's copies of them arriving
+/// late never set its own back.
 void WritePlayerBlueprint(const std::filesystem::path &root)
 {
     const nlohmann::json body = {{"Transform", Pose(0.f)},
@@ -104,7 +105,7 @@ void WritePlayerBlueprint(const std::filesystem::path &root)
     const nlohmann::json eye = {{"Transform", Pose(1.5f)},
         {"Camera", {{"isActive", true}}},
         {"Parent", {{"parent", "Player"}}},
-        {"Replicated", {{"excluded", {"Transform"}}}}};
+        {"Replicated", nlohmann::json::object()}};
     const nlohmann::json file = {{"version", 2},
         {"entities", nlohmann::json::array({{{"name", "Player"}, {"components", body}},
                                                {{"name", "Eye"}, {"components", eye}}})}};
@@ -428,6 +429,48 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
     CHECK(started <= kMostFramesToStart);
 }
 
+TEST_CASE("A client's own camera looks up and down freely while the host sends where it looked")
+{
+    // The host sends every camera's pose, the client's own included, a round
+    // trip after the client turned it. Written or interpolated over the client's
+    // camera, each one pulls the view back towards where it was a moment ago.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    REQUIRE(own != ECS::NullEntity);
+
+    // A small turn every frame, up and then down, well inside the camera's
+    // limits; and the most a frame may move against it, which is none.
+    constexpr float kLookPerFrame = 0.01f;
+    constexpr std::int32_t kLookFrames = 40;
+    constexpr float kMostAgainstTheLook = 1e-4f;
+
+    for (const float direction : {1.f, -1.f})
+    {
+        CAPTURE(direction);
+        float previous = PitchOfEye(client.world.scene, own);
+        float worst = 0.f;
+        session.Run(kLookFrames,
+                    [&]
+        {
+            const float now = PitchOfEye(client.world.scene, own);
+            worst = std::max(worst, (previous - now) * direction);
+            previous = now;
+            if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))
+            {
+                controls->lookPitch = kLookPerFrame * direction;
+            }
+        });
+        CHECK(worst < kMostAgainstTheLook);
+    }
+}
+
 TEST_CASE("Each player of a session plays its own character, and takes it with them when they leave")
 {
     const std::filesystem::path root = FreshRoot();
@@ -546,10 +589,10 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     CHECK(std::abs(glm::dot(second.world.scene.Get<ECS::Transform>(firstsOnSecond)->rotation, facing)) ==
           doctest::Approx(1.f).epsilon(kFacingTolerance));
 
-    // The look up is the first client's alone: its own camera keeps it, and the
-    // other client's copy of that camera is not sent it.
+    // Its own camera keeps the look up it gave it, and the other client is
+    // shown where it looks.
     CHECK(PitchOfEye(first.world.scene, firstsOwn) == doctest::Approx(lookUp).epsilon(kFacingTolerance));
-    CHECK(PitchOfEye(second.world.scene, firstsOnSecond) == doctest::Approx(0.f).epsilon(kFacingTolerance));
+    CHECK(PitchOfEye(second.world.scene, firstsOnSecond) == doctest::Approx(lookUp).epsilon(kFacingTolerance));
 
     // The first leaves: its character goes, camera and all, here and for the
     // one still playing.

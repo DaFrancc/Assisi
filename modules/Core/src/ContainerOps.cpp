@@ -74,10 +74,6 @@ std::string DescribeStruct(const StructSpec *spec, const std::byte *address)
     std::string text;
     for (const FieldMeta &member : spec->fields)
     {
-        if (member.transient)
-        {
-            continue;
-        }
         if (!text.empty())
         {
             text += ", ";
