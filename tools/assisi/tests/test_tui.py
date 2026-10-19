@@ -318,6 +318,10 @@ class AppTest(unittest.TestCase):
         names = [option.name for option in model.form_options(by_name()[command])]
         return ["j"] * names.index(name)
 
+    def to_go(self, command: str) -> List[str]:
+        """The keys that move a fresh form of @p command onto its Go button."""
+        return ["j"] * len(model.form_options(by_name()[command]))
+
     def test_enter_on_a_recipe_runs_it(self):
         self.context.store.save_recipe("ship-it", ["package", "ship", "--compiler", "gcc"])
         self.press(self.app(), "tab", "enter")
@@ -363,6 +367,19 @@ class AppTest(unittest.TestCase):
         for line in lines:
             self.assertNotIn("│x", line)
             self.assertNotIn("│y", line)
+
+    def test_go_at_the_bottom_of_a_menu_runs_it(self):
+        app = self.press(self.app(), *self.to_build("gcc-ship"), "p", *self.to_go("package"))
+        self.assertIn("[ Go ]", self.screen(app))
+        self.assertEqual(self.ran, [])
+        self.press(app, "enter")
+        self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
+
+    def test_go_on_a_menu_that_cannot_run_says_why_and_stays(self):
+        app = self.press(self.app(), *self.to_build("gcc-ship"), "v", *self.to_go("release"), "enter")
+        self.assertEqual(self.ran, [])
+        self.assertIsInstance(app.views[-1], Form)
+        self.assertIn("version", self.screen(app).splitlines()[-1])
 
     def test_escape_leaves_a_menu_without_running_it(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "c", "esc")

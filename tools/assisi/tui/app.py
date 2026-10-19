@@ -81,8 +81,12 @@ FORM_VALUE_WIDTH = 18
 
 # The rows of a form's dialog besides one per option: the border's two, a
 # blank row above and below what it holds, the command's help with a blank row
-# under it, and a blank row and the command line it runs under the options.
-FORM_EXTRA_ROWS = 8
+# under it, and under the options the command line it runs and the Go button,
+# each after a blank row.
+FORM_EXTRA_ROWS = 10
+
+# The button under a form's options that runs it.
+GO_BUTTON = "[ Go ]"
 
 # Shown for a choice left blank.
 BLANK_CHOICE = "none"
@@ -121,7 +125,7 @@ HOME_KEYS = (
 )
 
 HOME_HINT = "Enter run · b build · p package · e editor · : command · / filter · ? keys · q quit"
-FORM_HINT = "j k move · Space h l change · i type · Ctrl+R run · Ctrl+S save · Esc back"
+FORM_HINT = "j k move · Space h l change · i type · Enter on Go or Ctrl+R run · Ctrl+S save · Esc back"
 
 
 def bottom_row(canvas: Canvas, from_bottom: int) -> int:
@@ -474,24 +478,28 @@ class Form(View):
             index = choices.index(value) if value in choices else -1
             self.form.set(option.name, choices[(index + step) % len(choices)])
 
+    def on_go(self) -> bool:
+        """Whether the cursor is on the Go button, the row after the last option."""
+        return self.cursor == len(self.options)
+
     def key(self, name: str) -> None:
         if self.editing is not None:
             self.edit(name)
-            return
-        option = self.option()
-        if name in ("j", "down", "k", "up"):
+        elif name in ("j", "down", "k", "up"):
             step = 1 if name in ("j", "down") else -1
-            self.cursor = max(0, min(len(self.options) - 1, self.cursor + step))
-        elif name in ("l", "right", "h", "left") and option.kind is not Kind.FLAG:
-            self.change(1 if name in ("l", "right") else -1)
-        elif name in (" ", "enter", "l", "right", "h", "left", "i", "a"):
-            self.activate(name)
-        elif name == "ctrl+r":
+            self.cursor = max(0, min(len(self.options), self.cursor + step))
+        elif name == "ctrl+r" or (self.on_go() and name in (" ", "enter")):
             self.run()
         elif name == "ctrl+s":
             self.save()
         elif name in ("esc", "q"):
             self.app.close(self)
+        elif self.on_go():
+            return
+        elif name in ("l", "right", "h", "left") and self.option().kind is not Kind.FLAG:
+            self.change(1 if name in ("l", "right") else -1)
+        elif name in (" ", "enter", "l", "right", "h", "left", "i", "a"):
+            self.activate(name)
 
     def activate(self, name: str) -> None:
         """Space, Enter and the editing keys on the field under the cursor."""
@@ -556,7 +564,10 @@ class Form(View):
             if index == self.cursor and self.editing is None:
                 canvas.fill(x, y + index, width, SELECTED)
         ok, text = self.form.preview()
-        canvas.put(x, y + len(self.options) + 1, text[:width], ACCENT if ok else ERROR)
+        y += len(self.options) + 1
+        canvas.put(x, y, text[:width], ACCENT if ok else ERROR)
+        button_x = x + (width - len(GO_BUTTON)) // 2
+        canvas.put(button_x, y + 2, GO_BUTTON, SELECTED if self.on_go() else (BOLD if ok else DIM))
         draw_status(canvas, text, STATUS_LINE if ok else STATUS_LINE_ERROR)
         self.app.draw_message(canvas, "-- TYPING --  Enter or Esc to stop" if self.editing else FORM_HINT)
 

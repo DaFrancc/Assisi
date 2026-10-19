@@ -117,7 +117,8 @@ the package menu, for example, has the level, compiler, Steam Runtime switch
 and which earlier release to match. In the menu, **j** and **k** move between
 settings, **Space** switches one on or off, **h** and **l** step through a
 setting's choices, and **i** starts typing into a text setting such as a
-release's version (**Enter** or **Esc** stops). **Ctrl+R** runs it,
+release's version (**Enter** or **Esc** stops). **Enter** on the **Go**
+button at the bottom runs it, as does **Ctrl+R** from anywhere in the menu;
 **Ctrl+S** saves it as a recipe instead, and **Esc** goes back without
 running anything. A recipe or a most-used command, on the other hand, runs as
 soon as you choose it, because you already picked every setting when you
