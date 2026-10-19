@@ -50,10 +50,10 @@ def main(argv: Optional[List[str]] = None, root: Optional[Path] = None, host: Op
         if interactive is None:
             interactive = sys.stdin.isatty() and sys.stdout.isatty()
         if interactive:
-            from assisi import toolenv
-            code = toolenv.start(project)
-            if code is not None:
-                return code
+            from assisi.tui import term
+            if term.is_supported():
+                from assisi.tui.app import run
+                return run(context)
         print(overview(context))
         return 0
 

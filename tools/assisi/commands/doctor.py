@@ -82,11 +82,6 @@ def probe_container_runtime(context) -> Tuple[bool, str]:
     return (found is not None, found or "neither podman nor docker")
 
 
-def probe_tui(context) -> Tuple[bool, str]:
-    from assisi import toolenv
-    return toolenv.describe(context.project)
-
-
 def checks(host: str) -> List[Check]:
     rows = [
         Check("python", True, probe_python, f"install Python {'.'.join(map(str, MINIMUM_PYTHON))} or newer"),
@@ -110,7 +105,6 @@ def checks(host: str) -> List[Check]:
         ]
     rows += [
         Check("uncrustify", False, on_path("uncrustify"), "only needed for ./assisi format"),
-        Check("TUI environment", False, probe_tui, "created the first time ./assisi opens the TUI"),
     ]
     return rows
 

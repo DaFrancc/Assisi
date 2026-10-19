@@ -252,9 +252,8 @@ of GCC, or run `./assisi default --compiler clang` to make it your usual one.
 
 Run `./assisi` with nothing after it and it opens a menu in your terminal
 instead: every build with what has been built of it, your most used commands,
-and keys to build, package or start the editor. The first time, it downloads
-the few Python packages the menu uses into `out/tool-env/`, which needs
-Python 3.10 or newer. Every command works without the menu.
+and keys to build, package or start the editor. Every command works without
+the menu.
 
 ## If something went wrong
 

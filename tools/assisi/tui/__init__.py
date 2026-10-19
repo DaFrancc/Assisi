@@ -1,2 +1,2 @@
-"""The TUI. Only app.py imports Textual; model.py is plain Python the tests
-can drive without it."""
+"""The TUI, on the standard library alone. term.py is the only module that
+touches a real terminal; everything else is driven by the tests without one."""
