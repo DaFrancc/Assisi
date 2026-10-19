@@ -20,7 +20,7 @@ from __future__ import annotations
 import functools
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from assisi import core
 from assisi.commands.save import name_problem
@@ -131,9 +131,36 @@ HOME_KEYS = (
     ("q", "quit"),
 )
 
-HOME_HINT = "Enter run · b build · p package · e editor · : command · / filter · ? keys · q quit"
-FORM_HINT = "j k move · Space h l change · i type · Enter on Go or Ctrl+R run · Ctrl+S save · Esc back"
-BROWSER_HINT = "j k move · l Enter open or choose · h up · ~ home folder · Esc cancel"
+# The keys the message line names when it has nothing else to say, as key and
+# what it does, most useful first: a narrow terminal shows as many as fit and
+# then the last one, which says where the rest are or how to leave.
+Hint = Tuple[str, str]
+HINT_SEPARATOR = " · "
+HOME_HINTS: Dict[int, Tuple[Hint, ...]] = {
+    RECIPES: (("Enter", "run"), ("d", "delete"), ("s", "save"), (":", "command"), ("/", "filter"),
+              ("q", "quit")),
+    FREQUENT: (("Enter", "run"), ("1-9", "run"), ("a", "again"), ("s", "save"), (":", "command"),
+               ("/", "filter"), ("q", "quit")),
+    BUILDS: (("b", "build"), ("c", "cook"), ("p", "package"), ("v", "release"), ("e", "editor"),
+             ("r", "game"), ("t", "test"), ("D", "default"), (":", "command"), ("/", "filter"), ("q", "quit")),
+}
+HOME_LAST_HINT = ("?", "keys")
+FORM_HINTS = (("j k", "move"), ("Space h l", "change"), ("Enter on Go", "run"), ("i", "type"),
+              ("Ctrl+R", "run"), ("Ctrl+S", "save"))
+FORM_LAST_HINT = ("Esc", "back")
+TYPING_HINT = "-- TYPING --  Enter or Esc to stop"
+BROWSER_HINTS = (("j k", "move"), ("l Enter", "open or choose"), ("h", "up"), ("~", "home folder"))
+BROWSER_LAST_HINT = ("Esc", "cancel")
+
+
+def hint_text(hints: Sequence[Hint], last: Hint, width: int) -> str:
+    """As many of @p hints as fit in @p width, in order, then @p last."""
+    shown = list(hints)
+    while True:
+        text = HINT_SEPARATOR.join(f"{key} {what}" for key, what in shown + [last])
+        if len(text) <= width or not shown:
+            return text
+        shown.pop()
 
 
 def bottom_row(canvas: Canvas, from_bottom: int) -> int:
@@ -376,7 +403,7 @@ class Home(View):
             self.draw_pane(canvas, index, position, size)
         argv = self.selected_argv()
         draw_status(canvas, model.command_line(argv) if argv else "", STATUS_LINE)
-        self.app.draw_message(canvas, HOME_HINT)
+        self.app.draw_message(canvas, hint_text(HOME_HINTS[self.focus], HOME_LAST_HINT, canvas.width))
 
     def layout(self, canvas: Canvas) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """Where each pane goes, as (x, y) and (width, height), in pane order."""
@@ -584,7 +611,8 @@ class Form(View):
         button_x = x + (width - len(GO_BUTTON)) // 2
         canvas.put(button_x, y + 2, GO_BUTTON, SELECTED if self.on_go() else (BOLD if ok else DIM))
         draw_status(canvas, text, STATUS_LINE if ok else STATUS_LINE_ERROR)
-        self.app.draw_message(canvas, "-- TYPING --  Enter or Esc to stop" if self.editing else FORM_HINT)
+        hint = TYPING_HINT if self.editing else hint_text(FORM_HINTS, FORM_LAST_HINT, canvas.width)
+        self.app.draw_message(canvas, hint)
 
 
 class Line(View):
@@ -770,7 +798,7 @@ class Browser(View):
             self.draw_entry(canvas, self.entries[index], (x, top + row, x + width))
             if index == self.pane.cursor:
                 canvas.fill(x - 1, top + row, width + 2, SELECTED)
-        self.app.draw_message(canvas, BROWSER_HINT)
+        self.app.draw_message(canvas, hint_text(BROWSER_HINTS, BROWSER_LAST_HINT, canvas.width))
 
     def draw_entry(self, canvas: Canvas, entry: files.Entry, place: Place) -> None:
         x, y, limit = place

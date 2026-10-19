@@ -471,6 +471,23 @@ class AppTest(unittest.TestCase):
         finally:
             locked.chmod(0o755)
 
+    def test_the_bottom_line_names_every_build_key_on_a_build(self):
+        for size in (SCREEN_SIZE, SMALL_SIZE):
+            with self.subTest(size=size):
+                bottom = self.screen(self.press(self.app(size))).splitlines()[-1]
+                for hint in ("b build", "c cook", "p package", "v release", "e editor", "r game", "t test",
+                             "? keys"):
+                    self.assertIn(hint, bottom)
+
+    def test_the_bottom_line_follows_the_pane(self):
+        bottom = self.screen(self.press(self.app(), "tab")).splitlines()[-1]
+        self.assertIn("d delete", bottom)
+        self.assertNotIn("v release", bottom)
+
+    def test_a_narrow_bottom_line_keeps_the_key_help(self):
+        bottom = self.screen(self.press(self.app(NARROW_SIZE))).splitlines()[-1]
+        self.assertIn("? keys", bottom)
+
     def test_escape_leaves_a_menu_without_running_it(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "c", "esc")
         self.assertIsInstance(app.views[-1], Home)
