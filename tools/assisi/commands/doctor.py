@@ -110,6 +110,12 @@ def checks(host: str) -> List[Check]:
 
 
 def execute(request, context) -> int:
+    return 0 if report(context) else 1
+
+
+def report(context) -> bool:
+    """Print every check with what to do about a failed one; returns whether
+    every required tool is present."""
     failed = False
     for check in checks(context.project.host):
         passed, detail = check.probe(context)
@@ -124,4 +130,4 @@ def execute(request, context) -> int:
         if not passed:
             print(f"            {'':<18} -> {check.remedy}")
     print("All required tools are present." if not failed else "Some required tools are missing.")
-    return 1 if failed else 0
+    return not failed

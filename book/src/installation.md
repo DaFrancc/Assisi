@@ -185,24 +185,33 @@ including how to install podman.
 ## 3. Build and run the editor
 
 Everything from here on goes through `assisi`, the engine's build tool, which
-sits in the top folder of the repository. First check that step 2 left nothing
-out:
+sits in the top folder of the repository. Run it once on its own:
 
 **Linux**
 
 ```bash
-./assisi doctor
+./assisi
 ```
 
 **Windows**, from the Developer Command Prompt:
 
 ```bash
-assisi doctor
+assisi
 ```
 
-It lists each tool with `ok`, or `MISSING` and what to install. When it says
-**All required tools are present**, build the editor and start it with the
-example level open:
+The first time, it runs **setup**, which asks three things:
+
+1. **The tools.** It lists each tool the build needs with `ok`, or `MISSING`
+   and what to install. If anything is missing, install it and run
+   `./assisi setup` to check again.
+2. **Your defaults.** The compiler and level used when a command doesn't name
+   one. Press **Enter** to keep what's shown.
+3. **The `assisi` command.** Say yes, and you can type `assisi` instead of
+   `./assisi`, in any folder. If it then says a folder isn't on your PATH, add
+   the line it shows to the file it names and open a new terminal.
+
+After setup it opens the menu; press **q** to leave it. Now build the editor
+and start it with the example level open:
 
 **Linux**
 

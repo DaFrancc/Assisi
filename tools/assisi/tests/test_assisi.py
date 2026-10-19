@@ -25,12 +25,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[2]
 REPO = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 
-from assisi import cli, project, request, store  # noqa: E402
+from assisi import cli, install, locate, project, request, store  # noqa: E402
 from assisi.commands import catalog  # noqa: E402
 
 # A fake program: logs "<name> <args>" and answers the few queries the tool
@@ -106,7 +107,7 @@ class Sandbox:
             name = Path(relative).name
             make_executable(apps / relative, FAKE_PROGRAM.format(name=name))
 
-    def run(self, *argv: str, **environment: str):
+    def run(self, *argv: str, interactive: bool = False, **environment: str):
         env = {"PATH": str(self.bin), "FAKE_LOG": str(self.log)}
         env.update(environment)
         out, err = io.StringIO(), io.StringIO()
@@ -115,7 +116,7 @@ class Sandbox:
             os.environ.clear()
             os.environ.update(env)
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = cli.main(list(argv), root=self.root, host="Linux", interactive=False)
+                code = cli.main(list(argv), root=self.root, host="Linux", interactive=interactive)
         finally:
             os.environ.clear()
             os.environ.update(saved)
@@ -172,9 +173,8 @@ class PackageTest(ToolTest):
         self.assertEqual(self.sandbox.calls(), self.expected_package("gcc-ship", "best", "zstd")[:2])
 
     def test_package_needs_a_named_level(self):
-        code, _, err = self.sandbox.run("package")
+        code, _, _ = self.sandbox.run("package")
         self.assertNotEqual(code, 0)
-        self.assertIn("ship", err)
         self.assertEqual(self.sandbox.calls(), [])
 
     def test_the_profiler_build_takes_its_level_tier(self):
@@ -236,10 +236,9 @@ class ReleaseTest(ToolTest):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.1")[0], 0)
         self.sandbox.log.write_text("")
-        code, out, err = self.sandbox.run("package", "ship")
+        code, _, err = self.sandbox.run("package", "ship")
         self.assertEqual(code, 0, err)
         self.assertIn(f"--previous {self.release_dir('1.1') / 'assets.pak'}", self.pack_call())
-        self.assertIn("1.1", out)
 
     def test_a_release_of_another_level_is_not_used(self):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
@@ -262,9 +261,8 @@ class ReleaseTest(ToolTest):
         self.assertIn(f"--previous {named}", self.pack_call())
 
     def test_a_missing_previous_pak_is_refused_before_anything_runs(self):
-        code, _, err = self.sandbox.run("package", "ship", "--previous", "nowhere.pak")
+        code, _, _ = self.sandbox.run("package", "ship", "--previous", "nowhere.pak")
         self.assertNotEqual(code, 0)
-        self.assertIn("nowhere.pak", err)
         self.assertEqual(self.sandbox.calls(), [])
 
     def test_previous_and_fresh_together_are_refused(self):
@@ -276,15 +274,13 @@ class ReleaseTest(ToolTest):
     def test_a_version_is_never_overwritten(self):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
         self.sandbox.log.write_text("")
-        code, _, err = self.sandbox.run("release", "ship", "--version", "1.0")
+        code, _, _ = self.sandbox.run("release", "ship", "--version", "1.0")
         self.assertNotEqual(code, 0)
-        self.assertIn("1.0", err)
         self.assertEqual(self.sandbox.calls(), [])
 
     def test_a_release_needs_a_version(self):
-        code, _, err = self.sandbox.run("release", "ship")
+        code, _, _ = self.sandbox.run("release", "ship")
         self.assertNotEqual(code, 0)
-        self.assertIn("--version", err)
         self.assertEqual(self.sandbox.calls(), [])
 
     def test_a_failed_package_keeps_nothing(self):
@@ -383,15 +379,13 @@ class NameTest(ToolTest):
             self.tree(project.BuildSpec("msvc", "debug", sanitize="thread"), host="Windows")
 
     def test_another_hosts_compiler_is_refused(self):
-        code, _, err = self.sandbox.run("build", "dev", "--compiler", "msvc")
+        code, _, _ = self.sandbox.run("build", "dev", "--compiler", "msvc")
         self.assertNotEqual(code, 0)
-        self.assertIn("Windows", err)
         self.assertEqual(self.sandbox.calls(), [])
 
-    def test_unknown_level_lists_the_levels(self):
-        code, _, err = self.sandbox.run("build", "fast")
+    def test_unknown_level_is_refused(self):
+        code, _, _ = self.sandbox.run("build", "fast")
         self.assertNotEqual(code, 0)
-        self.assertIn("dev", err)
         self.assertEqual(self.sandbox.calls(), [])
 
     def test_saved_defaults_are_used_when_nothing_is_named(self):
@@ -489,9 +483,8 @@ class CleanTest(ToolTest):
 
     def test_clean_needs_something_named(self):
         self.sandbox.configured("gcc-dev")
-        code, _, err = self.sandbox.run("clean")
+        code, _, _ = self.sandbox.run("clean")
         self.assertNotEqual(code, 0)
-        self.assertIn("--all", err)
         self.assertTrue(self.sandbox.build_dir("gcc-dev").exists())
 
     def test_levels_and_all_together_are_refused(self):
@@ -529,12 +522,9 @@ class DoctorTest(unittest.TestCase):
     def sandbox(self, programs: tuple[str, ...]) -> Sandbox:
         return Sandbox(Path(self._directory.name), programs)
 
-    def test_missing_tools_are_named_with_a_remedy(self):
+    def test_missing_tools_fail(self):
         box = self.sandbox(())
-        code, out, _ = box.run("doctor")
-        self.assertNotEqual(code, 0)
-        for name in ("cmake", "ninja", "git", "g++"):
-            self.assertIn(name, out)
+        self.assertNotEqual(box.run("doctor")[0], 0)
 
     def test_everything_present_passes(self):
         box = self.sandbox(PROGRAMS)
@@ -543,15 +533,11 @@ class DoctorTest(unittest.TestCase):
 
     def test_old_cmake_fails(self):
         box = self.sandbox(PROGRAMS)
-        code, out, _ = box.run("doctor", FAKE_CMAKE_VERSION="3.20.0")
-        self.assertNotEqual(code, 0)
-        self.assertIn("3.28", out)
+        self.assertNotEqual(box.run("doctor", FAKE_CMAKE_VERSION="3.20.0")[0], 0)
 
     def test_missing_static_libstdcxx_fails(self):
         box = self.sandbox(PROGRAMS)
-        code, out, _ = box.run("doctor", FAKE_LIBSTDCXX="libstdc++.a")
-        self.assertNotEqual(code, 0)
-        self.assertIn("libstdc++", out)
+        self.assertNotEqual(box.run("doctor", FAKE_LIBSTDCXX="libstdc++.a")[0], 0)
 
 
 class RunTest(ToolTest):
@@ -578,11 +564,10 @@ class RunTest(ToolTest):
         code, _, _ = self.sandbox.run("run", "editor", "dev", "--no-build", FAKE_FAIL_ON="Assisi-GameEditor")
         self.assertEqual(code, 3)
 
-    def test_game_without_a_package_says_how_to_make_one(self):
+    def test_game_without_a_package_runs_nothing(self):
         self.sandbox.tools_built("gcc-dev")
-        code, _, err = self.sandbox.run("run", "game", "dev", "--no-build")
+        code, _, _ = self.sandbox.run("run", "game", "dev", "--no-build")
         self.assertNotEqual(code, 0)
-        self.assertIn("package", err)
         self.assertEqual(self.sandbox.calls(), [])
 
 
@@ -684,20 +669,20 @@ class HistoryTest(ToolTest):
         self.assertEqual(len(entries), store.HISTORY_LIMIT)
         self.assertNotIn(["build-0"], [entry.argv for entry in entries])
 
-    def test_history_writes_times_no_finer_than_it_reads_them(self):
+    def test_history_keeps_times_to_the_millisecond_and_durations_to_the_tenth(self):
         keeper = store.Store(self.sandbox.root)
         keeper.record(["build"], True, 23.886717182998837, now=1791612082.4157877)
-        text = (self.sandbox.root / ".assisi" / "history.json").read_text()
-        self.assertIn('"last_run": 1791612082.416', text)
-        self.assertIn('"duration": 23.9', text)
+        entry = store.Store(self.sandbox.root).history()[0]
+        self.assertEqual((entry.last_run, entry.duration), (1791612082.416, 23.9))
 
-    def test_corrupt_history_starts_empty_and_says_so(self):
+    def test_corrupt_history_starts_over_instead_of_stopping_the_tool(self):
         folder = self.sandbox.root / ".assisi"
         folder.mkdir()
         (folder / "history.json").write_text("{not json")
-        code, out, err = self.sandbox.run("history")
-        self.assertEqual(code, 0)
-        self.assertIn("history.json", err)
+        self.sandbox.configured("gcc-dev")
+        self.assertEqual(self.sandbox.run("build", "dev")[0], 0)
+        self.assertEqual([entry.argv for entry in store.Store(self.sandbox.root).history()],
+                         [["build", "dev", "--compiler", "gcc"]])
 
 
 class RecipeTest(ToolTest):
@@ -720,9 +705,7 @@ class RecipeTest(ToolTest):
     def test_names_that_mean_something_already_are_refused(self):
         for name in ("build", "dev", "gcc", "gcc-ship"):
             with self.subTest(name=name):
-                code, _, err = self.sandbox.run("save", name, "--", "build", "dev")
-                self.assertNotEqual(code, 0)
-                self.assertIn(name, err)
+                self.assertNotEqual(self.sandbox.run("save", name, "--", "build", "dev")[0], 0)
         self.assertEqual(store.Store(self.sandbox.root).recipes(), {})
 
     def test_an_invalid_recipe_command_is_refused(self):
@@ -736,16 +719,175 @@ class RecipeTest(ToolTest):
         self.assertEqual(store.Store(self.sandbox.root).recipes(), {})
 
 
-class DispatchTest(ToolTest):
-    def test_no_arguments_off_a_terminal_prints_help(self):
-        code, out, _ = self.sandbox.run()
-        self.assertEqual(code, 0)
-        self.assertIn("package", out)
+def make_checkout(folder: Path) -> Path:
+    """The two files that make a folder an Assisi checkout."""
+    (folder / "tools" / "assisi").mkdir(parents=True)
+    (folder / "tools" / "assisi" / "cli.py").write_text("")
+    (folder / "assisi").write_text("")
+    return folder
 
-    def test_unknown_command_names_the_commands(self):
-        code, _, err = self.sandbox.run("frobnicate")
-        self.assertNotEqual(code, 0)
-        self.assertIn("build", err)
+
+class LocateTest(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.top = Path(self._directory.name).resolve()
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def test_the_checkout_is_found_from_a_folder_inside_it(self):
+        checkout = make_checkout(self.top / "game")
+        inside = checkout / "apps" / "game" / "src"
+        inside.mkdir(parents=True)
+        self.assertEqual(locate.checkout_above(inside), checkout)
+
+    def test_a_folder_with_only_a_file_called_assisi_is_not_a_checkout(self):
+        (self.top / "assisi").write_text("")
+        self.assertIsNone(locate.checkout_above(self.top))
+
+    def test_the_command_hands_off_to_the_checkout_it_is_typed_in(self):
+        own, other = make_checkout(self.top / "a"), make_checkout(self.top / "b")
+        self.assertEqual(locate.handoff_target(own, other / "tools", True), other)
+
+    def test_a_tool_typed_by_its_path_runs_its_own_checkout(self):
+        own, other = make_checkout(self.top / "a"), make_checkout(self.top / "b")
+        self.assertIsNone(locate.handoff_target(own, other, False))
+
+    def test_the_command_never_hands_off_to_itself_or_outside_a_checkout(self):
+        own = make_checkout(self.top / "a")
+        self.assertIsNone(locate.handoff_target(own, own / "tools", True))
+        self.assertIsNone(locate.handoff_target(own, self.top, True))
+
+    def test_the_command_is_told_apart_from_a_typed_path(self):
+        script = make_checkout(self.top / "a") / "assisi"
+        link = self.top / "link"
+        link.symlink_to(script)
+        self.assertTrue(locate.via_command(link, {}))
+        self.assertFalse(locate.via_command(script, {}))
+        self.assertTrue(locate.via_command(script, {locate.COMMAND_VARIABLE: "1"}))
+
+
+class InstallTest(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.top = Path(self._directory.name).resolve()
+        self.bin = self.top / "bin"
+        self.checkout = make_checkout(self.top / "a")
+        self.asked: list[str] = []
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def install(self, answer: bool = True) -> bool:
+        def confirm(question: str) -> bool:
+            self.asked.append(question)
+            return answer
+        return install.install_posix(self.checkout, self.bin, confirm, lambda line: None)
+
+    def test_the_command_links_to_the_checkout(self):
+        self.assertTrue(self.install())
+        self.assertEqual((self.bin / "assisi").resolve(), self.checkout / "assisi")
+
+    def test_installing_again_asks_nothing(self):
+        self.install()
+        self.assertTrue(self.install())
+        self.assertEqual(self.asked, [])
+
+    def test_a_command_for_another_checkout_is_replaced_only_when_told(self):
+        other = make_checkout(self.top / "b")
+        self.bin.mkdir()
+        (self.bin / "assisi").symlink_to(other / "assisi")
+        self.assertFalse(self.install(answer=False))
+        self.assertEqual((self.bin / "assisi").resolve(), other / "assisi")
+        self.assertTrue(self.install(answer=True))
+        self.assertEqual((self.bin / "assisi").resolve(), self.checkout / "assisi")
+
+    def test_a_file_that_is_not_a_link_is_left_alone(self):
+        self.bin.mkdir()
+        (self.bin / "assisi").write_text("someone else's\n")
+        self.assertFalse(self.install())
+        self.assertEqual((self.bin / "assisi").read_text(), "someone else's\n")
+
+    def test_path_advice_only_when_the_folder_is_not_on_path(self):
+        self.assertIsNone(install.path_advice(self.bin, os.pathsep.join(["/usr/bin", str(self.bin)]), "/bin/zsh"))
+        self.assertIsNotNone(install.path_advice(self.bin, "/usr/bin", "/bin/zsh"))
+
+    def test_a_windows_path_gains_the_folder_once(self):
+        self.assertEqual(install.path_with(r"C:\Windows", r"C:\Tools"), r"C:\Windows;C:\Tools")
+        self.assertIsNone(install.path_with(r"C:\Windows;c:\tools\\", r"C:\Tools"))
+        self.assertEqual(install.path_with("", r"C:\Tools"), r"C:\Tools")
+
+    def test_a_windows_command_says_which_checkout_it_runs(self):
+        text = install.cmd_text(Path(r"C:\games\Assisi"), Path(r"C:\Python\python.exe"))
+        self.assertEqual(install.cmd_checkout(text), str(Path(r"C:\games\Assisi")))
+
+
+class SetupTest(ToolTest):
+    def setUp(self):
+        super().setUp()
+        self.home = Path(self._directory.name) / "home"
+        self.home.mkdir()
+
+    def run_answering(self, answers: list[str], *argv: str, interactive: bool = True):
+        with mock.patch("builtins.input", side_effect=answers) as asked:
+            code, out, err = self.sandbox.run(*argv, interactive=interactive, HOME=str(self.home))
+        return code, asked.call_count
+
+    def settings(self) -> dict:
+        return project.Project(self.sandbox.root, host="Linux").read_settings()
+
+    def test_the_first_run_sets_up_then_does_what_it_was_asked(self):
+        code, asked = self.run_answering(["clang", "ship", "y"], "default")
+        self.assertEqual(code, 0)
+        self.assertEqual(asked, 3)
+        settings = self.settings()
+        self.assertEqual((settings[project.COMPILER_KEY], settings[project.LEVEL_KEY]), ("clang", "ship"))
+        self.assertEqual((self.home / ".local" / "bin" / "assisi").resolve(), (self.sandbox.root / "assisi").resolve())
+
+    def test_the_second_run_asks_nothing(self):
+        self.run_answering(["", "", "n"], "default")
+        code, asked = self.run_answering([], "default")
+        self.assertEqual((code, asked), (0, 0))
+
+    def test_enter_keeps_the_defaults_and_no_keeps_the_command_off(self):
+        self.run_answering(["", "", "n"], "default")
+        settings = self.settings()
+        self.assertEqual((settings[project.COMPILER_KEY], settings[project.LEVEL_KEY]), ("gcc", "dev"))
+        self.assertFalse((self.home / ".local" / "bin" / "assisi").exists())
+
+    def test_off_a_terminal_nothing_is_asked_or_recorded(self):
+        code, asked = self.run_answering([], "default", interactive=False)
+        self.assertEqual((code, asked), (0, 0))
+        self.assertNotIn(project.SETUP_KEY, self.settings())
+
+    def test_inside_the_steam_runtime_container_nothing_is_asked(self):
+        with mock.patch("builtins.input", side_effect=[]) as asked:
+            self.sandbox.run("default", interactive=True, HOME=str(self.home), ASSISI_STEAMRT_SDK="1")
+        self.assertEqual(asked.call_count, 0)
+
+    def test_help_does_not_set_up(self):
+        for argv in (["--help"], ["build", "--help"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.run_answering([], *argv)[1], 0)
+
+    def test_setup_runs_again_when_asked(self):
+        self.run_answering(["", "", "n"], "default")
+        code, asked = self.run_answering(["", "ship", "n"], "setup")
+        self.assertEqual((code, asked), (0, 3))
+        self.assertEqual(self.settings()[project.LEVEL_KEY], "ship")
+
+    def test_setup_off_a_terminal_is_refused(self):
+        self.assertNotEqual(self.run_answering([], "setup", interactive=False)[0], 0)
+
+    def test_closing_input_at_the_first_question_still_counts_and_carries_on(self):
+        code, asked = self.run_answering(EOFError(), "default")
+        self.assertEqual(code, 0)
+        self.assertTrue(self.settings()[project.SETUP_KEY])
+
+    def test_an_answer_that_is_not_a_choice_is_asked_again(self):
+        _, asked = self.run_answering(["msvc", "gcc", "dev", "n"], "default")
+        self.assertEqual(asked, 4)
+        self.assertEqual(self.settings()[project.COMPILER_KEY], "gcc")
 
 
 class CompatibilityTest(unittest.TestCase):

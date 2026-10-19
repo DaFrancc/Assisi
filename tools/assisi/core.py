@@ -14,12 +14,18 @@ from assisi.store import Store
 # The exit code for a request refused before anything ran, as argparse uses.
 USAGE_EXIT = 2
 
+# What a run stopped with Ctrl+C exits with, as a shell reports it: 128 plus
+# the number of SIGINT.
+INTERRUPTED_EXIT = 130
+
 
 @dataclass
 class Context:
     project: Project
     runner: Runner
     store: Store
+    # Whether a person is at a terminal to answer questions.
+    interactive: bool = False
 
 
 def report_usage(error: UsageError) -> int:

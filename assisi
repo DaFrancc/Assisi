@@ -2,10 +2,27 @@
 """Build, run, test and package the engine. ./assisi --help lists the commands;
 with no arguments in a terminal it opens the TUI. The tool is tools/assisi/."""
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "tools"))
+SCRIPT = Path(__file__)
+OWN = SCRIPT.resolve().parent
+sys.path.insert(0, str(OWN / "tools"))
+
+from assisi import locate  # noqa: E402
+
+try:
+    CWD = Path.cwd().resolve()
+except OSError:
+    CWD = None
+TARGET = locate.handoff_target(OWN, CWD, locate.via_command(SCRIPT, os.environ)) if CWD else None
+if TARGET is not None:
+    TARGET_SCRIPT = str(TARGET / locate.LAUNCHER)
+    if os.name == "nt":
+        sys.exit(subprocess.call([sys.executable, TARGET_SCRIPT, *sys.argv[1:]]))
+    os.execv(sys.executable, [sys.executable, TARGET_SCRIPT, *sys.argv[1:]])
 
 from assisi.cli import main  # noqa: E402
 
