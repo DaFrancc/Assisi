@@ -81,6 +81,8 @@ SETTINGS_DIR = ".assisi"
 SETTINGS_FILE = "config.json"
 COMPILER_KEY = "compiler"
 LEVEL_KEY = "level"
+# Set once first-time setup has been offered in this checkout, taken up or not.
+SETUP_KEY = "setup_offered"
 
 
 class UsageError(Exception):

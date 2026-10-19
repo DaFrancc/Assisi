@@ -29,6 +29,7 @@ command's options.
 | `./assisi cook`, `./assisi pack` | The two halves of packaging on their own. |
 | `./assisi clean dev` | Deletes a build's folder, so the next build starts from nothing. `--all` deletes every build. |
 | `./assisi doctor` | Checks you have every tool the build needs, and says what to install if not. |
+| `./assisi setup` | Runs first-time setup again: checks your tools, asks for your defaults, offers the `assisi` command. See [below](#setup-and-the-assisi-command). |
 | `./assisi format` | Formats the C++ code. `--check` only reports. |
 
 Most commands take a **level**: `debug`, `dev` or `ship`. Leave it off and you
@@ -48,6 +49,28 @@ Linux distribution. [Build types](build-types.md) explains all of them.
 The first time you build something, the tool configures it for you: CMake picks
 the compiler and downloads the engine's libraries. You never have to configure
 by hand, but `./assisi configure` is there if you want to do it again.
+
+## Setup and the `assisi` command
+
+The first time you run `./assisi` in a terminal, in a new clone, it runs
+**setup** before anything else: it checks your tools like `./assisi doctor`,
+asks for your default compiler and level, and offers to make `assisi` a
+command. Setup only runs by itself once per clone, whatever you answer.
+`./assisi setup` runs it again, for example after installing a missing tool.
+It never runs in a script or a pipe, only when a person is at the terminal.
+
+The **`assisi` command** lets you type `assisi` instead of `./assisi`, from
+any folder. On Linux and macOS it's a link in `~/.local/bin`; on Windows, a
+small `assisi.cmd` that setup puts on your PATH. It picks which clone to work
+on from where you are:
+
+- **Inside a clone**, in its top folder or any folder below, it runs that
+  clone's own tool. If you have two clones, each one is built by its own
+  tool.
+- **Anywhere else**, it runs the clone you ran setup from.
+
+Running a clone's tool by its path, like `~/Assisi/assisi build`, always works
+on that clone, wherever you are.
 
 ## History and recipes
 

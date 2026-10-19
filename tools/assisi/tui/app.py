@@ -39,9 +39,7 @@ Executor = Callable[[Request], Outcome]
 # before, so nothing runs over the pane's border into the next one.
 Place = Tuple[int, int, int]
 
-# What a run stopped with Ctrl+C exits with, as a shell reports it: 128 plus
-# the number of SIGINT.
-INTERRUPTED_CODE = 130
+INTERRUPTED_CODE = core.INTERRUPTED_EXIT
 
 # How long the loop waits for a key before drawing again, which is how a
 # resized terminal is noticed without a signal Windows does not have.

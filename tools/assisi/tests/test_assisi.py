@@ -25,12 +25,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[2]
 REPO = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 
-from assisi import cli, project, request, store  # noqa: E402
+from assisi import cli, install, locate, project, request, store  # noqa: E402
 from assisi.commands import catalog  # noqa: E402
 
 # A fake program: logs "<name> <args>" and answers the few queries the tool
@@ -106,7 +107,7 @@ class Sandbox:
             name = Path(relative).name
             make_executable(apps / relative, FAKE_PROGRAM.format(name=name))
 
-    def run(self, *argv: str, **environment: str):
+    def run(self, *argv: str, interactive: bool = False, **environment: str):
         env = {"PATH": str(self.bin), "FAKE_LOG": str(self.log)}
         env.update(environment)
         out, err = io.StringIO(), io.StringIO()
@@ -115,7 +116,7 @@ class Sandbox:
             os.environ.clear()
             os.environ.update(env)
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = cli.main(list(argv), root=self.root, host="Linux", interactive=False)
+                code = cli.main(list(argv), root=self.root, host="Linux", interactive=interactive)
         finally:
             os.environ.clear()
             os.environ.update(saved)
@@ -716,6 +717,177 @@ class RecipeTest(ToolTest):
         self.sandbox.run("save", "ship-it", "--", "package", "ship")
         self.assertEqual(self.sandbox.run("forget", "ship-it")[0], 0)
         self.assertEqual(store.Store(self.sandbox.root).recipes(), {})
+
+
+def make_checkout(folder: Path) -> Path:
+    """The two files that make a folder an Assisi checkout."""
+    (folder / "tools" / "assisi").mkdir(parents=True)
+    (folder / "tools" / "assisi" / "cli.py").write_text("")
+    (folder / "assisi").write_text("")
+    return folder
+
+
+class LocateTest(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.top = Path(self._directory.name).resolve()
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def test_the_checkout_is_found_from_a_folder_inside_it(self):
+        checkout = make_checkout(self.top / "game")
+        inside = checkout / "apps" / "game" / "src"
+        inside.mkdir(parents=True)
+        self.assertEqual(locate.checkout_above(inside), checkout)
+
+    def test_a_folder_with_only_a_file_called_assisi_is_not_a_checkout(self):
+        (self.top / "assisi").write_text("")
+        self.assertIsNone(locate.checkout_above(self.top))
+
+    def test_the_command_hands_off_to_the_checkout_it_is_typed_in(self):
+        own, other = make_checkout(self.top / "a"), make_checkout(self.top / "b")
+        self.assertEqual(locate.handoff_target(own, other / "tools", True), other)
+
+    def test_a_tool_typed_by_its_path_runs_its_own_checkout(self):
+        own, other = make_checkout(self.top / "a"), make_checkout(self.top / "b")
+        self.assertIsNone(locate.handoff_target(own, other, False))
+
+    def test_the_command_never_hands_off_to_itself_or_outside_a_checkout(self):
+        own = make_checkout(self.top / "a")
+        self.assertIsNone(locate.handoff_target(own, own / "tools", True))
+        self.assertIsNone(locate.handoff_target(own, self.top, True))
+
+    def test_the_command_is_told_apart_from_a_typed_path(self):
+        script = make_checkout(self.top / "a") / "assisi"
+        link = self.top / "link"
+        link.symlink_to(script)
+        self.assertTrue(locate.via_command(link, {}))
+        self.assertFalse(locate.via_command(script, {}))
+        self.assertTrue(locate.via_command(script, {locate.COMMAND_VARIABLE: "1"}))
+
+
+class InstallTest(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.top = Path(self._directory.name).resolve()
+        self.bin = self.top / "bin"
+        self.checkout = make_checkout(self.top / "a")
+        self.asked: list[str] = []
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def install(self, answer: bool = True) -> bool:
+        def confirm(question: str) -> bool:
+            self.asked.append(question)
+            return answer
+        return install.install_posix(self.checkout, self.bin, confirm, lambda line: None)
+
+    def test_the_command_links_to_the_checkout(self):
+        self.assertTrue(self.install())
+        self.assertEqual((self.bin / "assisi").resolve(), self.checkout / "assisi")
+
+    def test_installing_again_asks_nothing(self):
+        self.install()
+        self.assertTrue(self.install())
+        self.assertEqual(self.asked, [])
+
+    def test_a_command_for_another_checkout_is_replaced_only_when_told(self):
+        other = make_checkout(self.top / "b")
+        self.bin.mkdir()
+        (self.bin / "assisi").symlink_to(other / "assisi")
+        self.assertFalse(self.install(answer=False))
+        self.assertEqual((self.bin / "assisi").resolve(), other / "assisi")
+        self.assertTrue(self.install(answer=True))
+        self.assertEqual((self.bin / "assisi").resolve(), self.checkout / "assisi")
+
+    def test_a_file_that_is_not_a_link_is_left_alone(self):
+        self.bin.mkdir()
+        (self.bin / "assisi").write_text("someone else's\n")
+        self.assertFalse(self.install())
+        self.assertEqual((self.bin / "assisi").read_text(), "someone else's\n")
+
+    def test_path_advice_only_when_the_folder_is_not_on_path(self):
+        self.assertIsNone(install.path_advice(self.bin, os.pathsep.join(["/usr/bin", str(self.bin)]), "/bin/zsh"))
+        self.assertIsNotNone(install.path_advice(self.bin, "/usr/bin", "/bin/zsh"))
+
+    def test_a_windows_path_gains_the_folder_once(self):
+        self.assertEqual(install.path_with(r"C:\Windows", r"C:\Tools"), r"C:\Windows;C:\Tools")
+        self.assertIsNone(install.path_with(r"C:\Windows;c:\tools\\", r"C:\Tools"))
+        self.assertEqual(install.path_with("", r"C:\Tools"), r"C:\Tools")
+
+    def test_a_windows_command_says_which_checkout_it_runs(self):
+        text = install.cmd_text(Path(r"C:\games\Assisi"), Path(r"C:\Python\python.exe"))
+        self.assertEqual(install.cmd_checkout(text), str(Path(r"C:\games\Assisi")))
+
+
+class SetupTest(ToolTest):
+    def setUp(self):
+        super().setUp()
+        self.home = Path(self._directory.name) / "home"
+        self.home.mkdir()
+
+    def run_answering(self, answers: list[str], *argv: str, interactive: bool = True):
+        with mock.patch("builtins.input", side_effect=answers) as asked:
+            code, out, err = self.sandbox.run(*argv, interactive=interactive, HOME=str(self.home))
+        return code, asked.call_count
+
+    def settings(self) -> dict:
+        return project.Project(self.sandbox.root, host="Linux").read_settings()
+
+    def test_the_first_run_sets_up_then_does_what_it_was_asked(self):
+        code, asked = self.run_answering(["clang", "ship", "y"], "default")
+        self.assertEqual(code, 0)
+        self.assertEqual(asked, 3)
+        settings = self.settings()
+        self.assertEqual((settings[project.COMPILER_KEY], settings[project.LEVEL_KEY]), ("clang", "ship"))
+        self.assertEqual((self.home / ".local" / "bin" / "assisi").resolve(), (self.sandbox.root / "assisi").resolve())
+
+    def test_the_second_run_asks_nothing(self):
+        self.run_answering(["", "", "n"], "default")
+        code, asked = self.run_answering([], "default")
+        self.assertEqual((code, asked), (0, 0))
+
+    def test_enter_keeps_the_defaults_and_no_keeps_the_command_off(self):
+        self.run_answering(["", "", "n"], "default")
+        settings = self.settings()
+        self.assertEqual((settings[project.COMPILER_KEY], settings[project.LEVEL_KEY]), ("gcc", "dev"))
+        self.assertFalse((self.home / ".local" / "bin" / "assisi").exists())
+
+    def test_off_a_terminal_nothing_is_asked_or_recorded(self):
+        code, asked = self.run_answering([], "default", interactive=False)
+        self.assertEqual((code, asked), (0, 0))
+        self.assertNotIn(project.SETUP_KEY, self.settings())
+
+    def test_inside_the_steam_runtime_container_nothing_is_asked(self):
+        with mock.patch("builtins.input", side_effect=[]) as asked:
+            self.sandbox.run("default", interactive=True, HOME=str(self.home), ASSISI_STEAMRT_SDK="1")
+        self.assertEqual(asked.call_count, 0)
+
+    def test_help_does_not_set_up(self):
+        for argv in (["--help"], ["build", "--help"]):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.run_answering([], *argv)[1], 0)
+
+    def test_setup_runs_again_when_asked(self):
+        self.run_answering(["", "", "n"], "default")
+        code, asked = self.run_answering(["", "ship", "n"], "setup")
+        self.assertEqual((code, asked), (0, 3))
+        self.assertEqual(self.settings()[project.LEVEL_KEY], "ship")
+
+    def test_setup_off_a_terminal_is_refused(self):
+        self.assertNotEqual(self.run_answering([], "setup", interactive=False)[0], 0)
+
+    def test_closing_input_at_the_first_question_still_counts_and_carries_on(self):
+        code, asked = self.run_answering(EOFError(), "default")
+        self.assertEqual(code, 0)
+        self.assertTrue(self.settings()[project.SETUP_KEY])
+
+    def test_an_answer_that_is_not_a_choice_is_asked_again(self):
+        _, asked = self.run_answering(["msvc", "gcc", "dev", "n"], "default")
+        self.assertEqual(asked, 4)
+        self.assertEqual(self.settings()[project.COMPILER_KEY], "gcc")
 
 
 class CompatibilityTest(unittest.TestCase):
