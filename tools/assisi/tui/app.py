@@ -34,6 +34,10 @@ from assisi.tui.canvas import PLAIN, Canvas, Color, Style, render
 Outcome = Tuple[int, float]
 Executor = Callable[[Request], Outcome]
 
+# Where a line of a pane is drawn: its x and y, and the column its text stops
+# before, so nothing runs over the pane's border into the next one.
+Place = Tuple[int, int, int]
+
 # What a run stopped with Ctrl+C exits with, as a shell reports it: 128 plus
 # the number of SIGINT.
 INTERRUPTED_CODE = 130
@@ -65,11 +69,20 @@ LEVEL_WIDTH = 7
 COMPILER_WIDTH = 10
 STATUS_WIDTH = 5
 
+# The columns a dialog keeps clear of the screen's sides, and the blank columns
+# between its border and what it holds.
+DIALOG_MARGIN = 2
+DIALOG_PADDING = 2
+
 # The form's columns: where the value starts after the option's name, and
 # where the help starts after the value.
-FORM_INDENT = 2
 FORM_NAME_WIDTH = 20
 FORM_VALUE_WIDTH = 18
+
+# The rows of a form's dialog besides one per option: the border's two, a
+# blank row above and below what it holds, the command's help with a blank row
+# under it, and a blank row and the command line it runs under the options.
+FORM_EXTRA_ROWS = 8
 
 # Shown for a choice left blank.
 BLANK_CHOICE = "none"
@@ -123,6 +136,23 @@ def draw_status(canvas: Canvas, text: str, style: Style) -> None:
 
 def draw_message(canvas: Canvas, text: str, style: Style) -> None:
     canvas.put(0, bottom_row(canvas, MESSAGE_FROM_BOTTOM), text.ljust(canvas.width), style)
+
+
+def draw_dialog(canvas: Canvas, size: Tuple[int, int], title: str) -> Tuple[int, int, int]:
+    """Dim everything above the status line and clear a bordered box of
+    @p size at its centre, shrunk to fit. Returns where the box's contents
+    start, as x and y, and how many columns they have."""
+    space = canvas.height - STATUS_FROM_BOTTOM
+    width = min(size[0], canvas.width - 2 * DIALOG_MARGIN)
+    height = min(size[1], space)
+    x = (canvas.width - width) // 2
+    y = (space - height) // 2
+    for row in range(space):
+        canvas.fill(0, row, canvas.width, DIM)
+    for row in range(y, y + height):
+        canvas.put(x, row, " " * width)
+    canvas.box(x, y, (width, height), title, ACCENT)
+    return x + 1 + DIALOG_PADDING, y + 1, width - 2 - 2 * DIALOG_PADDING
 
 
 class LineEdit:
@@ -358,58 +388,56 @@ class Home(View):
         inner_x, inner_y, inner_width = x + 1, y + 1, width - 2
         rows = height - 2
         if index == BUILDS:
-            self.draw_build_header(canvas, (inner_x, inner_y))
+            self.draw_build_header(canvas, (inner_x + 1, inner_y, inner_x + inner_width - 1))
             inner_y += 1
             rows -= 1
         count = self.counts()[index]
         pane = self.panes[index]
+        limit = inner_x + inner_width - 1
         for row, item in enumerate(pane.visible(count, max(0, rows))):
             line_y = inner_y + row
-            self.draw_item(canvas, index, item, (inner_x, line_y))
+            self.draw_item(canvas, index, item, (inner_x + 1, line_y, limit))
             if focused and item == pane.cursor:
                 canvas.fill(inner_x, line_y, inner_width, SELECTED)
 
-    def draw_item(self, canvas: Canvas, pane: int, item: int, position: Tuple[int, int]) -> None:
-        x, y = position
+    def draw_item(self, canvas: Canvas, pane: int, item: int, place: Place) -> None:
+        x, y, limit = place
         if pane == RECIPES:
             name, argv = self.recipes[item]
-            used = canvas.put(x + 1, y, name, BOLD)
-            canvas.put(x + used + 3, y, model.command_line(argv), DIM)
+            used = canvas.put(x, y, name, BOLD, limit)
+            canvas.put(x + used + 2, y, model.command_line(argv), DIM, limit)
         elif pane == FREQUENT:
-            self.draw_frequent(canvas, item, position)
+            self.draw_frequent(canvas, self.frequent[item], item + 1, place)
         else:
-            self.draw_build(canvas, self.rows[item], position)
+            self.draw_build(canvas, self.rows[item], place)
 
-    def draw_frequent(self, canvas: Canvas, item: int, position: Tuple[int, int]) -> None:
-        x, y = position
-        entry = self.frequent[item]
-        x += 1 + canvas.put(x + 1, y, f"{item + 1} ", BOLD)
-        x += canvas.put(x, y, "✔ " if entry.last_ok else "✘ ", SUCCESS if entry.last_ok else ERROR)
-        x += canvas.put(x, y, model.command_line(entry.argv))
-        canvas.put(x, y, f"  ×{entry.count} · {model.format_duration(entry.duration)}", DIM)
+    def draw_frequent(self, canvas: Canvas, entry: Entry, number: int, place: Place) -> None:
+        x, y, limit = place
+        x += canvas.put(x, y, f"{number} ", BOLD, limit)
+        x += canvas.put(x, y, "✔ " if entry.last_ok else "✘ ", SUCCESS if entry.last_ok else ERROR, limit)
+        x += canvas.put(x, y, model.command_line(entry.argv), PLAIN, limit)
+        canvas.put(x, y, f"  ×{entry.count} · {model.format_duration(entry.duration)}", DIM, limit)
 
-    def draw_build_header(self, canvas: Canvas, position: Tuple[int, int]) -> None:
-        x, y = position
-        x += 1
+    def draw_build_header(self, canvas: Canvas, place: Place) -> None:
+        x, y, limit = place
         for title, width in (("Level", LEVEL_WIDTH), ("Compiler", COMPILER_WIDTH)):
-            canvas.put(x, y, title, DIM)
+            canvas.put(x, y, title, DIM, limit)
             x += width
         for title, _ in model.STATUS_COLUMNS:
-            canvas.put(x, y, title[:STATUS_WIDTH - 1], DIM)
+            canvas.put(x, y, title[:STATUS_WIDTH - 1], DIM, limit)
             x += STATUS_WIDTH
-        canvas.put(x, y, "Extras", DIM)
+        canvas.put(x, y, "Extras", DIM, limit)
 
-    def draw_build(self, canvas: Canvas, row: model.BuildRow, position: Tuple[int, int]) -> None:
-        x, y = position
-        x += 1
+    def draw_build(self, canvas: Canvas, row: model.BuildRow, place: Place) -> None:
+        x, y, limit = place
         style = ACCENT if row.is_default else PLAIN
-        canvas.put(x, y, row.spec.level, style)
-        canvas.put(x + LEVEL_WIDTH, y, row.spec.compiler, style)
+        canvas.put(x, y, row.spec.level, style, limit)
+        canvas.put(x + LEVEL_WIDTH, y, row.spec.compiler, style, limit)
         x += LEVEL_WIDTH + COMPILER_WIDTH
         for glyph, status in row.glyphs():
-            canvas.put(x + 1, y, glyph, STATUS_STYLES[status])
+            canvas.put(x + 1, y, glyph, STATUS_STYLES[status], limit)
             x += STATUS_WIDTH
-        canvas.put(x, y, row.spec.tags(), DIM)
+        canvas.put(x, y, row.spec.tags(), DIM, limit)
 
 
 class Form(View):
@@ -508,20 +536,27 @@ class Form(View):
 
     def draw(self, canvas: Canvas) -> None:
         module = self.form.module
-        used = canvas.put(1, 0, module.NAME, BOLD)
-        canvas.put(used + 3, 0, module.HELP, DIM)
-        value_x = FORM_INDENT + FORM_NAME_WIDTH
+        help_width = max([len(module.HELP) - FORM_NAME_WIDTH - FORM_VALUE_WIDTH - 1]
+                         + [len(option.help) for option in self.options])
+        content = FORM_NAME_WIDTH + FORM_VALUE_WIDTH + 1 + help_width
+        size = (content + 2 + 2 * DIALOG_PADDING, len(self.options) + FORM_EXTRA_ROWS)
+        x, y, width = draw_dialog(canvas, size, module.NAME)
+        y += 1
+        canvas.put(x, y, module.HELP[:width], DIM)
+        y += 2
+        value_x = x + FORM_NAME_WIDTH
+        help_x = value_x + FORM_VALUE_WIDTH + 1
         for index, option in enumerate(self.options):
-            y = TITLE_ROWS + 1 + index
-            canvas.put(FORM_INDENT, y, option.name.replace("_", "-"), BOLD)
+            canvas.put(x, y + index, option.name.replace("_", "-"), BOLD)
             if index == self.cursor and self.editing is not None:
-                self.editing.draw(canvas, (value_x, y), FORM_VALUE_WIDTH)
+                self.editing.draw(canvas, (value_x, y + index), FORM_VALUE_WIDTH)
             else:
-                canvas.put(value_x, y, self.value_text(option))
-            canvas.put(value_x + FORM_VALUE_WIDTH + 1, y, option.help, DIM)
+                canvas.put(value_x, y + index, self.value_text(option))
+            canvas.put(help_x, y + index, option.help[:max(0, x + width - help_x)], DIM)
             if index == self.cursor and self.editing is None:
-                canvas.fill(FORM_INDENT, y, FORM_NAME_WIDTH + FORM_VALUE_WIDTH, SELECTED)
+                canvas.fill(x, y + index, width, SELECTED)
         ok, text = self.form.preview()
+        canvas.put(x, y + len(self.options) + 1, text[:width], ACCENT if ok else ERROR)
         draw_status(canvas, text, STATUS_LINE if ok else STATUS_LINE_ERROR)
         self.app.draw_message(canvas, "-- TYPING --  Enter or Esc to stop" if self.editing else FORM_HINT)
 
@@ -674,15 +709,11 @@ class Help(View):
     def draw(self, canvas: Canvas) -> None:
         keys_width = max(len(keys) for keys, _ in self.entries)
         lines = [f"{keys.ljust(keys_width)}   {what}" for keys, what in self.entries]
-        width = min(canvas.width, max(len(line) for line in lines) + 4)
-        height = min(canvas.height, len(lines) + 2)
-        x = (canvas.width - width) // 2
-        y = (canvas.height - height) // 2
-        for row in range(y, y + height):
-            canvas.put(x, row, " " * width)
-        canvas.box(x, y, (width, height), "Keys", ACCENT)
-        for index, line in enumerate(lines[:height - 2]):
-            canvas.put(x + 2, y + 1 + index, line[:width - 4])
+        size = (max(len(line) for line in lines) + 2 + 2 * DIALOG_PADDING, len(lines) + 2)
+        x, y, width = draw_dialog(canvas, size, "Keys")
+        rows = canvas.height - STATUS_FROM_BOTTOM - y - 1
+        for index, line in enumerate(lines[:rows]):
+            canvas.put(x, y + index, line[:width])
 
 
 class App:

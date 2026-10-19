@@ -332,6 +332,38 @@ class AppTest(unittest.TestCase):
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
         self.assertIsInstance(app.views[-1], Home)
 
+    def test_a_menu_is_a_box_with_nothing_behind_showing_through(self):
+        app = self.press(self.app(), *self.to_build("gcc-dev"), "b")
+        lines = app.frame().text_lines()
+        top = next(index for index, line in enumerate(lines) if "┌ build " in line)
+        left = lines[top].index("┌ build ")
+        right = lines[top].index("┐", left)
+        bottom = next(index for index in range(top + 1, len(lines)) if lines[index][left] == "└")
+        self.assertGreater(left, 0)
+        self.assertLess(right, SCREEN_SIZE[0] - 1)
+        inside = [line[left + 1:right] for line in lines[top + 1:bottom]]
+        self.assertTrue(any("game" in line for line in inside))
+        for line in inside:
+            self.assertNotIn("○", line)
+            self.assertNotIn("│", line)
+
+    def test_a_menu_opens_over_the_home_screen(self):
+        self.context.store.save_recipe("ship-it", ["package", "ship", "--compiler", "gcc"])
+        app = self.press(self.app(), *self.to_build("gcc-dev"), "b")
+        text = self.screen(app)
+        self.assertIn("┌ build ", text)
+        self.assertIn("ship-it", text)
+
+    def test_a_long_entry_stays_inside_its_pane(self):
+        self.context.store.save_recipe("long", ["test", "dev", "--compiler", "gcc", "--", "-R", "x" * SCREEN_SIZE[0]])
+        self.context.store.record(["test", "dev", "--compiler", "gcc", "--", "-R", "y" * SCREEN_SIZE[0]], True, 1.0)
+        lines = self.press(self.app()).frame().text_lines()
+        header = next(line for line in lines if "Level" in line)
+        self.assertIn("│ Level  Compiler", header)
+        for line in lines:
+            self.assertNotIn("│x", line)
+            self.assertNotIn("│y", line)
+
     def test_escape_leaves_a_menu_without_running_it(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "c", "esc")
         self.assertIsInstance(app.views[-1], Home)

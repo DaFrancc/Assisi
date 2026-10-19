@@ -68,13 +68,14 @@ class Canvas:
         self.height = height
         self.rows: List[List[Cell]] = [[(" ", PLAIN)] * width for _ in range(height)]
 
-    def put(self, x: int, y: int, text: str, style: Style = PLAIN) -> int:
+    def put(self, x: int, y: int, text: str, style: Style = PLAIN, limit: Optional[int] = None) -> int:
         """Write @p text from column @p x of row @p y, cut off at the right
-        edge, and return how many columns it took."""
-        if not 0 <= y < self.height or x >= self.width:
+        edge or before column @p limit, and return how many columns it took."""
+        right = self.width if limit is None else min(limit, self.width)
+        if not 0 <= y < self.height or x >= right:
             return 0
         row = self.rows[y]
-        visible = text[:max(0, self.width - x)]
+        visible = text[:right - x]
         for offset, character in enumerate(visible):
             if x + offset >= 0:
                 row[x + offset] = (character, style)
