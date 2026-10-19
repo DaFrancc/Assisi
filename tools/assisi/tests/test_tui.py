@@ -488,6 +488,16 @@ class AppTest(unittest.TestCase):
         bottom = self.screen(self.press(self.app(NARROW_SIZE))).splitlines()[-1]
         self.assertIn("? keys", bottom)
 
+    def test_a_file_setting_shows_its_whole_path_under_its_description(self):
+        pak = "releases/1.0/a-long-folder-name/assets.pak"
+        app = self.press(self.app(), *self.to_build("gcc-ship"), "p", *self.to_field("package", "previous"),
+                         "i", *typed(pak), "esc")
+        lines = self.screen(app).splitlines()
+        described = next(index for index, line in enumerate(lines) if "lay the pak out against" in line)
+        self.assertIn(pak, lines[described + 1])
+        self.assertNotIn(pak, lines[described])
+        self.assertGreater(lines[described + 1].index(pak), lines[described].index("previous"))
+
     def test_escape_leaves_a_menu_without_running_it(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "c", "esc")
         self.assertIsInstance(app.views[-1], Home)

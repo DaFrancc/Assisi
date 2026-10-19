@@ -89,6 +89,14 @@ FORM_EXTRA_ROWS = 10
 # The button under a form's options that runs it.
 GO_BUTTON = "[ Go ]"
 
+# How far a file's path sits in from its option's name, on the row under it,
+# and what that row says before a file is chosen.
+FORM_PATH_INDENT = 4
+PATH_PLACEHOLDER = "none · Enter to browse, i to type a path"
+
+# What stands in for the start of a path cut to fit.
+ELLIPSIS = "…"
+
 # The file browser's width before it is shrunk to fit, and the rows above its
 # entries: the folder being shown and a blank row under it.
 BROWSER_WIDTH = 76
@@ -175,6 +183,13 @@ def draw_status(canvas: Canvas, text: str, style: Style) -> None:
 
 def draw_message(canvas: Canvas, text: str, style: Style) -> None:
     canvas.put(0, bottom_row(canvas, MESSAGE_FROM_BOTTOM), text.ljust(canvas.width), style)
+
+
+def keep_end(text: str, width: int) -> str:
+    """@p text in @p width columns, cut at its start, where a path is least telling."""
+    if len(text) <= width:
+        return text
+    return ELLIPSIS + text[len(text) - width + len(ELLIPSIS):] if width > len(ELLIPSIS) else ""
 
 
 def draw_dialog(canvas: Canvas, size: Tuple[int, int], title: str) -> Tuple[int, int, int, int]:
@@ -584,29 +599,49 @@ class Form(View):
             return f"‹ {value or BLANK_CHOICE} ›"
         return str(value or "")
 
+    def draw_option(self, canvas: Canvas, index: int, place: Place) -> int:
+        """Draw the option at @p index from @p place and return the rows it took."""
+        x, y, limit = place
+        option = self.options[index]
+        rows = self.option_rows(option)
+        selected = index == self.cursor
+        if rows > 1:
+            value_x, value_y, value_width = x + FORM_PATH_INDENT, y + 1, limit - x - FORM_PATH_INDENT
+        else:
+            value_x, value_y, value_width = x + FORM_NAME_WIDTH, y, FORM_VALUE_WIDTH
+        canvas.put(x, y, option.name.replace("_", "-"), BOLD, limit)
+        canvas.put(x + FORM_NAME_WIDTH + FORM_VALUE_WIDTH + 1, y, option.help, DIM, limit)
+        if selected and self.editing is not None:
+            self.editing.draw(canvas, (value_x, value_y), value_width)
+        elif option.kind is Kind.PATH and not self.form.values[option.name]:
+            canvas.put(value_x, value_y, PATH_PLACEHOLDER, DIM, limit)
+        else:
+            canvas.put(value_x, value_y, keep_end(self.value_text(option), value_width), PLAIN, limit)
+        if selected and self.editing is None:
+            for row in range(y, y + rows):
+                canvas.fill(x, row, limit - x, SELECTED)
+        return rows
+
+    @staticmethod
+    def option_rows(option: Option) -> int:
+        """A file's path is too long for the value column, so it gets a row of
+        its own under the option's name and help."""
+        return 2 if option.kind is Kind.PATH else 1
+
     def draw(self, canvas: Canvas) -> None:
         module = self.form.module
         help_width = max([len(module.HELP) - FORM_NAME_WIDTH - FORM_VALUE_WIDTH - 1]
                          + [len(option.help) for option in self.options])
         content = FORM_NAME_WIDTH + FORM_VALUE_WIDTH + 1 + help_width
-        size = (content + 2 + 2 * DIALOG_PADDING, len(self.options) + FORM_EXTRA_ROWS)
-        x, y, width, _ = draw_dialog(canvas, size, module.NAME)
+        rows = sum(self.option_rows(option) for option in self.options)
+        x, y, width, _ = draw_dialog(canvas, (content + 2 + 2 * DIALOG_PADDING, rows + FORM_EXTRA_ROWS), module.NAME)
         y += 1
         canvas.put(x, y, module.HELP[:width], DIM)
         y += 2
-        value_x = x + FORM_NAME_WIDTH
-        help_x = value_x + FORM_VALUE_WIDTH + 1
-        for index, option in enumerate(self.options):
-            canvas.put(x, y + index, option.name.replace("_", "-"), BOLD)
-            if index == self.cursor and self.editing is not None:
-                self.editing.draw(canvas, (value_x, y + index), FORM_VALUE_WIDTH)
-            else:
-                canvas.put(value_x, y + index, self.value_text(option))
-            canvas.put(help_x, y + index, option.help[:max(0, x + width - help_x)], DIM)
-            if index == self.cursor and self.editing is None:
-                canvas.fill(x, y + index, width, SELECTED)
+        for index in range(len(self.options)):
+            y += self.draw_option(canvas, index, (x, y, x + width))
         ok, text = self.form.preview()
-        y += len(self.options) + 1
+        y += 1
         canvas.put(x, y, text[:width], ACCENT if ok else ERROR)
         button_x = x + (width - len(GO_BUTTON)) // 2
         canvas.put(button_x, y + 2, GO_BUTTON, SELECTED if self.on_go() else (BOLD if ok else DIM))
@@ -788,10 +823,7 @@ class Browser(View):
 
     def draw(self, canvas: Canvas) -> None:
         x, y, width, height = draw_dialog(canvas, (BROWSER_WIDTH, canvas.height), "Choose a file")
-        where = str(self.folder)
-        if len(where) > width:
-            where = "…" + where[len(where) - width + 1:]
-        canvas.put(x, y + 1, where, BOLD)
+        canvas.put(x, y + 1, keep_end(str(self.folder), width), BOLD)
         top = y + BROWSER_HEADER_ROWS
         rows = max(0, height - BROWSER_HEADER_ROWS - 1)
         for row, index in enumerate(self.pane.visible(len(self.entries), rows)):
