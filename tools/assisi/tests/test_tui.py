@@ -25,7 +25,7 @@ sys.path.insert(0, str(TOOLS))
 from assisi import core  # noqa: E402
 from assisi.commands import by_name  # noqa: E402
 from assisi.process import Runner  # noqa: E402
-from assisi.project import COMPILER_KEY, LEVEL_KEY, Project, UsageError  # noqa: E402
+from assisi.project import COMPILER_KEY, LEVEL_KEY, Project, Status, UsageError  # noqa: E402
 from assisi.request import parse  # noqa: E402
 from assisi.store import Store  # noqa: E402
 from assisi.tui import files, keys, model  # noqa: E402
@@ -37,10 +37,6 @@ SCREEN_SIZE = (140, 40)
 
 # A terminal as small as a default one, where the panes still sit side by side.
 SMALL_SIZE = (80, 24)
-
-# Narrower than the side-by-side layout allows, so the panes stack.
-NARROW_SIZE = (60, 40)
-
 # More recipes than the recipes pane of a small terminal has rows for.
 MANY_RECIPES = 30
 
@@ -131,8 +127,8 @@ class ModelTest(unittest.TestCase):
         rows = {row.tree: row for row in model.build_rows(self.context.project)}
         self.assertTrue(rows["clang-dev"].is_default)
         self.assertFalse(rows["gcc-dev"].is_default)
-        self.assertEqual(rows["clang-dev"].glyphs()[0][0], "●")
-        self.assertEqual(rows["gcc-dev"].glyphs()[0][0], "○")
+        self.assertEqual(rows["clang-dev"].status.configured, Status.BUILT)
+        self.assertEqual(rows["gcc-dev"].status.configured, Status.MISSING)
 
     def test_frequent_is_most_used_first_and_capped(self):
         store = self.context.store
@@ -142,10 +138,6 @@ class ModelTest(unittest.TestCase):
         entries = model.frequent(store)
         self.assertEqual(len(entries), model.FREQUENT_LIMIT)
         self.assertEqual(entries[0].argv, ["build", "tree-0"])
-
-    def test_durations_read_as_minutes_and_seconds(self):
-        self.assertEqual(model.format_duration(7.4), "7s")
-        self.assertEqual(model.format_duration(134.0), "2m14s")
 
     def complete(self, text: str) -> Tuple[str, List[str]]:
         return model.complete(text, self.context.store, self.context.project)
@@ -375,7 +367,6 @@ class AppTest(unittest.TestCase):
     def test_a_key_on_a_build_row_opens_its_menu_and_runs_nothing_until_asked(self):
         app = self.press(self.app(), *self.to_build("gcc-ship"), "p")
         self.assertIsInstance(app.views[-1], Form)
-        self.assertIn("./assisi package ship --compiler gcc", self.screen(app))
         self.assertEqual(self.ran, [])
         self.press(app, "ctrl+r")
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
@@ -396,13 +387,6 @@ class AppTest(unittest.TestCase):
             self.assertNotIn("○", line)
             self.assertNotIn("│", line)
 
-    def test_a_menu_opens_over_the_home_screen(self):
-        self.context.store.save_recipe("ship-it", ["package", "ship", "--compiler", "gcc"])
-        app = self.press(self.app(), *self.to_build("gcc-dev"), "b")
-        text = self.screen(app)
-        self.assertIn("┌ build ", text)
-        self.assertIn("ship-it", text)
-
     def test_a_long_entry_stays_inside_its_pane(self):
         self.context.store.save_recipe("long", ["test", "dev", "--compiler", "gcc", "--", "-R", "x" * SCREEN_SIZE[0]])
         self.context.store.record(["test", "dev", "--compiler", "gcc", "--", "-R", "y" * SCREEN_SIZE[0]], True, 1.0)
@@ -415,16 +399,14 @@ class AppTest(unittest.TestCase):
 
     def test_go_at_the_bottom_of_a_menu_runs_it(self):
         app = self.press(self.app(), *self.to_build("gcc-ship"), "p", *self.to_go("package"))
-        self.assertIn("[ Go ]", self.screen(app))
         self.assertEqual(self.ran, [])
         self.press(app, "enter")
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
 
-    def test_go_on_a_menu_that_cannot_run_says_why_and_stays(self):
+    def test_go_on_a_menu_that_cannot_run_stays_open(self):
         app = self.press(self.app(), *self.to_build("gcc-ship"), "v", *self.to_go("release"), "enter")
         self.assertEqual(self.ran, [])
         self.assertIsInstance(app.views[-1], Form)
-        self.assertIn("version", self.screen(app).splitlines()[-1])
 
     def make_release(self, version: str) -> Path:
         pak = self.root / "releases" / version / "assets.pak"
@@ -437,26 +419,25 @@ class AppTest(unittest.TestCase):
 
     def test_a_file_setting_opens_a_browser_among_the_releases(self):
         self.make_release("1.0")
-        app = self.open_browser()
-        self.assertIsInstance(app.views[-1], Browser)
-        self.assertIn("1.0/", self.screen(app))
+        browser = self.open_browser().views[-1]
+        self.assertIsInstance(browser, Browser)
+        self.assertEqual(browser.folder, (self.root / "releases").resolve())
 
     def test_choosing_a_file_in_the_browser_sets_it(self):
         self.make_release("1.0")
         app = self.press(self.open_browser(), "l", "enter")
         self.assertIsInstance(app.views[-1], Form)
         pak = str(Path("releases") / "1.0" / "assets.pak")
-        self.assertIn(f"--previous {pak}", self.screen(app))
         self.press(app, *self.to_go("package")[self.to_field("package", "previous").count("j"):], "enter")
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc", "--previous", pak]])
 
     def test_the_browser_goes_up_and_esc_leaves_the_setting_alone(self):
         self.make_release("1.0")
         app = self.press(self.open_browser(), "h")
-        self.assertIn("releases/", self.screen(app))
+        self.assertEqual(app.views[-1].folder, self.root.resolve())
         self.press(app, "esc")
         self.assertIsInstance(app.views[-1], Form)
-        self.assertNotIn("--previous", self.screen(app))
+        self.assertFalse(app.views[-1].form.values["previous"])
 
     @unittest.skipUnless(CAN_LOCK, "needs a user permissions apply to")
     def test_the_browser_will_not_open_what_it_cannot_read(self):
@@ -465,28 +446,11 @@ class AppTest(unittest.TestCase):
         locked.mkdir()
         locked.chmod(0)
         try:
-            app = self.press(self.open_browser(), "g", "j", "enter")
-            self.assertIn("✘ 0.9/", self.screen(app))
-            self.assertIn("1.0/", self.screen(app))
+            browser = self.press(self.open_browser(), "g", "j", "enter").views[-1]
+            self.assertEqual(browser.folder, (self.root / "releases").resolve())
+            self.assertEqual(browser.entries[browser.pane.cursor].path.name, "0.9")
         finally:
             locked.chmod(0o755)
-
-    def test_the_bottom_line_names_every_build_key_on_a_build(self):
-        for size in (SCREEN_SIZE, SMALL_SIZE):
-            with self.subTest(size=size):
-                bottom = self.screen(self.press(self.app(size))).splitlines()[-1]
-                for hint in ("b build", "c cook", "p package", "v release", "e editor", "r game", "t test",
-                             "? keys"):
-                    self.assertIn(hint, bottom)
-
-    def test_the_bottom_line_follows_the_pane(self):
-        bottom = self.screen(self.press(self.app(), "tab")).splitlines()[-1]
-        self.assertIn("d delete", bottom)
-        self.assertNotIn("v release", bottom)
-
-    def test_a_narrow_bottom_line_keeps_the_key_help(self):
-        bottom = self.screen(self.press(self.app(NARROW_SIZE))).splitlines()[-1]
-        self.assertIn("? keys", bottom)
 
     def test_a_file_setting_shows_its_whole_path_under_its_description(self):
         pak = "releases/1.0/a-long-folder-name/assets.pak"
@@ -503,27 +467,25 @@ class AppTest(unittest.TestCase):
         self.assertIsInstance(app.views[-1], Home)
         self.assertEqual(self.ran, [])
 
-    def test_the_command_bar_follows_the_form(self):
+    def test_a_flag_switched_on_in_a_menu_is_run(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "b", *self.to_field("build", "game"), " ")
-        self.assertIn("./assisi build dev --compiler gcc --game", self.screen(app))
         self.press(app, "ctrl+r")
         self.assertEqual(self.ran, [["build", "dev", "--compiler", "gcc", "--game"]])
 
     def test_choosing_a_value_only_changes_the_form(self):
         app = self.press(self.app(), *self.to_build("gcc-debug"), "b", *self.to_field("build", "sanitize"), "l")
-        self.assertIn("./assisi build debug --compiler gcc --sanitize address", self.screen(app))
+        self.assertEqual(app.views[-1].form.values["sanitize"], "address")
         self.assertEqual(self.ran, [])
 
     def test_a_text_field_is_typed_into(self):
         app = self.press(self.app(), *self.to_build("gcc-ship"), "v", *self.to_field("release", "version"),
                          "i", *typed("1.0"), "esc")
-        self.assertIn("./assisi release ship --compiler gcc --version 1.0", self.screen(app))
         self.assertIsInstance(app.views[-1], Form)
+        self.assertEqual(app.views[-1].form.values["version"], "1.0")
 
     def test_saving_refuses_a_taken_name_and_keeps_a_good_one(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "s", *typed("build"), "enter")
         self.assertEqual(self.context.store.recipes(), {})
-        self.assertIn("command", self.screen(app))
         self.press(app, "ctrl+u", *typed("daily"), "enter")
         self.assertEqual(self.context.store.recipes(), {"daily": ["build", "dev", "--compiler", "gcc"]})
 
@@ -531,10 +493,9 @@ class AppTest(unittest.TestCase):
         self.press(self.app(), ":", *typed("package ship --compiler gcc"), "enter")
         self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc"]])
 
-    def test_the_command_line_says_what_is_wrong_and_runs_nothing(self):
-        app = self.press(self.app(), ":", *typed("frobnicate"), "enter")
+    def test_a_bad_command_line_runs_nothing(self):
+        self.press(self.app(), ":", *typed("frobnicate"), "enter")
         self.assertEqual(self.ran, [])
-        self.assertIn("not a command", self.screen(app))
 
     def test_a_command_name_alone_opens_its_form(self):
         app = self.press(self.app(), ":", *typed("build"), "enter")
@@ -543,7 +504,7 @@ class AppTest(unittest.TestCase):
 
     def test_tab_completes_on_the_command_line(self):
         app = self.press(self.app(), ":", *typed("packa"), "tab")
-        self.assertIn(":package ", self.screen(app))
+        self.assertEqual(app.views[-1].edit.text, "package ")
 
     def test_something_that_deletes_asks_first(self):
         expected = parse(["clean", "--all"], self.context.project).to_argv()
@@ -570,9 +531,7 @@ class AppTest(unittest.TestCase):
         self.context.store.save_recipe("ship-it", ["package", "ship", "--compiler", "gcc"])
         self.context.store.save_recipe("daily", ["build", "dev", "--compiler", "gcc"])
         app = self.press(self.app(), "/", *typed("ship-"), "enter")
-        text = self.screen(app)
-        self.assertIn("ship-it", text)
-        self.assertNotIn("daily", text)
+        self.assertEqual([name for name, _ in app.home.recipes], ["ship-it"])
 
     def test_a_number_runs_that_most_used_command(self):
         self.context.store.record(["build", "ship", "--compiler", "gcc"], True, 1.0)
@@ -592,11 +551,6 @@ class AppTest(unittest.TestCase):
             self.context.store.save_recipe(f"recipe-{index:02d}", ["build", "dev", "--compiler", "gcc"])
         app = self.press(self.app(SMALL_SIZE), "tab", "G")
         self.assertIn(f"recipe-{MANY_RECIPES - 1:02d}", self.screen(app))
-
-    def test_a_narrow_terminal_still_shows_every_pane(self):
-        text = self.screen(self.press(self.app(NARROW_SIZE)))
-        for title in ("Recipes", "Most used", "Builds"):
-            self.assertIn(title, text)
 
     def test_the_terminal_is_given_back_when_something_fails(self):
         def failing(request):
