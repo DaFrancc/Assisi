@@ -124,6 +124,15 @@ running anything. A recipe or a most-used command, on the other hand, runs as
 soon as you choose it, because you already picked every setting when you
 first ran it.
 
+A setting that names a file, like the earlier pak a package is laid out
+against, opens a **file browser** when you press **Enter** on it. It starts in
+`releases/`, where your earlier releases are, and lists folders first, then
+files. **j** and **k** move, **l** or **Enter** opens a folder or picks a file,
+**h** goes up a folder, **~** jumps to your home folder and **Esc** goes back
+without changing anything. It can go anywhere on your computer you're allowed
+to read; anything you aren't is shown in red with a **✘** and won't open. To
+type a path instead, press **i** on the setting.
+
 At the **:** line, a command name on its own, like `build`, opens that
 command's menu, and a whole command, like `build ship --game`, runs. A
 recipe's name runs the recipe.

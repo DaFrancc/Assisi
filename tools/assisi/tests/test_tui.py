@@ -28,8 +28,8 @@ from assisi.process import Runner  # noqa: E402
 from assisi.project import COMPILER_KEY, LEVEL_KEY, Project, UsageError  # noqa: E402
 from assisi.request import parse  # noqa: E402
 from assisi.store import Store  # noqa: E402
-from assisi.tui import keys, model  # noqa: E402
-from assisi.tui.app import INTERRUPTED_CODE, App, Confirm, Form, Home  # noqa: E402
+from assisi.tui import files, keys, model  # noqa: E402
+from assisi.tui.app import INTERRUPTED_CODE, App, Browser, Confirm, Form, Home  # noqa: E402
 from assisi.tui.canvas import Canvas, Color, Style, render  # noqa: E402
 
 # Large enough that every pane and the status lines are on screen.
@@ -173,6 +173,51 @@ class ModelTest(unittest.TestCase):
     def test_the_command_line_takes_the_launcher_out_of_habit(self):
         request = model.line_request("./assisi build ship", self.context.store, self.context.project)
         self.assertEqual(request.to_argv(), ["build", "ship", "--compiler", "gcc"])
+
+
+CAN_LOCK = os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0
+
+
+class FilesTest(unittest.TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.root = Path(self._directory.name)
+        self.project = Project(self.root, host="Linux")
+
+    def tearDown(self):
+        for path in self.root.rglob("*"):
+            path.chmod(0o755)
+        self._directory.cleanup()
+
+    def test_folders_come_first_under_the_way_up(self):
+        (self.root / "b.txt").write_text("")
+        (self.root / "a").mkdir()
+        (self.root / "c").mkdir()
+        names = [entry.name for entry in files.listing(self.root)]
+        self.assertEqual(names, ["..", "a", "c", "b.txt"])
+
+    @unittest.skipUnless(CAN_LOCK, "needs a user permissions apply to")
+    def test_what_cannot_be_opened_is_marked(self):
+        locked = self.root / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        (self.root / "open").mkdir()
+        readable = {entry.name: entry.readable for entry in files.listing(self.root)}
+        self.assertFalse(readable["locked"])
+        self.assertTrue(readable["open"])
+
+    def test_the_browser_starts_among_the_releases(self):
+        self.assertEqual(files.start_directory(self.project, ""), self.root)
+        (self.root / "releases" / "1.0").mkdir(parents=True)
+        self.assertEqual(files.start_directory(self.project, ""), self.root / "releases")
+        self.assertEqual(files.start_directory(self.project, "releases/1.0/assets.pak"),
+                         self.root / "releases" / "1.0")
+
+    def test_a_chosen_file_is_written_as_the_command_line_would_take_it(self):
+        self.assertEqual(files.as_given(self.project, self.root / "releases" / "1.0" / "assets.pak"),
+                         str(Path("releases") / "1.0" / "assets.pak"))
+        outside = Path(tempfile.gettempdir()).resolve() / "elsewhere.pak"
+        self.assertEqual(files.as_given(self.project, outside), str(outside))
 
 
 class KeysTest(unittest.TestCase):
@@ -380,6 +425,51 @@ class AppTest(unittest.TestCase):
         self.assertEqual(self.ran, [])
         self.assertIsInstance(app.views[-1], Form)
         self.assertIn("version", self.screen(app).splitlines()[-1])
+
+    def make_release(self, version: str) -> Path:
+        pak = self.root / "releases" / version / "assets.pak"
+        pak.parent.mkdir(parents=True)
+        pak.write_text("")
+        return pak
+
+    def open_browser(self) -> App:
+        return self.press(self.app(), *self.to_build("gcc-ship"), "p", *self.to_field("package", "previous"), "enter")
+
+    def test_a_file_setting_opens_a_browser_among_the_releases(self):
+        self.make_release("1.0")
+        app = self.open_browser()
+        self.assertIsInstance(app.views[-1], Browser)
+        self.assertIn("1.0/", self.screen(app))
+
+    def test_choosing_a_file_in_the_browser_sets_it(self):
+        self.make_release("1.0")
+        app = self.press(self.open_browser(), "l", "enter")
+        self.assertIsInstance(app.views[-1], Form)
+        pak = str(Path("releases") / "1.0" / "assets.pak")
+        self.assertIn(f"--previous {pak}", self.screen(app))
+        self.press(app, *self.to_go("package")[self.to_field("package", "previous").count("j"):], "enter")
+        self.assertEqual(self.ran, [["package", "ship", "--compiler", "gcc", "--previous", pak]])
+
+    def test_the_browser_goes_up_and_esc_leaves_the_setting_alone(self):
+        self.make_release("1.0")
+        app = self.press(self.open_browser(), "h")
+        self.assertIn("releases/", self.screen(app))
+        self.press(app, "esc")
+        self.assertIsInstance(app.views[-1], Form)
+        self.assertNotIn("--previous", self.screen(app))
+
+    @unittest.skipUnless(CAN_LOCK, "needs a user permissions apply to")
+    def test_the_browser_will_not_open_what_it_cannot_read(self):
+        self.make_release("1.0")
+        locked = self.root / "releases" / "0.9"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            app = self.press(self.open_browser(), "g", "j", "enter")
+            self.assertIn("✘ 0.9/", self.screen(app))
+            self.assertIn("1.0/", self.screen(app))
+        finally:
+            locked.chmod(0o755)
 
     def test_escape_leaves_a_menu_without_running_it(self):
         app = self.press(self.app(), *self.to_build("gcc-dev"), "c", "esc")

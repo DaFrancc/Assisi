@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import time
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from assisi import core
@@ -27,7 +28,7 @@ from assisi.options import Kind, Option
 from assisi.project import COMPILER_KEY, LEVEL_KEY, Status, UsageError, spec_of
 from assisi.request import Request, parse
 from assisi.store import Entry
-from assisi.tui import model
+from assisi.tui import files, model
 from assisi.tui.canvas import PLAIN, Canvas, Color, Style, render
 
 # The result of running a request: its exit code and how long it took.
@@ -88,6 +89,11 @@ FORM_EXTRA_ROWS = 10
 # The button under a form's options that runs it.
 GO_BUTTON = "[ Go ]"
 
+# The file browser's width before it is shrunk to fit, and the rows above its
+# entries: the folder being shown and a blank row under it.
+BROWSER_WIDTH = 76
+BROWSER_HEADER_ROWS = 3
+
 # Shown for a choice left blank.
 BLANK_CHOICE = "none"
 
@@ -103,6 +109,7 @@ WARNING = Style(color=Color.YELLOW, bold=True)
 SELECTED = Style(reverse=True)
 STATUS_LINE = Style(reverse=True)
 STATUS_LINE_ERROR = Style(color=Color.RED, reverse=True)
+FOLDER = Style(color=Color.BLUE, bold=True)
 STATUS_STYLES = {Status.BUILT: SUCCESS, Status.STALE: Style(color=Color.YELLOW), Status.MISSING: DIM}
 
 # Every key of the home screen, for the help overlay.
@@ -126,6 +133,7 @@ HOME_KEYS = (
 
 HOME_HINT = "Enter run · b build · p package · e editor · : command · / filter · ? keys · q quit"
 FORM_HINT = "j k move · Space h l change · i type · Enter on Go or Ctrl+R run · Ctrl+S save · Esc back"
+BROWSER_HINT = "j k move · l Enter open or choose · h up · ~ home folder · Esc cancel"
 
 
 def bottom_row(canvas: Canvas, from_bottom: int) -> int:
@@ -142,10 +150,10 @@ def draw_message(canvas: Canvas, text: str, style: Style) -> None:
     canvas.put(0, bottom_row(canvas, MESSAGE_FROM_BOTTOM), text.ljust(canvas.width), style)
 
 
-def draw_dialog(canvas: Canvas, size: Tuple[int, int], title: str) -> Tuple[int, int, int]:
+def draw_dialog(canvas: Canvas, size: Tuple[int, int], title: str) -> Tuple[int, int, int, int]:
     """Dim everything above the status line and clear a bordered box of
     @p size at its centre, shrunk to fit. Returns where the box's contents
-    start, as x and y, and how many columns they have."""
+    start, as x and y, and how many columns and rows they have."""
     space = canvas.height - STATUS_FROM_BOTTOM
     width = min(size[0], canvas.width - 2 * DIALOG_MARGIN)
     height = min(size[1], space)
@@ -156,7 +164,7 @@ def draw_dialog(canvas: Canvas, size: Tuple[int, int], title: str) -> Tuple[int,
     for row in range(y, y + height):
         canvas.put(x, row, " " * width)
     canvas.box(x, y, (width, height), title, ACCENT)
-    return x + 1 + DIALOG_PADDING, y + 1, width - 2 - 2 * DIALOG_PADDING
+    return x + 1 + DIALOG_PADDING, y + 1, width - 2 - 2 * DIALOG_PADDING, height - 2
 
 
 class LineEdit:
@@ -504,11 +512,18 @@ class Form(View):
     def activate(self, name: str) -> None:
         """Space, Enter and the editing keys on the field under the cursor."""
         option = self.option()
+        value = str(self.form.values[option.name] or "")
         if option.kind is Kind.FLAG or self.is_choice(option):
             if name not in ("i", "a"):
                 self.change(1)
+        elif option.kind is Kind.PATH and name in (" ", "enter"):
+            start = files.start_directory(self.form.project, value)
+            self.app.push(Browser(self.app, start, functools.partial(self.set_path, option.name)))
         else:
-            self.editing = LineEdit(str(self.form.values[option.name] or ""))
+            self.editing = LineEdit(value)
+
+    def set_path(self, name: str, path: Path) -> None:
+        self.form.set(name, files.as_given(self.form.project, path))
 
     def edit(self, name: str) -> None:
         if name in ("esc", "enter"):
@@ -548,7 +563,7 @@ class Form(View):
                          + [len(option.help) for option in self.options])
         content = FORM_NAME_WIDTH + FORM_VALUE_WIDTH + 1 + help_width
         size = (content + 2 + 2 * DIALOG_PADDING, len(self.options) + FORM_EXTRA_ROWS)
-        x, y, width = draw_dialog(canvas, size, module.NAME)
+        x, y, width, _ = draw_dialog(canvas, size, module.NAME)
         y += 1
         canvas.put(x, y, module.HELP[:width], DIM)
         y += 2
@@ -688,6 +703,84 @@ class CommandLine(Line):
             self.app.run_request(asked)
 
 
+class Browser(View):
+    """A file explorer for a setting that names a file. It goes anywhere the
+    file system lets it; what cannot be opened is shown in red, marked, and
+    left closed."""
+
+    def __init__(self, app: "App", start: Path, choose: Callable[[Path], None]):
+        super().__init__(app)
+        self.choose = choose
+        self.pane = ListPane("")
+        self.folder = start
+        self.entries: List[files.Entry] = []
+        self.open_folder(start)
+
+    def open_folder(self, folder: Path, cursor_on: Optional[Path] = None) -> None:
+        """List @p folder, with the cursor on @p cursor_on when it is there,
+        else on the first entry after the way up."""
+        self.folder = folder.resolve()
+        self.entries = files.listing(self.folder)
+        paths = [entry.path for entry in self.entries if entry.name != files.PARENT]
+        has_parent = len(paths) < len(self.entries)
+        if cursor_on is not None and cursor_on in paths:
+            self.pane.cursor = paths.index(cursor_on) + has_parent
+        else:
+            self.pane.cursor = int(has_parent and bool(paths))
+        self.pane.top = 0
+
+    def up(self) -> None:
+        if self.folder.parent != self.folder:
+            self.open_folder(self.folder.parent, cursor_on=self.folder)
+
+    def open(self, entry: files.Entry) -> None:
+        if not entry.readable:
+            return
+        if entry.name == files.PARENT:
+            self.up()
+        elif entry.is_dir:
+            self.open_folder(entry.path)
+        else:
+            self.app.close(self)
+            self.choose(entry.path)
+
+    def key(self, name: str) -> None:
+        count = len(self.entries)
+        steps = {"j": 1, "down": 1, "k": -1, "up": -1, "g": -count, "home": -count, "G": count, "end": count}
+        if name in steps:
+            self.pane.move(steps[name], count)
+        elif name in ("enter", "l", "right") and self.entries:
+            self.open(self.entries[self.pane.cursor])
+        elif name in ("h", "left", "backspace"):
+            self.up()
+        elif name == "~":
+            self.open_folder(Path.home())
+        elif name in ("esc", "q"):
+            self.app.close(self)
+
+    def draw(self, canvas: Canvas) -> None:
+        x, y, width, height = draw_dialog(canvas, (BROWSER_WIDTH, canvas.height), "Choose a file")
+        where = str(self.folder)
+        if len(where) > width:
+            where = "…" + where[len(where) - width + 1:]
+        canvas.put(x, y + 1, where, BOLD)
+        top = y + BROWSER_HEADER_ROWS
+        rows = max(0, height - BROWSER_HEADER_ROWS - 1)
+        for row, index in enumerate(self.pane.visible(len(self.entries), rows)):
+            self.draw_entry(canvas, self.entries[index], (x, top + row, x + width))
+            if index == self.pane.cursor:
+                canvas.fill(x - 1, top + row, width + 2, SELECTED)
+        self.app.draw_message(canvas, BROWSER_HINT)
+
+    def draw_entry(self, canvas: Canvas, entry: files.Entry, place: Place) -> None:
+        x, y, limit = place
+        name = entry.name + ("/" if entry.is_dir and entry.name != files.PARENT else "")
+        if not entry.readable:
+            canvas.put(x, y, f"✘ {name}", ERROR, limit)
+        else:
+            canvas.put(x + len("✘ "), y, name, FOLDER if entry.is_dir else PLAIN, limit)
+
+
 class Confirm(View):
     """Yes or no before something that deletes."""
 
@@ -721,8 +814,7 @@ class Help(View):
         keys_width = max(len(keys) for keys, _ in self.entries)
         lines = [f"{keys.ljust(keys_width)}   {what}" for keys, what in self.entries]
         size = (max(len(line) for line in lines) + 2 + 2 * DIALOG_PADDING, len(lines) + 2)
-        x, y, width = draw_dialog(canvas, size, "Keys")
-        rows = canvas.height - STATUS_FROM_BOTTOM - y - 1
+        x, y, width, rows = draw_dialog(canvas, size, "Keys")
         for index, line in enumerate(lines[:rows]):
             canvas.put(x, y + index, line[:width])
 
