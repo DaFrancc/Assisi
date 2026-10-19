@@ -1,10 +1,5 @@
 # The build tool (./assisi) has no build artifacts; these are its own tests, run
 # through ctest so the whole suite covers it.
-#
-# The command line's tests run on any Python. The TUI's tests also drive the
-# Textual app, so they run under the TUI's own interpreter when that environment
-# has been created (the first time somebody opens the TUI); under any other
-# Python the app half skips itself and the rest still runs.
 add_test(
     NAME assisi-tool
     COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_assisi.py"
@@ -22,14 +17,10 @@ add_test(
 )
 set_tests_properties(assisi-steam-sdk PROPERTIES LABELS container)
 
-if (WIN32)
-  set(_assisi_tui_python "${CMAKE_SOURCE_DIR}/out/tool-env/Scripts/python.exe")
-else()
-  set(_assisi_tui_python "${CMAKE_SOURCE_DIR}/out/tool-env/bin/python")
-endif()
-
-if (EXISTS "${_assisi_tui_python}")
-  add_test(NAME assisi-tui COMMAND "${_assisi_tui_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tui.py")
-else()
-  add_test(NAME assisi-tui COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tui.py")
-endif()
+# The TUI, against a fake terminal; in the container too, since it runs on the
+# same Python as the command line.
+add_test(
+    NAME assisi-tui
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tui.py"
+)
+set_tests_properties(assisi-tui PROPERTIES LABELS container)

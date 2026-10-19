@@ -1,15 +1,15 @@
-"""What the TUI shows and what each key asks for, without Textual.
+"""What the TUI shows and what each key asks for, without drawing anything.
 
 Every request the TUI runs is made here, through request.parse, so the TUI can
-only ask for what a command line could have said, and these rules are tested
-on any Python without the TUI's environment.
+only ask for what a command line could have said.
 """
 
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from assisi import request as requests
 from assisi.options import COMPILER, PROFILER, SANITIZE, STEAM_RUNTIME, Kind, Option
@@ -32,7 +32,7 @@ FREQUENT_LIMIT = 9
 # once the developer has seen every setting the action has.
 BUILD_MENUS: Dict[str, Tuple[str, Dict[str, object]]] = {
     "b": ("build", {}),
-    "k": ("cook", {}),
+    "c": ("cook", {}),
     "p": ("package", {}),
     "v": ("release", {}),
     "t": ("test", {}),
@@ -41,6 +41,13 @@ BUILD_MENUS: Dict[str, Tuple[str, Dict[str, object]]] = {
 }
 
 SECONDS_PER_MINUTE = 60
+
+# The TUI's own command, which its command line does not open again.
+TUI_COMMAND = "tui"
+
+# How the tool is started, which a command typed at the command line may begin
+# with out of habit.
+LAUNCHER_WORDS = ("assisi", "./assisi", "assisi.cmd")
 
 
 def command_line(argv: Sequence[str]) -> str:
@@ -92,6 +99,67 @@ def frequent(store: Store, needle: str = "") -> List[Entry]:
 def recipes(store: Store, needle: str = "") -> List[Tuple[str, List[str]]]:
     return [(name, argv) for name, argv in store.recipes().items()
             if matches(name + " " + " ".join(argv), needle)]
+
+
+def command_words(store: Store) -> List[str]:
+    """What the command line takes as its first word: a command or a recipe."""
+    from assisi.commands import catalog
+
+    return [module.NAME for module in catalog() if module.NAME != TUI_COMMAND] + list(store.recipes())
+
+
+def option_words(command: str, project: Project) -> List[str]:
+    """What the command line takes after @p command: its flags, and the words
+    its options choose from."""
+    from assisi.commands import by_name
+
+    module = by_name().get(command)
+    if module is None:
+        return []
+    words: List[str] = []
+    for option in form_options(module):
+        if not option.is_positional and option.kind is not Kind.PASSTHROUGH:
+            words.append(option.flag)
+        words += value_choices(option, project)
+    return words
+
+
+def complete(text: str, store: Store, project: Project) -> Tuple[str, List[str]]:
+    """@p text with its last word finished as far as every candidate agrees,
+    and the candidates. A single candidate is finished with a space after it."""
+    head, _, last = text.rpartition(" ")
+    words = head.split()
+    candidates = option_words(words[0], project) if words else command_words(store)
+    matching = sorted(set(word for word in candidates if word.startswith(last)))
+    if not matching:
+        return text, []
+    finished = os.path.commonprefix(matching) + (" " if len(matching) == 1 else "")
+    return (head + " " if head else "") + finished, matching
+
+
+def line_request(text: str, store: Store, project: Project) -> Union[requests.Request, "FormModel"]:
+    """What a line typed at the TUI's command line asks for: a recipe's or a
+    command's request, or the form of a command named on its own. A UsageError
+    says why the line asks for nothing."""
+    from assisi.commands import by_name
+
+    try:
+        words = shlex.split(text)
+    except ValueError as error:
+        raise UsageError(f"{error}.") from error
+    if words and words[0] in LAUNCHER_WORDS:
+        words = words[1:]
+    if not words:
+        raise UsageError("type a command, or press Esc.")
+    if words[0] == TUI_COMMAND:
+        raise UsageError("this is the TUI.")
+    recipe = store.recipes().get(words[0])
+    if recipe is not None and len(words) == 1:
+        return requests.parse(recipe, project)
+    module = by_name().get(words[0])
+    if module is not None and len(words) == 1 and form_options(module):
+        return FormModel(module, project)
+    return requests.parse(words, project)
 
 
 def form_for_build_key(key: str, tree: str, project: Project) -> "FormModel":

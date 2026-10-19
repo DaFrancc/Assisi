@@ -741,7 +741,6 @@ class DispatchTest(ToolTest):
         code, out, _ = self.sandbox.run()
         self.assertEqual(code, 0)
         self.assertIn("package", out)
-        self.assertNotIn("textual", sys.modules)
 
     def test_unknown_command_names_the_commands(self):
         code, _, err = self.sandbox.run("frobnicate")
@@ -750,23 +749,31 @@ class DispatchTest(ToolTest):
 
 
 class CompatibilityTest(unittest.TestCase):
-    """The command line runs on the Steam Runtime container's Python 3.9."""
+    """The tool, TUI included, runs on the Steam Runtime container's Python 3.9
+    with nothing installed beside it."""
 
-    def cli_files(self) -> list[Path]:
+    def tool_files(self) -> list[Path]:
         package = TOOLS / "assisi"
-        return [path for path in package.rglob("*.py")
-                if path.parent.name not in ("tui", "tests") or path.name == "model.py"]
+        return [path for path in package.rglob("*.py") if path.parent.name != "tests"]
 
-    def test_command_line_files_parse_as_python_3_9(self):
-        for path in self.cli_files():
+    def test_tool_files_parse_as_python_3_9(self):
+        for path in self.tool_files():
             with self.subTest(path=path.name):
                 ast.parse(path.read_text(), filename=str(path), feature_version=(3, 9))
 
-    def test_command_line_never_imports_textual(self):
-        for path in self.cli_files():
-            text = path.read_text()
-            for statement in ("import textual", "from textual", "import rich", "from rich"):
-                self.assertFalse(statement in text, f"{path.name} has '{statement}'")
+    @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "Python 3.10 lists the standard library")
+    def test_tool_imports_only_the_standard_library(self):
+        allowed = set(sys.stdlib_module_names) | {"assisi", "__future__"}
+        for path in self.tool_files():
+            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    self.assertIn(name.split(".")[0], allowed, f"{path.name} imports {name}")
 
 
 if __name__ == "__main__":

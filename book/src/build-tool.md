@@ -83,39 +83,63 @@ configured, editor built, game built, assets cooked, assets packed. Your default
 level and compiler are highlighted. On the
 left are your recipes and your most used commands.
 
-The bottom line always shows the exact `./assisi` command for whatever is
-selected, so the menu teaches you the commands as you use it.
+The highlighted line near the bottom, the **status line**, always shows the
+exact `./assisi` command for whatever is selected, so the menu teaches you the
+commands as you use it.
+
+The menu works like vim: single keys do things, and you only type text where
+text is needed. The panes are **Recipes**, **Most used** and **Builds**; the
+one with the bright border has the focus, and the movement keys move its
+cursor.
 
 | Key | Does |
 |---|---|
-| **↑ ↓**, **Tab** | Move around |
+| **j** **k** or **↑** **↓** | Move the cursor down and up |
+| **g** **G** | Jump to the first or last entry |
+| **Tab**, **h** **l** | Focus the next or previous pane |
 | **Enter** | Run the selected recipe or command; on a build, open its build menu |
-| **b**, **k**, **p**, **v** | On a build: open the build, cook, package or release menu |
+| **b**, **c**, **p**, **v** | On a build: open the build, cook, package or release menu |
 | **e**, **r**, **t** | On a build: open the menu to start its editor, start its game, or test it |
 | **D** | On a build: make its level and compiler your defaults |
 | **1**–**9** | Run that entry of your most used commands |
 | **a** | Run the last command again |
 | **s** | Save the selected command, or the one that just ran, as a recipe |
+| **d** | On a recipe: delete it |
+| **:** | Type any command, as you would after `./assisi`; **Tab** completes it |
 | **/** | Filter the lists by typing |
-| **Ctrl+P** | Search every command and recipe |
+| **Esc** | Clear the filter and the last result |
 | **?** | Show every key |
 | **q** | Quit |
 
 The keys on a build never start anything by themselves. Each opens a menu
 holding every setting of that action, already set to the build you were on:
 the package menu, for example, has the level, compiler, Steam Runtime switch
-and which earlier release to match. Change what you need and choose **Run**
-(or press **Ctrl+R**); **Ctrl+S** saves it as a recipe instead, and **Esc**
-goes back without running anything. A recipe or a most-used command, on the
-other hand, runs as soon as you choose it, because you already picked every
-setting when you first ran it.
+and which earlier release to match. In the menu, **j** and **k** move between
+settings, **Space** switches one on or off, **h** and **l** step through a
+setting's choices, and **i** starts typing into a text setting such as a
+release's version (**Enter** or **Esc** stops). **Enter** on the **Go**
+button at the bottom runs it, as does **Ctrl+R** from anywhere in the menu;
+**Ctrl+S** saves it as a recipe instead, and **Esc** goes back without
+running anything. A recipe or a most-used command, on the other hand, runs as
+soon as you choose it, because you already picked every setting when you
+first ran it.
+
+A setting that names a file, like the earlier pak a package is laid out
+against, opens a **file browser** when you press **Enter** on it. It starts in
+`releases/`, where your earlier releases are, and lists folders first, then
+files. **j** and **k** move, **l** or **Enter** opens a folder or picks a file,
+**h** goes up a folder, **~** jumps to your home folder and **Esc** goes back
+without changing anything. It can go anywhere on your computer you're allowed
+to read; anything you aren't is shown in red with a **✘** and won't open. To
+type a path instead, press **i** on the setting.
+
+At the **:** line, a command name on its own, like `build`, opens that
+command's menu, and a whole command, like `build ship --game`, runs. A
+recipe's name runs the recipe.
 
 When something runs, the menu steps aside and the build prints straight to your
-terminal as usual. When it finishes, press **Enter** to go back.
+terminal as usual. **Ctrl+C** stops the build without closing the menu. When it
+finishes, press **Enter** to go back.
 
-The menu is built with [Textual](https://textual.textualize.io/). The first
-time you open it, the tool downloads Textual and the few packages it needs into
-`out/tool-env/`, which needs an internet connection and Python 3.10 or newer.
-It never touches the rest of your system. If that doesn't work, the tool says
-why, and every command still works without the menu. `./assisi tui --reinstall`
-downloads it again.
+The menu uses only Python's standard library, so there is nothing to install
+for it, and it works on any terminal that `./assisi` runs in, Windows' included.
