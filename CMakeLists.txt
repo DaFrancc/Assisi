@@ -12,6 +12,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# No source here or in a fetched dependency is a C++ module. Scanning for them
+# preprocesses every file a second time before it compiles, and the scanned
+# compile carries -fmodules-ts, which ccache refuses, so no C++ file would ever
+# be cached. Set before any target exists so the dependencies get it too.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 # Tooling (reflection/codegen can consume compile_commands.json later)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
