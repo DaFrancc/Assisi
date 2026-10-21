@@ -51,7 +51,18 @@ add_executable(Assisi-App-Tests
 # plain conditional keeps SOURCES a list of real filenames, which is what that
 # property is being read as.
 if (ASSISI_ENABLE_NETWORKING)
-  target_sources(Assisi-App-Tests PRIVATE TestBlueprintReplication.cpp TestPlayerSession.cpp)
+  # The session cases run in real time, a few seconds each, so they are spread
+  # over files that ctest runs side by side.
+  target_sources(Assisi-App-Tests PRIVATE
+    TestBlueprintReplication.cpp
+    PlayerSessionTesting.cpp
+    TestPlayerSessionGaps.cpp
+    TestPlayerSessionGapWalks.cpp
+    TestPlayerSessionOthers.cpp
+    TestPlayerSessionOwnCharacter.cpp
+    TestPlayerSessionPlayers.cpp
+    TestPlayerSessionTicks.cpp
+  )
 endif()
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
@@ -117,5 +128,20 @@ target_sources(Assisi-App-Tests PRIVATE
 )
 
 Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
+
+# The session cases run real sockets in real time. Packed in with a test on
+# every other CPU, a client's clock reads the time it waited for one as a slow
+# link and corrects itself, which a case that checks it settled fails on. A
+# second CPU held for each keeps ctest from running them on a full machine.
+if (ASSISI_ENABLE_NETWORKING)
+  set_tests_properties(
+    App.TestPlayerSessionGaps
+    App.TestPlayerSessionGapWalks
+    App.TestPlayerSessionOthers
+    App.TestPlayerSessionOwnCharacter
+    App.TestPlayerSessionPlayers
+    App.TestPlayerSessionTicks
+    PROPERTIES PROCESSORS 2)
+endif()
 
 set_target_properties(Assisi-App-Tests PROPERTIES FOLDER "tests")
