@@ -805,6 +805,45 @@ TEST_CASE("A client walking on through a gap the host lets go in ends where the 
           NetSync::Smoothing().predictionTolerance);
 }
 
+TEST_CASE("The sync test finds every tick a client steps a second time the same as the first")
+{
+    // A level with an oscillator each machine moves from the tick, and a
+    // client walking and looking around: everything a replay must put back.
+    const std::filesystem::path root = FreshRoot();
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    for (const std::unique_ptr<Machine> &machine : session.machines)
+    {
+        REQUIRE(App::SystemCatalog::Instance().Install(machine->world, std::vector<std::string>{"Oscillate"}, "test"));
+        const ECS::Entity bob = machine->world.scene.Create();
+        (void)machine->world.scene.Add<ECS::Transform>(bob);
+        (void)machine->world.scene.Add<Runtime::Oscillator>(bob);
+    }
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    REQUIRE(own != ECS::NullEntity);
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    replication.SetSyncTest(true);
+
+    constexpr float kTurnPerFrame = 0.01f;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))
+        {
+            controls->move = {0.5f, 1.f};
+            controls->lookYaw = kTurnPerFrame;
+        }
+    });
+
+    CHECK(replication.SyncTestResults().replays > static_cast<std::uint64_t>(kLongWalkFrames) / 2u);
+    CHECK(replication.SyncTestResults().differences == 0);
+}
+
 TEST_CASE("Every player reaches a client as a whole blueprint, the host's own included")
 {
     // The host makes its own player on its first step. Sent before the host

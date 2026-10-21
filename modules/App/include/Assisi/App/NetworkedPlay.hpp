@@ -78,7 +78,9 @@ public:
     ///
     /// For the world this plays, a client first steps again every tick since
     /// the host's word that it got wrong, so the live step goes on from what
-    /// the host said. Any other world is stepped as it is.
+    /// the host said; with no such word and the sync test on, it steps the
+    /// last tick again instead (NetSync::ReplicationClient::SetSyncTest). Any
+    /// other world is stepped as it is.
     void StepWorld(const SystemContext &ctx);
 
     /// @brief The end of a fixed step, after everything that writes in it: puts

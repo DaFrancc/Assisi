@@ -65,11 +65,6 @@ CollisionFilter FilterOfCollider(const Collider &collider)
     return CollisionFilter{collider.collidesWith, collider.channel};
 }
 
-glm::vec3 ToGlm(JPH::Vec3Arg vector)
-{
-    return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
-}
-
 /// Keeps the first hit per piece of @p hits, in order.
 void KeepFirstPerPiece(std::vector<QueryHit> &hits)
 {

@@ -449,6 +449,9 @@ SessionStats NetSession::Stats() const
         stats.divergenceMax      = corrections.divergenceMax;
         stats.predictionsKept     = corrections.predictionsKept;
         stats.predictionsReplayed = corrections.predictionsReplayed;
+        stats.hardSnaps           = corrections.hardSnaps;
+        stats.syncTestReplays     = _client->SyncTestResults().replays;
+        stats.syncTestDifferences = _client->SyncTestResults().differences;
         stats.mirrorsResurrected = _client->MirrorsResurrected();
         stats.eventsDispatched   = _client->EventsDispatched();
         stats.eventsUnhandled    = _client->EventsUnhandled();

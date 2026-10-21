@@ -202,12 +202,7 @@ void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose
 
 bool ReplicationClient::PredictsCharacter(NetId netId, ECS::Entity entity) const
 {
-    if (!_confirmed.contains(netId) || !_scene.Has<Physics::Character>(entity))
-    {
-        return false;
-    }
-    const Physics::CharacterState *state = _scene.Get<Physics::CharacterState>(entity);
-    return state == nullptr || state->baseEntity == ECS::NullEntity;
+    return _confirmed.contains(netId) && _scene.Has<Physics::Character>(entity);
 }
 
 void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
@@ -479,6 +474,10 @@ void ReplicationClient::Reset()
     _history.clear();
     _sentCommands.fill(InputCommand{});
     _recordedTicks.fill(0);
+    for (std::vector<FollowerRecord> &followers : _followers)
+    {
+        followers.clear();
+    }
     _newestRecordedTick = 0;
     _confirmed.clear();
     _transformHistory.clear();

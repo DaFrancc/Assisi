@@ -1260,11 +1260,11 @@ namespace
 {
 
 /// A character standing on the shared floor, sent to the client.
-ECS::Entity SpawnStanding(PhysicsHarness &harness)
+ECS::Entity SpawnStanding(PhysicsHarness &harness, glm::vec3 feet = glm::vec3{0.f})
 {
     SpawnSharedFloor(harness);
     const ECS::Entity character = harness.serverScene.Create();
-    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{.position = feet});
     (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
     (void)harness.serverScene.Add<Replicated>(character, Replicated{});
     harness.Step(30);
@@ -1370,6 +1370,54 @@ glm::vec3 MoveFor(const InputCommand *command, glm::vec3 held, std::uint32_t sta
     return starvedTicks > kRigHoldTicks ? glm::vec3{0.f} : held;
 }
 
+/// What a PredictionRig stands in, besides the floor and the client's
+/// character at the origin.
+struct RigLevel
+{
+    /// Another player's character: the host's to move, and on the client a
+    /// mirror like any other.
+    std::optional<glm::vec3> other;
+    /// A second character the client controls.
+    std::optional<glm::vec3> secondAt;
+    /// A moving deck the client's characters stand on, carried by it: a level's
+    /// own kinematic platform, on both machines and never sent, moved by each
+    /// from the tick alone as Oscillate moves one.
+    bool deck = false;
+};
+
+/// The deck's size (m), and where its top is.
+constexpr glm::vec3 kDeckHalfExtents{6.f, 0.25f, 6.f};
+constexpr float kDeckTop = 0.5f;
+
+/// How fast the deck travels (m/s) and turns (rad/s). Turning, so a rider
+/// stepped again against a deck standing still walks a different line.
+constexpr glm::vec3 kDeckVelocity{0.5f, 0.f, 0.25f};
+constexpr float kDeckYawRate = 0.5f;
+
+/// A moving deck in @p scene, as RigLevel::deck describes.
+ECS::Entity AddDeck(ECS::Scene &scene, Physics::PhysicsWorld &physics)
+{
+    const ECS::Entity deck = SpawnBox(scene, physics, {0.f, kDeckTop - kDeckHalfExtents.y, 0.f}, /*isStatic=*/ false,
+                                      kDeckHalfExtents, /*replicated=*/ false);
+    scene.GetMut<Physics::RigidBody>(deck)->motion = Physics::MotionType::Kinematic;
+    (void)scene.Add<Physics::Carrier>(deck, Physics::Carrier{});
+    physics.Reconcile();
+    return deck;
+}
+
+/// Puts @p deck where it is at @p tick, having set off at @p from.
+void MoveDeck(ECS::Scene &scene, ECS::Entity deck, std::uint64_t tick, std::uint64_t from)
+{
+    if (deck == ECS::NullEntity || tick < from)
+    {
+        return;
+    }
+    const float seconds = static_cast<float>(tick - from) * kFixedStep;
+    ECS::Transform &transform = *scene.GetMut<ECS::Transform>(deck);
+    transform.position = glm::vec3{0.f, kDeckTop - kDeckHalfExtents.y, 0.f} + kDeckVelocity * seconds;
+    transform.rotation = glm::angleAxis(kDeckYawRate * seconds, glm::vec3{0.f, 1.f, 0.f});
+}
+
 /// Both machines walking the client's characters the same way, the client
 /// kLeadTicks ahead and sending its commands as a player's machine does, with
 /// each machine's step and the wire between them run by hand so a case
@@ -1400,29 +1448,35 @@ struct PredictionRig
     std::uint32_t replays = 0;
     std::uint32_t replayedSteps = 0;
 
-    PredictionRig() : PredictionRig(std::nullopt) {}
+    /// The deck on each machine, when the level has one, and the tick it sets
+    /// off at on both.
+    ECS::Entity hostDeck{ECS::NullEntity};
+    ECS::Entity clientDeck{ECS::NullEntity};
+    std::uint64_t deckFrom = 0;
 
-    /// With @p other, another player's character stands there: the host's
-    /// to move, and on the client a mirror like any other. With @p secondAt,
-    /// the client controls a second character standing there.
-    explicit PredictionRig(std::optional<glm::vec3> other, std::optional<glm::vec3> secondAt = std::nullopt)
+    explicit PredictionRig(const RigLevel &level = {})
     {
         harness.Step(4);
-        character = SpawnStanding(harness);
+        if (level.deck)
+        {
+            hostDeck = AddDeck(harness.serverScene, harness.serverPhysics);
+            clientDeck = AddDeck(harness.clientScene, harness.clientPhysics);
+        }
+        character = SpawnStanding(harness, glm::vec3{0.f, level.deck ? kDeckTop : 0.f, 0.f});
         (void)harness.serverScene.Add<Test::Charge>(character, Test::Charge{});
-        if (other.has_value())
+        if (level.other.has_value())
         {
             otherPlayer = harness.serverScene.Create();
-            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *other});
+            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *level.other});
             (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
         }
         const ClientId client = harness.server.ClientIdOf(harness.serverSide());
         harness.server.SetControl(character, client);
-        if (secondAt.has_value())
+        if (level.secondAt.has_value())
         {
             second = harness.serverScene.Create();
-            (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = *secondAt});
+            (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = *level.secondAt});
             (void)harness.serverScene.Add<Physics::Character>(second, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(second, Replicated{});
             harness.server.SetControl(second, client);
@@ -1437,6 +1491,7 @@ struct PredictionRig
             REQUIRE(secondMirror != ECS::NullEntity);
         }
         Deliver();
+        deckFrom = harness.tick;
 
         // The client's first commands, sent before the host reaches them and
         // there when it does.
@@ -1478,7 +1533,7 @@ struct PredictionRig
             {
                 harness.clientScene.GetMut<Physics::CharacterIntent>(entity)->move = held;
             }
-            harness.clientPhysics.StepCharacters(replay->characters, kFixedStep);
+            harness.clientPhysics.StepCharacters(replay->characters, harness.client.FollowersAt(tick), kFixedStep);
             if (afterStep)
             {
                 afterStep(harness.clientScene, mirror, tick);
@@ -1533,6 +1588,7 @@ struct PredictionRig
         {
             harness.clientScene.GetMut<Physics::CharacterIntent>(entity)->move = move;
         }
+        MoveDeck(harness.clientScene, clientDeck, tick, deckFrom);
         harness.clientPhysics.Update(kFixedStep);
         if (afterStep)
         {
@@ -1560,6 +1616,7 @@ struct PredictionRig
         {
             harness.serverScene.GetMut<Physics::CharacterIntent>(entity)->move = hostMove;
         }
+        MoveDeck(harness.serverScene, hostDeck, harness.tick, deckFrom);
         harness.serverPhysics.Update(kFixedStep);
         if (afterStep)
         {
@@ -1731,7 +1788,7 @@ TEST_CASE("a rollback for one predicted character leaves the other where its own
     // The host agreed with the second, so it is put back to the client's own
     // record and stepped again; put back where the host had it instead, it
     // would move by the host's rounding on every rollback of its neighbour.
-    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    PredictionRig rig(RigLevel{.other = std::nullopt, .secondAt = kSecondCharacterAt, .deck = false});
     for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
     {
         rig.StepBoth();
@@ -1754,9 +1811,42 @@ TEST_CASE("a rollback for one predicted character leaves the other where its own
           kMatchedUnmoved);
 }
 
+TEST_CASE("a character riding a moving, turning deck steps again with it, to where its own steps put it")
+{
+    // A rollback for the first character puts the second, which the host
+    // agreed with, back to its own record; stepped again against the deck
+    // where it is now rather than where it was, it would walk a different line.
+    constexpr std::int32_t kHostCharge = 7;
+    const glm::vec3 secondOnDeck{0.f, kDeckTop, 3.f};
+    PredictionRig rig(RigLevel{.other = std::nullopt, .secondAt = secondOnDeck, .deck = true});
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    REQUIRE(rig.replays == 0);
+    REQUIRE(rig.harness.clientScene.Get<Physics::CharacterState>(rig.secondMirror)->baseEntity == rig.clientDeck);
+
+    rig.harness.serverScene.GetMut<Test::Charge>(rig.character)->level = kHostCharge;
+    ECS::Transform secondBefore;
+    for (std::uint32_t i = 0; i < kAgreeingTicks && rig.replays == 0; ++i)
+    {
+        rig.StepBoth();
+        secondBefore = *rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror);
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    REQUIRE(rig.replays == 1);
+    const ECS::Transform &secondAfter = *rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror);
+    CHECK(glm::length(secondAfter.position - secondBefore.position) < kMatchedUnmoved);
+    CHECK(std::abs(glm::dot(secondAfter.rotation, secondBefore.rotation)) > 1.f - kMatchedUnmoved);
+    CHECK(rig.harness.clientScene.Get<Physics::CharacterState>(rig.secondMirror)->baseEntity == rig.clientDeck);
+}
+
 TEST_CASE("a predicted character the host despawns is neither put back nor remembered")
 {
-    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    PredictionRig rig(RigLevel{.other = std::nullopt, .secondAt = kSecondCharacterAt, .deck = false});
     for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
     {
         rig.StepBoth();
@@ -1815,7 +1905,7 @@ TEST_CASE("a predicted component steps again from the client's own record, and l
     // must put the second's charge back to the tick it rolls back to from the
     // client's own record, or the replay drains it twice.
     constexpr std::int32_t kFullCharge = 1000;
-    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    PredictionRig rig(RigLevel{.other = std::nullopt, .secondAt = kSecondCharacterAt, .deck = false});
     (void)rig.harness.serverScene.Add<Test::Charge>(rig.second, Test::Charge{.level = kFullCharge});
     for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
     {
@@ -1944,7 +2034,7 @@ TEST_CASE("a client walking its character into another player does not shove tha
     // Shoved here, the mirror would be put back by the host's next word, into
     // the way of the character that shoved it, which would be pushed back in
     // turn: a jitter every snapshot for as long as the two touch.
-    PredictionRig rig(kOtherPlayerAhead);
+    PredictionRig rig(RigLevel{.other = kOtherPlayerAhead, .secondAt = std::nullopt, .deck = false});
     const ECS::Entity otherMirror = MirrorOf(rig.harness, rig.otherPlayer);
     REQUIRE(otherMirror != ECS::NullEntity);
 

@@ -459,6 +459,16 @@ inline JPH::Quat ToJolt(glm::quat rotation)
     return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized();
 }
 
+inline glm::vec3 ToGlm(JPH::Vec3Arg vector)
+{
+    return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
+}
+
+inline glm::quat ToGlm(JPH::QuatArg rotation)
+{
+    return glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
+}
+
 /// Every degree of freedom, as LockedAxis bits.
 constexpr uint32_t kAllAxes = (1u << static_cast<uint32_t>(LockedAxis::Count_)) - 1u;
 
@@ -1123,6 +1133,13 @@ private:
     /// Applies one request to a character: a force or an impulse becomes a
     /// change of velocity, and anything else is ignored.
     void ApplyCharacterRequest(CharacterRecord &record, const BodyRequest &request, float deltaTime) const;
+
+    /// What ApplyRequests does for the characters of @p stepped alone, which
+    /// StepCharacters steps; every other request stays queued.
+    void ApplyCharacterRequests(std::span<CharacterRecord *const> stepped, float deltaTime);
+
+    /// Applies @p request if it is for a character of @p stepped. True if it was.
+    bool TakeCharacterRequest(std::span<CharacterRecord *const> stepped, const BodyRequest &request, float deltaTime);
 
     /// The slot @p entity's index maps to, if it holds that entity.
     BodySlot *SlotFor(ECS::Entity entity);
@@ -1803,6 +1820,13 @@ private:
     /// gave the base, turning its facing with the base's yaw unless it opted
     /// out, and lets go of each one that is leaving.
     void CarryRiders();
+
+    /// CarryRiders for one riding character.
+    void CarryRider(CharacterRecord &record);
+
+    /// Puts @p entity's kinematic body where @p frame has it, moving as fast.
+    /// Nothing for any other body.
+    void PlaceFollower(ECS::Entity entity, const FollowerFrame &frame);
 
     /// Changes @p record's capsule to @p stance's. False when it does not fit,
     /// which in practice means standing up under something too low; nothing

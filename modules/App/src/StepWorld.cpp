@@ -11,9 +11,11 @@
 namespace Assisi::App
 {
 
-void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters)
+void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters,
+               std::span<const Physics::FollowerStep> followers)
 {
-    ASSISI_ASSERT(ctx.replaying || replayedCharacters.empty(), "StepWorld: a live step steps every character");
+    ASSISI_ASSERT(ctx.replaying || (replayedCharacters.empty() && followers.empty()),
+                  "StepWorld: a live step steps every character and every body");
     World &world = ctx.world;
 
     // Ask for what should happen, simulate it, react to what did. The phase
@@ -29,7 +31,7 @@ void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCh
         ASSISI_PROFILE_SCOPE("physics-step");
         if (ctx.replaying)
         {
-            world.physics.StepCharacters(replayedCharacters, ctx.dt);
+            world.physics.StepCharacters(replayedCharacters, followers, ctx.dt);
         }
         else
         {

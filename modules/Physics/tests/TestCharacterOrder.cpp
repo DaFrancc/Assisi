@@ -132,7 +132,7 @@ TEST_CASE("Stepping only the characters steps them as a whole step does")
         WalkAtEachOther(whole, inWhole);
         WalkAtEachOther(subset, inSubset);
         whole.world.Update(kStep);
-        subset.world.StepCharacters(both, kStep);
+        subset.world.StepCharacters(both, {}, kStep);
     }
 
     CHECK(glm::length(FeetOf(whole, inWhole.left) - FeetOf(subset, inSubset.left)) < kSameRunTolerance);

@@ -6,6 +6,7 @@
 ///        game, a dedicated server, and a client stepping a tick again.
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <span>
 
@@ -24,9 +25,11 @@ struct SystemContext;
 /// a step the same on every machine.
 ///
 /// Live (`ctx.replaying` false), the physics step is the whole PhysicsWorld
-/// update and @p replayedCharacters must be empty. Replaying, it steps only
-/// the characters of @p replayedCharacters, as a live step would, against
-/// everything else as it stands; `liveOnly` systems are skipped.
-void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters = {});
+/// update and @p replayedCharacters and @p followers must be empty. Replaying,
+/// it steps only the characters of @p replayedCharacters, as a live step would,
+/// with each of @p followers moving as it did live and everything else as it
+/// stands (PhysicsWorld::StepCharacters); `liveOnly` systems are skipped.
+void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters = {},
+               std::span<const Physics::FollowerStep> followers = {});
 
 } // namespace Assisi::App

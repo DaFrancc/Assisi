@@ -88,6 +88,11 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
         return;
     }
     std::optional<NetSync::ReplicationClient::Replay> replay = client->BeginRollback();
+    const bool syncTest = !replay.has_value();
+    if (syncTest)
+    {
+        replay = client->BeginSyncTest();
+    }
     if (!replay.has_value())
     {
         return;
@@ -101,12 +106,16 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
         const NetSync::ReplicationClient::AppliedCommand applied = client->CommandAppliedAt(tick);
         _players.ReplayCommand(_world, applied.command, applied.starvedTicks);
         replayed.simTick = tick;
-        App::StepWorld(replayed, replay->characters);
+        App::StepWorld(replayed, replay->characters, client->FollowersAt(tick));
         client->RecordHistory(tick);
         _players.RecordControls(_world, tick);
     }
     client->EndRollback();
     _players.EndReplay(_world);
+    if (syncTest)
+    {
+        client->EndSyncTest();
+    }
 }
 
 void NetworkedPlay::EndStep()

@@ -73,16 +73,6 @@ std::uint64_t JointKey(ECS::Entity owner, JointKind kind)
     return (static_cast<std::uint64_t>(owner.index) << kKindBits) | static_cast<std::uint64_t>(kind);
 }
 
-glm::vec3 ToGlm(JPH::Vec3Arg vector)
-{
-    return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
-}
-
-glm::quat ToGlm(JPH::QuatArg rotation)
-{
-    return glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
-}
-
 /// A unit vector at right angles to the unit @p axis, the same one every time.
 glm::vec3 PerpendicularTo(glm::vec3 axis)
 {

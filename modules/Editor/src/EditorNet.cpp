@@ -745,10 +745,35 @@ void EditorApp::DrawNetworkWindow()
         ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
                            static_cast<double>(stats.divergenceMax) * 1000.0);
 
-        // How often the host disagreed with where this client put its own
-        // character. Every replay is a correction the player may feel.
+        // How often the host disagreed with what this client predicted. Every
+        // replay is a correction the player may feel.
         LabelledValue("Predictions kept", std::format("{}", stats.predictionsKept));
         LabelledValue("Predictions replayed", std::format("{}", stats.predictionsReplayed));
+        NetCounterRow("Hard snaps", stats.hardSnaps,
+                      "The host's word was older than any tick this client kept, so it was snapped to with "
+                      "nothing replayed on top.");
+
+        // Steps every tick again and compares it with the live step: a check of
+        // the replay itself, for while something is being built.
+        if (Assisi::NetSync::ReplicationClient *client = _networkedPlay->Session().Client(); client != nullptr)
+        {
+            bool syncTest = client->SyncTest();
+            if (ImGui::Checkbox("Sync test", &syncTest))
+            {
+                client->SetSyncTest(syncTest);
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Step every tick a second time and compare it with the first. Any field that "
+                                  "differs is logged: something a replay does not put back.");
+            }
+            if (syncTest || stats.syncTestReplays > 0)
+            {
+                LabelledValue("Ticks stepped twice", std::format("{}", stats.syncTestReplays));
+                NetCounterRow("Fields that differed", stats.syncTestDifferences,
+                              "Each is in the log with both values. Zero is the only right answer.");
+            }
+        }
 
         // Silent churn otherwise: a client-side cleanup system running over
         // mirrors would destroy and re-receive them forever with no signal.

@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -12,6 +13,9 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 // ===========================================================================
@@ -93,6 +97,50 @@ void ReplicationClient::Record(std::uint64_t tick)
             record.character = _physics->CaptureCharacter(entity);
         }
     }
+    RecordFollowers(tick);
+}
+
+void ReplicationClient::RecordFollowers(std::uint64_t tick)
+{
+    std::vector<FollowerRecord> &followers = _followers[tick % kPredictionHistoryTicks];
+    followers.clear();
+    if (_physics == nullptr)
+    {
+        return;
+    }
+    _followerEntities.clear();
+    _physics->Followers(_followerEntities);
+    for (const ECS::Entity entity : _followerEntities)
+    {
+        followers.push_back(FollowerRecord{.frame = _physics->CaptureFollower(entity), .entity = entity});
+    }
+}
+
+std::vector<Physics::FollowerStep> ReplicationClient::FollowersAt(std::uint64_t tick) const
+{
+    std::vector<Physics::FollowerStep> steps;
+    const std::uint64_t previous = tick - 1u;
+    if (_recordedTicks[tick % kPredictionHistoryTicks] != tick ||
+        _recordedTicks[previous % kPredictionHistoryTicks] != previous)
+    {
+        return steps;
+    }
+    // Both in the order the physics world lists them, so one pass pairs them.
+    const std::vector<FollowerRecord> &from = _followers[previous % kPredictionHistoryTicks];
+    const std::vector<FollowerRecord> &to = _followers[tick % kPredictionHistoryTicks];
+    std::vector<FollowerRecord>::const_iterator start = from.begin();
+    for (const FollowerRecord &end : to)
+    {
+        const std::vector<FollowerRecord>::const_iterator found = std::find_if(
+            start, from.end(), [&end](const FollowerRecord &record) { return record.entity == end.entity; });
+        if (found == from.end())
+        {
+            continue;
+        }
+        steps.push_back(Physics::FollowerStep{.from = found->frame, .to = end.frame, .entity = end.entity});
+        start = found + 1;
+    }
+    return steps;
 }
 
 void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
@@ -229,9 +277,11 @@ std::string ReplicationClient::PhysicsDifference(const BodyState &host, const Pr
             return Difference("rotation", transform.rotation, host.rotation);
         }
     }
-    if (glm::length(mine.velocity - host.linearVelocity) > smoothing.predictionVelocityTolerance)
+    // In the world, as the host sends it: a rider's own velocity is its
+    // base's frame's.
+    if (glm::length(mine.worldVelocity - host.linearVelocity) > smoothing.predictionVelocityTolerance)
     {
-        return Difference("velocity", mine.velocity, host.linearVelocity);
+        return Difference("velocity", mine.worldVelocity, host.linearVelocity);
     }
     if (mine.stance != host.stance)
     {
@@ -339,8 +389,10 @@ void ReplicationClient::PlaceCharacter(ECS::Entity entity, Physics::CharacterFra
     // The wire carries where the host had it, how fast it went, how it stood
     // and which way it faced, not its jump timers or eye height: those stay
     // the client's own.
+    // The host's velocity is in the world; a rider's own is relative to its
+    // base, which moved as fast then as the frame records.
     frame.position = host.position;
-    frame.velocity = host.linearVelocity;
+    frame.velocity = host.linearVelocity - (frame.worldVelocity - frame.velocity);
     frame.stance = host.stance;
     _physics->RewindCharacter(entity, frame);
     if (ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity); transform != nullptr)
@@ -362,6 +414,105 @@ std::optional<ReplicationClient::Replay> ReplicationClient::BeginRollback()
     {
         return std::nullopt;
     }
+    std::optional<Replay> replay = RollBackTo(from);
+    if (replay.has_value())
+    {
+        ++_corrections.predictionsReplayed;
+    }
+    return replay;
+}
+
+std::optional<ReplicationClient::Replay> ReplicationClient::BeginSyncTest()
+{
+    const std::uint64_t now = _newestRecordedTick;
+    if (!_syncTest || _rollingBack || now == 0 || _recordedTicks[(now - 1u) % kPredictionHistoryTicks] != now - 1u)
+    {
+        return std::nullopt;
+    }
+    _syncLive.clear();
+    for (const auto &[netId, history] : _history)
+    {
+        const PredictedRecord &record = history.records[now % kPredictionHistoryTicks];
+        if (record.tick == now)
+        {
+            _syncLive.emplace_back(netId, record);
+        }
+    }
+    _syncTick = now;
+    return RollBackTo(now - 1u);
+}
+
+void ReplicationClient::EndSyncTest()
+{
+    ++_syncTestCounts.replays;
+    for (const auto &[netId, live] : _syncLive)
+    {
+        const std::unordered_map<NetId, PredictionHistory>::const_iterator found = _history.find(netId);
+        if (found == _history.end())
+        {
+            continue;
+        }
+        const PredictedRecord &replayed = found->second.records[_syncTick % kPredictionHistoryTicks];
+        for (const std::string &difference : SyncDifferences(live, replayed))
+        {
+            ++_syncTestCounts.differences;
+            Core::Log::Warn("Sync test: tick {}, entity {}: stepped again, {} (live, then replayed).", _syncTick,
+                            netId.value, difference);
+        }
+    }
+    _syncLive.clear();
+}
+
+std::vector<std::string> ReplicationClient::SyncDifferences(const PredictedRecord &live,
+                                                            const PredictedRecord &replayed) const
+{
+    std::vector<std::string> differences;
+    if (replayed.tick != live.tick)
+    {
+        differences.push_back("the record: missing");
+        return differences;
+    }
+    if (live.hasCharacter && replayed.hasCharacter)
+    {
+        const Physics::CharacterFrame &a = live.character;
+        const Physics::CharacterFrame &b = replayed.character;
+        if (!Core::Reflect::PredictedFieldEqual(a.position, b.position))
+        {
+            differences.push_back(Difference("position", a.position, b.position));
+        }
+        if (!Core::Reflect::PredictedFieldEqual(a.worldVelocity, b.worldVelocity))
+        {
+            differences.push_back(Difference("velocity", a.worldVelocity, b.worldVelocity));
+        }
+        if (a.stance != b.stance || a.ground != b.ground || a.base != b.base)
+        {
+            differences.push_back(Difference("stance, ground and base",
+                                             glm::uvec3(static_cast<std::uint32_t>(a.stance),
+                                                        static_cast<std::uint32_t>(a.ground), a.base.index),
+                                             glm::uvec3(static_cast<std::uint32_t>(b.stance),
+                                                        static_cast<std::uint32_t>(b.ground), b.base.index)));
+        }
+    }
+    for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
+    {
+        const std::uint64_t bit = std::uint64_t{1} << i;
+        if ((live.present & bit) == 0 || (replayed.present & bit) == 0)
+        {
+            continue;
+        }
+        const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
+        const void *a = live.components.data() + _predictedOffsets[i];
+        const void *b = replayed.components.data() + _predictedOffsets[i];
+        if (!meta.predictedEquals(a, b))
+        {
+            differences.push_back(std::format("{} {}", meta.name, meta.predictedDifference(a, b)));
+        }
+    }
+    return differences;
+}
+
+std::optional<ReplicationClient::Replay> ReplicationClient::RollBackTo(std::uint64_t from)
+{
     if (_recordedTicks[from % kPredictionHistoryTicks] != from)
     {
         for (auto &[netId, history] : _history)
@@ -419,7 +570,6 @@ std::optional<ReplicationClient::Replay> ReplicationClient::BeginRollback()
 
     _scene.BeginReplay(replayed);
     _rollingBack = true;
-    ++_corrections.predictionsReplayed;
     return replay;
 }
 
