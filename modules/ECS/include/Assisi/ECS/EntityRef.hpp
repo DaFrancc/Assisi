@@ -15,7 +15,7 @@
 /// With no codec installed a reference writes null and reads back as NullEntity:
 /// there is nothing it could be addressed by.
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <Assisi/ECS/Entity.hpp>
 
