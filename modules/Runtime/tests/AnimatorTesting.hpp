@@ -30,6 +30,18 @@ inline constexpr std::string_view kSpace = "quaternius/UAL1/Locomotion.ablnd";
 inline constexpr std::string_view kMaterial = "quaternius/UAL1/UAL1_M_Joints.amat";
 inline constexpr std::string_view kClips = "quaternius/UAL1/UAL1_animations/";
 
+/// Skips a test when the UAL1 pack is not in the asset tree.
+///
+/// The pack is Quaternius's, not the engine's: assets/quaternius/ is ignored by
+/// git, so a checkout has it only once someone has put it there. Without it
+/// every test that compiles against the real skeleton would fail on a missing
+/// file rather than on anything it tests, so they report as skipped instead,
+/// and run again the moment the pack is installed.
+inline doctest::skip NeedsUal1()
+{
+    return doctest::skip(!std::filesystem::exists(std::filesystem::path{ASSISI_SOURCE_ASSET_ROOT} / kModel));
+}
+
 /// The asset tree as a cook sees it: the real UAL1 files by their real kinds,
 /// and any `.sgl` libraries a test writes in memory.
 class TestTree final : public Core::AssetCookContext

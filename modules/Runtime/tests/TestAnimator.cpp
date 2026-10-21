@@ -75,7 +75,7 @@ void Jump(Character &character)
 
 } // namespace
 
-TEST_CASE("Animator: each layer starts at its first state, and the player plays it")
+TEST_CASE("Animator: each layer starts at its first state, and the player plays it" * NeedsUal1())
 {
     const Character character = Bound();
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"locomotion"});
@@ -90,7 +90,7 @@ TEST_CASE("Animator: each layer starts at its first state, and the player plays 
     CHECK_FALSE(upper.loop);
 }
 
-TEST_CASE("Animator: a transition fires into a state holding states, with its own fade")
+TEST_CASE("Animator: a transition fires into a state holding states, with its own fade" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
@@ -99,7 +99,7 @@ TEST_CASE("Animator: a transition fires into a state holding states, with its ow
     CHECK_FALSE(character.player.loop);
 }
 
-TEST_CASE("Animator: a trigger lasts one frame, used or not")
+TEST_CASE("Animator: a trigger lasts one frame, used or not" * NeedsUal1())
 {
     Character character = Bound();
     REQUIRE(Runtime::SetAnimatorBool(character.animator, "grounded", false));
@@ -110,7 +110,7 @@ TEST_CASE("Animator: a trigger lasts one frame, used or not")
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"locomotion"});
 }
 
-TEST_CASE("Animator: a clip played once moves on when it ends, and not a frame before")
+TEST_CASE("Animator: a clip played once moves on when it ends, and not a frame before" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
@@ -133,7 +133,7 @@ TEST_CASE("Animator: a clip played once moves on when it ends, and not a frame b
     CHECK(character.player.loop);
 }
 
-TEST_CASE("Animator: an outer transition wins over the state inside it moving on")
+TEST_CASE("Animator: an outer transition wins over the state inside it moving on" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
@@ -143,7 +143,7 @@ TEST_CASE("Animator: an outer transition wins over the state inside it moving on
     CHECK(character.player.fade == doctest::Approx(kLandFade));
 }
 
-TEST_CASE("Animator: during a fade only a transition that may interrupt fires")
+TEST_CASE("Animator: during a fade only a transition that may interrupt fires" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
@@ -163,7 +163,7 @@ TEST_CASE("Animator: during a fade only a transition that may interrupt fires")
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"airborne", "jump_start"});
 }
 
-TEST_CASE("Animator: a state played once again from the start when entered on the same clip")
+TEST_CASE("Animator: a state played once again from the start when entered on the same clip" * NeedsUal1())
 {
     const std::string walk = Clip("Walk_Loop");
     Character character =
@@ -175,7 +175,7 @@ TEST_CASE("Animator: a state played once again from the start when entered on th
     CHECK(character.player.track.current.Phase == 0.f);
 }
 
-TEST_CASE("Animator: rate, blend position and weight are written every frame")
+TEST_CASE("Animator: rate, blend position and weight are written every frame" * NeedsUal1())
 {
     Character character = Bound();
     constexpr float kSpeed = 3.f;
@@ -191,7 +191,7 @@ TEST_CASE("Animator: rate, blend position and weight are written every frame")
     CHECK(character.player.layers[0].speed == 0.f);
 }
 
-TEST_CASE("Animator: a changed file keeps each layer in the states of the same names, and the params")
+TEST_CASE("Animator: a changed file keeps each layer in the states of the same names, and the params" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
@@ -216,7 +216,7 @@ TEST_CASE("Animator: a changed file keeps each layer in the states of the same n
     CHECK(walking.player.parameter.x == doctest::Approx(2.f));
 }
 
-TEST_CASE("Animator: a param is set only by its own name and type")
+TEST_CASE("Animator: a param is set only by its own name and type" * NeedsUal1())
 {
     Character character = Bound();
     CHECK_FALSE(Runtime::SetAnimatorBool(character.animator, "jump", true));
@@ -232,7 +232,7 @@ TEST_CASE("Animator: a param is set only by its own name and type")
     CHECK_FALSE(Runtime::AnimatorFloat(unbound, "speed").has_value());
 }
 
-TEST_CASE("Animator: a level keeps its file and clip bindings, and not where it was in them")
+TEST_CASE("Animator: a level keeps its file and clip bindings, and not where it was in them" * NeedsUal1())
 {
     ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
@@ -257,7 +257,7 @@ TEST_CASE("Animator: a level keeps its file and clip bindings, and not where it 
     CHECK(restored->run.graph == nullptr);
 }
 
-TEST_CASE("Animator: a clip param plays what the Animator binds to it")
+TEST_CASE("Animator: a clip param plays what the Animator binds to it" * NeedsUal1())
 {
     const std::string source = "use animation;\nskeleton \"" + std::string{kModel} +
                                "\";\nparam run_clip: clip;\nlayer base {\n    state run { play run_clip; }\n}\n";

@@ -402,7 +402,7 @@ class NameTest(ToolTest):
     def test_every_build_the_tool_knows_is_a_preset_and_back(self):
         # Against the repository's real CMakePresets.json: a preset added there
         # and not here, or named here and not there, fails this.
-        presets = json.loads((REPO / "CMakePresets.json").read_text())
+        presets = json.loads((REPO / "CMakePresets.json").read_text(encoding="utf-8"))
         configure = {entry["name"] for entry in presets["configurePresets"] if not entry.get("hidden")}
         build = {entry["name"] for entry in presets["buildPresets"]}
         test = {entry["name"] for entry in presets["testPresets"]}
@@ -901,13 +901,13 @@ class CompatibilityTest(unittest.TestCase):
     def test_tool_files_parse_as_python_3_9(self):
         for path in self.tool_files():
             with self.subTest(path=path.name):
-                ast.parse(path.read_text(), filename=str(path), feature_version=(3, 9))
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 9))
 
     @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "Python 3.10 lists the standard library")
     def test_tool_imports_only_the_standard_library(self):
         allowed = set(sys.stdlib_module_names) | {"assisi", "__future__"}
         for path in self.tool_files():
-            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
                 if isinstance(node, ast.Import):
                     names = [alias.name for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:

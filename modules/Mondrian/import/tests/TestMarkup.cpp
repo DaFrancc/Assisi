@@ -78,7 +78,10 @@ TEST_CASE("Markup: an element's own line and column are where its name starts")
     CHECK(root.children[0].line == 2);
     CHECK(root.children[0].column == 4);
 
-    const MarkupAttribute *gap = Parsed("<screen>\n  <column gap=\"12\" />\n</screen>\n").children[0].Find("gap");
+    // Kept in a variable: Find points into the tree, and a tree that was only a
+    // temporary is gone by the next line.
+    const MarkupElement withGap = Parsed("<screen>\n  <column gap=\"12\" />\n</screen>\n");
+    const MarkupAttribute *gap = withGap.children[0].Find("gap");
     REQUIRE(gap != nullptr);
     CHECK(gap->line == 2);
     CHECK(gap->column == 11);

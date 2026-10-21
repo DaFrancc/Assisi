@@ -63,7 +63,7 @@ TEST_CASE("Animator compile: the vocabulary is one Sigil can use")
     CHECK(Sigil::Compile::CheckVocabulary(Runtime::Import::AnimationVocabulary(nullptr)).has_value());
 }
 
-TEST_CASE("Animator compile: the book's character compiles into its layers, states and fades")
+TEST_CASE("Animator compile: the book's character compiles into its layers, states and fades" * NeedsUal1())
 {
     const std::expected<Runtime::AnimatorGraph, std::string> compiled = Compile(kCharacter);
     REQUIRE_MESSAGE(compiled.has_value(), compiled.error());
@@ -96,7 +96,7 @@ TEST_CASE("Animator compile: the book's character compiles into its layers, stat
     CHECK(upper.states[1].clip.asset == Core::DerivedAssetId(Clip("Pistol_Aim_Neutral")));
 }
 
-TEST_CASE("Animator compile: a cooked graph reads back, and a damaged or empty one is refused")
+TEST_CASE("Animator compile: a cooked graph reads back, and a damaged or empty one is refused" * NeedsUal1())
 {
     const std::expected<Runtime::AnimatorGraph, std::string> compiled = Compile(kCharacter);
     REQUIRE_MESSAGE(compiled.has_value(), compiled.error());
@@ -126,7 +126,7 @@ TEST_CASE("Animator compile: a cooked graph reads back, and a damaged or empty o
     CHECK_FALSE(Runtime::ReadAnimatorGraph(truncated).has_value());
 }
 
-TEST_CASE("Animator compile: names are checked against the asset tree and the skeleton")
+TEST_CASE("Animator compile: names are checked against the asset tree and the skeleton" * NeedsUal1())
 {
     CHECK(Refuses(File("layer base {\n    state a { play \"nope/Walk.glb\"; }\n}\n"), 4,
                   "there is no \"nope/Walk.glb\" in the asset tree"));
@@ -142,7 +142,7 @@ TEST_CASE("Animator compile: names are checked against the asset tree and the sk
                   "the file has no \"skeleton\" clause"));
 }
 
-TEST_CASE("Animator compile: each state plays one thing, and only a state holding none plays")
+TEST_CASE("Animator compile: each state plays one thing, and only a state holding none plays" * NeedsUal1())
 {
     const std::string walk = Clip("Walk_Loop");
     CHECK(Refuses(File("layer base {\n    state a { }\n}\n"), 4, "state \"a\" plays nothing"));
@@ -158,7 +158,7 @@ TEST_CASE("Animator compile: each state plays one thing, and only a state holdin
                   "plays two things"));
 }
 
-TEST_CASE("Animator compile: the first layer is the whole body")
+TEST_CASE("Animator compile: the first layer is the whole body" * NeedsUal1())
 {
     const std::string walk = Clip("Walk_Loop");
     CHECK(Refuses(File("layer base {\n    mask \"spine_01\";\n    state a { play \"" + walk + "\"; }\n}\n"), 4,
@@ -171,7 +171,7 @@ TEST_CASE("Animator compile: the first layer is the whole body")
     CHECK(faded->layers[0].fade != Runtime::kNotWritten);
 }
 
-TEST_CASE("Animator compile: a clip param is bound on the Animator, and a library plays nothing")
+TEST_CASE("Animator compile: a clip param is bound on the Animator, and a library plays nothing" * NeedsUal1())
 {
     const std::expected<Runtime::AnimatorGraph, std::string> bound =
         Compile(File("param run_clip: clip;\nlayer base {\n    state run { play run_clip; }\n}\n"));

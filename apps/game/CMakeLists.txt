@@ -640,15 +640,21 @@ if (ASSISI_BUILD_TESTS)
   # Registered beside the scans they underwrite rather than in a directory of
   # their own: the scanners exist for them, and a matcher that silently stopped
   # matching would make every one of them pass.
-  add_test(NAME check-symbols
-    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_symbols.py")
-  add_test(NAME check-dependencies
-    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_dependencies.py")
+  #
+  # Linux only, like the scans: they fake nm, readelf, podman and docker with
+  # shell scripts, which Windows cannot run, and the Steam Runtime helper refuses
+  # any other host before it reaches what its tests check.
+  if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME check-symbols
+      COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_symbols.py")
+    add_test(NAME check-dependencies
+      COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_check_dependencies.py")
 
-  # The Steam Runtime helper, with podman and docker faked: it starts no
-  # container, so it runs on every machine.
-  add_test(NAME steamrt
-    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_steamrt.py")
+    # The Steam Runtime helper, with podman and docker faked: it starts no
+    # container, so it runs on every Linux machine.
+    add_test(NAME steamrt
+      COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/tests/test_steamrt.py")
+  endif()
 endif()
 
 # The source asset tree is the only one. Nothing is staged beside the executable,
