@@ -6,6 +6,17 @@
 Install that package and run the configure again. On Fedora, the most common one
 is `libstdc++-static`.
 
+**On Windows, `python3` says "Python was not found", but Python is installed.**
+That isn't your Python. Windows ships a placeholder called `python3` (and one
+called `python`) that only points you to the Microsoft Store, and Python from
+python.org installs as `python` and `py`, never `python3`. `./assisi` skips the
+placeholder and uses whichever real one it finds. If it says `assisi: needs
+Python 3.9 or newer on PATH`, the placeholder is all it found: install Python
+from python.org, or `winget install -e --id Python.Python.3.13`, and open a new
+terminal. To get rid of the placeholder, turn off **python.exe** and
+**python3.exe** under **Settings → Apps → Advanced app settings → App execution
+aliases**.
+
 **The build fails with "ccache: not found" (or similar).**
 Install ccache. The build expects it. See [Installation](installation.md). If
 you just installed it, open a new terminal: an install only changes `PATH` for

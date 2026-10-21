@@ -1,4 +1,17 @@
-#!/usr/bin/env python3
+#!/bin/sh
+# Runs under whichever Python answers, not just python3: the python.org installer
+# for Windows makes no python3, and the python3 Git Bash finds there instead is
+# the Microsoft Store placeholder, which only says how to install Python. The
+# lines between the quotes are sh to the shell and a string to Python.
+""":"
+for python in python3 python py; do
+    if "$python" -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+        exec "$python" "$0" "$@"
+    fi
+done
+echo "assisi: needs Python 3.9 or newer on PATH" >&2
+exit 1
+":"""
 """Build, run, test and package the engine. ./assisi --help lists the commands;
 with no arguments in a terminal it opens the TUI. The tool is tools/assisi/."""
 

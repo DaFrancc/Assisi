@@ -18,6 +18,11 @@
 *.aast  text eol=lf
 *.amat  text eol=lf
 
+# The launcher starts as a shell script, and sh reads a CRLF line's \r as part
+# of the command, so a Windows checkout that rewrote its newlines would run it
+# from Git Bash with a stray argument on every line.
+/assisi text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #
