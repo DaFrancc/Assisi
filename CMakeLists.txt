@@ -44,6 +44,19 @@ if (NOT CMAKE_CXX_COMPILER_LAUNCHER)
   endif()
 endif()
 
+# mold links a debug executable of a few hundred megabytes in well under a
+# second, where GNU ld takes five to seven, and every edit relinks several of
+# them. Used wherever it is installed; without it the default linker runs.
+if (NOT MSVC)
+  include(CheckLinkerFlag)
+  check_linker_flag(CXX "-fuse-ld=mold" ASSISI_HAS_MOLD)
+  if (ASSISI_HAS_MOLD)
+    add_link_options("-fuse-ld=mold")
+  else()
+    message(STATUS "mold not found: linking with the default linker, which is several times slower")
+  endif()
+endif()
+
 # ------------------------------------------------------------
 # Project-wide knobs (driven by presets/CI, not hand-edited cache)
 # ------------------------------------------------------------

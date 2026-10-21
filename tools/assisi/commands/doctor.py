@@ -100,6 +100,7 @@ def checks(host: str) -> List[Check]:
             Check("static libstdc++", True, probe_static_runtime,
                   "install the static C++ runtime (on Fedora: libstdc++-static); a Release game links it in"),
             Check("clang++", False, on_path("clang++"), "only needed for the clang builds"),
+            Check("mold", False, on_path("mold"), "install mold for links several times faster; " + INSTALL_HELP),
             Check("podman or docker", False, probe_container_runtime,
                   "only needed for the Steam Runtime build; see book/src/steam-runtime.md"),
         ]
