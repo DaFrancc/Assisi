@@ -5,6 +5,7 @@
 /// @brief The knobs on the sky's reflection probe.
 
 #include <Assisi/Render/SpecularIbl.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <bit>
@@ -68,7 +69,7 @@ struct EnvironmentSettings
     settings.resolution = clamped - below <= above - clamped ? below : above;
 
     settings.sampleCount = std::clamp(settings.sampleCount, kMinProbeSampleCount, kMaxProbeSampleCount);
-    settings.rebakeDegrees = std::isfinite(settings.rebakeDegrees)
+    settings.rebakeDegrees = Math::IsFinite(settings.rebakeDegrees)
                                  ? std::clamp(settings.rebakeDegrees, 0.0f, kMaxProbeRebakeDegrees)
                                  : defaults.rebakeDegrees;
     return settings;

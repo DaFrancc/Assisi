@@ -3,6 +3,7 @@
 #include <Assisi/Render/ShadowImportance.hpp>
 
 #include <Assisi/Render/ShadowAtlas.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -27,7 +28,7 @@ float LocalShadowScore(const LocalShadowCandidate &candidate)
     const float coverage = candidate.screenCoverage;
     const float intensity = std::abs(candidate.intensity);
     const float priority = candidate.priority;
-    if (!std::isfinite(coverage) || !std::isfinite(intensity) || !std::isfinite(priority))
+    if (!Math::IsFinite(coverage) || !Math::IsFinite(intensity) || !Math::IsFinite(priority))
     {
         return 0.f;
     }
@@ -38,12 +39,12 @@ float LocalShadowScore(const LocalShadowCandidate &candidate)
 std::uint32_t StableSizeClass(std::uint32_t baseClass, float coverage, std::uint32_t previousClass, float hysteresis)
 {
     baseClass = std::min(baseClass, kShadowSizeClassCount - 1u);
-    if (!std::isfinite(coverage))
+    if (!Math::IsFinite(coverage))
     {
         coverage = 0.f;
     }
     coverage = std::clamp(coverage, 0.f, 1.f);
-    hysteresis = std::isfinite(hysteresis) ? std::clamp(hysteresis, 0.f, 1.f) : 0.f;
+    hysteresis = Math::IsFinite(hysteresis) ? std::clamp(hysteresis, 0.f, 1.f) : 0.f;
 
     // The demand, before anything resists it: every halving of coverage below
     // the reference drops one class. Floored rather than rounded, so a light

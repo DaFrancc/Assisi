@@ -9,6 +9,8 @@
 /// constants, the ranges a value is allowed to take, and the rule that a
 /// copy-through step neither exposes nor grades.
 
+#include <Assisi/Math/Float.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -76,7 +78,7 @@ struct TonemapSettings
 /// and a NaN in any of these lanes takes the whole frame to black.
 [[nodiscard]] inline float ClampFinite(float value, float low, float high, float fallback)
 {
-    return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    return Math::IsFinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
 /// @brief The same settings with every lane inside its range. options.json is

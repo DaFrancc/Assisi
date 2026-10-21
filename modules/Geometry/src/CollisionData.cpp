@@ -3,6 +3,7 @@
 #include <Assisi/Geometry/CollisionData.hpp>
 
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <array>
@@ -236,16 +237,13 @@ NodeFrame FrameOf(const glm::mat4 &world)
     return NodeFrame{glm::normalize(glm::quat_cast(rotation)), glm::vec3(world[3]), scale};
 }
 
-bool IsFinite(const glm::vec3 &value)
-{
-    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
-}
+using Math::IsFinite;
 
 bool IsFinite(const glm::mat4 &matrix)
 {
     for (glm::length_t column = 0; column < 4; ++column)
     {
-        if (!IsFinite(glm::vec3(matrix[column])) || !std::isfinite(matrix[column].w))
+        if (!Math::IsFinite(matrix[column]))
         {
             return false;
         }

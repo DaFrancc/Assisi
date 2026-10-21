@@ -1,6 +1,7 @@
 # The Sigil runtime: the bytecode a compiled expression becomes, the check a
 # cooked asset's code passes when it loads, and the evaluator that runs it.
-# Depends on nothing but the standard library, so the game can link it.
+# Depends on nothing but the standard library and Math's float checks, so the
+# game can link it.
 add_library(Assisi-Sigil)
 Assisi_apply_defaults(Assisi-Sigil)
 
@@ -22,6 +23,13 @@ target_sources(Assisi-Sigil
 target_include_directories(Assisi-Sigil
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+# The evaluator's float comparisons ask Math whether an operand is NaN, since
+# fast-math makes a comparison with one answer whatever the compiler likes.
+target_link_libraries(Assisi-Sigil
+  PRIVATE
+    Assisi::Math
 )
 
 add_library(Assisi::Sigil ALIAS Assisi-Sigil)

@@ -14,6 +14,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
@@ -91,10 +92,10 @@ glm::vec3 PerpendicularTo(glm::vec3 axis)
 
 bool SpecIsFinite(const JointSpec &spec)
 {
-    return IsFinite(spec.anchor) && IsFinite(spec.axis) && IsFinite(spec.otherAnchor) && std::isfinite(spec.minLimit) &&
-           std::isfinite(spec.maxLimit) && std::isfinite(spec.swing) && std::isfinite(spec.springFrequency) &&
-           std::isfinite(spec.springDamping) && std::isfinite(spec.friction) && std::isfinite(spec.motorTarget) &&
-           std::isfinite(spec.motorMax);
+    return IsFinite(spec.anchor) && IsFinite(spec.axis) && IsFinite(spec.otherAnchor) && Math::IsFinite(spec.minLimit) &&
+           Math::IsFinite(spec.maxLimit) && Math::IsFinite(spec.swing) && Math::IsFinite(spec.springFrequency) &&
+           Math::IsFinite(spec.springDamping) && Math::IsFinite(spec.friction) && Math::IsFinite(spec.motorTarget) &&
+           Math::IsFinite(spec.motorMax);
 }
 
 bool KindHasAxis(JointKind kind)

@@ -1,10 +1,13 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Sigil/Evaluate.hpp>
 
+#include <Assisi/Math/Float.hpp>
+
 #include <array>
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <type_traits>
 #include <utility>
 
 namespace Assisi::Sigil
@@ -75,15 +78,52 @@ Word AbsInt(Word value)
     return ToInt(value) < 0 ? NegateInt(value) : value;
 }
 
+/// Whether two floats can't be ordered, because one is NaN.
+///
+/// Asked before every float comparison rather than left to the comparison:
+/// fast-math lets the compiler assume no NaN, so `nan == nan` can come out
+/// true and `nan < 1` either way, in exactly the builds a game ships.
+bool Unordered(float left, float right)
+{
+    return Math::IsNaN(left) || Math::IsNaN(right);
+}
+
+/// @p op on two floats, or false when they can't be ordered: NaN equals and
+/// orders nothing.
+template <typename Op> auto Ordered(Op op)
+{
+    return [op](float left, float right) { return !Unordered(left, right) && op(left, right); };
+}
+
+/// Whether two floats differ, which a NaN always does.
+bool NotEqualFloat(float left, float right)
+{
+    return Unordered(left, right) || left != right;
+}
+
 /// The smaller of two values, or the first when they can't be ordered.
 template <typename T> T Smaller(T first, T second)
 {
+    if constexpr (std::is_same_v<T, float>)
+    {
+        if (Unordered(first, second))
+        {
+            return first;
+        }
+    }
     return second < first ? second : first;
 }
 
 /// The larger of two values, or the first when they can't be ordered.
 template <typename T> T Larger(T first, T second)
 {
+    if constexpr (std::is_same_v<T, float>)
+    {
+        if (Unordered(first, second))
+        {
+            return first;
+        }
+    }
     return first < second ? second : first;
 }
 
@@ -228,37 +268,37 @@ Word Evaluate(std::span<const Word> code, uint32_t entry, std::span<const Word> 
             Compare<Word>(stack, std::equal_to<Word>{});
             break;
         case Opcode::EqualFloat:
-            Compare<float>(stack, std::equal_to<float>{});
+            Compare<float>(stack, Ordered(std::equal_to<float>{}));
             break;
         case Opcode::NotEqualWord:
             Compare<Word>(stack, std::not_equal_to<Word>{});
             break;
         case Opcode::NotEqualFloat:
-            Compare<float>(stack, std::not_equal_to<float>{});
+            Compare<float>(stack, NotEqualFloat);
             break;
         case Opcode::LessInt:
             Compare<int32_t>(stack, std::less<int32_t>{});
             break;
         case Opcode::LessFloat:
-            Compare<float>(stack, std::less<float>{});
+            Compare<float>(stack, Ordered(std::less<float>{}));
             break;
         case Opcode::LessEqualInt:
             Compare<int32_t>(stack, std::less_equal<int32_t>{});
             break;
         case Opcode::LessEqualFloat:
-            Compare<float>(stack, std::less_equal<float>{});
+            Compare<float>(stack, Ordered(std::less_equal<float>{}));
             break;
         case Opcode::GreaterInt:
             Compare<int32_t>(stack, std::greater<int32_t>{});
             break;
         case Opcode::GreaterFloat:
-            Compare<float>(stack, std::greater<float>{});
+            Compare<float>(stack, Ordered(std::greater<float>{}));
             break;
         case Opcode::GreaterEqualInt:
             Compare<int32_t>(stack, std::greater_equal<int32_t>{});
             break;
         case Opcode::GreaterEqualFloat:
-            Compare<float>(stack, std::greater_equal<float>{});
+            Compare<float>(stack, Ordered(std::greater_equal<float>{}));
             break;
         case Opcode::AndJump:
             Branch(stack, code, pc, false);

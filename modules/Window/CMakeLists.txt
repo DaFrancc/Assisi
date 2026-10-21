@@ -29,6 +29,8 @@ target_link_libraries(Assisi-Window
     Assisi::Deps
   PRIVATE
     nlohmann_json::nlohmann_json
+    # Math's float checks, for the multi-tap interval a caller sets.
+    Assisi::Math
 )
 
 # InputBindings is an AASSET: reflectgen emits its AssetTypeRegistry

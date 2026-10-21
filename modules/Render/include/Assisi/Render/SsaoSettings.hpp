@@ -4,6 +4,8 @@
 /// @file SsaoSettings.hpp
 /// @brief The knobs on screen-space ambient occlusion.
 
+#include <Assisi/Math/Float.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -59,8 +61,8 @@ struct SsaoSettings
     const SsaoSettings defaults;
     settings.sampleCount = std::clamp(settings.sampleCount, kMinSsaoSampleCount, kMaxSsaoSampleCount);
     settings.radius =
-        std::isfinite(settings.radius) ? std::clamp(settings.radius, kMinSsaoRadius, kMaxSsaoRadius) : defaults.radius;
-    settings.strength = std::isfinite(settings.strength)
+        Math::IsFinite(settings.radius) ? std::clamp(settings.radius, kMinSsaoRadius, kMaxSsaoRadius) : defaults.radius;
+    settings.strength = Math::IsFinite(settings.strength)
                             ? std::clamp(settings.strength, kMinSsaoStrength, kMaxSsaoStrength)
                             : defaults.strength;
     return settings;

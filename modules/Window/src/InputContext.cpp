@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Window/InputContext.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <GLFW/glfw3.h>
 
@@ -133,7 +134,7 @@ void InputContext::OnMouseButton(MouseButton button, KeyAction action, double ti
 
 void InputContext::SetMultiTapInterval(double seconds)
 {
-    if (std::isfinite(seconds))
+    if (Math::IsFinite(seconds))
     {
         _multiTapSeconds = std::clamp(seconds, kMinMultiTapSeconds, kMaxMultiTapSeconds);
     }

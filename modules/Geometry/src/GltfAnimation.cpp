@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "GltfAnimation.hpp"
 
+#include <Assisi/Math/Float.hpp>
+
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 
@@ -40,22 +42,12 @@ bool StrictlyIncreasing(std::span<const float> times)
 {
     for (std::size_t key = 0; key < times.size(); ++key)
     {
-        if (!std::isfinite(times[key]) || (key > 0 && times[key] <= times[key - 1]))
+        if (!Math::IsFinite(times[key]) || (key > 0 && times[key] <= times[key - 1]))
         {
             return false;
         }
     }
     return true;
-}
-
-bool Finite(const glm::vec3 &value)
-{
-    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
-}
-
-bool Finite(const glm::quat &value)
-{
-    return std::isfinite(value.w) && std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
 void ReadValues(const fastgltf::Asset &asset, const fastgltf::Accessor &accessor, std::vector<glm::vec3> &out)
@@ -98,7 +90,7 @@ std::expected<void, AnimationReadError> ReadChannel(const fastgltf::Asset &asset
     channel.Mode = sampler.interpolation == fastgltf::AnimationInterpolation::Step ? Interpolation::Step
                                                                                    : Interpolation::Linear;
 
-    const bool finite = std::ranges::all_of(channel.Values, [](const T &value) { return Finite(value); });
+    const bool finite = std::ranges::all_of(channel.Values, [](const T &value) { return Math::IsFinite(value); });
     if (channel.Times.size() != channel.Values.size() || !StrictlyIncreasing(channel.Times) || !finite)
     {
         return std::unexpected(AnimationReadError::BadKeys);

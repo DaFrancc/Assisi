@@ -35,6 +35,7 @@
 /// sun's and at midnight the sun's is eleven orders down, so neither is ever
 /// worth a branch.
 
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Celestial.hpp>
 
@@ -370,7 +371,7 @@ struct SkyMoon
 /// and one NaN here reaches every pixel of the sky.
 [[nodiscard]] inline float ClampFiniteSky(float value, float low, float high, float fallback)
 {
-    return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    return Math::IsFinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
 /// @brief A colour or coefficient triple with every channel finite and in range.
@@ -422,8 +423,8 @@ struct SkyMoon
 /// @brief The same sun with a unit direction and finite, non-negative radiance.
 [[nodiscard]] inline SkySun Sanitized(SkySun sun)
 {
-    const bool finiteDirection = std::isfinite(sun.directionToSun.x) && std::isfinite(sun.directionToSun.y) &&
-                                 std::isfinite(sun.directionToSun.z);
+    const bool finiteDirection = Math::IsFinite(sun.directionToSun.x) && Math::IsFinite(sun.directionToSun.y) &&
+                                 Math::IsFinite(sun.directionToSun.z);
     sun.directionToSun = SafeSkyDirection(finiteDirection ? sun.directionToSun : glm::vec3(0.0f, 1.0f, 0.0f));
     sun.color = SanitizedSkyChannels(sun.color, glm::vec3(1.0f));
     sun.intensity = ClampFiniteSky(sun.intensity, 0.0f, kMaxSkyExposure, 1.0f);
@@ -442,12 +443,12 @@ struct SkyMoon
 [[nodiscard]] inline SkyMoon Sanitized(SkyMoon moon)
 {
     const SkyMoon defaults;
-    const bool finiteDirection = std::isfinite(moon.directionToMoon.x) && std::isfinite(moon.directionToMoon.y) &&
-                                 std::isfinite(moon.directionToMoon.z);
+    const bool finiteDirection = Math::IsFinite(moon.directionToMoon.x) && Math::IsFinite(moon.directionToMoon.y) &&
+                                 Math::IsFinite(moon.directionToMoon.z);
     moon.directionToMoon = SafeSkyDirection(finiteDirection ? moon.directionToMoon : defaults.directionToMoon);
 
     const bool finiteUp =
-        std::isfinite(moon.imageUp.x) && std::isfinite(moon.imageUp.y) && std::isfinite(moon.imageUp.z);
+        Math::IsFinite(moon.imageUp.x) && Math::IsFinite(moon.imageUp.y) && Math::IsFinite(moon.imageUp.z);
     const glm::vec3 up = finiteUp ? moon.imageUp : defaults.imageUp;
     const glm::vec3 tangent = up - moon.directionToMoon * glm::dot(moon.directionToMoon, up);
     const float tangentLength = std::sqrt(glm::dot(tangent, tangent));

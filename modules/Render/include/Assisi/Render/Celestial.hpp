@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Render
@@ -244,7 +245,7 @@ struct EclipticFrame
     // A year of no length has no seasons to be partway through, and the honest
     // answer is the equinox the year is measured from — the same permanent
     // equinox a world with no axial tilt has every day of its year.
-    if (!(yearLengthDays > 0.0f) || !std::isfinite(yearLengthDays))
+    if (!(yearLengthDays > 0.0f) || !Math::IsFinite(yearLengthDays))
     {
         return 0.0f;
     }

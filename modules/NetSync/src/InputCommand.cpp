@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/NetSync/InputCommand.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +67,7 @@ bool ClampInputCommand(InputCommand &command, const InputLimits &limits)
     // Treat it as the absence of input.
     const auto sanitize = [&clean](float &value)
                           {
-                              if (!std::isfinite(value))
+                              if (!Math::IsFinite(value))
                               {
                                   value = 0.f;
                                   clean = false;

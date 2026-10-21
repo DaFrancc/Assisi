@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -137,9 +138,10 @@ bool SettleDependentBounds(std::span<const FieldMeta> fields, void *object)
             }
 
             // The finite test is what stops a NaN from being written back over
-            // and over: it compares unequal to itself, so "did it move" would be
-            // true on every pass.
-            if (settled != value && std::isfinite(settled) && WriteNumericField(field, object, settled))
+            // and over, since a NaN read back is never settled. "Did it move" is
+            // by bits: fast-math lets `!=` call a NaN equal to anything.
+            if (!Math::Identical(settled, value) && Math::IsFinite(settled) &&
+                WriteNumericField(field, object, settled))
             {
                 movedThisPass = true;
             }

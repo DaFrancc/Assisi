@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Math
@@ -57,7 +58,7 @@ inline constexpr float kDefaultSpotOuterAngleDegrees = 45.0f;
 {
     const float lhsLength = std::sqrt(glm::dot(lhs, lhs));
     const float rhsLength = std::sqrt(glm::dot(rhs, rhs));
-    if (!(lhsLength > 0.f) || !(rhsLength > 0.f) || !std::isfinite(lhsLength) || !std::isfinite(rhsLength))
+    if (!(lhsLength > 0.f) || !(rhsLength > 0.f) || !IsFinite(lhsLength) || !IsFinite(rhsLength))
     {
         return 0.f;
     }

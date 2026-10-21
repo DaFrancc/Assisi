@@ -27,6 +27,7 @@
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Editor/Overlay/LinePass.hpp>
@@ -358,7 +359,7 @@ bool EditorApp::DrawDirectionalLightGizmo()
         const float lengthSq = glm::dot(turned, turned);
         // A degenerate result would put a NaN in the light's direction, and a NaN
         // there reaches the cascade fit and takes every shadowed pixel with it.
-        if (std::isfinite(lengthSq) && lengthSq > 0.f)
+        if (Math::IsFinite(lengthSq) && lengthSq > 0.f)
         {
             light->direction = turned / std::sqrt(lengthSq);
             _scene->MarkChanged(_selectedEntity, lightId);

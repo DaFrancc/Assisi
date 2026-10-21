@@ -2,6 +2,7 @@
 #include <Assisi/Mondrian/Layout.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <array>
@@ -808,7 +809,7 @@ const LayoutNode *LayoutResult::Get(NodeId id) const
 
 void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out)
 {
-    ASSISI_ASSERT(scale > 0.f && std::isfinite(scale), "ComputeLayout needs a positive, finite scale");
+    ASSISI_ASSERT(scale > 0.f && Math::IsFinite(scale), "ComputeLayout needs a positive, finite scale");
 
     out.nodes.assign(tree.Slots().size(), LayoutNode{});
     out.texts.clear();

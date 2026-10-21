@@ -2,6 +2,7 @@
 #include <Assisi/Geometry/BlendSpace.hpp>
 
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -15,7 +16,7 @@ namespace
 
 bool Finite(const glm::vec2 &position)
 {
-    return std::isfinite(position.x) && std::isfinite(position.y);
+    return Math::IsFinite(position.x) && Math::IsFinite(position.y);
 }
 
 bool SharesPosition(std::span<const BlendPoint> points)

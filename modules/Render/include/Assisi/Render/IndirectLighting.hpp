@@ -21,6 +21,7 @@
 /// point receives.
 
 #include <Assisi/Math/Color.hpp>
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
 #include <Assisi/Render/SkyProbeInputs.hpp>
@@ -226,7 +227,7 @@ public:
     SkyProbeIndirect(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &skyRadiance, const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> &groundRadiance,
                      const SkyProbeInputs &environment, float maxLod)
         : _hemisphere(skyRadiance, groundRadiance), _environment(environment),
-        _maxLod(std::isfinite(maxLod) ? std::max(maxLod, 0.0f) : 0.0f)
+        _maxLod(Math::IsFinite(maxLod) ? std::max(maxLod, 0.0f) : 0.0f)
     {
     }
 

@@ -134,8 +134,10 @@ void BitWriter::WriteFloatQuantized(float value, float min, float max, std::uint
 
     // Round-to-nearest, so the quantization error is symmetric (±half a step)
     // rather than always biased toward min the way truncation would be.
-    const float scaled = t * static_cast<float>(levels);
-    WriteBits(static_cast<std::uint32_t>(scaled + 0.5f), bits);
+    // In double: at 32 bits a float rounds `levels` up to 2^32, and converting
+    // that to uint32_t is out of range, which MSVC's optimized builds turn into 0.
+    const double scaled = static_cast<double>(t) * static_cast<double>(levels);
+    WriteBits(static_cast<std::uint32_t>(std::min(scaled + 0.5, static_cast<double>(levels))), bits);
 }
 
 void BitWriter::Align()
@@ -313,7 +315,7 @@ float BitReader::ReadFloatQuantized(float min, float max, std::uint32_t bits)
 
     const std::uint32_t levels = static_cast<std::uint32_t>(LowBitMask(bits));
     const std::uint32_t raw    = ReadBits(bits);
-    return min + (static_cast<float>(raw) / static_cast<float>(levels)) * (max - min);
+    return min + static_cast<float>(static_cast<double>(raw) / static_cast<double>(levels)) * (max - min);
 }
 
 void BitReader::Align()

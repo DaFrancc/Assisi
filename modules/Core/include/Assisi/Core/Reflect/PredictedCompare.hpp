@@ -11,6 +11,8 @@
 /// builds — so a float agrees within a tolerance, and a vector, quaternion or
 /// matrix component by component. Everything else agrees exactly.
 
+#include <Assisi/Math/Float.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <concepts>
@@ -42,6 +44,14 @@ template <typename T> [[nodiscard]] bool PredictedFieldEqual(const T &lhs, const
 {
     if constexpr (std::floating_point<T>)
     {
+        // Asked first: fast-math lets the tolerance compare below call a NaN
+        // close to anything. An infinity agrees only with the same infinity.
+        const double lhsValue = static_cast<double>(lhs);
+        const double rhsValue = static_cast<double>(rhs);
+        if (!Math::IsFinite(lhsValue) || !Math::IsFinite(rhsValue))
+        {
+            return !Math::IsNaN(lhsValue) && Math::Identical(lhsValue, rhsValue);
+        }
         const double difference = std::abs(static_cast<double>(lhs) - static_cast<double>(rhs));
         const double larger =
             std::max(std::abs(static_cast<double>(lhs)), std::abs(static_cast<double>(rhs)));

@@ -507,7 +507,7 @@ void PhysicsWorld::Impl::RePlacePiece(ECS::Entity piece)
     }
 
     JPH::ShapeRefC rescaled;
-    if (placement.scale != slot->worldScale)
+    if (!Math::Identical(placement.scale, slot->worldScale))
     {
         WarnOnClampedScale(piece, slot->collider, placement.scale);
         rescaled = MakeColliderShape(AsBuilt(piece, slot->collider, owner->motion), placement.scale, piece);
@@ -651,7 +651,7 @@ void PhysicsWorld::Impl::PlaceFollowers()
         {
             continue;
         }
-        if (world.scale != slot.worldScale)
+        if (!Math::Identical(world.scale, slot.worldScale))
         {
             WarnOnClampedScale(entity, slot.collider, world.scale);
             if (const JPH::ShapeRefC shape = MakeColliderShape(slot.collider, world.scale, entity); shape != nullptr)
@@ -663,7 +663,8 @@ void PhysicsWorld::Impl::PlaceFollowers()
         // Put there rather than swept: a follower only rides along, and a
         // sweep would arrive a step late and fling what it met with its owner's
         // speed.
-        if (world.position != slot.placed.position || world.rotation != slot.placed.rotation)
+        if (!Math::Identical(world.position, slot.placed.position) ||
+            !Math::Identical(world.rotation, slot.placed.rotation))
         {
             bodies.SetPositionAndRotation(slot.body, ToJolt(world.position), ToJolt(world.rotation),
                                           JPH::EActivation::Activate);

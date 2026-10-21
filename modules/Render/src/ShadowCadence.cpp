@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Render/ShadowCadence.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +15,7 @@ namespace
 glm::vec3 SafeDirection(const glm::vec3 &direction)
 {
     const float lengthSquared = glm::dot(direction, direction);
-    if (!(lengthSquared > 0.f) || !std::isfinite(lengthSquared))
+    if (!(lengthSquared > 0.f) || !Math::IsFinite(lengthSquared))
     {
         return glm::vec3{0.f, -1.f, 0.f};
     }

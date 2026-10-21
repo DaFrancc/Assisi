@@ -176,7 +176,7 @@ TEST_CASE("Layout: % padding is a share of the parent's content on the same axis
         const NodeId child = scene.Add(parent, childStyle);
         scene.Run();
         INFO("parent width: " << parentWidth);
-        CHECK(scene.NodeOf(child).padding.left == parentWidth / 10.f);
+        CHECK(scene.NodeOf(child).padding.left == doctest::Approx(parentWidth / 10.f));
     }
 }
 
@@ -231,7 +231,7 @@ TEST_CASE("Layout: em is the node's own text size, and follows the scale with it
         const NodeId node = scene.Add(scene.tree.Root(), style);
         scene.Run(kReference, scale);
         INFO("scale: " << scale);
-        CHECK(scene.NodeOf(node).padding.left == 20.f * scale);
+        CHECK(scene.NodeOf(node).padding.left == doctest::Approx(20.f * scale));
     }
 }
 
@@ -254,7 +254,7 @@ TEST_CASE("Layout: a text size in em is of its parent's, and chains down the tre
 
     CHECK(scene.NodeOf(child).textSize == 20.f);
     CHECK(scene.NodeOf(grandchild).textSize == 20.f);
-    CHECK(scene.NodeOf(grandchild).padding.left == 20.f);
+    CHECK(scene.NodeOf(grandchild).padding.left == doctest::Approx(20.f));
 }
 
 TEST_CASE("Layout: each edge of a padding keeps its own unit")
@@ -268,10 +268,10 @@ TEST_CASE("Layout: each edge of a padding keeps its own unit")
     scene.Run({1000, 500}, 1.f);
 
     const Insets &padding = scene.NodeOf(node).padding;
-    CHECK(padding.left == 10.f);   // 1em of 10
-    CHECK(padding.top == 10.f);    // 5% of the parent's 200 down
-    CHECK(padding.right == 3.f);   // 3 UI pixels at scale one
-    CHECK(padding.bottom == 10.f); // 1% of a 1000-wide viewport
+    CHECK(padding.left == doctest::Approx(10.f));   // 1em of 10
+    CHECK(padding.top == doctest::Approx(10.f));    // 5% of the parent's 200 down
+    CHECK(padding.right == doctest::Approx(3.f));   // 3 UI pixels at scale one
+    CHECK(padding.bottom == doctest::Approx(10.f)); // 1% of a 1000-wide viewport
 }
 
 TEST_CASE("Layout: a floating offset in vw is a share of the viewport")

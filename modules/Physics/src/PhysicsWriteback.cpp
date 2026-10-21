@@ -163,8 +163,8 @@ void PhysicsWorld::Impl::WriteBodyState(ECS::Entity entity, const BodyState &sta
     {
         return;
     }
-    if (current->linearVelocity == state.linearVelocity && current->angularVelocity == state.angularVelocity &&
-        current->asleep == state.asleep)
+    if (Math::Identical(current->linearVelocity, state.linearVelocity) &&
+        Math::Identical(current->angularVelocity, state.angularVelocity) && current->asleep == state.asleep)
     {
         return;
     }
@@ -182,10 +182,12 @@ void PhysicsWorld::Impl::WriteCharacterState(ECS::Entity entity, const Character
         return;
     }
     // A standing crowd would otherwise rewrite every field every step.
-    if (current->velocity == state.velocity && current->groundNormal == state.groundNormal &&
-        current->groundVelocity == state.groundVelocity && current->groundEntity == state.groundEntity &&
+    if (Math::Identical(current->velocity, state.velocity) &&
+        Math::Identical(current->groundNormal, state.groundNormal) &&
+        Math::Identical(current->groundVelocity, state.groundVelocity) && current->groundEntity == state.groundEntity &&
         current->baseEntity == state.baseEntity &&
-        current->timeSinceGrounded == state.timeSinceGrounded && current->eyeHeight == state.eyeHeight &&
+        Math::Identical(current->timeSinceGrounded, state.timeSinceGrounded) &&
+        Math::Identical(current->eyeHeight, state.eyeHeight) &&
         current->ground == state.ground && current->stance == state.stance && current->canJump == state.canJump)
     {
         return;
@@ -212,7 +214,8 @@ void PhysicsWorld::Impl::WritePose(ECS::Entity entity, Pose pose, bool writeRota
     // Nothing moved: skip the write rather than stamp a change tick for a pose
     // identical to the one already there, which would read as a change to
     // propagation, the render blend and replication alike.
-    if (current->position == pose.position && (!writeRotation || current->rotation == pose.rotation))
+    if (Math::Identical(current->position, pose.position) &&
+        (!writeRotation || Math::Identical(current->rotation, pose.rotation)))
     {
         return;
     }

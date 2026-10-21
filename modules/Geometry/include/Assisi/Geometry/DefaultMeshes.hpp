@@ -5,6 +5,7 @@
 /// @brief Factory functions for built-in primitive meshes, plus tangent generation.
 
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -51,7 +52,7 @@ inline void ComputeTangents(MeshData &mesh)
         const float dv2 = uv2.y - uv0.y;
 
         const float det = du1 * dv2 - du2 * dv1;
-        if (!std::isfinite(det) || det == 0.0f)
+        if (!Math::IsFinite(det) || det == 0.0f)
         {
             continue;
         }
@@ -81,7 +82,7 @@ inline void ComputeTangents(MeshData &mesh)
         // Gram-Schmidt orthogonalise
         glm::vec3 tangent           = t - glm::dot(t, n) * n;
         const float lengthSquared = glm::dot(tangent, tangent);
-        if (std::isfinite(lengthSquared) && lengthSquared > kMinTangentLengthSquared)
+        if (Math::IsFinite(lengthSquared) && lengthSquared > kMinTangentLengthSquared)
         {
             tangent /= std::sqrt(lengthSquared);
         }

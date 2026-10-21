@@ -35,6 +35,8 @@ target_link_libraries(Assisi-Physics
     Assisi::ECS
     # Geometry: the collision a model carries, which a CollisionSource hands over.
     Assisi::Geometry
+    # Math: the float checks every value is put through before Jolt sees it.
+    Assisi::Math
     Jolt::Jolt
 )
 

@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Render/ShadowView.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +43,7 @@ constexpr float kMaxLocalFovDegrees = 175.0f;
 
 float SafeRange(float range)
 {
-    return std::isfinite(range) && range > 0.f ? range : 1.f;
+    return Math::IsFinite(range) && range > 0.f ? range : 1.f;
 }
 
 /// An up axis that is not parallel to @p forward, so lookAt has a basis to build.
@@ -184,7 +185,7 @@ std::uint32_t PointLightFaceOf(const glm::vec3 &direction)
 
 float LocalTexelsPerUnitDistance(std::uint32_t tileResolution, float tanHalfFov)
 {
-    if (tileResolution == 0u || !std::isfinite(tanHalfFov))
+    if (tileResolution == 0u || !Math::IsFinite(tanHalfFov))
     {
         return 0.f;
     }
@@ -199,7 +200,7 @@ float LocalDepthBiasNdcTimesDistance(std::uint32_t tileResolution, float nearPla
 {
     const LocalShadowSettings safe = Sanitized(settings);
     const float perDistance = LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
-    if (perDistance <= 0.f || !std::isfinite(farPlane) || farPlane <= nearPlane || nearPlane <= 0.f)
+    if (perDistance <= 0.f || !Math::IsFinite(farPlane) || farPlane <= nearPlane || nearPlane <= 0.f)
     {
         return 0.f;
     }
@@ -218,7 +219,7 @@ float LocalNormalOffsetPerDistance(std::uint32_t tileResolution, float tanHalfFo
 
 float LocalPenumbraUvPerDepth(float sourceRadius, float tanHalfFov, float nearPlane, float farPlane)
 {
-    if (!(sourceRadius > 0.f) || !(tanHalfFov > 0.f) || !std::isfinite(farPlane) || farPlane <= nearPlane ||
+    if (!(sourceRadius > 0.f) || !(tanHalfFov > 0.f) || !Math::IsFinite(farPlane) || farPlane <= nearPlane ||
         nearPlane <= 0.f)
     {
         return 0.f;
@@ -231,7 +232,7 @@ float LocalPenumbraUvPerDepth(float sourceRadius, float tanHalfFov, float nearPl
 float LocalTexelDepthTimesDistance(std::uint32_t tileResolution, float tanHalfFov, float nearPlane, float farPlane)
 {
     const float perDistance = LocalTexelsPerUnitDistance(tileResolution, tanHalfFov);
-    if (perDistance <= 0.f || !std::isfinite(farPlane) || farPlane <= nearPlane || nearPlane <= 0.f)
+    if (perDistance <= 0.f || !Math::IsFinite(farPlane) || farPlane <= nearPlane || nearPlane <= 0.f)
     {
         return 0.f;
     }
@@ -295,7 +296,7 @@ ShadowView SpotShadowView(const LocalShadowLightPose &pose, const ShadowAtlasTil
     // it — widened for the same reason a point light's faces are, so the filter
     // at the cone's rim reads depth this light recorded rather than the tile
     // beside it.
-    const float outer = std::isfinite(pose.outerAngleDegrees)
+    const float outer = Math::IsFinite(pose.outerAngleDegrees)
                             ? std::clamp(pose.outerAngleDegrees, 0.f, Math::kMaxConeHalfAngleDegrees)
                             : Math::kDefaultSpotOuterAngleDegrees;
     const float fov = outer * 2.f + kPointLightFaceOverlapDegrees;

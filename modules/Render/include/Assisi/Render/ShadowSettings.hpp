@@ -21,6 +21,8 @@
 /// then the fields are editable. That is why Tier() reports Custom rather than
 /// storing which button was last pressed.
 
+#include <Assisi/Math/Float.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -587,7 +589,7 @@ struct ShadowSettings
 /// and a NaN reaching a cascade matrix takes every shadowed pixel with it.
 [[nodiscard]] inline float ClampFiniteShadow(float value, float low, float high, float fallback)
 {
-    return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    return Math::IsFinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
 /// @brief @p value clamped into [low, high] and then rounded down to a power of

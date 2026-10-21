@@ -1076,8 +1076,9 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
     CharacterRecord &record = *FindCharacter(entity);
     BodySlot &slot = *SlotFor(entity);
     const float crouchHalfHeight = glm::min(tuning.crouchHalfHeight, tuning.halfHeight);
-    const bool resized = tuning.radius != record.radius || tuning.halfHeight != record.standingHalfHeight ||
-                         crouchHalfHeight != record.crouchHalfHeight;
+    const bool resized = !Math::Identical(tuning.radius, record.radius) ||
+                         !Math::Identical(tuning.halfHeight, record.standingHalfHeight) ||
+                         !Math::Identical(crouchHalfHeight, record.crouchHalfHeight);
 
     record.Retune(tuning);
 

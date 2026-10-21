@@ -3,6 +3,7 @@
 #include <Assisi/Render/ShadowCascades.hpp>
 
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <array>
@@ -29,7 +30,7 @@ constexpr glm::vec3 kFallbackLightDirection{0.f, -1.f, 0.f};
 glm::vec3 SafeLightDirection(const glm::vec3 &direction)
 {
     const float lengthSq = glm::dot(direction, direction);
-    return lengthSq > 0.f && std::isfinite(lengthSq) ? direction / std::sqrt(lengthSq) : kFallbackLightDirection;
+    return lengthSq > 0.f && Math::IsFinite(lengthSq) ? direction / std::sqrt(lengthSq) : kFallbackLightDirection;
 }
 } // namespace
 
@@ -152,7 +153,7 @@ constexpr float kSnapTexelTolerance = 1e-3f;
 
 glm::vec3 SnapToTexelGrid(const glm::vec3 &center, const glm::mat4 &lightRotation, float worldUnitsPerTexel)
 {
-    if (!(worldUnitsPerTexel > 0.f) || !std::isfinite(worldUnitsPerTexel))
+    if (!(worldUnitsPerTexel > 0.f) || !Math::IsFinite(worldUnitsPerTexel))
     {
         return center;
     }

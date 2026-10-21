@@ -20,6 +20,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Geometry/CollisionData.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <Jolt/Jolt.h>
 
@@ -434,15 +435,7 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 /// Whether every component is a number. Nothing that fails this is handed to
 /// Jolt or written to a component: one NaN in a body spreads to everything it
 /// touches within a step.
-inline bool IsFinite(glm::vec3 value)
-{
-    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
-}
-
-inline bool IsFinite(glm::quat value)
-{
-    return std::isfinite(value.w) && IsFinite(glm::vec3(value.x, value.y, value.z));
-}
+using Math::IsFinite;
 
 inline bool IsFinite(const Pose &pose)
 {

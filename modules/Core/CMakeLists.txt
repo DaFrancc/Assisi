@@ -121,6 +121,14 @@ target_link_libraries(Assisi-Core
     zstd::zstd
 )
 
+# Math's float checks, which a reflected field's write and the generated compare
+# of a predicted component (Reflect/PredictedCompare.hpp, a public header) are
+# put through. Below Core rather than above it: Math depends on nothing but glm.
+target_link_libraries(Assisi-Core
+  PUBLIC
+    Assisi::Math
+)
+
 add_library(Assisi::Core ALIAS Assisi-Core)
 
 if (ASSISI_BUILD_TESTS)

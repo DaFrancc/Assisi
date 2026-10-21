@@ -650,9 +650,9 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
         return;
     }
 
-    const bool moved = transform.position != slot->stamp.position;
-    const bool turned = transform.rotation != slot->stamp.rotation;
-    const bool scaled = transform.scale != slot->stamp.scale;
+    const bool moved = !Math::Identical(transform.position, slot->stamp.position);
+    const bool turned = !Math::Identical(transform.rotation, slot->stamp.rotation);
+    const bool scaled = !Math::Identical(transform.scale, slot->stamp.scale);
     const Pose world = WorldPoseOf(scene, entity, transform);
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
 

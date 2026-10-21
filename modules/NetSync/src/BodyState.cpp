@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <array>
@@ -162,7 +163,7 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     // filled with NaN" is not a failure anyone traces back.
     const float lengthSq = state.rotation.x * state.rotation.x + state.rotation.y * state.rotation.y +
                            state.rotation.z * state.rotation.z + state.rotation.w * state.rotation.w;
-    if (!std::isfinite(lengthSq) || lengthSq < 0.5f || lengthSq > 2.0f)
+    if (!Math::IsFinite(lengthSq) || lengthSq < 0.5f || lengthSq > 2.0f)
     {
         reader.Invalidate();
         return false;

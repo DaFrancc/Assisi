@@ -3,6 +3,7 @@
 #include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@ namespace
 /// and one NaN in a clock reaches every direction the frame derives from it.
 float ClampFiniteClock(float value, float low, float high, float fallback)
 {
-    return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+    return Math::IsFinite(value) ? std::clamp(value, low, high) : fallback;
 }
 
 /// @p value brought into [0, @p period), for a positive period. std::fmod keeps
@@ -25,7 +26,7 @@ float ClampFiniteClock(float value, float low, float high, float fallback)
 /// the cycle.
 double Wrapped(double value, double period)
 {
-    if (!std::isfinite(value) || !(period > 0.0))
+    if (!Math::IsFinite(value) || !(period > 0.0))
     {
         return 0.0;
     }
@@ -42,7 +43,7 @@ TimeOfDay Sanitized(TimeOfDay clock)
     clock.yearLengthDays =
         ClampFiniteClock(clock.yearLengthDays, kMinYearLengthDays, kMaxYearLengthDays, defaults.yearLengthDays);
 
-    clock.hour = std::isfinite(clock.hour) ? Wrapped(clock.hour, 24.0) : defaults.hour;
+    clock.hour = Math::IsFinite(clock.hour) ? Wrapped(clock.hour, 24.0) : defaults.hour;
     // Wrapped on read rather than only on write, because a year shortened after
     // the fact leaves a day of the year past its end and nothing else would
     // notice.
@@ -88,7 +89,7 @@ Moon Sanitized(Moon moon)
 
 void AdvanceTimeOfDay(TimeOfDay &clock, float dtSeconds)
 {
-    if (!std::isfinite(dtSeconds) || dtSeconds <= 0.f)
+    if (!Math::IsFinite(dtSeconds) || dtSeconds <= 0.f)
     {
         return;
     }
@@ -119,7 +120,7 @@ void AdvanceTimeOfDay(TimeOfDay &clock, float dtSeconds)
 
 bool Jump(TimeOfDay &clock, int32_t day, double hour)
 {
-    if (!std::isfinite(hour))
+    if (!Math::IsFinite(hour))
     {
         return false;
     }
@@ -136,7 +137,7 @@ bool Jump(TimeOfDay &clock, int32_t day, double hour)
 
 bool JumpForwardTo(TimeOfDay &clock, double hour)
 {
-    if (!std::isfinite(hour))
+    if (!Math::IsFinite(hour))
     {
         return false;
     }
@@ -147,7 +148,7 @@ bool JumpForwardTo(TimeOfDay &clock, double hour)
 
 bool JumpSeason(TimeOfDay &clock, double dayOfYear)
 {
-    if (!std::isfinite(dayOfYear))
+    if (!Math::IsFinite(dayOfYear))
     {
         return false;
     }

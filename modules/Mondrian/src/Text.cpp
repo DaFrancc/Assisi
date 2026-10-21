@@ -4,6 +4,7 @@
 #include <Assisi/Mondrian/Utf8.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
 #include <array>
@@ -176,7 +177,7 @@ TextLayout LayoutText(const ShapedText &shaped, const Font &font, float size, st
                       TextAlign align)
 {
     ASSISI_ASSERT(size > 0.f && font.pixelSize > 0.f, "LayoutText needs a positive size and a sized font");
-    ASSISI_ASSERT(!wrapWidth || (std::isfinite(*wrapWidth) && *wrapWidth > 0.f),
+    ASSISI_ASSERT(!wrapWidth || (Math::IsFinite(*wrapWidth) && *wrapWidth > 0.f),
                   "LayoutText's wrap width must be finite and positive; no wrap is nullopt");
     ASSISI_ASSERT(align < TextAlign::Count_, "LayoutText given an alignment that does not exist");
 

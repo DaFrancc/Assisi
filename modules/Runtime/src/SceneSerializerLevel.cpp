@@ -7,6 +7,7 @@
 #include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Math/Float.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -44,7 +45,7 @@ namespace
             fixed += SanitizeNonFinite(child);
         }
     }
-    else if (value.is_number_float() && !std::isfinite(value.get<double>()))
+    else if (value.is_number_float() && !Math::IsFinite(value.get<double>()))
     {
         value = 0.0;
         ++fixed;

@@ -97,10 +97,10 @@ JPH::ShapeRefC MakeShape(const Collider &collider, ECS::Entity entity)
 
 bool SameShape(const Collider &a, const Collider &b)
 {
-    return a.shape == b.shape && a.halfExtents == b.halfExtents && a.radius == b.radius &&
-           a.halfHeight == b.halfHeight && a.offsetPosition == b.offsetPosition &&
-           a.offsetRotation == b.offsetRotation && a.density == b.density && a.collisionAsset == b.collisionAsset &&
-           a.collisionPiece == b.collisionPiece;
+    return a.shape == b.shape && Math::Identical(a.halfExtents, b.halfExtents) && Math::Identical(a.radius, b.radius) &&
+           Math::Identical(a.halfHeight, b.halfHeight) && Math::Identical(a.offsetPosition, b.offsetPosition) &&
+           Math::Identical(a.offsetRotation, b.offsetRotation) && Math::Identical(a.density, b.density) &&
+           a.collisionAsset == b.collisionAsset && a.collisionPiece == b.collisionPiece;
 }
 
 glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
