@@ -71,6 +71,23 @@ option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 # reflectgen reflect C arrays too.
 option(ASSISI_FORBID_C_ARRAYS "Refuse reflected C array fields; std::array reflects the same way" ON)
 
+# Precompiled headers for gcc and clang; see Assisi_precompile_headers. OFF
+# builds every file from its own includes alone, which shows a missing one.
+if (MSVC)
+  set(ASSISI_PRECOMPILE_HEADERS OFF)
+else()
+  option(ASSISI_PRECOMPILE_HEADERS "Precompile the standard library and third-party headers per target" ON)
+endif()
+
+# ccache refuses a file compiled against a precompiled header unless told the
+# header's macros and timestamps cannot change its output, which holds here: it
+# is rebuilt whenever what it includes changes. Set in the launcher so every
+# build of the tree gets it, whichever ccache and whoever runs the build.
+if (ASSISI_PRECOMPILE_HEADERS AND CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache$")
+  set(CMAKE_CXX_COMPILER_LAUNCHER
+    "${CMAKE_COMMAND}" -E env "CCACHE_SLOPPINESS=pch_defines,time_macros" ${CMAKE_CXX_COMPILER_LAUNCHER})
+endif()
+
 # Sanitizers: primarily valuable on Linux; MSVC support is limited.
 option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
 set(ASSISI_SANITIZER_SET "address;undefined" CACHE STRING
@@ -153,6 +170,94 @@ function(Assisi_apply_defaults target_name)
       Assisi::Perf
       Assisi::Sanitize
   )
+
+  # At the end of the calling directory, once the target has every library it
+  # links, which decides what its precompiled header can hold.
+  if (ASSISI_PRECOMPILE_HEADERS)
+    cmake_language(EVAL CODE "cmake_language(DEFER CALL Assisi_precompile_headers [[${target_name}]])")
+  endif()
+endfunction()
+
+# Every target whose headers @p target_name sees, directly or through another
+# it links, ALIAS names resolved to the targets they name. A library another
+# links privately reaches its users as $<LINK_ONLY:...>, without its headers.
+function(Assisi_linked_targets target_name out_var)
+  set(_pending "${target_name}")
+  set(_found "")
+  while (_pending)
+    list(POP_FRONT _pending _name)
+    if (NOT TARGET "${_name}")
+      continue()
+    endif()
+    get_target_property(_aliased "${_name}" ALIASED_TARGET)
+    if (_aliased)
+      set(_name "${_aliased}")
+    endif()
+    if (_name IN_LIST _found)
+      continue()
+    endif()
+    list(APPEND _found "${_name}")
+    get_target_property(_interface "${_name}" INTERFACE_LINK_LIBRARIES)
+    if (_interface)
+      list(APPEND _pending ${_interface})
+    endif()
+    if (_name STREQUAL target_name)
+      get_target_property(_direct "${_name}" LINK_LIBRARIES)
+      if (_direct)
+        list(APPEND _pending ${_direct})
+      endif()
+    endif()
+  endwhile()
+  set(${out_var} "${_found}" PARENT_SCOPE)
+endfunction()
+
+# Most of what a file here costs to compile is parsing the standard library,
+# nlohmann/json, glm and doctest before it reaches a line of its own: about
+# four seconds of a debug build's eight per file. A precompiled header parses
+# them once per target instead. It holds only headers that never change, so an
+# edit to the engine's own never rebuilds it.
+#
+# gcc and clang only: MSVC compiles through ccache, which cannot cache a file
+# built against an MSVC precompiled header. A precompiled header also supplies
+# its headers to files that forgot to include them, which the MSVC build, and a
+# tree configured with ASSISI_PRECOMPILE_HEADERS off, still catches.
+#
+# A test's main.cpp configures doctest before including it, so it compiles
+# without.
+set(ASSISI_PRECOMPILED_STD
+  <algorithm> <array> <chrono> <cmath> <cstddef> <cstdint> <cstring> <expected> <filesystem> <format>
+  <fstream> <functional> <map> <memory> <mutex> <optional> <ostream> <set> <span> <sstream> <string>
+  <string_view> <thread> <tuple> <type_traits> <unordered_map> <unordered_set> <utility> <variant> <vector>
+)
+function(Assisi_precompile_headers target_name)
+  get_target_property(_type "${target_name}" TYPE)
+  if (_type STREQUAL "INTERFACE_LIBRARY")
+    return()
+  endif()
+  set(_headers ${ASSISI_PRECOMPILED_STD})
+  Assisi_linked_targets("${target_name}" _linked)
+  if ("Assisi-Core" IN_LIST _linked)
+    list(APPEND _headers <nlohmann/json.hpp>)
+  endif()
+  # Through the engine's own header, which sets the macros glm has to see first.
+  if ("Assisi-Math" IN_LIST _linked)
+    list(APPEND _headers <Assisi/Math/GLM.hpp>)
+  endif()
+  get_target_property(_includes "${target_name}" INCLUDE_DIRECTORIES)
+  if (_includes AND "${doctest_SOURCE_DIR}" IN_LIST _includes)
+    list(APPEND _headers <doctest/doctest.h>)
+  endif()
+  list(TRANSFORM _headers PREPEND "$<$<COMPILE_LANGUAGE:CXX>:")
+  list(TRANSFORM _headers APPEND ">")
+  target_precompile_headers("${target_name}" PRIVATE ${_headers})
+
+  get_target_property(_sources "${target_name}" SOURCES)
+  foreach (_source IN LISTS _sources)
+    if (_source MATCHES "(^|/)main\\.cpp$")
+      set_source_files_properties("${_source}" TARGET_DIRECTORY "${target_name}"
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    endif()
+  endforeach()
 endfunction()
 
 # Same as Assisi_apply_defaults, plus the handful of warnings that only doctest's

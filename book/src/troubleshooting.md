@@ -34,6 +34,16 @@ Warnings are treated as errors, on purpose, so they get fixed rather than piling
 up. Fix the warning. A common one is ignoring the result of `scene.Add<T>(...)`:
 write `(void)scene.Add<T>(...)` if you don't need the pointer.
 
+**It builds on Linux, but on Windows a file says a standard name like
+`std::vector` or `std::format` doesn't exist.**
+The file uses something it never includes. On Linux, GCC and Clang builds
+include the standard library, nlohmann/json, glm and doctest into every file
+ahead of time (a *precompiled header*), so a missing `#include <vector>` goes
+unnoticed there; MSVC builds don't. Add the include. To see these on Linux,
+configure a tree with them off, for example `cmake --preset gcc-debug
+-DASSISI_PRECOMPILE_HEADERS=OFF`, and build it. The tree keeps the setting until
+you configure it again with `=ON`.
+
 **reflectgen stops the build with an error about my header.**
 reflectgen reads the `ASYSTEM`, `ACOMP` and `AFIELD` annotations, and its
 message says what's wrong. The usual causes:
