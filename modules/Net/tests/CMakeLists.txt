@@ -21,7 +21,6 @@ target_link_libraries(Assisi-Net-Tests
 # slower than the pure-logic suites — and the simulated-lag case deliberately
 # waits out 25 ms of induced latency per hop. Give the whole suite room without
 # letting a genuine hang run forever.
-add_test(NAME Net COMMAND Assisi-Net-Tests)
-set_tests_properties(Net PROPERTIES TIMEOUT 120)
+Assisi_add_doctest_tests(Assisi-Net-Tests NAME Net PROPERTIES TIMEOUT 120)
 
 set_target_properties(Assisi-Net-Tests PROPERTIES FOLDER "tests")

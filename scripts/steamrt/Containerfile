@@ -2,8 +2,8 @@
 #
 # The SDK brings GCC 14, Ninja, Python 3, ccache and GLFW's Wayland and X11
 # headers, all against glibc 2.31. Its CMake is 3.25 and the engine needs 3.28,
-# so a pinned Kitware release goes on top. Kitware's Linux binaries are built
-# against an old glibc, so they run here.
+# so a pinned Kitware release goes on top, and a pinned mold beside it.
+# Kitware's Linux binaries are built against an old glibc, so they run here.
 #
 # scripts/steamrt.py builds this with BASE set to the pinned SDK digest.
 
@@ -22,7 +22,21 @@ RUN set -eu; \
     tar -xzf "/tmp/${archive}" -C /opt/cmake --strip-components=1; \
     rm "/tmp/${archive}"
 
+# mold links in a fraction of GNU ld's time, and the build uses it wherever it
+# finds it. Its release binaries are statically linked, so they run here.
+ARG MOLD_VERSION=2.40.4
+ARG MOLD_SHA256=4c999e19ffa31afa5aa429c679b665d5e2ca5a6b6832ad4b79668e8dcf3d8ec1
+
+RUN set -eu; \
+    archive="mold-${MOLD_VERSION}-x86_64-linux.tar.gz"; \
+    curl -fsSL -o "/tmp/${archive}" \
+        "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/${archive}"; \
+    echo "${MOLD_SHA256}  /tmp/${archive}" | sha256sum -c -; \
+    mkdir -p /opt/mold; \
+    tar -xzf "/tmp/${archive}" -C /opt/mold --strip-components=1; \
+    rm "/tmp/${archive}"
+
 # ASSISI_STEAMRT_SDK is what the gcc-ship-steamrt preset and ./assisi look for:
 # that build is only configured where this image is the one running it.
-ENV PATH=/opt/cmake/bin:${PATH} \
+ENV PATH=/opt/cmake/bin:/opt/mold/bin:${PATH} \
     ASSISI_STEAMRT_SDK=1

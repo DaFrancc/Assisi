@@ -85,6 +85,6 @@ target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-TestComponents-Generated>
 )
 
-add_test(NAME Editor COMMAND Assisi-Editor-Tests)
+Assisi_add_doctest_tests(Assisi-Editor-Tests NAME Editor)
 
 set_target_properties(Assisi-Editor-Tests PROPERTIES FOLDER "tests")

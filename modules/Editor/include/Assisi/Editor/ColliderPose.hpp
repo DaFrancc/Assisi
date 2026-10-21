@@ -5,7 +5,7 @@
 /// @brief Where a rigid body's collider actually is, for the editor's overlays.
 
 #include <Assisi/ECS/Entity.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 

@@ -3,6 +3,8 @@
 
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace Assisi::ECS
 {
 

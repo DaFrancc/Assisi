@@ -30,6 +30,8 @@ cd Assisi
 
 You need a C++ compiler, **CMake 3.28+**, **Ninja**, **ccache** and **Python
 3.9+**. ccache makes rebuilds faster, and the build expects it to be installed.
+On Linux, **mold** is a linker that makes every rebuild a few seconds faster;
+the commands below install it, and the build uses it whenever it is there.
 Python runs the engine's build tool, `assisi`, and a code generator during the
 build. Neither needs anything from `pip`.
 
@@ -56,7 +58,7 @@ you'll find in the Start menu. A normal terminal can't find the compiler.
 ### Arch Linux
 
 ```bash
-sudo pacman -S --needed base-devel git cmake ninja ccache python \
+sudo pacman -S --needed base-devel git cmake ninja ccache mold python \
                         wayland libxkbcommon \
                         libxcursor libxi libxinerama libxrandr \
                         vulkan-icd-loader
@@ -93,7 +95,7 @@ Reboot after installing an NVIDIA driver.
 ### Fedora, RHEL, Rocky, Alma
 
 ```bash
-sudo dnf install gcc-c++ git cmake ninja-build ccache python3 pkgconf-pkg-config \
+sudo dnf install gcc-c++ git cmake ninja-build ccache mold python3 pkgconf-pkg-config \
                  libstdc++-static \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
@@ -140,7 +142,7 @@ guess. You need **Debian 13+** or **Ubuntu 24.04+**; older releases ship a
 compiler and CMake that are too old.
 
 ```bash
-sudo apt install build-essential git cmake ninja-build ccache python3 pkg-config \
+sudo apt install build-essential git cmake ninja-build ccache mold python3 pkg-config \
                  libwayland-dev libwayland-bin libxkbcommon-dev \
                  libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
                  libvulkan1

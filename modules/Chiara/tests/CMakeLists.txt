@@ -29,7 +29,7 @@ target_link_libraries(Assisi-Chiara-Tests
     nlohmann_json::nlohmann_json
 )
 
-add_test(NAME Chiara COMMAND Assisi-Chiara-Tests)
+Assisi_add_doctest_tests(Assisi-Chiara-Tests NAME Chiara)
 
 set_target_properties(Assisi-Chiara-Tests PROPERTIES FOLDER "tests")
 
@@ -53,6 +53,6 @@ target_link_libraries(Assisi-Chiara-PreInit-Tests
     Threads::Threads
 )
 
-add_test(NAME Chiara-PreInit COMMAND Assisi-Chiara-PreInit-Tests)
+Assisi_add_doctest_tests(Assisi-Chiara-PreInit-Tests NAME Chiara-PreInit)
 
 set_target_properties(Assisi-Chiara-PreInit-Tests PROPERTIES FOLDER "tests")

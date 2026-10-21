@@ -23,6 +23,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <Assisi/Core/StrongIdFormat.hpp>
+
 namespace Assisi::Core
 {
 

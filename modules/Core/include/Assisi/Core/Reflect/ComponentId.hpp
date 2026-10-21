@@ -12,7 +12,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <functional>
 #include <typeindex>
 
@@ -91,16 +90,6 @@ template <> struct IsStrongId<Reflect::ComponentId> : std::true_type
 };
 static_assert(StrongId<Reflect::ComponentId>);
 } // namespace Assisi::Core
-
-/// Prints as the bare number, so a log line reads "component 7" rather than
-/// making every call site spell `.value`.
-template <> struct std::formatter<Assisi::Core::Reflect::ComponentId> : std::formatter<std::uint32_t>
-{
-    auto format(Assisi::Core::Reflect::ComponentId id, std::format_context &ctx) const
-    {
-        return std::formatter<std::uint32_t>::format(id.value, ctx);
-    }
-};
 
 template <> struct std::hash<Assisi::Core::Reflect::ComponentId>
 {

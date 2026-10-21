@@ -10,7 +10,7 @@
 /// after an inspector/browser edit to a single entity, and per frame while
 /// async loads are still streaming in (so placeholders upgrade in place).
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/Components.hpp>
 

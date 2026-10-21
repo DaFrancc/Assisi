@@ -57,6 +57,6 @@ target_sources(Assisi-Mondrian-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Mondrian-TestStructs-Generated>
 )
 
-add_test(NAME Mondrian COMMAND Assisi-Mondrian-Tests)
+Assisi_add_doctest_tests(Assisi-Mondrian-Tests NAME Mondrian)
 
 set_target_properties(Assisi-Mondrian-Tests PROPERTIES FOLDER "tests")

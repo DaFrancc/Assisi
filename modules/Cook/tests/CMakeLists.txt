@@ -2,7 +2,11 @@ add_executable(Assisi-Cook-Tests
   main.cpp
   TestManifest.cpp
   TestCookTree.cpp
+  PakWriterTesting.cpp
   TestPakWriter.cpp
+  TestPakLayout.cpp
+  TestPakLayoutResize.cpp
+  TestPakLayoutGaps.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Cook-Tests)
@@ -46,6 +50,6 @@ target_compile_definitions(Assisi-Cook-Tests PRIVATE
   ASSISI_COOK_TEST_FONT="${CMAKE_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf"
 )
 
-add_test(NAME Cook COMMAND Assisi-Cook-Tests)
+Assisi_add_doctest_tests(Assisi-Cook-Tests NAME Cook)
 
 set_target_properties(Assisi-Cook-Tests PROPERTIES FOLDER "tests")

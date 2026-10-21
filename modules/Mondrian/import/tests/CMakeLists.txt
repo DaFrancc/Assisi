@@ -25,7 +25,7 @@ target_compile_definitions(Assisi-FontImport-Tests PRIVATE
   ASSISI_TEST_FONT_PATH="${CMAKE_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf"
 )
 
-add_test(NAME FontImport COMMAND Assisi-FontImport-Tests)
+Assisi_add_doctest_tests(Assisi-FontImport-Tests NAME FontImport)
 
 set_target_properties(Assisi-FontImport-Tests PROPERTIES FOLDER "tests")
 
@@ -71,6 +71,6 @@ target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   ASSISI_CONTROLS_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Controls.amdn"
 )
 
-add_test(NAME MondrianImport COMMAND Assisi-MondrianImport-Tests)
+Assisi_add_doctest_tests(Assisi-MondrianImport-Tests NAME MondrianImport)
 
 set_target_properties(Assisi-MondrianImport-Tests PROPERTIES FOLDER "tests")

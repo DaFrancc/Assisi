@@ -12,6 +12,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# No source here or in a fetched dependency is a C++ module. Scanning for them
+# preprocesses every file a second time before it compiles, and the scanned
+# compile carries -fmodules-ts, which ccache refuses, so no C++ file would ever
+# be cached. Set before any target exists so the dependencies get it too.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 # Tooling (reflection/codegen can consume compile_commands.json later)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -38,6 +44,19 @@ if (NOT CMAKE_CXX_COMPILER_LAUNCHER)
   endif()
 endif()
 
+# mold links a debug executable of a few hundred megabytes in well under a
+# second, where GNU ld takes five to seven, and every edit relinks several of
+# them. Used wherever it is installed; without it the default linker runs.
+if (NOT MSVC)
+  include(CheckLinkerFlag)
+  check_linker_flag(CXX "-fuse-ld=mold" ASSISI_HAS_MOLD)
+  if (ASSISI_HAS_MOLD)
+    add_link_options("-fuse-ld=mold")
+  else()
+    message(STATUS "mold not found: linking with the default linker, which is several times slower")
+  endif()
+endif()
+
 # ------------------------------------------------------------
 # Project-wide knobs (driven by presets/CI, not hand-edited cache)
 # ------------------------------------------------------------
@@ -51,6 +70,24 @@ option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 # which reflects the same way and behaves like every other value. OFF lets
 # reflectgen reflect C arrays too.
 option(ASSISI_FORBID_C_ARRAYS "Refuse reflected C array fields; std::array reflects the same way" ON)
+
+# Precompiled headers for gcc and clang; see Assisi_precompile_headers. OFF
+# builds every file from its own includes alone, which shows a missing one; the
+# Steam Runtime build is always OFF, so every release build checks that.
+if (MSVC)
+  set(ASSISI_PRECOMPILE_HEADERS OFF)
+else()
+  option(ASSISI_PRECOMPILE_HEADERS "Precompile the standard library and third-party headers per target" ON)
+endif()
+
+# ccache refuses a file compiled against a precompiled header unless told the
+# header's macros and timestamps cannot change its output, which holds here: it
+# is rebuilt whenever what it includes changes. Set in the launcher so every
+# build of the tree gets it, whichever ccache and whoever runs the build.
+if (ASSISI_PRECOMPILE_HEADERS AND CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache$")
+  set(CMAKE_CXX_COMPILER_LAUNCHER
+    "${CMAKE_COMMAND}" -E env "CCACHE_SLOPPINESS=pch_defines,time_macros" ${CMAKE_CXX_COMPILER_LAUNCHER})
+endif()
 
 # Sanitizers: primarily valuable on Linux; MSVC support is limited.
 option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
@@ -134,6 +171,94 @@ function(Assisi_apply_defaults target_name)
       Assisi::Perf
       Assisi::Sanitize
   )
+
+  # At the end of the calling directory, once the target has every library it
+  # links, which decides what its precompiled header can hold.
+  if (ASSISI_PRECOMPILE_HEADERS)
+    cmake_language(EVAL CODE "cmake_language(DEFER CALL Assisi_precompile_headers [[${target_name}]])")
+  endif()
+endfunction()
+
+# Every target whose headers @p target_name sees, directly or through another
+# it links, ALIAS names resolved to the targets they name. A library another
+# links privately reaches its users as $<LINK_ONLY:...>, without its headers.
+function(Assisi_linked_targets target_name out_var)
+  set(_pending "${target_name}")
+  set(_found "")
+  while (_pending)
+    list(POP_FRONT _pending _name)
+    if (NOT TARGET "${_name}")
+      continue()
+    endif()
+    get_target_property(_aliased "${_name}" ALIASED_TARGET)
+    if (_aliased)
+      set(_name "${_aliased}")
+    endif()
+    if (_name IN_LIST _found)
+      continue()
+    endif()
+    list(APPEND _found "${_name}")
+    get_target_property(_interface "${_name}" INTERFACE_LINK_LIBRARIES)
+    if (_interface)
+      list(APPEND _pending ${_interface})
+    endif()
+    if (_name STREQUAL target_name)
+      get_target_property(_direct "${_name}" LINK_LIBRARIES)
+      if (_direct)
+        list(APPEND _pending ${_direct})
+      endif()
+    endif()
+  endwhile()
+  set(${out_var} "${_found}" PARENT_SCOPE)
+endfunction()
+
+# Most of what a file here costs to compile is parsing the standard library,
+# nlohmann/json, glm and doctest before it reaches a line of its own: about
+# four seconds of a debug build's eight per file. A precompiled header parses
+# them once per target instead. It holds only headers that never change, so an
+# edit to the engine's own never rebuilds it.
+#
+# gcc and clang only: MSVC compiles through ccache, which cannot cache a file
+# built against an MSVC precompiled header. A precompiled header also supplies
+# its headers to files that forgot to include them, which the MSVC build, and a
+# tree configured with ASSISI_PRECOMPILE_HEADERS off, still catches.
+#
+# A test's main.cpp configures doctest before including it, so it compiles
+# without.
+set(ASSISI_PRECOMPILED_STD
+  <algorithm> <array> <chrono> <cmath> <cstddef> <cstdint> <cstring> <expected> <filesystem> <format>
+  <fstream> <functional> <map> <memory> <mutex> <optional> <ostream> <set> <span> <sstream> <string>
+  <string_view> <thread> <tuple> <type_traits> <unordered_map> <unordered_set> <utility> <variant> <vector>
+)
+function(Assisi_precompile_headers target_name)
+  get_target_property(_type "${target_name}" TYPE)
+  if (_type STREQUAL "INTERFACE_LIBRARY")
+    return()
+  endif()
+  set(_headers ${ASSISI_PRECOMPILED_STD})
+  Assisi_linked_targets("${target_name}" _linked)
+  if ("Assisi-Core" IN_LIST _linked)
+    list(APPEND _headers <nlohmann/json.hpp>)
+  endif()
+  # Through the engine's own header, which sets the macros glm has to see first.
+  if ("Assisi-Math" IN_LIST _linked)
+    list(APPEND _headers <Assisi/Math/GLM.hpp>)
+  endif()
+  get_target_property(_includes "${target_name}" INCLUDE_DIRECTORIES)
+  if (_includes AND "${doctest_SOURCE_DIR}" IN_LIST _includes)
+    list(APPEND _headers <doctest/doctest.h>)
+  endif()
+  list(TRANSFORM _headers PREPEND "$<$<COMPILE_LANGUAGE:CXX>:")
+  list(TRANSFORM _headers APPEND ">")
+  target_precompile_headers("${target_name}" PRIVATE ${_headers})
+
+  get_target_property(_sources "${target_name}" SOURCES)
+  foreach (_source IN LISTS _sources)
+    if (_source MATCHES "(^|/)main\\.cpp$")
+      set_source_files_properties("${_source}" TARGET_DIRECTORY "${target_name}"
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    endif()
+  endforeach()
 endfunction()
 
 # Same as Assisi_apply_defaults, plus the handful of warnings that only doctest's
@@ -191,6 +316,51 @@ function(Assisi_apply_test_defaults target_name)
         TARGET_DIRECTORY "${target_name}"
         PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Wno-array-bounds>")
     endif()
+  endif()
+endfunction()
+
+# Registers a doctest executable with ctest as one test per source file that
+# holds test cases, named <NAME>.<file stem>, so ctest runs a suite's files side
+# by side instead of the whole suite as one long test. <NAME>.Other runs every
+# case outside those files, so between them they run each case exactly once.
+# PROPERTIES are set on every one of them.
+#
+# Cases are picked by doctest's source-file filter, which matches the end of the
+# path a case was compiled from. A file whose name ends another's would pick up
+# that file's cases too, so configuring stops on one.
+function(Assisi_add_doctest_tests target_name)
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "" "NAME" "PROPERTIES")
+  get_target_property(_sources "${target_name}" SOURCES)
+  get_target_property(_source_dir "${target_name}" SOURCE_DIR)
+  set(_files "")
+  set(_tests "")
+  foreach (_source IN LISTS _sources)
+    cmake_path(ABSOLUTE_PATH _source BASE_DIRECTORY "${_source_dir}" OUTPUT_VARIABLE _path)
+    if (NOT _source MATCHES "\\.cpp$" OR NOT EXISTS "${_path}")
+      continue()
+    endif()
+    file(STRINGS "${_path}" _cases REGEX "^[ \t]*(TEST_CASE|SCENARIO)" LIMIT_COUNT 1)
+    if (NOT _cases)
+      continue()
+    endif()
+    cmake_path(GET _path FILENAME _file)
+    cmake_path(GET _path STEM _stem)
+    foreach (_other IN LISTS _files)
+      if (_file MATCHES "${_other}$" OR _other MATCHES "${_file}$")
+        message(FATAL_ERROR "${target_name}: ${_file} and ${_other} end the same way, so doctest cannot "
+                            "pick one's cases without the other's; rename one")
+      endif()
+    endforeach()
+    list(APPEND _files "${_file}")
+    add_test(NAME "${ARG_NAME}.${_stem}" COMMAND "${target_name}" "--source-file=*${_file}")
+    list(APPEND _tests "${ARG_NAME}.${_stem}")
+  endforeach()
+  list(TRANSFORM _files PREPEND "*")
+  list(JOIN _files "," _picked)
+  add_test(NAME "${ARG_NAME}.Other" COMMAND "${target_name}" "--source-file-exclude=${_picked}")
+  list(APPEND _tests "${ARG_NAME}.Other")
+  if (ARG_PROPERTIES)
+    set_tests_properties(${_tests} PROPERTIES ${ARG_PROPERTIES})
   endif()
 endfunction()
 

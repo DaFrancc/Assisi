@@ -33,6 +33,7 @@ sys.path.insert(0, str(TOOLS))
 
 from assisi import cli, install, locate, project, request, store  # noqa: E402
 from assisi.commands import catalog  # noqa: E402
+from assisi.commands import test as test_command  # noqa: E402
 
 # A fake program: logs "<name> <args>" and answers the few queries the tool
 # makes. FAKE_FAIL_ON makes any call whose arguments contain it exit non-zero.
@@ -437,7 +438,7 @@ class SteamRuntimeTest(ToolTest):
         self.assertEqual(self.sandbox.calls(), [
             self.sandbox.configure_call("gcc-ship-steamrt"),
             "cmake --build --preset gcc-ship-steamrt",
-            "ctest --preset gcc-ship-steamrt -L game|container",
+            f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -L game|container",
         ])
 
     def test_fetch_and_remove(self):
@@ -450,12 +451,33 @@ class SteamRuntimeTest(ToolTest):
 
 
 class TestCommandTest(ToolTest):
+    def setUp(self):
+        super().setUp()
+        jobs = mock.patch("assisi.commands.test.parallel_jobs", return_value=7)
+        jobs.start()
+        self.addCleanup(jobs.stop)
+
     def test_builds_then_runs_ctest_with_passthrough(self):
         self.sandbox.configured("gcc-debug")
         code, _, err = self.sandbox.run("test", "debug", "--", "-R", "Audio")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.sandbox.calls(), ["cmake --build --preset gcc-debug",
-                                                "ctest --preset gcc-debug -R Audio"])
+                                                "ctest --preset gcc-debug -j7 -R Audio"])
+
+    def test_ctest_runs_a_test_per_cpu_at_once(self):
+        self.sandbox.configured("gcc-debug")
+        code, _, err = self.sandbox.run("test", "debug")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls()[-1], "ctest --preset gcc-debug -j7")
+
+    def test_a_jobs_count_passed_through_is_the_only_one(self):
+        self.sandbox.configured("gcc-debug")
+        for jobs in (["-j2"], ["-j", "2"], ["--parallel", "2"], ["--parallel=2"], ["-j"]):
+            with self.subTest(jobs=jobs):
+                self.sandbox.log.write_text("")
+                code, _, err = self.sandbox.run("test", "debug", "--", *jobs)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.sandbox.calls()[-1], " ".join(["ctest --preset gcc-debug", *jobs]))
 
 
 class CleanTest(ToolTest):

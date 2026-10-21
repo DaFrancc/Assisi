@@ -16,7 +16,7 @@
 /// Update() inside an ECS::FixedStepScope, so the ECS draws those Transforms
 /// blended between steps.
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/CollisionSource.hpp>

@@ -10,7 +10,7 @@
 /// not here: what is here is the single answer to "which Camera does this scene
 /// nominate", so the two hosts cannot disagree about it.
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>

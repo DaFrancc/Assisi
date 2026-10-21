@@ -16,7 +16,6 @@
 #include <Assisi/Core/BitStream.hpp>
 
 #include <cstdint>
-#include <format>
 #include <functional>
 #include <limits>
 #include <string>
@@ -425,18 +424,6 @@ template <> struct IsStrongId<NetSync::ClientId> : std::true_type
 };
 static_assert(StrongId<NetSync::ClientId>);
 } // namespace Assisi::Core
-
-/// Prints as the bare number, so a log line reads "netId 7" rather than making
-/// every call site spell `.value`. Without this the type would be strictly worse
-/// to hold than the integer it replaces, which is how a good rule gets worked
-/// around.
-template <> struct std::formatter<Assisi::NetSync::NetId> : std::formatter<Assisi::NetSync::NetIdValue>
-{
-    auto format(Assisi::NetSync::NetId id, std::format_context &ctx) const
-    {
-        return std::formatter<Assisi::NetSync::NetIdValue>::format(id.value, ctx);
-    }
-};
 
 template <> struct std::hash<Assisi::NetSync::NetId>
 {

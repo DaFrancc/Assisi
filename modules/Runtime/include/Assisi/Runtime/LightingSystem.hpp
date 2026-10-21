@@ -12,7 +12,8 @@
 ///   2. Call Resize() whenever the viewport or projection changes.
 ///   3. Call Update() every frame before DrawScene().
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
 #include <Assisi/Render/Sky.hpp>
