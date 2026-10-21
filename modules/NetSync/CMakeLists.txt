@@ -28,6 +28,7 @@ target_sources(Assisi-NetSync
     "src/NetworkConfig.cpp"
     "src/ReplicationClient.cpp"
     "src/ReplicationClientMotion.cpp"
+    "src/ReplicationClientPrediction.cpp"
     "src/ReplicationInternal.hpp"
     "src/ReplicationServer.cpp"
     "src/ReplicationServerMessages.cpp"

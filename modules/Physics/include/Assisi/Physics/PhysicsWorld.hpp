@@ -63,14 +63,58 @@ struct Pose
 struct CharacterFrame
 {
     CharacterIntent intent;
+    /// While riding, its base's rotation when `localFeet` was taken.
+    glm::quat baseRotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 position{0.f}; ///< The feet, in world space.
+    /// Its own velocity: relative to its base while it rides one.
     glm::vec3 velocity{0.f};
+    /// Its velocity in the world, its base's included. Read back, never put
+    /// back: it follows from `velocity` and the base.
+    glm::vec3 worldVelocity{0.f};
     glm::vec3 facing{0.f, 0.f, -1.f}; ///< The way it looked during the step.
+    /// While riding, its feet in its base's frame.
+    glm::vec3 localFeet{0.f};
+    /// The world velocity of the ground it last stood on, and while riding,
+    /// its world velocity after the sweep.
+    glm::vec3 lastGroundVelocity{0.f};
+    glm::vec3 groundedWorldVelocity{0.f};
+    /// The carrier it rides, or NullEntity.
+    ECS::Entity base{ECS::NullEntity};
     float timeSinceGrounded = 0.f;
     float jumpBufferRemaining = 0.f;
     float eyeHeight = 0.f;
+    /// While riding, seconds before a carrier that stopped holding it lets go.
+    float graceRemaining = 0.f;
     Stance stance = Stance::Standing;
+    /// What it stood on after the step. Read back, never put back: a rewind
+    /// finds the ground again where it places the character.
+    GroundState ground = GroundState::InAir;
     bool jumpedSinceGrounded = false;
+    /// Riding: let go after its next carry; seated by gameplay; moving with
+    /// other ground it stands on rather than with its base.
+    bool leavingBase = false;
+    bool basedByIntent = false;
+    bool withGround = false;
+};
+
+/// @brief Where a kinematic body is and how it moves, as a step left it.
+///
+/// What a client stepping its own characters again puts the platforms and
+/// carriers of the world back to, step by step, so they ride as they did.
+struct FollowerFrame
+{
+    Pose pose;
+    glm::vec3 linearVelocity{0.f};
+    glm::vec3 angularVelocity{0.f};
+};
+
+/// @brief One follower's part of a step stepped again: where it stood when the
+/// step began, and where the step left it and how fast it moved through it.
+struct FollowerStep
+{
+    FollowerFrame from;
+    FollowerFrame to;
+    ECS::Entity entity{ECS::NullEntity};
 };
 
 /// @brief What a participant is, and what it interacts with.
@@ -631,16 +675,6 @@ public:
     /// as standing up under something low is.
     void RewindCharacter(ECS::Entity entity, const CharacterFrame &frame);
 
-    /// @brief Steps @p entity's character alone by @p deltaTime, under
-    /// @p intent and looking along @p facing, as Update would have stepped it.
-    /// Writes and snaps the Transform. Not while the world is stepping.
-    ///
-    /// Everything else stays where it is now, so the step is against the world as
-    /// it stands rather than as it stood when the step first ran: a character
-    /// replayed next to a moving body or a crowd lands where it would have with
-    /// them here. Pushes and carriers take no part.
-    void ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing, float deltaTime);
-
     /// @brief Gives @p entity's character its place in the order characters
     /// step in: by @p key, before every character without one, which step by
     /// entity index.
@@ -657,14 +691,26 @@ public:
     void ClearCharacterOrderKey(ECS::Entity entity);
 
     /// @brief Steps the characters of @p entities by @p deltaTime exactly as
-    /// Update steps them, and nothing else. Writes and snaps their Transforms.
-    /// Not while the world is stepping.
+    /// Update steps them, and nothing else but @p followers. Writes and snaps
+    /// their Transforms. Not while the world is stepping.
     ///
     /// They step in Update's order and meet each other, so two of them pushing
-    /// each other or one riding a base step as they did live. Everything else
-    /// stays where it is: bodies are not solved and the scene is not
-    /// reconciled, so a base the characters ride is wherever it now stands.
-    void StepCharacters(std::span<const ECS::Entity> entities, float deltaTime);
+    /// each other step as they did live. Each follower, a kinematic body,
+    /// stands where its step began and moves as fast as it did while they
+    /// sweep, then is put where its step left it, and the characters riding it
+    /// are carried with it. Everything else stays where it is: bodies are not
+    /// solved and the scene is not reconciled.
+    void StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
+                        float deltaTime);
+
+    /// @brief Where @p entity's kinematic body is now and how it moves, for
+    /// StepCharacters to put it back to. A default frame for any other entity.
+    [[nodiscard]] FollowerFrame CaptureFollower(ECS::Entity entity) const;
+
+    /// @brief Appends every entity StepCharacters can move as a follower, each
+    /// with a kinematic body, in an order that does not change between calls
+    /// while none is added or removed.
+    void Followers(std::vector<ECS::Entity> &out) const;
 
 private:
     struct Impl;

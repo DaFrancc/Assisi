@@ -80,8 +80,11 @@ struct SessionStats
     std::uint64_t correctionBytes    = 0;
     float divergenceMean     = 0.f;         ///< Metres, averaged over every correction so far.
     float divergenceMax      = 0.f;         ///< Metres, worst since the session began.
-    std::uint64_t predictionsKept     = 0; ///< Host answers for the client's own character that agreed.
-    std::uint64_t predictionsReplayed = 0; ///< ...and the ones that did not, replayed from the host's.
+    std::uint64_t predictionsKept     = 0; ///< Host answers about a predicted entity that agreed.
+    std::uint64_t predictionsReplayed = 0; ///< Rollbacks: the predicted set replayed from the host's word.
+    std::uint64_t hardSnaps          = 0; ///< Host answers too old to replay from, snapped to.
+    std::uint64_t syncTestReplays    = 0; ///< Ticks the sync test stepped again.
+    std::uint64_t syncTestDifferences = 0; ///< ...and fields that came out different.
     std::uint64_t mirrorsResurrected = 0;
 
     // Host.

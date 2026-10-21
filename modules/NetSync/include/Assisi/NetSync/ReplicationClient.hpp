@@ -17,6 +17,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
@@ -24,10 +25,12 @@
 
 #include <typeindex>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
 #include <unordered_set>
 #include <string>
@@ -56,6 +59,11 @@ struct CommandEcho
     /// has not said anything about.
     [[nodiscard]] bool Applied(std::uint64_t tick) const;
 };
+
+/// @brief Ticks a client keeps of what it predicted, and of the commands it
+/// sent: more than the furthest it runs ahead of the host, so the host's word
+/// about a tick still finds it.
+inline constexpr std::size_t kPredictionHistoryTicks = 64;
 
 /// @brief The receiving half. Applies snapshots into a local scene.
 class ReplicationClient
@@ -365,8 +373,11 @@ public:
     {
         std::uint64_t applied      = 0;
         std::uint64_t bytesApplied = 0;
-        std::uint64_t predictionsKept     = 0; ///< Own-character answers near enough to what was predicted.
-        std::uint64_t predictionsReplayed = 0; ///< ...and the ones that were not, replayed from the host's.
+        std::uint64_t predictionsKept     = 0; ///< Predicted entities the host agreed with at a tick.
+        std::uint64_t predictionsReplayed = 0; ///< Rollbacks: the predicted set replayed from the host's word.
+        /// Answers about a tick older than any kept: the entity is put where
+        /// the host had it then, with nothing to replay on top.
+        std::uint64_t hardSnaps = 0;
         double divergenceSum = 0.0;
         float divergenceMax = 0.f;
         float         divergenceMean() const
@@ -398,15 +409,117 @@ public:
     /// hesitation.
     void EnforceSleep();
 
-    /// @brief Remember where each character this client controls stands after
-    /// the step whose command is stamped @p commandTick. Call once per fixed
-    /// step, after the step.
-    ///
-    /// The host's state for that tick arrives a round trip later and is
-    /// compared with this. Within ViewSmoothing::predictionTolerance the
-    /// client's own result stands and nothing moves; beyond it the character is
-    /// put where the host had it and stepped again through every command since.
-    void RecordPrediction(std::uint64_t commandTick);
+    // --- Rollback ---------------------------------------------------------------
+    //
+    // The client keeps, for every tick it stepped, each predicted entity as the
+    // step left it: its character's physics frame and its ACOMP(predicted)
+    // components. The host's word about a tick arrives a round trip later and
+    // is compared with that record, section by section. Within the tolerances
+    // the client's result stands and nothing moves. Beyond them every predicted
+    // entity is put back to that tick, the one the host disagreed with to the
+    // host's word and every other to its own record, and the caller steps them
+    // all again to the present: BeginRollback, then for each tick
+    // CommandAppliedAt, one replayed step and RecordHistory, then EndRollback.
+
+    /// @brief What a step stepped again runs on: the command the host applied
+    /// for its tick, or none when the host had none and held or released the
+    /// last, after @p starvedTicks steps in a row without one.
+    struct AppliedCommand
+    {
+        const InputCommand *command = nullptr;
+        std::uint32_t starvedTicks = 0;
+    };
+
+    /// @brief One rollback, as BeginRollback starts it.
+    struct Replay
+    {
+        /// The ticks to step again, oldest first, each one this client stepped.
+        std::vector<std::uint64_t> ticks;
+        /// The characters to step in them: the predicted ones.
+        std::vector<ECS::Entity> characters;
+        /// The tick the predicted set was put back to.
+        std::uint64_t from = 0;
+    };
+
+    /// @brief How often one section of a predicted entity was compared with the
+    /// host's word and how often that started a rollback, with the first field
+    /// that differed the last time it did, and both its values.
+    struct PredictionCounts
+    {
+        std::string firstDifference;
+        std::uint64_t compares = 0;
+        std::uint64_t rollbacks = 0;
+    };
+
+    /// @brief The counts for one predicted entity: its physics frame, and each
+    /// ACOMP(predicted) component apart.
+    struct EntityPredictionCounts
+    {
+        std::unordered_map<Core::Reflect::ComponentId, PredictionCounts> components;
+        PredictionCounts physics;
+    };
+
+    /// @brief Remember @p command, and every predicted entity as the step it is
+    /// stamped for left it. Call once per live fixed step, after the step.
+    void RecordStep(const InputCommand &command);
+
+    /// @brief Remember every predicted entity as the replayed step of @p tick
+    /// left it, in place of what the live step left.
+    void RecordHistory(std::uint64_t tick);
+
+    /// @brief Puts every predicted entity back to the tick the host's word
+    /// last disagreed at, and starts the scene replaying them. Empty when
+    /// nothing disagreed. Each EndRollback answers one that was not empty.
+    [[nodiscard]] std::optional<Replay> BeginRollback();
+
+    /// @brief What the host stepped this client's player on for @p tick, as far
+    /// as it has said: the command this client sent for it when the host had it
+    /// or has not said yet.
+    [[nodiscard]] AppliedCommand CommandAppliedAt(std::uint64_t tick) const;
+
+    /// @brief How every kinematic body moved through the step of @p tick, for
+    /// that step stepped again, so a platform carries its riders where it did.
+    [[nodiscard]] std::vector<Physics::FollowerStep> FollowersAt(std::uint64_t tick) const;
+
+    /// @brief Ends the rollback BeginRollback started: the scene steps
+    /// everything again, and the difference the replay made to each predicted
+    /// character's pose is eased in on screen rather than shown at once.
+    void EndRollback();
+
+    /// @brief How the host's word about the predicted entity @p netId compared
+    /// with this client's, or null for one it does not predict.
+    [[nodiscard]] const EntityPredictionCounts *PredictionCountsOf(NetId netId) const;
+
+    // --- Sync test ---------------------------------------------------------------
+    //
+    // A check that stepping a tick again lands where stepping it live did. With
+    // it on, a step that has no rollback to run puts every predicted entity back
+    // one tick, by its own record, and steps that tick again; every recorded
+    // field that comes out different from the live step is logged and counted.
+    // Any is a bug: something a replay does not put back, or a system that runs
+    // differently the second time.
+
+    void SetSyncTest(bool enabled) { _syncTest = enabled; }
+    [[nodiscard]] bool SyncTest() const { return _syncTest; }
+
+    /// @brief With the sync test on and no rollback waiting, puts every
+    /// predicted entity back to the tick before the newest one recorded and
+    /// starts the scene replaying them, as BeginRollback does. Empty otherwise.
+    /// Answered by EndRollback and then EndSyncTest.
+    [[nodiscard]] std::optional<Replay> BeginSyncTest();
+
+    /// @brief Compares what the sync test's replay recorded with what the live
+    /// step had, logging and counting each field that differs.
+    void EndSyncTest();
+
+    /// @brief Ticks the sync test stepped again, and fields that came out
+    /// different.
+    struct SyncTestCounts
+    {
+        std::uint64_t replays = 0;
+        std::uint64_t differences = 0;
+    };
+    [[nodiscard]] const SyncTestCounts &SyncTestResults() const { return _syncTestCounts; }
 
     /// @brief Mirrors that were destroyed locally and had to be recreated when
     /// the server next mentioned them.
@@ -432,32 +545,103 @@ public:
 private:
     bool ApplySnapshot(Core::BitReader &reader);
 
-    /// Applies the host's @p state for one body, as it stood after its step
-    /// @p serverTick.
-    void ApplyBodyState(const BodyState &state, std::uint64_t serverTick);
+    /// Applies the host's @p state for one body. A character this client
+    /// predicts is left as it is: its state is in its confirmed copy, for
+    /// ComparePredicted.
+    void ApplyBodyState(const BodyState &state);
 
-    /// Where this client predicted its own character would be after one step.
-    struct PredictedFrame
+    /// One predicted entity as one step left it.
+    struct PredictedRecord
     {
-        Physics::CharacterFrame frame;
-        std::uint64_t tick = 0; ///< The command tick of that step.
+        /// Each predicted component it had, at its offset in
+        /// `_predictedOffsets`.
+        std::vector<std::byte> components;
+        Physics::CharacterFrame character;
+        std::uint64_t tick = 0;    ///< The command tick of the step; 0 for none yet.
+        std::uint64_t present = 0; ///< Bit i: it had `_predictedComponents[i]`.
+        bool hasCharacter = false;
     };
 
-    using PredictionHistory = std::deque<PredictedFrame>;
+    /// What this client predicted of one entity, a ring of records by tick,
+    /// and how its predictions have fared.
+    struct PredictionHistory
+    {
+        std::array<PredictedRecord, kPredictionHistoryTicks> records;
+        EntityPredictionCounts counts;
+        /// No rollback starts for it before the client reaches this tick, so a
+        /// predicted value the host disagrees with every snapshot costs one
+        /// replay a snapshot interval.
+        std::uint64_t cooldownUntil = 0;
+        /// The host's tick it was last found wrong at and not yet put back
+        /// for, or 0.
+        std::uint64_t mispredictedAt = 0;
+    };
 
-    /// Ticks of prediction kept per character: more than the furthest a client
-    /// runs ahead of the host, so the host's answer for a tick still finds it.
-    static constexpr std::size_t kPredictionHistoryTicks = 64;
+    /// Whether @p entity, @p netId's mirror, is a character this client
+    /// predicts and steps again.
+    [[nodiscard]] bool PredictsCharacter(NetId netId, ECS::Entity entity) const;
 
-    /// Puts @p entity where the host had it at @p serverTick, with the timers
-    /// @p history holds for then, and steps it again through every later frame
-    /// of @p history, rewriting each with where it lands now.
-    void ReplayOwnCharacter(ECS::Entity entity, PredictionHistory &history, const BodyState &state,
-                            std::uint64_t serverTick);
+    /// One follower as one step left it.
+    struct FollowerRecord
+    {
+        Physics::FollowerFrame frame;
+        ECS::Entity entity{ECS::NullEntity};
+    };
 
-    /// Whether @p entity is a character this client predicts: one it controls
-    /// that is not riding anything, whose motion is its base's to give.
-    [[nodiscard]] bool PredictsCharacter(ECS::Entity entity) const;
+    /// Records every follower of @p tick: each kinematic body.
+    void RecordFollowers(std::uint64_t tick);
+
+    /// Records @p tick for every predicted entity; RecordStep and RecordHistory
+    /// both come here.
+    void Record(std::uint64_t tick);
+
+    /// Compares every predicted entity the snapshot of @p serverTick spoke of
+    /// with what this client recorded for that tick.
+    void ComparePredicted(std::uint64_t serverTick);
+
+    /// Compares @p confirmed, the host's word about @p entity at @p serverTick,
+    /// with what @p history recorded for that tick, counting into it, and
+    /// appends each section that disagrees to @p differing.
+    void CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+                       PredictionHistory &history, std::vector<PredictionCounts *> &differing);
+
+    /// What differs between a character's physics frame as the host had it and
+    /// as this client did, beyond the tolerances; empty when nothing does.
+    [[nodiscard]] std::string PhysicsDifference(const BodyState &host, const PredictedRecord &record) const;
+
+    /// Puts @p entity where the host had it, with nothing replayed on top: the
+    /// host's word is older than anything this client kept.
+    void HardSnap(NetId netId, ECS::Entity entity, const Confirmed &confirmed);
+
+    /// Puts @p entity back as @p record has it, with the host's word in
+    /// @p host taking the place of each section it carries for that tick.
+    void Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host);
+
+    /// Writes the host's copy of each predicted component in @p confirmed over
+    /// @p entity's own, all but its Transform when @p skipTransform.
+    void WriteHostComponents(ECS::Entity entity, const Confirmed &confirmed, bool skipTransform);
+
+    /// Puts @p entity's character in @p frame, but where, how fast, how
+    /// standing and facing which way @p host says.
+    void PlaceCharacter(ECS::Entity entity, Physics::CharacterFrame frame, const BodyState &host);
+
+    /// Where the Transform sits in a record, or nothing when Transform is not
+    /// predicted in this build.
+    [[nodiscard]] std::optional<std::size_t> TransformRecordOffset() const;
+
+    /// Ticks between two snapshots, as the host announced them.
+    [[nodiscard]] std::uint64_t SnapshotIntervalTicks() const;
+
+    /// Puts every predicted entity back to @p from, the ones marked mispredicted
+    /// at it to the host's word, and starts the scene replaying them. Empty
+    /// when @p from is no longer kept.
+    [[nodiscard]] std::optional<Replay> RollBackTo(std::uint64_t from);
+
+    /// Each field in which @p replayed, a predicted entity's record after the
+    /// sync test stepped its tick again, differs from @p live, the record the
+    /// live step left; empty when none does.
+    [[nodiscard]] std::vector<std::string> SyncDifferences(const PredictedRecord &live,
+                                                           const PredictedRecord &replayed) const;
 
     /// Mark one mirror as body-corrected once the components just applied to it
     /// describe a body. The physics world builds the body itself from those
@@ -608,6 +792,18 @@ private:
     /// mirror — have already lost the entity by then.
     void DestroyMirrorBody(NetId netId);
 
+    /// Starts hiding a correction to @p record's mirror: the picture stays at
+    /// @p renderedPosition and @p renderedRotation this instant, and eases to
+    /// the corrected pose.
+    static void AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered, const Physics::Pose &corrected);
+
+    /// Where one predicted character was drawn before a rollback moved it.
+    struct RenderedBeforeReplay
+    {
+        Physics::Pose pose;
+        NetId netId = InvalidNetId;
+    };
+
     Net::NetTransport &_transport;
     ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
@@ -645,8 +841,31 @@ private:
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
 
-    /// For each character this client predicts, oldest first.
-    std::unordered_map<NetId, PredictionHistory> _predictions;
+    /// For each entity this client predicts.
+    std::unordered_map<NetId, PredictionHistory> _history;
+
+    /// The commands this client sent, by tick, and which ticks it recorded:
+    /// the same ring as each entity's records.
+    std::array<InputCommand, kPredictionHistoryTicks> _sentCommands{};
+    std::array<std::uint64_t, kPredictionHistoryTicks> _recordedTicks{};
+    /// Every follower each recorded tick left, on the same ring.
+    std::array<std::vector<FollowerRecord>, kPredictionHistoryTicks> _followers{};
+    /// Scratch for RecordFollowers, kept to keep its storage.
+    std::vector<ECS::Entity> _followerEntities;
+
+    /// Where each ACOMP(predicted) component sits in a record, by its index in
+    /// `_predictedComponents`, and a record's size.
+    std::vector<std::size_t> _predictedOffsets;
+    std::size_t _predictedBytes = 0;
+
+    /// Filled by BeginRollback, read by EndRollback.
+    std::vector<RenderedBeforeReplay> _renderedBeforeReplay;
+
+    /// What the live step of the sync test's tick recorded, by entity, until
+    /// EndSyncTest compares the replay with it.
+    std::vector<std::pair<NetId, PredictedRecord>> _syncLive;
+    SyncTestCounts _syncTestCounts;
+    std::uint64_t _syncTick = 0; ///< The tick the sync test stepped again.
 
     /// The host's word about every entity this client predicts, which is
     /// exactly the predicted set.
@@ -679,12 +898,15 @@ private:
     std::uint64_t _snapshotsRejected  = 0;
     std::uint64_t _structureRevision  = 0;
     std::uint64_t _mirrorsResurrected = 0;
+    std::uint64_t _newestRecordedTick = 0; ///< The newest tick Record wrote.
     std::uint32_t _tickRateHz         = 60;
     std::uint32_t _snapshotHz         = 20;
     bool _synchronized       = false;
     bool _worldComplete      = false;
     bool _deferHandshake     = false;
     bool _awaitingLevel      = false;
+    bool _rollingBack        = false; ///< Between BeginRollback and EndRollback.
+    bool _syncTest           = false;
 
     /// The content-set hash and whether it has been supplied. A separate flag
     /// rather than a sentinel: 0 is a legitimate hash (an empty content set), and

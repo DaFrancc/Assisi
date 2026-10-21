@@ -243,7 +243,9 @@ enum class RejectReason : std::uint8_t
 ///  - 9 → 10: the snapshot header says which of the client's command ticks the
 ///    server applied and which it stepped without one. Two fields in the middle
 ///    of the header, so a v9 client reads the rest of it shifted.
-inline constexpr std::uint32_t kNetProtocolVersion = 10;
+///  - 10 → 11: a body record says whether it is a character's, and a
+///    character's carries its stance and ground state after the velocities.
+inline constexpr std::uint32_t kNetProtocolVersion = 11;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

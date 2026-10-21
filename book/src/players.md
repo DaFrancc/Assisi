@@ -113,3 +113,8 @@ Read controls in a **`FixedUpdate`** system that runs `before = "CharacterComman
 `CharacterCommand` clears `pressed` and the turning once the step has used them,
 so a press is seen by exactly one step, and a system after it would never see
 one.
+
+In a networked game a client sometimes runs a step again, to correct what it
+predicted (see [Multiplayer basics](multiplayer.md#systems-during-a-rollback)).
+Your controls system then runs again too, with `PlayerInput` holding the
+controls the host received for that step. Nothing in your code has to change.

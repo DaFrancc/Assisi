@@ -148,6 +148,66 @@ void PlayerSession::Detach(World &world)
 
 const NetSync::InputCommand *PlayerSession::LocalCommand() const { return _local.has_value() ? &*_local : nullptr; }
 
+std::pair<ECS::Entity, PlayerInput *> PlayerSession::LocalControls(World &world)
+{
+    // Including the frozen: a replay steps this machine's player, but the
+    // controls are asked for on either side of it too.
+    using Locals = ECS::QueryViewOf<PlayerInput, LocalPlayer, ECS::IncludingFrozen>;
+    Locals locals = world.scene.Query<PlayerInput, LocalPlayer, ECS::IncludingFrozen>();
+    const Locals::Iterator first = locals.begin();
+    if (first == locals.end())
+    {
+        return {ECS::NullEntity, nullptr};
+    }
+    const ECS::Entity entity = std::get<0>(*first);
+    return {entity, world.scene.GetMut<PlayerInput>(entity)};
+}
+
+void PlayerSession::RecordControls(World &world, std::uint64_t tick)
+{
+    const std::pair<ECS::Entity, PlayerInput *> local = LocalControls(world);
+    if (local.second != nullptr)
+    {
+        _recordedControls[tick % _recordedControls.size()] = RecordedControls{.tick = tick, .controls = *local.second};
+    }
+}
+
+void PlayerSession::BeginReplay(World &world, std::uint64_t tick)
+{
+    const std::pair<ECS::Entity, PlayerInput *> local = LocalControls(world);
+    if (local.second == nullptr)
+    {
+        return;
+    }
+    _liveControls = *local.second;
+    const RecordedControls &recorded = _recordedControls[tick % _recordedControls.size()];
+    // With nothing kept for the tick, the gathered controls are the nearest
+    // guess at what was held then.
+    if (recorded.tick == tick)
+    {
+        *local.second = recorded.controls;
+    }
+}
+
+void PlayerSession::ReplayCommand(World &world, const NetSync::InputCommand *command, std::uint32_t starvedTicks)
+{
+    const std::pair<ECS::Entity, PlayerInput *> local = LocalControls(world);
+    if (local.second != nullptr)
+    {
+        RelayHeldCommand(*local.second, command, starvedTicks);
+    }
+}
+
+void PlayerSession::EndReplay(World &world)
+{
+    const std::pair<ECS::Entity, PlayerInput *> local = LocalControls(world);
+    if (local.second != nullptr && _liveControls.has_value())
+    {
+        *local.second = *_liveControls;
+    }
+    _liveControls.reset();
+}
+
 void PlayerSession::GivePlayers(NetSync::NetSession &session, World &world)
 {
     NetSync::ReplicationServer &server = *session.Server();

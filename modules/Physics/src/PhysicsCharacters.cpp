@@ -452,16 +452,54 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
         return CharacterFrame{};
     }
     const JPH::RVec3 position = record->character->GetPosition();
-    const JPH::Vec3 velocity = record->character->GetLinearVelocity();
+    const CharacterState state = _impl->BuildCharacterState(*record);
     return CharacterFrame{.intent = record->lastIntent,
+                          .baseRotation = ToGlm(record->baseRotation),
                           .position = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-                          .velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+                          .velocity = ToGlm(record->character->GetLinearVelocity()),
+                          .worldVelocity = state.velocity,
                           .facing = record->facing,
+                          .localFeet = ToGlm(record->localFeet),
+                          .lastGroundVelocity = ToGlm(record->lastGroundVelocity),
+                          .groundedWorldVelocity = ToGlm(record->groundedWorldVelocity),
+                          .base = record->base,
                           .timeSinceGrounded = record->timeSinceGrounded,
                           .jumpBufferRemaining = record->jumpBufferRemaining,
                           .eyeHeight = record->eyeHeight,
+                          .graceRemaining = record->graceRemaining,
                           .stance = record->stance,
-                          .jumpedSinceGrounded = record->jumpedSinceGrounded};
+                          .ground = state.ground,
+                          .jumpedSinceGrounded = record->jumpedSinceGrounded,
+                          .leavingBase = record->leavingBase,
+                          .basedByIntent = record->basedByIntent,
+                          .withGround = record->withGround};
+}
+
+FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
+{
+    const Impl::BodySlot *slot = _impl->SlotFor(entity);
+    if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion != BodyMotion::Kinematic)
+    {
+        return FollowerFrame{};
+    }
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    const JPH::RVec3 position = bodies.GetPosition(slot->body);
+    return FollowerFrame{.pose = Pose{ToGlm(bodies.GetRotation(slot->body)),
+                                      glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
+                         .linearVelocity = ToGlm(bodies.GetLinearVelocity(slot->body)),
+                         .angularVelocity = ToGlm(bodies.GetAngularVelocity(slot->body))};
+}
+
+void PhysicsWorld::Followers(std::vector<ECS::Entity> &out) const
+{
+    for (std::uint32_t index = 0; index < _impl->slots.size(); ++index)
+    {
+        const Impl::BodySlot &slot = _impl->slots[index];
+        if (slot.kind == Impl::SlotKind::Body && slot.motion == BodyMotion::Kinematic)
+        {
+            out.push_back(ECS::Entity{index, slot.generation});
+        }
+    }
 }
 
 void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &frame)
@@ -490,36 +528,32 @@ void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &fra
     record->jumpBufferRemaining = frame.jumpBufferRemaining;
     record->eyeHeight = frame.eyeHeight;
     record->jumpedSinceGrounded = frame.jumpedSinceGrounded;
-    _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
-}
+    record->lastGroundVelocity = ToJoltVector(frame.lastGroundVelocity);
 
-void PhysicsWorld::ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing,
-                                   float deltaTime)
-{
-    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ReplayCharacter called while the world is stepping");
-    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
+    // Back on the base it rode then, if that is still a body; with none, it
+    // rides nothing, as a rider whose base was destroyed does.
+    const Impl::BodySlot *base = frame.base == ECS::NullEntity ? nullptr : _impl->SlotFor(frame.base);
+    if (base != nullptr && base->kind == Impl::SlotKind::Body)
     {
-        return;
+        record->base = frame.base;
+        record->baseBody = base->body;
+        record->baseRotation = ToJolt(frame.baseRotation);
+        record->localFeet = ToJoltVector(frame.localFeet);
+        record->groundedWorldVelocity = ToJoltVector(frame.groundedWorldVelocity);
+        record->graceRemaining = frame.graceRemaining;
+        record->leavingBase = frame.leavingBase;
+        record->basedByIntent = frame.basedByIntent;
+        record->withGround = frame.withGround;
     }
-
-    // As Update runs it: the stance asked for at the reconcile before the step,
-    // and the sweep with denormals flushed.
-    if (intent.stance != record->stance)
+    else
     {
-        (void)_impl->ApplyStance(*record, intent.stance);
+        record->base = ECS::NullEntity;
+        record->baseBody = JPH::BodyID{};
+        record->graceRemaining = 0.f;
+        record->leavingBase = false;
+        record->basedByIntent = false;
+        record->withGround = false;
     }
-    record->facing = facing;
-    {
-        const JPH::FPFlushDenormals flushDenormals;
-        const Impl::GroundContact contact = _impl->SenseGround(*record);
-        (void)_impl->MoveCharacter(*record, intent, contact, deltaTime);
-    }
-
-    const JPH::RVec3 feet = record->character->GetPosition();
-    _impl->WritePose(entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
-                     /*writeRotation=*/ false);
-    ECS::SnapTransform(_impl->scene, entity);
     _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
 }
 
@@ -537,7 +571,8 @@ void PhysicsWorld::ClearCharacterOrderKey(ECS::Entity entity)
     }
 }
 
-void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, float deltaTime)
+void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
+                                  float deltaTime)
 {
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::StepCharacters called while the world is stepping");
 
@@ -558,6 +593,18 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, float d
         }
         stepped.push_back(record);
     }
+    // The pushes the replayed step's systems gave them, which Update would
+    // take; one for anything else stays for the next Update.
+    _impl->ApplyCharacterRequests(stepped, deltaTime);
+
+    // Where each follower stood as the step began, moving as it moved through
+    // it: what a character riding or meeting it reads during its sweep.
+    for (const FollowerStep &follower : followers)
+    {
+        _impl->PlaceFollower(follower.entity, FollowerFrame{.pose = follower.from.pose,
+                                                            .linearVelocity = follower.to.linearVelocity,
+                                                            .angularVelocity = follower.to.angularVelocity});
+    }
 
     _impl->OrderCharacters();
     {
@@ -568,6 +615,19 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, float d
             {
                 _impl->StepCharacter(*record, deltaTime);
             }
+        }
+    }
+
+    // Where the solve took each follower, and its riders with it.
+    for (const FollowerStep &follower : followers)
+    {
+        _impl->PlaceFollower(follower.entity, follower.to);
+    }
+    for (Impl::CharacterRecord *record : stepped)
+    {
+        if (record->base != ECS::NullEntity)
+        {
+            _impl->CarryRider(*record);
         }
     }
 
@@ -861,51 +921,67 @@ glm::quat YawOf(JPH::QuatArg rotation, JPH::Vec3Arg up)
 
 void PhysicsWorld::Impl::CarryRiders()
 {
-    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
     for (std::pair<const std::uint32_t, CharacterRecord> &entry : characters)
     {
-        CharacterRecord &record = entry.second;
-        if (record.base == ECS::NullEntity)
+        if (entry.second.base != ECS::NullEntity)
         {
-            continue;
-        }
-
-        const JPH::RVec3 basePosition = bodies.GetPosition(record.baseBody);
-        const JPH::Quat baseRotation = bodies.GetRotation(record.baseBody);
-        const JPH::Quat turned = baseRotation * record.baseRotation.Conjugated();
-        const JPH::RVec3 feet = basePosition + baseRotation * record.localFeet;
-        record.character->SetPosition(feet);
-
-        // The velocity is the deck's, held in world axes, so it turns with the
-        // deck; left alone, a walk across a turning deck would curve. One that
-        // stays with other ground keeps its world velocity instead, so the
-        // base speeding up or turning is not passed on to it as a shove.
-        if (record.withGround)
-        {
-            record.character->SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
-        }
-        else
-        {
-            record.character->SetLinearVelocity(turned * record.character->GetLinearVelocity());
-        }
-
-        // Only the yaw: the capsule stays upright on a rocking deck, and so
-        // does the view. One that stays with other ground does not turn.
-        const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity);
-        if (record.options.Has(CharacterOption::TurnsWithBase) && !record.withGround && transform != nullptr)
-        {
-            const glm::quat yaw = YawOf(turned, kCharacterUp);
-            WritePose(record.entity,
-                      Pose{glm::normalize(yaw * transform->rotation),
-                           glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
-                      /*writeRotation=*/ true);
-        }
-
-        if (record.leavingBase)
-        {
-            ReleaseRider(record);
+            CarryRider(entry.second);
         }
     }
+}
+
+void PhysicsWorld::Impl::CarryRider(CharacterRecord &record)
+{
+    const JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    const JPH::RVec3 basePosition = bodies.GetPosition(record.baseBody);
+    const JPH::Quat baseRotation = bodies.GetRotation(record.baseBody);
+    const JPH::Quat turned = baseRotation * record.baseRotation.Conjugated();
+    const JPH::RVec3 feet = basePosition + baseRotation * record.localFeet;
+    record.character->SetPosition(feet);
+
+    // The velocity is the deck's, held in world axes, so it turns with the
+    // deck; left alone, a walk across a turning deck would curve. One that
+    // stays with other ground keeps its world velocity instead, so the
+    // base speeding up or turning is not passed on to it as a shove.
+    if (record.withGround)
+    {
+        record.character->SetLinearVelocity(record.groundedWorldVelocity - BaseVelocityAt(record));
+    }
+    else
+    {
+        record.character->SetLinearVelocity(turned * record.character->GetLinearVelocity());
+    }
+
+    // Only the yaw: the capsule stays upright on a rocking deck, and so
+    // does the view. One that stays with other ground does not turn.
+    const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity);
+    if (record.options.Has(CharacterOption::TurnsWithBase) && !record.withGround && transform != nullptr)
+    {
+        const glm::quat yaw = YawOf(turned, kCharacterUp);
+        WritePose(record.entity,
+                  Pose{glm::normalize(yaw * transform->rotation), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                  /*writeRotation=*/ true);
+    }
+
+    if (record.leavingBase)
+    {
+        ReleaseRider(record);
+    }
+}
+
+void PhysicsWorld::Impl::PlaceFollower(ECS::Entity entity, const FollowerFrame &frame)
+{
+    const BodySlot *slot = SlotFor(entity);
+    if (slot == nullptr || slot->kind != SlotKind::Body || slot->motion != BodyMotion::Kinematic)
+    {
+        return;
+    }
+    JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
+    const bool moving = glm::length(frame.linearVelocity) > 0.f || glm::length(frame.angularVelocity) > 0.f;
+    bodies.SetPositionAndRotation(slot->body, ToJolt(frame.pose.position), ToJolt(frame.pose.rotation),
+                                  moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    bodies.SetLinearAndAngularVelocity(slot->body, ToJoltVector(frame.linearVelocity),
+                                       ToJoltVector(frame.angularVelocity));
 }
 
 void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)

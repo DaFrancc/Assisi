@@ -7,6 +7,7 @@
 #include <Assisi/ECS/EntityRef.hpp>
 #include <type_traits>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
+#include <string>
 #include <Assisi/Core/Reflect/ContainerJson.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <cstdint>
@@ -603,6 +604,21 @@ bool _reflectgen_SamplePredicted_equals(const void *a, const void *b)
            Assisi::Core::Reflect::PredictedFieldEqual(lhs.heat, rhs.heat);
 }
 
+std::string _reflectgen_SamplePredicted_difference(const void *a, const void *b)
+{
+    const Assisi::Runtime::SamplePredicted &lhs = *static_cast<const Assisi::Runtime::SamplePredicted *>(a);
+    const Assisi::Runtime::SamplePredicted &rhs = *static_cast<const Assisi::Runtime::SamplePredicted *>(b);
+    if (std::string text = Assisi::Core::Reflect::PredictedFieldDifference("aim", lhs.aim, rhs.aim); !text.empty())
+    {
+        return text;
+    }
+    if (std::string text = Assisi::Core::Reflect::PredictedFieldDifference("heat", lhs.heat, rhs.heat); !text.empty())
+    {
+        return text;
+    }
+    return {};
+}
+
 static const bool _reflectgen_SamplePredicted = []() -> bool
 {
     using T = Assisi::Runtime::SamplePredicted;
@@ -670,6 +686,7 @@ static const bool _reflectgen_SamplePredicted = []() -> bool
             (void)scene.Add<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
         .predictedEquals = &_reflectgen_SamplePredicted_equals,
+        .predictedDifference = &_reflectgen_SamplePredicted_difference,
         .fields = {
             { .name = "aim", .type = Assisi::Core::Reflect::FieldType::Vec3, .offset = offsetof(T, aim) },
             { .name = "heat", .type = Assisi::Core::Reflect::FieldType::Float, .offset = offsetof(T, heat) }

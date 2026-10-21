@@ -46,7 +46,7 @@ glm::vec3 WithinRoundingKept(glm::vec3 received, glm::vec3 local, float step)
 void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
     _bodies.erase(netId);
-    _predictions.erase(netId);
+    _history.erase(netId);
 }
 
 void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
@@ -65,7 +65,7 @@ void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
     _transformHistory.erase(netId);
 }
 
-void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t serverTick)
+void ReplicationClient::ApplyBodyState(const BodyState &state)
 {
     if (_physics == nullptr)
         return;
@@ -114,72 +114,58 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
     // Only what this client predicts is its own to move. A character it does
     // not, shoved here by the one it does, would be put back by the host's next
     // word, into the way of the character it was shoved by.
+    const bool predicted = character && PredictsCharacter(state.netId, entity);
     if (character)
     {
-        _physics->SetCharacterPushable(entity, PredictsCharacter(entity));
+        _physics->SetCharacterPushable(entity, predicted);
     }
-
-    // A character this client predicts is compared with where it predicted it
-    // at the same tick, not with where it is now: it is a round trip further on.
-    PredictionHistory *history = nullptr;
-    if (const std::unordered_map<NetId, PredictionHistory>::iterator found = _predictions.find(state.netId);
-        found != _predictions.end() && !found->second.empty() && PredictsCharacter(entity))
-    {
-        history = &found->second;
-    }
-    const PredictionHistory::const_iterator predicted =
-        history == nullptr ? PredictionHistory::const_iterator{}
-                           : std::find_if(history->cbegin(), history->cend(),
-                                          [serverTick](const PredictedFrame &frame) { return frame.tick == serverTick; });
-    const bool comparable = history != nullptr && predicted != history->cend();
-    const float divergence = glm::length((comparable ? predicted->frame.position : simulatedPosition) - state.position);
 
     ++_corrections.applied;
-    _corrections.divergenceSum += static_cast<double>(divergence);
-    _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
 
-    // Near enough, and the client's own result stands: moving a character the
-    // player is steering by a hair's breadth of rounding is a jitter they feel.
-    if (comparable && divergence <= Smoothing().predictionTolerance)
+    // Compared with where the client had it at the same tick, not where it is
+    // now, a round trip further on: ComparePredicted does that, after the
+    // whole snapshot is in.
+    if (predicted)
     {
-        ++_corrections.predictionsKept;
-        std::erase_if(*history, [serverTick](const PredictedFrame &frame) { return frame.tick <= serverTick; });
         return;
     }
+
+    const float divergence = glm::length(simulatedPosition - state.position);
+    _corrections.divergenceSum += static_cast<double>(divergence);
+    _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
 
     // The rendered pose, which the correction must not change: the sim is
     // snapped and the offset absorbs the whole difference, so nothing happens on
     // screen this instant. Successive corrections accumulate into the same
     // offset, which keeps a stream of small ones smooth.
-    const glm::vec3 renderedPosition = simulatedPosition + record.positionError;
-    const glm::quat renderedRotation = record.rotationError * simulatedRotation;
+    const Physics::Pose rendered{record.rotationError * simulatedRotation, simulatedPosition + record.positionError};
 
     // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
     // physics state, and a half-applied correction is not one. Hiding the jump
-    // belongs to the view. A predicted character is snapped to the host's state
-    // and then brought forward to now through the commands sent since.
-    glm::vec3 correctedPosition = state.position;
-    if (history != nullptr)
-    {
-        ReplayOwnCharacter(entity, *history, state, serverTick);
-        ++_corrections.predictionsReplayed;
-        correctedPosition = _physics->CaptureCharacter(entity).position;
-    }
-    else
-    {
-        correctedPosition = WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
-        _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
-                                  Physics::BodyState{.linearVelocity = state.linearVelocity,
-                                                     .angularVelocity = state.angularVelocity,
-                                                     .asleep = state.asleep});
-    }
+    // belongs to the view.
+    const glm::vec3 correctedPosition =
+        WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
+    _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
+                              Physics::BodyState{.linearVelocity = state.linearVelocity,
+                                                 .angularVelocity = state.angularVelocity,
+                                                 .asleep = state.asleep});
     if (character && targetRotation != simulatedRotation)
     {
         _scene.GetMut<ECS::Transform>(entity)->rotation = targetRotation;
     }
 
-    record.positionError = renderedPosition - correctedPosition;
-    record.rotationError = glm::normalize(renderedRotation * glm::inverse(targetRotation));
+    AbsorbCorrection(record, rendered, Physics::Pose{targetRotation, correctedPosition});
+
+    record.asleep       = state.asleep;
+    record.restPosition = correctedPosition;
+    record.restRotation = state.rotation;
+}
+
+void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered,
+                                         const Physics::Pose &corrected)
+{
+    record.positionError = rendered.position - corrected.position;
+    record.rotationError = glm::normalize(rendered.rotation * glm::inverse(corrected.rotation));
 
     const ViewSmoothing &smoothing = Smoothing();
     const float carried   = glm::length(record.positionError);
@@ -212,82 +198,11 @@ void ReplicationClient::ApplyBodyState(const BodyState &state, std::uint64_t ser
         record.rotationErrorStart = record.rotationError;
         record.smoothingElapsed   = 0.f;
     }
-
-    record.asleep       = state.asleep;
-    record.restPosition = correctedPosition;
-    record.restRotation = state.rotation;
 }
 
-void ReplicationClient::ReplayOwnCharacter(ECS::Entity entity, PredictionHistory &history, const BodyState &state,
-                                           std::uint64_t serverTick)
+bool ReplicationClient::PredictsCharacter(NetId netId, ECS::Entity entity) const
 {
-    // The wire carries where the host had it and how fast it went, not its jump
-    // timers, stance or eye height; those come from the client's own frame for
-    // that tick, or the nearest after it when that one is gone.
-    const PredictionHistory::const_iterator from = std::find_if(
-        history.cbegin(), history.cend(), [serverTick](const PredictedFrame &frame) { return frame.tick >= serverTick; });
-    Physics::CharacterFrame start = from != history.cend() ? from->frame : history.back().frame;
-    start.position = state.position;
-    start.velocity = state.linearVelocity;
-    _physics->RewindCharacter(entity, start);
-
-    // Each frame is rewritten with where the replay put it, so the host's next
-    // answer is compared with what the client now believes rather than with
-    // what it believed before it was corrected.
-    const float step = 1.f / static_cast<float>(std::max(_tickRateHz, 1u));
-    for (PredictedFrame &later : history)
-    {
-        if (later.tick <= serverTick)
-        {
-            continue;
-        }
-        _physics->ReplayCharacter(entity, later.frame.intent, later.frame.facing, step);
-        later.frame = _physics->CaptureCharacter(entity);
-    }
-    std::erase_if(history, [serverTick](const PredictedFrame &frame) { return frame.tick <= serverTick; });
-}
-
-bool ReplicationClient::PredictsCharacter(ECS::Entity entity) const
-{
-    if (!_scene.Has<Physics::Character>(entity) || !ControlsEntity(entity))
-    {
-        return false;
-    }
-    const Physics::CharacterState *state = _scene.Get<Physics::CharacterState>(entity);
-    return state == nullptr || state->baseEntity == ECS::NullEntity;
-}
-
-void ReplicationClient::RecordPrediction(std::uint64_t commandTick)
-{
-    if (_physics == nullptr)
-    {
-        return;
-    }
-    for (const auto &[netId, body] : _bodies)
-    {
-        (void)body;
-        const ECS::Entity entity = EntityOf(netId);
-        if (!_scene.IsAlive(entity) || !PredictsCharacter(entity) || !_physics->HasBody(entity))
-        {
-            // Handed to someone else, riding, or not built yet: what it
-            // predicted before no longer describes it.
-            _predictions.erase(netId);
-            continue;
-        }
-        PredictionHistory &history = _predictions[netId];
-
-        // Command ticks only go forward. One that did not would pair the host's
-        // answers with the wrong steps.
-        if (!history.empty() && history.back().tick >= commandTick)
-        {
-            history.clear();
-        }
-        history.push_back(PredictedFrame{.frame = _physics->CaptureCharacter(entity), .tick = commandTick});
-        while (history.size() > kPredictionHistoryTicks)
-        {
-            history.pop_front();
-        }
-    }
+    return _confirmed.contains(netId) && _scene.Has<Physics::Character>(entity);
 }
 
 void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
@@ -556,7 +471,14 @@ void ReplicationClient::Reset()
 
     // The mirrors' bodies go with the entities destroyed above.
     _bodies.clear();
-    _predictions.clear();
+    _history.clear();
+    _sentCommands.fill(InputCommand{});
+    _recordedTicks.fill(0);
+    for (std::vector<FollowerRecord> &followers : _followers)
+    {
+        followers.clear();
+    }
+    _newestRecordedTick = 0;
     _confirmed.clear();
     _transformHistory.clear();
     _sentTransforms.clear();

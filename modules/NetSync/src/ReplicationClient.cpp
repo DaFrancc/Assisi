@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/InstanceRecord.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -26,6 +27,13 @@ namespace Assisi::NetSync
 {
 namespace
 {
+
+/// How a predicted component is aligned within a record: as the storage new
+/// hands out, which reflectgen asserts every predicted component fits.
+constexpr std::size_t kPredictedRecordAlignment = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+
+/// One bit each in PredictedRecord::present.
+constexpr std::size_t kMaxPredictedComponents = 64;
 
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
@@ -184,6 +192,7 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
                 }
             }
         }
+        _history.erase(it->first);
         it = _confirmed.erase(it);
     }
 
@@ -237,8 +246,15 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
         if (meta.predicted)
         {
             _predictedComponents.push_back(&meta);
+            _predictedOffsets.push_back(_predictedBytes);
+            // Aligned as storage from new is, so each compare reads its
+            // component at an address its type allows.
+            _predictedBytes += (meta.size + kPredictedRecordAlignment - 1u) / kPredictedRecordAlignment *
+                               kPredictedRecordAlignment;
         }
     }
+    ASSISI_ASSERT(_predictedComponents.size() <= kMaxPredictedComponents,
+                  "ReplicationClient: more ACOMP(predicted) components than a record has bits for");
 
     // A mirror's joints break when the server says so, by removing them. One
     // broken here as well would leave the two simulations disagreeing.
@@ -1111,11 +1127,15 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             found->second.body        = state;
             found->second.physicsTick = header.serverTick;
         }
-        ApplyBodyState(state, header.serverTick);
+        ApplyBodyState(state);
     }
     if (!reader.Ok())
         return false;
     _corrections.bytesApplied += (reader.BitsRead() - bodySectionStart + 7u) / 8u;
+
+    // After both sections, so each predicted entity is judged on everything
+    // this snapshot said of it.
+    ComparePredicted(header.serverTick);
 
     ResolvePendingRefs();
 

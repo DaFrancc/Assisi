@@ -17,6 +17,11 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <format>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 
 namespace Assisi::Core::Reflect
 {
@@ -73,6 +78,50 @@ template <typename T> [[nodiscard]] bool PredictedFieldEqual(const T &lhs, const
     {
         return lhs == rhs;
     }
+}
+
+/// @brief @p value as text, for saying what a prediction got wrong: a number
+/// as std::format writes it, a glm type as its components in parentheses, an
+/// enum as its underlying number.
+template <typename T> [[nodiscard]] std::string PredictedFieldText(const T &value)
+{
+    if constexpr (ComponentWise<T>)
+    {
+        std::string text = "(";
+        for (std::size_t i = 0; i < static_cast<std::size_t>(T::length()); ++i)
+        {
+            if (i != 0)
+            {
+                text += ", ";
+            }
+            text += PredictedFieldText(value[static_cast<typename T::length_type>(i)]);
+        }
+        return text + ")";
+    }
+    else if constexpr (std::is_enum_v<T>)
+    {
+        return std::format("{}", std::to_underlying(value));
+    }
+    else if constexpr (std::formattable<T, char>)
+    {
+        return std::format("{}", value);
+    }
+    else
+    {
+        return "(a value with no text form)";
+    }
+}
+
+/// @brief "@p name: lhs vs rhs" when PredictedFieldEqual says the two
+/// disagree, and empty when it says they agree.
+template <typename T>
+[[nodiscard]] std::string PredictedFieldDifference(std::string_view name, const T &lhs, const T &rhs)
+{
+    if (PredictedFieldEqual(lhs, rhs))
+    {
+        return {};
+    }
+    return std::format("{}: {} vs {}", name, PredictedFieldText(lhs), PredictedFieldText(rhs));
 }
 
 } // namespace Assisi::Core::Reflect

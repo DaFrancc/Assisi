@@ -11,14 +11,18 @@
 /// only what a session adds to it. A host runs it once per fixed step, before
 /// the step's systems; so does a client.
 
+#include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Assisi::NetSync
 {
@@ -41,8 +45,6 @@ void PublishPlayerActions();
 /// A command a step late should not jerk a running player to a stop and back;
 /// a connection that has gone quiet should not leave one running into a wall.
 inline constexpr std::uint32_t kInputHoldTicks = 6;
-
-struct PlayerInput;
 
 /// @brief Hands a remote player's character the controls the host steps it on
 /// this tick: @p command when one came, otherwise what it held, released once
@@ -80,7 +82,37 @@ public:
     /// player yet or is not a client.
     [[nodiscard]] const NetSync::InputCommand *LocalCommand() const;
 
+    // A client stepping ticks again steps its player on what the host applied
+    // for each, from the controls it held after the tick it went back to. The
+    // controls this frame has gathered for the next live step wait meanwhile.
+
+    /// @brief Remembers this machine's player's controls as the step of
+    /// @p tick left them. Call after every step a client takes, live or replayed.
+    void RecordControls(World &world, std::uint64_t tick);
+
+    /// @brief Starts stepping ticks again from @p tick: sets this frame's
+    /// controls aside and puts back the ones the step of @p tick left.
+    void BeginReplay(World &world, std::uint64_t tick);
+
+    /// @brief Hands this machine's player the controls the host stepped it on
+    /// for a tick stepped again: @p command, or what it held after
+    /// @p starvedTicks steps without one, as RelayHeldCommand has it.
+    void ReplayCommand(World &world, const NetSync::InputCommand *command, std::uint32_t starvedTicks);
+
+    /// @brief Gives this frame's controls back, for the live step.
+    void EndReplay(World &world);
+
 private:
+    /// This machine's player and its controls, or NullEntity and null.
+    [[nodiscard]] static std::pair<ECS::Entity, PlayerInput *> LocalControls(World &world);
+
+    /// One tick's controls, as the step of it left them.
+    struct RecordedControls
+    {
+        std::uint64_t tick = 0; ///< 0 for none yet.
+        PlayerInput controls;
+    };
+
     void GivePlayers(NetSync::NetSession &session, World &world);
     void RelayControls(NetSync::NetSession &session, World &world, std::uint64_t simTick);
     void CaptureLocalControls(World &world);
@@ -92,6 +124,13 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> _starved;
 
     std::optional<NetSync::InputCommand> _local;
+
+    /// The controls each recent step left, by tick, as far back as a client
+    /// keeps anything it predicted.
+    std::array<RecordedControls, NetSync::kPredictionHistoryTicks> _recordedControls{};
+
+    /// The controls gathered for the next live step, set aside by BeginReplay.
+    std::optional<PlayerInput> _liveControls;
 
     /// Whether the host is a player too. See Attach.
     bool _hostPlays = true;

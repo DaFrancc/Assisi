@@ -297,7 +297,18 @@ void ServerApp::OnFixedUpdate(float dt)
     }
 #endif // ASSISI_NETWORKING
 
+#if defined(ASSISI_NETWORKING)
+    if (_play)
+    {
+        _play->StepWorld(StepContext(dt, stepTick));
+    }
+    else
+    {
+        Assisi::App::StepWorld(StepContext(dt, stepTick));
+    }
+#else
     Assisi::App::StepWorld(StepContext(dt, stepTick));
+#endif
 
     // After the simulation: a snapshot describes the world at the end of the
     // tick it is stamped with. A headless client with no player sends an empty

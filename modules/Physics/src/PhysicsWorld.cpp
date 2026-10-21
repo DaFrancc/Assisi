@@ -674,6 +674,26 @@ void PhysicsWorld::Impl::ApplyRequests(float deltaTime)
     requests.clear();
 }
 
+void PhysicsWorld::Impl::ApplyCharacterRequests(std::span<CharacterRecord *const> stepped, float deltaTime)
+{
+    std::erase_if(requests,
+                  [this, stepped, deltaTime](const BodyRequest &request)
+                  { return TakeCharacterRequest(stepped, request, deltaTime); });
+}
+
+bool PhysicsWorld::Impl::TakeCharacterRequest(std::span<CharacterRecord *const> stepped, const BodyRequest &request,
+                                              float deltaTime)
+{
+    const ECS::Entity owner = OwnerOf(request.entity);
+    CharacterRecord *record = FindCharacter(owner);
+    if (record == nullptr || std::find(stepped.begin(), stepped.end(), record) == stepped.end())
+    {
+        return false;
+    }
+    ApplyCharacterRequest(*record, request, deltaTime);
+    return true;
+}
+
 void PhysicsWorld::Impl::ApplyBodyRequest(ECS::Entity owner, const BodySlot &slot, const BodyRequest &request)
 {
     // Only a dynamic body responds to a push, and Jolt asserts on one given to
