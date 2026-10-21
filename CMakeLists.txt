@@ -72,7 +72,8 @@ option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 option(ASSISI_FORBID_C_ARRAYS "Refuse reflected C array fields; std::array reflects the same way" ON)
 
 # Precompiled headers for gcc and clang; see Assisi_precompile_headers. OFF
-# builds every file from its own includes alone, which shows a missing one.
+# builds every file from its own includes alone, which shows a missing one; the
+# Steam Runtime build is always OFF, so every release build checks that.
 if (MSVC)
   set(ASSISI_PRECOMPILE_HEADERS OFF)
 else()
