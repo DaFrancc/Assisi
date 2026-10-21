@@ -213,6 +213,51 @@ function(Assisi_apply_test_defaults target_name)
   endif()
 endfunction()
 
+# Registers a doctest executable with ctest as one test per source file that
+# holds test cases, named <NAME>.<file stem>, so ctest runs a suite's files side
+# by side instead of the whole suite as one long test. <NAME>.Other runs every
+# case outside those files, so between them they run each case exactly once.
+# PROPERTIES are set on every one of them.
+#
+# Cases are picked by doctest's source-file filter, which matches the end of the
+# path a case was compiled from. A file whose name ends another's would pick up
+# that file's cases too, so configuring stops on one.
+function(Assisi_add_doctest_tests target_name)
+  cmake_parse_arguments(PARSE_ARGV 1 ARG "" "NAME" "PROPERTIES")
+  get_target_property(_sources "${target_name}" SOURCES)
+  get_target_property(_source_dir "${target_name}" SOURCE_DIR)
+  set(_files "")
+  set(_tests "")
+  foreach (_source IN LISTS _sources)
+    cmake_path(ABSOLUTE_PATH _source BASE_DIRECTORY "${_source_dir}" OUTPUT_VARIABLE _path)
+    if (NOT _source MATCHES "\\.cpp$" OR NOT EXISTS "${_path}")
+      continue()
+    endif()
+    file(STRINGS "${_path}" _cases REGEX "^[ \t]*(TEST_CASE|SCENARIO)" LIMIT_COUNT 1)
+    if (NOT _cases)
+      continue()
+    endif()
+    cmake_path(GET _path FILENAME _file)
+    cmake_path(GET _path STEM _stem)
+    foreach (_other IN LISTS _files)
+      if (_file MATCHES "${_other}$" OR _other MATCHES "${_file}$")
+        message(FATAL_ERROR "${target_name}: ${_file} and ${_other} end the same way, so doctest cannot "
+                            "pick one's cases without the other's; rename one")
+      endif()
+    endforeach()
+    list(APPEND _files "${_file}")
+    add_test(NAME "${ARG_NAME}.${_stem}" COMMAND "${target_name}" "--source-file=*${_file}")
+    list(APPEND _tests "${ARG_NAME}.${_stem}")
+  endforeach()
+  list(TRANSFORM _files PREPEND "*")
+  list(JOIN _files "," _picked)
+  add_test(NAME "${ARG_NAME}.Other" COMMAND "${target_name}" "--source-file-exclude=${_picked}")
+  list(APPEND _tests "${ARG_NAME}.Other")
+  if (ARG_PROPERTIES)
+    set_tests_properties(${_tests} PROPERTIES ${ARG_PROPERTIES})
+  endif()
+endfunction()
+
 
 # ---- Baseline compile behavior (applies to targets only when Options are linked)
 if (MSVC)

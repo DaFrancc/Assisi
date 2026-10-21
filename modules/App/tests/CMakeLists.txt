@@ -116,6 +116,6 @@ target_sources(Assisi-App-Tests PRIVATE
   $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:$<TARGET_OBJECTS:Assisi-NetSync-Generated>>
 )
 
-add_test(NAME App COMMAND Assisi-App-Tests)
+Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
 
 set_target_properties(Assisi-App-Tests PROPERTIES FOLDER "tests")

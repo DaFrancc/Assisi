@@ -33,6 +33,6 @@ target_link_libraries(Assisi-Render-Tests
     Assisi::Render
 )
 
-add_test(NAME Render COMMAND Assisi-Render-Tests)
+Assisi_add_doctest_tests(Assisi-Render-Tests NAME Render)
 
 set_target_properties(Assisi-Render-Tests PROPERTIES FOLDER "tests")

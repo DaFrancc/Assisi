@@ -17,6 +17,6 @@ target_link_libraries(Assisi-Image-Tests
     Assisi::TestSupport
 )
 
-add_test(NAME Image COMMAND Assisi-Image-Tests)
+Assisi_add_doctest_tests(Assisi-Image-Tests NAME Image)
 
 set_target_properties(Assisi-Image-Tests PROPERTIES FOLDER "tests")

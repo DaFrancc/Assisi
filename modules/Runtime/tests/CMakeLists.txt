@@ -71,6 +71,6 @@ target_sources(Assisi-Runtime-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
 )
 
-add_test(NAME Runtime COMMAND Assisi-Runtime-Tests)
+Assisi_add_doctest_tests(Assisi-Runtime-Tests NAME Runtime)
 
 set_target_properties(Assisi-Runtime-Tests PROPERTIES FOLDER "tests")

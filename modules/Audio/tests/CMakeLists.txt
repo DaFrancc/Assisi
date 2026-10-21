@@ -35,6 +35,6 @@ target_link_libraries(Assisi-Audio-Tests
     Assisi::Audio
 )
 
-add_test(NAME Audio COMMAND Assisi-Audio-Tests)
+Assisi_add_doctest_tests(Assisi-Audio-Tests NAME Audio)
 
 set_target_properties(Assisi-Audio-Tests PROPERTIES FOLDER "tests")
