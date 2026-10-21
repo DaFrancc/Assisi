@@ -10,7 +10,8 @@
 /// conventionally on the same entity but is looked up scene-wide, because there
 /// is one time of day and it is not the sun's property.
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
 

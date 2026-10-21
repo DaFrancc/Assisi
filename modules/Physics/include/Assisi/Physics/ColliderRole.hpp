@@ -5,7 +5,7 @@
 /// @brief What a Collider is to the simulation, decided by what is above it.
 
 #include <Assisi/ECS/Entity.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 
 #include <cstdint>
 

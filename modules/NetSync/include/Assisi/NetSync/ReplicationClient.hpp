@@ -11,7 +11,7 @@
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>

@@ -21,7 +21,7 @@
 /// replication tests run both halves in one process, and how a soak runs under
 /// simulated lag.)
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/NetClock.hpp>

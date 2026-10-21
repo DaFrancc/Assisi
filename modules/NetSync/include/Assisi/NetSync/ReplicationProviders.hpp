@@ -8,7 +8,7 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>

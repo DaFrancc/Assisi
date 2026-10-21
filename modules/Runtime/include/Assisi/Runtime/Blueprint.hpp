@@ -28,7 +28,7 @@
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
 namespace Assisi::Runtime

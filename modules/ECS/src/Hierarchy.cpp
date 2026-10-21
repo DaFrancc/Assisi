@@ -3,6 +3,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 
