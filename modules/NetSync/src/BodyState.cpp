@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 
@@ -28,6 +29,22 @@ constexpr std::uint32_t kQuatComponentBits = 9;
 /// 1/sqrt(2) once the largest is the one dropped — which is the whole reason
 /// smallest-three is cheaper than three raw floats at the same precision.
 constexpr float kQuatComponentBound = 0.7071068f;
+
+/// Bits that hold every value of an enum with a trailing Count_.
+template <typename E> constexpr std::uint32_t kEnumBits =
+    static_cast<std::uint32_t>(std::bit_width(static_cast<std::uint32_t>(E::Count_) - 1u));
+
+/// Reads an enum written in kEnumBits<E>; false for a value past its last.
+template <typename E> bool ReadEnum(Core::BitReader &reader, E &out)
+{
+    const std::uint32_t value = reader.ReadBits(kEnumBits<E>);
+    if (value >= static_cast<std::uint32_t>(E::Count_))
+    {
+        return false;
+    }
+    out = static_cast<E>(value);
+    return true;
+}
 
 /// Smallest-three: drop the largest-magnitude component and send the other
 /// three, flipping the sign of the whole quaternion first so the dropped one is
@@ -118,6 +135,13 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
         writer.WriteFloatQuantized(state.angularVelocity.z, -q.angularVelocityMax, q.angularVelocityMax,
                                    q.angularVelocityBits);
     }
+
+    writer.WriteBool(state.character);
+    if (state.character)
+    {
+        writer.WriteBits(static_cast<std::uint32_t>(state.stance), kEnumBits<Physics::Stance>);
+        writer.WriteBits(static_cast<std::uint32_t>(state.ground), kEnumBits<Physics::GroundState>);
+    }
 }
 
 bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
@@ -148,6 +172,14 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
             reader.ReadFloatQuantized(-q.angularVelocityMax, q.angularVelocityMax, q.angularVelocityBits);
         state.angularVelocity.z =
             reader.ReadFloatQuantized(-q.angularVelocityMax, q.angularVelocityMax, q.angularVelocityBits);
+    }
+
+    state.character = reader.ReadBool();
+    if (state.character &&
+        (!ReadEnum(reader, state.stance) || !ReadEnum(reader, state.ground)))
+    {
+        reader.Invalidate();
+        return false;
     }
 
     if (!reader.Ok() || state.netId == InvalidNetId)

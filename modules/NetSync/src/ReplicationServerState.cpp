@@ -243,8 +243,15 @@ void ReplicationServer::CaptureBodyStates()
         // so a client can carry it on between updates.
         if (const Physics::CharacterState *character = _scene.Get<Physics::CharacterState>(entity))
         {
-            record.state = BodyState{netId,          transform.position, transform.rotation,
-                                     character->velocity, glm::vec3{0.f},  /*asleep=*/ false};
+            record.state = BodyState{.netId = netId,
+                                     .position = transform.position,
+                                     .rotation = transform.rotation,
+                                     .linearVelocity = character->velocity,
+                                     .angularVelocity = glm::vec3{0.f},
+                                     .asleep = false,
+                                     .character = true,
+                                     .stance = character->stance,
+                                     .ground = character->ground};
             record.tick  = _bodyStateTick;
             continue;
         }

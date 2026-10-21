@@ -49,7 +49,9 @@ RelevancyConfig gRelevancy;
 [[nodiscard]] bool SmoothingInRange(const NetworkConfig &config)
 {
     return config.positionCorrectionTime > 0.f && config.positionCorrectionTimeFast > 0.f &&
-           config.rotationCorrectionTime > 0.f && config.largeErrorDistance > config.smallErrorDistance;
+           config.rotationCorrectionTime > 0.f && config.largeErrorDistance > config.smallErrorDistance &&
+           config.predictionTolerance > 0.f && config.predictionRotationTolerance > 0.f &&
+           config.predictionVelocityTolerance > 0.f;
 }
 
 void ApplyQuantization(const NetworkConfig &config)
@@ -80,8 +82,9 @@ void ApplySmoothing(const NetworkConfig &config)
 {
     if (!SmoothingInRange(config))
     {
-        Core::Log::Warn("NetSync: the network config's smoothing is out of range (times must be positive, "
-                        "largeErrorDistance must exceed smallErrorDistance) - keeping the defaults.");
+        Core::Log::Warn("NetSync: the network config's smoothing is out of range (times and prediction "
+                        "tolerances must be positive, largeErrorDistance must exceed smallErrorDistance) - "
+                        "keeping the defaults.");
         return;
     }
 
@@ -92,7 +95,9 @@ void ApplySmoothing(const NetworkConfig &config)
                                .rotationCorrectionTime     = config.rotationCorrectionTime,
                                .snapBelowDistance          = config.snapBelowDistance,
                                .hardSnapDistance           = config.hardSnapDistance,
-                               .predictionTolerance        = config.predictionTolerance};
+                               .predictionTolerance        = config.predictionTolerance,
+                               .predictionRotationTolerance = config.predictionRotationTolerance,
+                               .predictionVelocityTolerance = config.predictionVelocityTolerance};
     SetSmoothing(loaded);
     Core::Log::Info("NetSync: correction smoothing - converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
                     "below {:g} m and beyond {:g} m.",

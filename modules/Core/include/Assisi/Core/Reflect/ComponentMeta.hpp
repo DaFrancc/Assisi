@@ -117,6 +117,11 @@ struct ComponentMeta
     /// same value.
     std::function<bool(const void *lhs, const void *rhs)> predictedEquals{};
 
+    /// @brief The first field in which two instances of an ACOMP(predicted)
+    /// component disagree, by the compare predictedEquals makes, as "field:
+    /// lhs vs rhs"; empty when they agree. Null for every other component.
+    std::function<std::string(const void *lhs, const void *rhs)> predictedDifference{};
+
     std::vector<FieldMeta> fields{};
 
     /// @brief The names ACOMP(requires = {...}) and ACOMP(excludes = {...})

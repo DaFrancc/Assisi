@@ -70,6 +70,9 @@ struct CharacterFrame
     float jumpBufferRemaining = 0.f;
     float eyeHeight = 0.f;
     Stance stance = Stance::Standing;
+    /// What it stood on after the step. Read back, never put back: a rewind
+    /// finds the ground again where it places the character.
+    GroundState ground = GroundState::InAir;
     bool jumpedSinceGrounded = false;
 };
 
@@ -630,16 +633,6 @@ public:
     /// A stance that no longer fits where the character stands is left as it is,
     /// as standing up under something low is.
     void RewindCharacter(ECS::Entity entity, const CharacterFrame &frame);
-
-    /// @brief Steps @p entity's character alone by @p deltaTime, under
-    /// @p intent and looking along @p facing, as Update would have stepped it.
-    /// Writes and snaps the Transform. Not while the world is stepping.
-    ///
-    /// Everything else stays where it is now, so the step is against the world as
-    /// it stands rather than as it stood when the step first ran: a character
-    /// replayed next to a moving body or a crowd lands where it would have with
-    /// them here. Pushes and carriers take no part.
-    void ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing, float deltaTime);
 
     /// @brief Gives @p entity's character its place in the order characters
     /// step in: by @p key, before every character without one, which step by

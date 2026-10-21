@@ -4,7 +4,9 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/StepWorld.hpp>
 
+#include <optional>
 #include <utility>
 
 namespace Assisi::App
@@ -65,7 +67,46 @@ std::uint64_t NetworkedPlay::BeginStep(std::uint64_t localTick, bool stepping)
     {
         _players.BeginStep(_session, _world, tick);
     }
+    _tick = tick;
     return tick;
+}
+
+void NetworkedPlay::StepWorld(const SystemContext &ctx)
+{
+    if (&ctx.world == &_world)
+    {
+        ReplayMispredicted(ctx);
+    }
+    App::StepWorld(ctx);
+}
+
+void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
+{
+    NetSync::ReplicationClient *client = _session.Client();
+    if (client == nullptr)
+    {
+        return;
+    }
+    std::optional<NetSync::ReplicationClient::Replay> replay = client->BeginRollback();
+    if (!replay.has_value())
+    {
+        return;
+    }
+
+    _players.BeginReplay(_world, replay->from);
+    SystemContext replayed = live;
+    replayed.replaying = true;
+    for (const std::uint64_t tick : replay->ticks)
+    {
+        const NetSync::ReplicationClient::AppliedCommand applied = client->CommandAppliedAt(tick);
+        _players.ReplayCommand(_world, applied.command, applied.starvedTicks);
+        replayed.simTick = tick;
+        App::StepWorld(replayed, replay->characters);
+        client->RecordHistory(tick);
+        _players.RecordControls(_world, tick);
+    }
+    client->EndRollback();
+    _players.EndReplay(_world);
 }
 
 void NetworkedPlay::EndStep()
@@ -74,6 +115,10 @@ void NetworkedPlay::EndStep()
     // woken by a contact the host never had must be put back before the send
     // reads it.
     _session.AfterPhysicsStep();
+    if (_session.IsClient())
+    {
+        _players.RecordControls(_world, _tick);
+    }
     _session.Tick(_players.LocalCommand());
 }
 

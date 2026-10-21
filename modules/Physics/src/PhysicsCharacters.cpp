@@ -461,6 +461,7 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
                           .jumpBufferRemaining = record->jumpBufferRemaining,
                           .eyeHeight = record->eyeHeight,
                           .stance = record->stance,
+                          .ground = _impl->BuildCharacterState(*record).ground,
                           .jumpedSinceGrounded = record->jumpedSinceGrounded};
 }
 
@@ -490,36 +491,6 @@ void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &fra
     record->jumpBufferRemaining = frame.jumpBufferRemaining;
     record->eyeHeight = frame.eyeHeight;
     record->jumpedSinceGrounded = frame.jumpedSinceGrounded;
-    _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
-}
-
-void PhysicsWorld::ReplayCharacter(ECS::Entity entity, const CharacterIntent &intent, glm::vec3 facing,
-                                   float deltaTime)
-{
-    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::ReplayCharacter called while the world is stepping");
-    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
-    if (record == nullptr)
-    {
-        return;
-    }
-
-    // As Update runs it: the stance asked for at the reconcile before the step,
-    // and the sweep with denormals flushed.
-    if (intent.stance != record->stance)
-    {
-        (void)_impl->ApplyStance(*record, intent.stance);
-    }
-    record->facing = facing;
-    {
-        const JPH::FPFlushDenormals flushDenormals;
-        const Impl::GroundContact contact = _impl->SenseGround(*record);
-        (void)_impl->MoveCharacter(*record, intent, contact, deltaTime);
-    }
-
-    const JPH::RVec3 feet = record->character->GetPosition();
-    _impl->WritePose(entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
-                     /*writeRotation=*/ false);
-    ECS::SnapTransform(_impl->scene, entity);
     _impl->WriteCharacterState(entity, _impl->BuildCharacterState(*record));
 }
 

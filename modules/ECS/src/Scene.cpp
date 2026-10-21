@@ -91,8 +91,34 @@ ComponentId Scene::RequirerOf(Entity entity, ComponentId id) const
     return kInvalidComponentId;
 }
 
+void Scene::BeginReplay(std::span<const Entity> replayed)
+{
+    ASSISI_ASSERT(!_replaying, "Scene::BeginReplay while a replay is already running");
+    _replayMembers.clear();
+    for (const Entity entity : replayed)
+    {
+        if (!IsAlive(entity))
+        {
+            continue;
+        }
+        if (entity.index >= _replayMembers.size())
+        {
+            _replayMembers.resize(entity.index + 1u, std::uint8_t{0});
+        }
+        _replayMembers[entity.index] = 1;
+    }
+    _replaying = true;
+}
+
+void Scene::EndReplay()
+{
+    _replaying = false;
+    _replayMembers.clear();
+}
+
 RemoveResult Scene::RemoveById(Entity entity, ComponentId id)
 {
+    ASSISI_ASSERT(IsReplayed(entity), "Scene::Remove from an entity a replay has frozen");
     if (!HasById(entity, id))
     {
         return RemoveResult::Absent;

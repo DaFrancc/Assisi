@@ -1112,6 +1112,13 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
+#if defined(ASSISI_NETWORKING)
+                if (_networkedPlay)
+                {
+                    _networkedPlay->StepWorld(WorldContext(world, dt, _stepTick));
+                    return;
+                }
+#endif
                 Assisi::App::StepWorld(WorldContext(world, dt, _stepTick));
             });
     }

@@ -12,7 +12,9 @@
 /// plain component yields `const T&`. A `Mut<T>` yields `T&` and marks the
 /// component changed for every entity the loop reaches, so an ACOMP(tracked)
 /// write is never missed and a write through a plain element does not compile.
-/// A `Without<T>` yields nothing and skips entities holding a T.
+/// A `Without<T>` yields nothing and skips entities holding a T. While a scene
+/// replays, a query skips every entity the replay does not step, unless it
+/// names `IncludingFrozen`.
 ///
 /// @code
 ///   for (auto [e, vel, pos] : scene.Query<Velocity, Mut<Position>>())
@@ -50,6 +52,16 @@ struct Scene; // sole constructor of QueryView — see friend declaration below
 /// never been created excludes nobody — there are no holders to reject — so a
 /// missing excluded pool is simply a no-op filter.
 template <typename T> struct Without
+{
+};
+
+/// @brief Query argument that keeps entities a replay has frozen.
+///
+/// While a scene replays (Scene::BeginReplay) a query yields only the entities
+/// the replay steps, so a system run again for a past tick moves nothing else.
+/// One that must still see the rest, to read where it stands now, names this.
+/// Outside a replay it changes nothing.
+struct IncludingFrozen
 {
 };
 
@@ -99,6 +111,20 @@ template <typename T> struct QueryArgument<Without<T>>
     using Elements = std::tuple<>;
     using Excluded = std::tuple<T>;
 };
+
+template <> struct QueryArgument<IncludingFrozen>
+{
+    using Elements = std::tuple<>;
+    using Excluded = std::tuple<>;
+};
+
+/// @brief Whether Query<Args...> names IncludingFrozen.
+template <typename... Args> inline constexpr bool IncludesFrozen = CountOf<IncludingFrozen, Args...> != 0;
+
+/// @brief Which entities a replay steps, by entity index: one byte each, set
+/// for a replayed entity. What a query tests every entity it visits against
+/// while a scene replays.
+using ReplayMembers = std::vector<std::uint8_t>;
 
 /// @brief The yielded elements of Query<Args...>, in argument order.
 template <typename... Args>
@@ -190,8 +216,9 @@ private:
 
         Iterator(const std::vector<Entity> *entities, std::size_t pos,
                  std::tuple<SparseSet<ComponentOf<Es>> *...> required, std::tuple<const SparseSet<Xs> *...> excluded,
-                 ChangeTickPtr<Writes> changeTick)
-            : _entities(entities), _pos(pos), _required(required), _excluded(excluded), _changeTick(changeTick)
+                 ChangeTickPtr<Writes> changeTick, const ReplayMembers *replayed)
+            : _entities(entities), _pos(pos), _required(required), _excluded(excluded), _replayed(replayed),
+            _changeTick(changeTick)
         {
             _versionSnapshot = CurrentStructureVersion();
             SkipInvalid();
@@ -236,10 +263,16 @@ private:
             return std::apply([&](auto *... ps) { return (false || ... || (ps && ps->Has(e))); }, _excluded);
         }
 
-        /// HasAll must run first: operator* trusts the pointer cache only when
-        /// the entity matched, and short-circuiting skips the exclusion probe
-        /// for entities that already failed the positive match.
-        bool Matches(Entity e) { return HasAll(e) && !HasExcluded(e); }
+        /// Null outside a replay, so a query run live pays one compare.
+        bool Replayed(Entity e) const
+        {
+            return _replayed == nullptr || (e.index < _replayed->size() && (*_replayed)[e.index] != 0);
+        }
+
+        /// HasAll must run before operator*: it trusts the pointer cache only
+        /// when the entity matched, and short-circuiting skips the exclusion
+        /// probe for entities that already failed the positive match.
+        bool Matches(Entity e) { return Replayed(e) && HasAll(e) && !HasExcluded(e); }
 
         void SkipInvalid()
         {
@@ -287,6 +320,8 @@ private:
         std::size_t _pos;
         std::tuple<SparseSet<ComponentOf<Es>> *...> _required;
         std::tuple<const SparseSet<Xs> *...> _excluded;
+        /// The entities a running replay steps, or null for every entity.
+        const ReplayMembers *_replayed;
         /// Cached by HasAll; valid only while the iterator is dereferenceable.
         std::tuple<ComponentOf<Es> *...> _components{};
         /// Scene's change-tick counter, for stamping Mut elements. Empty (and
@@ -299,7 +334,7 @@ private:
     Iterator begin()
     {
         static const std::vector<Entity> empty;
-        return Iterator{_primary ? _primary : &empty, 0, _required, _excluded, _changeTick};
+        return Iterator{_primary ? _primary : &empty, 0, _required, _excluded, _changeTick, _replayed};
     }
 
     Sentinel end() const { return {}; }
@@ -308,14 +343,16 @@ private:
     friend struct Scene; // QueryView exists only to be returned by Scene::Query
 
     QueryView(std::tuple<SparseSet<ComponentOf<Es>> *...> required, const std::vector<Entity> *primary,
-              std::tuple<const SparseSet<Xs> *...> excluded, ChangeTickPtr<Writes> changeTick)
-        : _required(required), _primary(primary), _excluded(excluded), _changeTick(changeTick)
+              std::tuple<const SparseSet<Xs> *...> excluded, ChangeTickPtr<Writes> changeTick,
+              const ReplayMembers *replayed)
+        : _required(required), _primary(primary), _excluded(excluded), _replayed(replayed), _changeTick(changeTick)
     {
     }
 
     std::tuple<SparseSet<ComponentOf<Es>> *...> _required;
     const std::vector<Entity> *_primary; ///< Entity list of the smallest required pool; nullptr = no results.
     std::tuple<const SparseSet<Xs> *...> _excluded;
+    const ReplayMembers *_replayed; ///< See Iterator::_replayed.
     [[no_unique_address]] ChangeTickPtr<Writes> _changeTick; ///< Passed to each Iterator; empty when nothing writes.
 };
 

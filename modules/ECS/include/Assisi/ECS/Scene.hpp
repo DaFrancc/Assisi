@@ -62,7 +62,11 @@ struct Scene
     Scene &operator=(Scene &&) = delete;
 
     /// @brief Allocates a new entity.
-    Entity Create() { return _registry.Create(); }
+    Entity Create()
+    {
+        ASSISI_ASSERT(!_replaying, "Scene::Create during a replay: a replayed step makes no entities");
+        return _registry.Create();
+    }
 
     /// @brief Queues an entity for destruction at the next FlushDestroyed().
     ///
@@ -75,6 +79,7 @@ struct Scene
     /// ignored; the slot is not reused until the flush actually applies it.
     void Destroy(Entity entity)
     {
+        ASSISI_ASSERT(!_replaying, "Scene::Destroy during a replay: a replayed step destroys no entities");
         if (_registry.IsAlive(entity))
             _pendingDestroy.push_back(entity);
     }
@@ -172,6 +177,7 @@ struct Scene
         {
             return nullptr;
         }
+        ASSISI_ASSERT(IsReplayed(entity), "Scene::Add to an entity a replay has frozen");
         const Core::Reflect::ComponentId id = Core::Reflect::ComponentIdOf<T>();
         if (const std::optional<ComponentConflict> conflict = ConflictOf(entity, id); conflict.has_value())
         {
@@ -417,6 +423,29 @@ struct Scene
     /// requires it; each such member is logged.
     bool RemoveManyById(Entity entity, std::span<const Core::Reflect::ComponentId> ids);
 
+    // ── Replay ────────────────────────────────────────────────────────────────
+    // A client that got a past tick wrong steps it again, and every tick since,
+    // for the few entities it predicts. Everything else stays as it is now.
+
+    /// @brief Starts a replay of @p replayed: until EndReplay, a query yields
+    /// only these entities unless it names IncludingFrozen, and nothing may be
+    /// created or destroyed, nor a component added to or removed from any
+    /// other entity. Get and GetMut still reach every entity.
+    void BeginReplay(std::span<const Entity> replayed);
+
+    /// @brief Ends the replay BeginReplay started.
+    void EndReplay();
+
+    /// @brief Whether a replay is running.
+    [[nodiscard]] bool Replaying() const { return _replaying; }
+
+    /// @brief Whether @p entity is stepped now: always outside a replay, and
+    /// during one only if the replay names it.
+    [[nodiscard]] bool IsReplayed(Entity entity) const
+    {
+        return !_replaying || (entity.index < _replayMembers.size() && _replayMembers[entity.index] != 0);
+    }
+
     /// @brief Returns a lazy view over the entities that have every component
     /// Args names and none that a Without among them excludes.
     ///
@@ -430,6 +459,9 @@ struct Scene
     ///
     /// `Without<T>` is a single-pass filter folded into the same iteration
     /// as the positive match — it never runs a second loop.
+    ///
+    /// While a replay runs, only the entities it steps are yielded, unless
+    /// `IncludingFrozen` is among Args.
     ///
     /// @warning The view holds a pointer into the driving pool's internal entity
     /// array. A structural change to a *queried* component pool during iteration
@@ -450,12 +482,12 @@ struct Scene
         if constexpr (AnyWrites<Args...>)
         {
             return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
-                            &_changeTick);
+                            &_changeTick, ReplayFilter<Args...>());
         }
         else
         {
             return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
-                            NoChangeTick{});
+                            NoChangeTick{}, ReplayFilter<Args...>());
         }
     }
 
@@ -465,10 +497,17 @@ struct Scene
     QueryViewOf<Args...> Query() const
     {
         return MakeView(std::type_identity<ElementsOf<Args...>>{}, std::type_identity<ExcludedOf<Args...>>{},
-                        NoChangeTick{});
+                        NoChangeTick{}, ReplayFilter<Args...>());
     }
 
 private:
+    /// @brief What Query<Args...> tests each entity against: the replay's
+    /// members while one runs, unless Args include the frozen; otherwise null.
+    template <typename... Args> [[nodiscard]] const ReplayMembers *ReplayFilter() const
+    {
+        return _replaying && !IncludesFrozen<Args...> ? &_replayMembers : nullptr;
+    }
+
     /// @brief Whether @p entity has the component @p id, by id.
     [[nodiscard]] bool HasById(Entity entity, Core::Reflect::ComponentId id) const;
 
@@ -488,7 +527,8 @@ private:
     template <typename... Es, typename... Xs>
     QueryView<std::tuple<Es...>, std::tuple<Xs...>> MakeView(std::type_identity<std::tuple<Es...>>,
                                                              std::type_identity<std::tuple<Xs...>>,
-                                                             ChangeTickPtr<AnyWrites<Es...>> changeTick) const
+                                                             ChangeTickPtr<AnyWrites<Es...>> changeTick,
+                                                             const ReplayMembers *replayed) const
     {
         using View = QueryView<std::tuple<Es...>, std::tuple<Xs...>>;
 
@@ -501,7 +541,7 @@ private:
         std::apply([&](auto *... ps) { anyNull = (... || (ps == nullptr)); }, pools);
         if (anyNull)
         {
-            return View{pools, nullptr, excluded, changeTick};
+            return View{pools, nullptr, excluded, changeTick, replayed};
         }
 
         /* Drive iteration from the smallest required pool to minimise skipped
@@ -523,7 +563,7 @@ private:
             },
             pools);
 
-        return View{pools, primary, excluded, changeTick};
+        return View{pools, primary, excluded, changeTick, replayed};
     }
 
     struct PoolStorage
@@ -625,12 +665,14 @@ private:
     /// scene — including gaps for components that belong to other modules.
     std::vector<PoolStorage> _pools;
     std::vector<Entity> _pendingDestroy; ///< Entities queued by Destroy(), drained by FlushDestroyed().
+    ReplayMembers _replayMembers;        ///< The running replay's entities; see BeginReplay.
 
     /// Monotonic change-detection tick, bumped on each mutable access to a tracked
     /// component (Add / GetMut / MarkChanged). See the Change detection section.
     uint64_t _changeTick = 0;
 
     uint32_t _clearEpoch = 0; ///< Incremented by Clear(); see ClearEpoch().
+    bool _replaying = false;  ///< Between BeginReplay and EndReplay.
 };
 
 } // namespace Assisi::ECS

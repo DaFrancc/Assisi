@@ -15,11 +15,12 @@
 /// play.Host(port, level, HostRole::Player);
 /// // each fixed step:
 /// const std::uint64_t tick = play.BeginStep(GetSimTick(), /*stepping=*/ true);
-/// StepWorld(contextAt(tick));
+/// play.StepWorld(contextAt(tick));
 /// play.EndStep();
 /// @endcode
 
 #include <Assisi/App/PlayerSession.hpp>
+#include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
@@ -73,6 +74,13 @@ public:
     /// system of the step runs at, the same on every machine.
     std::uint64_t BeginStep(std::uint64_t localTick, bool stepping);
 
+    /// @brief One fixed step of @p ctx's world, through App::StepWorld.
+    ///
+    /// For the world this plays, a client first steps again every tick since
+    /// the host's word that it got wrong, so the live step goes on from what
+    /// the host said. Any other world is stepped as it is.
+    void StepWorld(const SystemContext &ctx);
+
     /// @brief The end of a fixed step, after everything that writes in it: puts
     /// mirrored bodies the step woke back to sleep, then sends the step's
     /// snapshot (host) or command (client).
@@ -89,9 +97,14 @@ public:
     [[nodiscard]] const NetSync::NetSession &Session() const { return _session; }
 
 private:
+    /// Steps again every tick since the host's word this client last got
+    /// wrong, on @p live's context with each tick's own number.
+    void ReplayMispredicted(const SystemContext &live);
+
     World &_world;
     NetSync::NetSession _session;
     PlayerSession _players;
+    std::uint64_t _tick = 0; ///< The step's tick, from BeginStep.
 };
 
 } // namespace Assisi::App

@@ -64,6 +64,8 @@ struct NetworkConfig
     AFIELD() float snapBelowDistance = ViewSmoothing{}.snapBelowDistance;
     AFIELD() float hardSnapDistance = ViewSmoothing{}.hardSnapDistance;
     AFIELD() float predictionTolerance = ViewSmoothing{}.predictionTolerance;
+    AFIELD() float predictionRotationTolerance = ViewSmoothing{}.predictionRotationTolerance;
+    AFIELD() float predictionVelocityTolerance = ViewSmoothing{}.predictionVelocityTolerance;
 
     // --- Relevancy: who is told about what. Not hashed, same reason as the
     // never-replicate list.

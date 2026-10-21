@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestCharacterReplay.cpp
-/// @brief Putting a character back to a frame it was in, and stepping it alone
+/// @brief Putting a character back to a frame it was in, and stepping it again
 ///        through the intents it was given since, reproduces where it went.
 ///
 /// A client predicting its own character relies on this: told it was wrong at
@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -132,7 +133,16 @@ void CheckSameFrame(const Physics::CharacterFrame &replayed, const Physics::Char
     CHECK(replayed.jumpBufferRemaining == doctest::Approx(live.jumpBufferRemaining).epsilon(tolerance));
     CHECK(replayed.eyeHeight == doctest::Approx(live.eyeHeight).epsilon(tolerance));
     CHECK(replayed.stance == live.stance);
+    CHECK(replayed.ground == live.ground);
     CHECK(replayed.jumpedSinceGrounded == live.jumpedSinceGrounded);
+}
+
+/// Steps @p character again, alone, on the intent @p frame's step consumed.
+void StepAgain(PhysicsTests::TestScene &test, ECS::Entity character, const Physics::CharacterFrame &frame)
+{
+    *test.scene.GetMut<Physics::CharacterIntent>(character) = frame.intent;
+    const std::array<ECS::Entity, 1> only{character};
+    test.world.StepCharacters(only, kStep);
 }
 
 /// Rewinds to @p run's frame @p from and replays every later frame's intent,
@@ -143,7 +153,7 @@ void ReplayFrom(PhysicsTests::TestScene &test, const Run &run, std::size_t from)
     for (std::size_t i = from + 1; i < run.frames.size(); ++i)
     {
         CAPTURE(i);
-        test.world.ReplayCharacter(run.character, run.frames[i].intent, run.frames[i].facing, kStep);
+        StepAgain(test, run.character, run.frames[i]);
         CheckSameFrame(test.world.CaptureCharacter(run.character), run.frames[i], glm::vec3(0.f), kReplayTolerance);
     }
 }
@@ -197,7 +207,7 @@ TEST_CASE("A rewind places the character where the frame says, and the replay ca
     for (std::size_t i = 1; i < run.frames.size(); ++i)
     {
         CAPTURE(i);
-        test.world.ReplayCharacter(run.character, run.frames[i].intent, run.frames[i].facing, kStep);
+        StepAgain(test, run.character, run.frames[i]);
         CheckSameFrame(test.world.CaptureCharacter(run.character), run.frames[i], shift, kShiftedTolerance);
     }
 }

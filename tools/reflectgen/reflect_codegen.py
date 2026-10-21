@@ -318,6 +318,24 @@ def _equals_name(comp: ComponentInfo) -> str:
     return f'_reflectgen_{comp.name}_equals'
 
 
+def _difference_name(comp: ComponentInfo) -> str:
+    return f'_reflectgen_{comp.name}_difference'
+
+
+def _field_differences(fields: list, path: str) -> list[str]:
+    """A PredictedFieldDifference for every field beneath @p path, in the order
+    _field_comparisons visits them, each named by its path from the component."""
+    differences = []
+    for f in fields:
+        held = _struct_of(f)
+        if held is not None:
+            differences.extend(_field_differences(held.fields, f'{path}{f.name}.'))
+        else:
+            differences.append(f'Assisi::Core::Reflect::PredictedFieldDifference("{path}{f.name}", '
+                                f'lhs.{path}{f.name}, rhs.{path}{f.name})')
+    return differences
+
+
 def _field_comparisons(fields: list, path: str) -> list[str]:
     """A PredictedFieldEqual for every field beneath @p path, a struct's fields
     one by one rather than the struct as a whole, so no type needs a compare of
@@ -357,6 +375,8 @@ def _gen_predicted_support(comp: ComponentInfo, fqn: str) -> str:
     compile-time checks reflectgen cannot make from spellings, and the
     field-wise compare its ComponentMeta points at."""
     comparisons = ' &&\n           '.join(_field_comparisons(comp.fields, ''))
+    differences = ''.join(f'    if (std::string text = {d}; !text.empty())\n    {{\n        return text;\n    }}\n'
+                          for d in _field_differences(comp.fields, ''))
     asserts = '\n'.join(_size_asserts(fqn, comp.fields))
     return f"""\
 // ACOMP(predicted): copied as bytes, compared field by field within tolerance.
@@ -370,6 +390,13 @@ bool {_equals_name(comp)}(const void *a, const void *b)
     const {fqn} &lhs = *static_cast<const {fqn} *>(a);
     const {fqn} &rhs = *static_cast<const {fqn} *>(b);
     return {comparisons};
+}}
+
+std::string {_difference_name(comp)}(const void *a, const void *b)
+{{
+    const {fqn} &lhs = *static_cast<const {fqn} *>(a);
+    const {fqn} &rhs = *static_cast<const {fqn} *>(b);
+{differences}    return {{}};
 }}
 
 """
@@ -1149,6 +1176,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <type_traits>')
     if has_predicted:
         includes.append('#include <Assisi/Core/Reflect/PredictedCompare.hpp>')
+        includes.append('#include <string>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -1258,7 +1286,8 @@ static const bool {var_name} = []() -> bool
         predicted_support = ''
         if comp.args.has('predicted'):
             predicted_support = _gen_predicted_support(comp, fqn)
-            add_default = add_default + f'        .predictedEquals = &{_equals_name(comp)},\n'
+            add_default = (add_default + f'        .predictedEquals = &{_equals_name(comp)},\n'
+                           f'        .predictedDifference = &{_difference_name(comp)},\n')
 
         blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}

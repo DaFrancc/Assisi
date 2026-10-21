@@ -256,7 +256,7 @@ void NetSession::Tick(const InputCommand *localInput)
 
     InputCommand command = localInput != nullptr ? *localInput : InputCommand{};
     command.tick         = _simTick;
-    _client->RecordPrediction(command.tick);
+    _client->RecordStep(command);
     _inputBuffer.Push(command);
     _client->SendInput(_inputBuffer);
 }

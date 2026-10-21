@@ -28,15 +28,22 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestNetComponents.hpp>
 #include <Assisi/NetSync/TestTransport.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
+#include <functional>
+#include <limits>
 #include <optional>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using namespace Assisi;
@@ -364,6 +371,57 @@ TEST_CASE("quantized body state round-trips within a quantum")
     Core::BitWriter restingWriter;
     WriteBodyState(resting, restingWriter);
     CHECK(restingWriter.BitsWritten() < writer.BitsWritten());
+}
+
+TEST_CASE("a character's body record carries its stance and what it stands on, and a body's carries neither")
+{
+    BodyState crouched;
+    crouched.netId = NetId{9};
+    crouched.position = {1.f, 2.f, 3.f};
+    crouched.character = true;
+    crouched.stance = Physics::Stance::Crouching;
+    crouched.ground = Physics::GroundState::OnSteepGround;
+
+    Core::BitWriter writer;
+    WriteBodyState(crouched, writer);
+    BodyState decoded;
+    Core::BitReader reader(writer.Data());
+    REQUIRE(ReadBodyState(reader, decoded));
+    CHECK(decoded.character);
+    CHECK(decoded.stance == Physics::Stance::Crouching);
+    CHECK(decoded.ground == Physics::GroundState::OnSteepGround);
+
+    BodyState crate = crouched;
+    crate.character = false;
+    Core::BitWriter crateWriter;
+    WriteBodyState(crate, crateWriter);
+    BodyState crateDecoded;
+    Core::BitReader crateReader(crateWriter.Data());
+    REQUIRE(ReadBodyState(crateReader, crateDecoded));
+    CHECK_FALSE(crateDecoded.character);
+    CHECK(crateWriter.BitsWritten() < writer.BitsWritten());
+}
+
+TEST_CASE("a character on the host reaches the client's confirmed copy with its stance and ground")
+{
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+    const ECS::Entity character = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
+    (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
+    (void)harness.serverScene.Add<Replicated>(character, Replicated{});
+    harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(10);
+    harness.serverScene.GetMut<Physics::CharacterIntent>(character)->stance = Physics::Stance::Crouching;
+    harness.Step(30);
+
+    const ReplicationClient::Confirmed *confirmed = harness.client.ConfirmedOf(harness.server.NetIdOf(character));
+    REQUIRE(confirmed != nullptr);
+    REQUIRE(confirmed->physicsTick != 0);
+    CHECK(confirmed->body.character);
+    CHECK(confirmed->body.stance == Physics::Stance::Crouching);
+    CHECK(confirmed->body.ground == Physics::GroundState::OnGround);
 }
 
 TEST_CASE("two builds that quantize differently refuse to pair, and the summary says which field")
@@ -1296,25 +1354,62 @@ constexpr float kMirrorNearHost = 0.01f;
 /// not a pull.
 constexpr float kMostBackPerTick = 0.001f;
 
-/// Both machines walking the same character the same way, the client
-/// kLeadTicks ahead, with each machine's step and the wire between them run
-/// by hand so a case decides when a snapshot lands.
+/// Steps a starved controller holds its last move for, as a host holds a
+/// player's controls through a short gap.
+constexpr std::uint32_t kRigHoldTicks = 6;
+
+/// The move a step runs on: @p command's when one came, otherwise @p held
+/// until the gap passes kRigHoldTicks. The host and the client's replay both
+/// use it, as App::RelayHeldCommand is used by both.
+glm::vec3 MoveFor(const InputCommand *command, glm::vec3 held, std::uint32_t starvedTicks)
+{
+    if (command != nullptr)
+    {
+        return {command->moveX, 0.f, command->moveY};
+    }
+    return starvedTicks > kRigHoldTicks ? glm::vec3{0.f} : held;
+}
+
+/// Both machines walking the client's characters the same way, the client
+/// kLeadTicks ahead and sending its commands as a player's machine does, with
+/// each machine's step and the wire between them run by hand so a case
+/// decides when a snapshot lands. The client steps its physics alone, and
+/// replays through PhysicsWorld::StepCharacters, as App's StepWorld does.
 struct PredictionRig
 {
     PhysicsHarness harness;
     ECS::Entity character{ECS::NullEntity};
     ECS::Entity mirror{ECS::NullEntity};
     ECS::Entity otherPlayer{ECS::NullEntity};
+    /// A second character the client controls, when the case asks for one.
+    ECS::Entity second{ECS::NullEntity};
+    ECS::Entity secondMirror{ECS::NullEntity};
     glm::vec3 move{1.f, 0.f, 0.f};
+    InputCommandBuffer sent;
+    /// What the host stepped its characters on last, and the steps in a row
+    /// it had no command.
+    glm::vec3 hostMove{0.f};
+    std::uint32_t hostStarved = 0;
+    /// Called with each machine's scene, its copy of the client's character and
+    /// the tick after every step it takes, live or replayed: the rig's
+    /// FixedUpdate system.
+    std::function<void(ECS::Scene &, ECS::Entity, std::uint64_t)> afterStep;
+    /// The newest tick the client stepped.
+    std::uint64_t clientTick = 0;
+    /// Replays run, and steps they took.
+    std::uint32_t replays = 0;
+    std::uint32_t replayedSteps = 0;
 
     PredictionRig() : PredictionRig(std::nullopt) {}
 
     /// With @p other, another player's character stands there: the host's
-    /// to move, and on the client a mirror like any other.
-    explicit PredictionRig(std::optional<glm::vec3> other)
+    /// to move, and on the client a mirror like any other. With @p secondAt,
+    /// the client controls a second character standing there.
+    explicit PredictionRig(std::optional<glm::vec3> other, std::optional<glm::vec3> secondAt = std::nullopt)
     {
         harness.Step(4);
         character = SpawnStanding(harness);
+        (void)harness.serverScene.Add<Test::Charge>(character, Test::Charge{});
         if (other.has_value())
         {
             otherPlayer = harness.serverScene.Create();
@@ -1322,53 +1417,163 @@ struct PredictionRig
             (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
         }
-        harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+        const ClientId client = harness.server.ClientIdOf(harness.serverSide());
+        harness.server.SetControl(character, client);
+        if (secondAt.has_value())
+        {
+            second = harness.serverScene.Create();
+            (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = *secondAt});
+            (void)harness.serverScene.Add<Physics::Character>(second, Physics::Character{});
+            (void)harness.serverScene.Add<Replicated>(second, Replicated{});
+            harness.server.SetControl(second, client);
+        }
         harness.Step(30);
         mirror = MirrorOf(harness, character);
         REQUIRE(mirror != ECS::NullEntity);
         REQUIRE(harness.client.ControlsEntity(mirror));
+        if (second != ECS::NullEntity)
+        {
+            secondMirror = MirrorOf(harness, second);
+            REQUIRE(secondMirror != ECS::NullEntity);
+        }
         Deliver();
 
-        // The client's first commands, sent before the host reaches them.
+        // The client's first commands, sent before the host reaches them and
+        // there when it does.
         for (std::uint32_t i = 0; i < kLeadTicks; ++i)
         {
             StepClient(harness.tick + i);
         }
+        Deliver();
+    }
+
+    /// The client's characters, by what each machine calls them.
+    [[nodiscard]] std::vector<ECS::Entity> HostCharacters() const
+    {
+        return second == ECS::NullEntity ? std::vector<ECS::Entity>{character}
+                                         : std::vector<ECS::Entity>{character, second};
+    }
+    [[nodiscard]] std::vector<ECS::Entity> ClientCharacters() const
+    {
+        return second == ECS::NullEntity ? std::vector<ECS::Entity>{mirror}
+                                         : std::vector<ECS::Entity>{mirror, secondMirror};
+    }
+
+    /// What a client's StepWorld does before a live step: steps again every
+    /// tick since the host's word it got wrong, on what the host applied.
+    void ReplayPending()
+    {
+        std::optional<ReplicationClient::Replay> replay = harness.client.BeginRollback();
+        if (!replay.has_value())
+        {
+            return;
+        }
+        ++replays;
+        glm::vec3 held = move;
+        for (const std::uint64_t tick : replay->ticks)
+        {
+            const ReplicationClient::AppliedCommand applied = harness.client.CommandAppliedAt(tick);
+            held = MoveFor(applied.command, held, applied.starvedTicks);
+            for (const ECS::Entity entity : ClientCharacters())
+            {
+                harness.clientScene.GetMut<Physics::CharacterIntent>(entity)->move = held;
+            }
+            harness.clientPhysics.StepCharacters(replay->characters, kFixedStep);
+            if (afterStep)
+            {
+                afterStep(harness.clientScene, mirror, tick);
+            }
+            harness.client.RecordHistory(tick);
+            ++replayedSteps;
+        }
+        harness.client.EndRollback();
     }
 
     /// Hands every message waiting on the wire to its side.
-    void Deliver()
+    void Deliver() { DeliverToClient(std::numeric_limits<std::size_t>::max()); }
+
+    /// Hands the host everything waiting for it, and the client the oldest
+    /// @p most messages waiting for it; the rest wait for a later call.
+    void DeliverToClient(std::size_t most)
     {
         std::vector<Net::NetEvent> events;
         harness.transport->Poll(events);
-        for (const Net::NetEvent &event : events)
+        for (Net::NetEvent &event : events)
         {
             if (event.type != Net::NetEvent::Type::Message)
                 continue;
             if (event.connection == harness.pair.first)
                 harness.server.HandleMessage(harness.pair.first, event.payload);
             else if (event.connection == harness.pair.second)
-                harness.client.HandleMessage(event.payload);
+                forClient.push_back(std::move(event));
+        }
+        for (std::size_t handed = 0; handed < most && !forClient.empty(); ++handed)
+        {
+            harness.client.HandleMessage(forClient.front().payload);
+            forClient.pop_front();
+        }
+        // A despawned mirror goes when the frame ends, as an application ends it.
+        harness.clientScene.FlushDestroyed();
+    }
+
+    /// Messages to the client not handed to it yet, oldest first.
+    std::deque<Net::NetEvent> forClient;
+
+    /// The client's step for command @p tick, as a client takes one: any replay
+    /// first, then the step, its record, and its command sent.
+    void StepClient(std::uint64_t tick)
+    {
+        clientTick = tick;
+        ReplayPending();
+        InputCommand command;
+        command.tick = tick;
+        command.moveX = move.x;
+        command.moveY = move.z;
+        for (const ECS::Entity entity : ClientCharacters())
+        {
+            harness.clientScene.GetMut<Physics::CharacterIntent>(entity)->move = move;
+        }
+        harness.clientPhysics.Update(kFixedStep);
+        if (afterStep)
+        {
+            afterStep(harness.clientScene, mirror, tick);
+        }
+        harness.client.RecordStep(command);
+        if (!loseCommands)
+        {
+            sent.Push(command);
+            harness.client.SendInput(sent);
         }
     }
 
-    /// The client's step for command @p tick, and its record of where that
-    /// left its character.
-    void StepClient(std::uint64_t tick)
+    /// While set, the client's commands are lost on the way, the copies of
+    /// them later packets repeat included.
+    bool loseCommands = false;
+
+    /// The host's step of its tick, on the command the client sent for it.
+    void StepHost()
     {
-        harness.clientScene.GetMut<Physics::CharacterIntent>(mirror)->move = move;
-        harness.clientPhysics.Update(kFixedStep);
-        harness.client.RecordPrediction(tick);
+        const InputCommand *command = harness.server.ConsumeInput(harness.serverSide(), harness.tick);
+        hostStarved = command != nullptr ? 0u : hostStarved + 1u;
+        hostMove = MoveFor(command, hostMove, hostStarved);
+        for (const ECS::Entity entity : HostCharacters())
+        {
+            harness.serverScene.GetMut<Physics::CharacterIntent>(entity)->move = hostMove;
+        }
+        harness.serverPhysics.Update(kFixedStep);
+        if (afterStep)
+        {
+            afterStep(harness.serverScene, character, harness.tick);
+        }
+        harness.server.Tick(harness.tick++);
     }
 
     /// One tick on both machines: the host's step and snapshot, and the
     /// client's step kLeadTicks further on. Nothing is delivered.
     void StepBoth()
     {
-        harness.serverScene.GetMut<Physics::CharacterIntent>(character)->move = move;
-        harness.serverPhysics.Update(kFixedStep);
-        StepClient(harness.tick + kLeadTicks);
-        harness.server.Tick(harness.tick++);
+        StepHost();
+        StepClient(harness.tick - 1u + kLeadTicks);
     }
 
     [[nodiscard]] glm::vec3 ClientPosition() const
@@ -1390,11 +1595,15 @@ TEST_CASE("a correction that agrees with the client's prediction leaves its char
         rig.StepBoth();
         const glm::vec3 before = rig.ClientPosition();
         rig.Deliver();
+        rig.ReplayPending();
         CHECK(rig.ClientPosition() == before);
     }
 
     // It walked the whole time, so the corrections were about a moving character.
     CHECK(rig.harness.client.Corrections().applied > correctionsBefore);
+    CHECK(rig.harness.client.Corrections().predictionsKept > 0);
+    CHECK(rig.harness.client.Corrections().predictionsReplayed == 0);
+    CHECK(rig.replays == 0);
     CHECK(rig.ClientPosition().x > 0.1f);
 }
 
@@ -1423,9 +1632,14 @@ TEST_CASE("a correction the client got wrong is replayed from the host's state, 
         rig.StepBoth();
         before = rig.ClientPosition();
         rig.Deliver();
+        rig.ReplayPending();
     }
     REQUIRE(rig.harness.client.Corrections().applied > correctionsBefore);
     CHECK(glm::length(rig.ClientPosition() - (before + shove)) < kReplayedNear);
+    CHECK(rig.harness.client.Corrections().predictionsReplayed == 1);
+    CHECK(rig.replays == 1);
+    // From the host's tick to the newest the client stepped.
+    CHECK(rig.replayedSteps == kLeadTicks);
 
     // Eased across rather than jumped: one frame later it is drawn nearer
     // where it was than where it went.
@@ -1439,9 +1653,290 @@ TEST_CASE("a correction the client got wrong is replayed from the host's state, 
             rig.StepBoth();
             const glm::vec3 settled = rig.ClientPosition();
             rig.Deliver();
+            rig.ReplayPending();
             CHECK(rig.ClientPosition() == settled);
         }
+        CHECK(rig.replays == 1);
     }
+}
+
+namespace
+{
+
+/// Where the client's second character stands: clear of the first.
+constexpr glm::vec3 kSecondCharacterAt{0.f, 0.f, 3.f};
+
+/// How far a replay may move a character the host agreed with (m): far under
+/// the two millimetres the host's position is rounded to, which is what it
+/// would move by if it were put where the host had it.
+constexpr float kMatchedUnmoved = 1e-4f;
+
+/// Ticks a client runs ahead with no word from the host: past every tick it
+/// keeps.
+constexpr std::uint32_t kPastTheRing = static_cast<std::uint32_t>(kPredictionHistoryTicks) + 6u;
+
+/// Ticks between two snapshots at the default rates.
+constexpr std::uint32_t kSnapshotIntervalTicks = 3;
+
+/// Ticks a burst of snapshots is held back for: three snapshot intervals.
+constexpr std::uint32_t kBurstTicks = 3 * kSnapshotIntervalTicks;
+
+/// Shoves @p rig's host copy of @p entity sideways by @p shove, as something
+/// only the host knows of would.
+void ShoveOnHost(PredictionRig &rig, ECS::Entity entity, glm::vec3 shove)
+{
+    const Physics::Pose pose = rig.harness.serverPhysics.GetBodyPose(entity);
+    rig.harness.serverPhysics.ApplyCorrection(
+        entity, Physics::Pose{pose.rotation, pose.position + shove},
+        Physics::BodyState{.linearVelocity = rig.harness.serverPhysics.GetBodyState(entity).linearVelocity});
+}
+
+/// A FixedUpdate system draining the second character's charge by one a step
+/// from tick `from` on, on whichever machine steps it.
+struct Drain
+{
+    std::uint64_t from = 0;
+    std::uint64_t newestOnClient = 0; ///< The newest tick the client drained at.
+
+    void Step(PredictionRig &rig, ECS::Scene &scene, std::uint64_t tick)
+    {
+        const bool onClient = &scene == &rig.harness.clientScene;
+        if (tick >= from)
+        {
+            --scene.GetMut<Test::Charge>(onClient ? rig.secondMirror : rig.second)->level;
+        }
+        if (onClient)
+        {
+            newestOnClient = std::max(newestOnClient, tick);
+        }
+    }
+};
+
+/// Runs @p rig until the client has replayed once, or kAgreeingTicks pass.
+void RunUntilReplayed(PredictionRig &rig)
+{
+    const std::uint32_t before = rig.replays;
+    for (std::uint32_t i = 0; i < kAgreeingTicks && rig.replays == before; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+}
+
+} // namespace
+
+TEST_CASE("a rollback for one predicted character leaves the other where its own steps put it")
+{
+    // The host agreed with the second, so it is put back to the client's own
+    // record and stepped again; put back where the host had it instead, it
+    // would move by the host's rounding on every rollback of its neighbour.
+    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    REQUIRE(rig.replays == 0);
+
+    ShoveOnHost(rig, rig.character, glm::vec3{0.f, 0.f, -kHostShove});
+    glm::vec3 secondBefore{0.f};
+    for (std::uint32_t i = 0; i < kAgreeingTicks && rig.replays == 0; ++i)
+    {
+        rig.StepBoth();
+        secondBefore = rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position;
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    REQUIRE(rig.replays == 1);
+    CHECK(glm::length(rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position - secondBefore) <
+          kMatchedUnmoved);
+}
+
+TEST_CASE("a predicted character the host despawns is neither put back nor remembered")
+{
+    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    const NetId secondId = rig.harness.server.NetIdOf(rig.second);
+    REQUIRE(rig.harness.client.PredictionCountsOf(secondId) != nullptr);
+
+    // The host takes the second away and shoves the first in the same tick: the
+    // rollback that follows covers ticks the second was alive for.
+    rig.harness.serverScene.Destroy(rig.second);
+    rig.harness.serverScene.FlushDestroyed();
+    rig.second = ECS::NullEntity;
+    ShoveOnHost(rig, rig.character, glm::vec3{0.f, 0.f, kHostShove});
+    const ECS::Entity secondMirror = rig.secondMirror;
+    rig.secondMirror = ECS::NullEntity;
+    RunUntilReplayed(rig);
+
+    REQUIRE(rig.replays == 1);
+    CHECK_FALSE(rig.harness.clientScene.IsAlive(secondMirror));
+    CHECK(rig.harness.client.PredictionCountsOf(secondId) == nullptr);
+}
+
+TEST_CASE("an answer from before every tick the client kept snaps the character to the host's")
+{
+    PredictionRig rig;
+    rig.StepBoth();
+    rig.Deliver();
+
+    // The client runs on alone, far past what it keeps.
+    for (std::uint32_t i = 0; i < kPastTheRing; ++i)
+    {
+        rig.StepClient(rig.harness.tick + kLeadTicks + i);
+    }
+    ShoveOnHost(rig, rig.character, glm::vec3{0.f, 0.f, kHostShove});
+    // Enough host steps for one to send a snapshot.
+    for (std::uint32_t i = 0; i < kSnapshotIntervalTicks; ++i)
+    {
+        rig.StepHost();
+    }
+    rig.Deliver();
+    rig.ReplayPending();
+
+    CHECK(rig.replays == 0);
+    CHECK(rig.harness.client.Corrections().hardSnaps == 1);
+    const ReplicationClient::Confirmed *host = rig.harness.client.ConfirmedOf(rig.harness.server.NetIdOf(rig.character));
+    REQUIRE(host != nullptr);
+    CHECK(glm::length(rig.ClientPosition() - host->body.position) < kMatchedUnmoved);
+}
+
+TEST_CASE("a predicted component steps again from the client's own record, and lands where a straight run does")
+{
+    // A FixedUpdate system drains the second character's charge every step
+    // from one tick on, on both machines. A rollback for the first character
+    // must put the second's charge back to the tick it rolls back to from the
+    // client's own record, or the replay drains it twice.
+    constexpr std::int32_t kFullCharge = 1000;
+    PredictionRig rig(std::nullopt, kSecondCharacterAt);
+    (void)rig.harness.serverScene.Add<Test::Charge>(rig.second, Test::Charge{.level = kFullCharge});
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    const std::uint32_t replaysBeforeDrain = rig.replays;
+    REQUIRE(rig.harness.clientScene.Get<Test::Charge>(rig.secondMirror) != nullptr);
+    REQUIRE(rig.harness.clientScene.Get<Test::Charge>(rig.secondMirror)->level == kFullCharge);
+
+    // From a tick neither machine has stepped yet.
+    Drain drain{.from = rig.harness.tick + kLeadTicks};
+    rig.afterStep = [&rig, &drain](ECS::Scene &scene, ECS::Entity entity, std::uint64_t tick)
+                    {
+                        (void)entity;
+                        drain.Step(rig, scene, tick);
+                    };
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    REQUIRE(rig.replays == replaysBeforeDrain);
+
+    ShoveOnHost(rig, rig.character, glm::vec3{0.f, 0.f, kHostShove});
+    RunUntilReplayed(rig);
+    REQUIRE(rig.replays == replaysBeforeDrain + 1u);
+    const std::int32_t drained = static_cast<std::int32_t>(drain.newestOnClient - drain.from + 1u);
+    CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.secondMirror)->level == kFullCharge - drained);
+}
+
+TEST_CASE("a tick the host stepped without the client's command is stepped again on what the host held")
+{
+    // Past the host's hold, so it holds some of the gap and lets go of the rest.
+    constexpr std::uint32_t kLostTicks = kRigHoldTicks + 2u;
+    PredictionRig rig;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+
+    const std::uint64_t lastSent = rig.clientTick;
+    rig.loseCommands = true;
+    for (std::uint32_t i = 0; i < kLostTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    rig.loseCommands = false;
+    // Until the host has stepped and spoken of every lost tick.
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+
+    const ReplicationClient::AppliedCommand before = rig.harness.client.CommandAppliedAt(lastSent);
+    CHECK(before.command != nullptr);
+    for (std::uint32_t i = 0; i < kLostTicks; ++i)
+    {
+        CAPTURE(i);
+        const ReplicationClient::AppliedCommand lost = rig.harness.client.CommandAppliedAt(lastSent + 1u + i);
+        CHECK(lost.command == nullptr);
+        CHECK(lost.starvedTicks == i + 1u);
+    }
+    const ReplicationClient::AppliedCommand after = rig.harness.client.CommandAppliedAt(lastSent + 1u + kLostTicks);
+    CHECK(after.command != nullptr);
+}
+
+TEST_CASE("a predicted component the host keeps changing costs one rollback per snapshot interval, and is named")
+{
+    // The client's charge never changes and the host's changes every tick: a
+    // disagreement on every snapshot. A burst of them, held back and then
+    // delivered one a step, is one rollback, not one each.
+    PredictionRig rig;
+    for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+    rig.afterStep = [&rig](ECS::Scene &scene, ECS::Entity entity, std::uint64_t tick)
+                    {
+                        (void)tick;
+                        if (&scene == &rig.harness.serverScene)
+                        {
+                            ++scene.GetMut<Test::Charge>(entity)->level;
+                        }
+                    };
+    for (std::uint32_t i = 0; i < kBurstTicks; ++i)
+    {
+        rig.StepBoth();
+    }
+    for (std::uint32_t i = 0; i < kBurstTicks / kSnapshotIntervalTicks; ++i)
+    {
+        rig.DeliverToClient(1);
+        rig.StepClient(rig.clientTick + 1u);
+    }
+    rig.Deliver();
+    rig.ReplayPending();
+
+    CHECK(rig.replays == 1);
+    const ReplicationClient::EntityPredictionCounts *counts =
+        rig.harness.client.PredictionCountsOf(rig.harness.server.NetIdOf(rig.character));
+    REQUIRE(counts != nullptr);
+    const std::unordered_map<Core::Reflect::ComponentId, ReplicationClient::PredictionCounts>::const_iterator charge =
+        counts->components.find(Core::Reflect::ComponentIdOf<Test::Charge>());
+    REQUIRE(charge != counts->components.end());
+    CHECK(charge->second.compares >= 2);
+    CHECK(charge->second.rollbacks == 1);
+    CHECK(charge->second.firstDifference.find("level") != std::string::npos);
+    CHECK(counts->physics.rollbacks == 0);
+
+    // ...and the replay took the host's charge, which only the host raises.
+    CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.mirror)->level > 0);
 }
 
 TEST_CASE("a client walking its character into another player does not shove that player's mirror")

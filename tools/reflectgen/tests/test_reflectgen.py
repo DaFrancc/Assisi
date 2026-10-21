@@ -919,6 +919,18 @@ class PredictedComponentTest(unittest.TestCase):
         self.assertIn("sizeof(N::Cooldown) == sizeof(decltype(N::Cooldown::remaining)) + "
                       "sizeof(decltype(N::Cooldown::charges))", cpp)
 
+    def test_an_accepted_component_names_its_first_differing_field(self):
+        src = ("namespace N {\nASTRUCT()\nstruct Timer { AFIELD() float left = 0.f; };\n"
+               "ACOMP(replicable, predicted)\n"
+               "struct Cooldown { AFIELD() Timer timer; AFIELD() int32_t charges = 0; };\n}\n")
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/Cooldown.hpp")
+        self.assertIn(".predictedDifference = ", cpp)
+        # Each field in declaration order, a struct's by their own names, and
+        # judged by the same compare as predictedEquals.
+        self.assertIn('PredictedFieldDifference("timer.left", lhs.timer.left, rhs.timer.left)', cpp)
+        self.assertIn('PredictedFieldDifference("charges", lhs.charges, rhs.charges)', cpp)
+        self.assertLess(cpp.index('"timer.left"'), cpp.index('"charges"'))
+
     def test_an_unpredicted_component_has_no_compare(self):
         src = "namespace N {\nACOMP(replicable)\nstruct C { AFIELD() float a = 0.f; };\n}\n"
         cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")

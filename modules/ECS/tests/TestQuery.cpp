@@ -183,6 +183,52 @@ TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
     CHECK(count == 0); // stale 'a' must not match; 'b' lacks Velocity
 }
 
+TEST_CASE("Query: while a replay runs, a query yields only the replayed entities, unless it includes the frozen")
+{
+    Scene scene;
+    const Entity replayed = scene.Create();
+    const Entity frozen = scene.Create();
+    REQUIRE(scene.Add<Position>(replayed, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(frozen, {2.0f}) != nullptr);
+
+    const std::vector<Entity> only{replayed};
+    scene.BeginReplay(only);
+    CHECK(scene.Replaying());
+
+    std::vector<Entity> seen;
+    for (auto [e, pos] : scene.Query<Mut<Position>>())
+    {
+        pos.x += 10.0f;
+        seen.push_back(e);
+    }
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0] == replayed);
+    CHECK(scene.Get<Position>(frozen)->x == doctest::Approx(2.0f));
+
+    std::vector<Entity> everyone;
+    for (auto [e, pos] : scene.Query<Position, IncludingFrozen>())
+    {
+        (void)pos;
+        everyone.push_back(e);
+    }
+    CHECK(everyone.size() == 2);
+
+    // Reading one entity by handle is not a query, and reaches the frozen too.
+    CHECK(scene.Get<Position>(frozen) != nullptr);
+    CHECK(scene.GetMut<Position>(frozen) != nullptr);
+
+    scene.EndReplay();
+    CHECK_FALSE(scene.Replaying());
+    std::int32_t afterwards = 0;
+    for (auto [e, pos] : scene.Query<Position>())
+    {
+        (void)e;
+        (void)pos;
+        ++afterwards;
+    }
+    CHECK(afterwards == 2);
+}
+
 // The point of deferring Destroy: calling it mid-Query touches no pool, so the
 // iterator stays valid and every entity is still visited this pass. The removals
 // land only at FlushDestroyed(). Enough entities to force the dense array to have
@@ -344,6 +390,26 @@ TEST_CASE("Query guard: destroying entities mid-iteration is allowed (deferred)"
     CHECK(scene.AliveCount() == 64); // still deferred
     scene.FlushDestroyed();
     CHECK(scene.AliveCount() == 0);
+}
+
+TEST_CASE("Replay guard: a replay neither makes nor destroys entities, nor changes a frozen one's components")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    Scene scene;
+    const Entity replayed = scene.Create();
+    const Entity frozen = scene.Create();
+    REQUIRE(scene.Add<Position>(replayed, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(frozen, {2.0f}) != nullptr);
+
+    const std::vector<Entity> only{replayed};
+    scene.BeginReplay(only);
+    CHECK_THROWS_AS((void)scene.Create(), Assisi::Core::ContractViolation);
+    CHECK_THROWS_AS(scene.Destroy(frozen), Assisi::Core::ContractViolation);
+    CHECK_THROWS_AS((void)scene.Add<Velocity>(frozen, {1.0f}), Assisi::Core::ContractViolation);
+    CHECK_THROWS_AS((void)scene.Remove<Position>(frozen), Assisi::Core::ContractViolation);
+    CHECK_NOTHROW((void)scene.Add<Velocity>(replayed, {1.0f}));
+    CHECK_NOTHROW((void)scene.Remove<Velocity>(replayed));
+    scene.EndReplay();
 }
 
 TEST_CASE("Query guard: a normal full iteration never trips")

@@ -20,6 +20,7 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
 #include <string_view>
@@ -150,6 +151,14 @@ struct ViewSmoothing
     /// never taken for a miss; small enough that a real disagreement is never
     /// kept for long.
     float predictionTolerance = 0.02f;
+
+    /// ...and how far apart the two may face (rad), on the same terms: about
+    /// four steps of the half-degree a rotation is rounded to on the wire.
+    float predictionRotationTolerance = 0.035f;
+
+    /// ...and how far apart their velocities may be (m/s): four steps of the
+    /// 62 mm/s a velocity is rounded to on the wire.
+    float predictionVelocityTolerance = 0.25f;
 };
 
 /// @brief The parameters this process encodes and decodes body state with.
@@ -176,10 +185,17 @@ struct BodyState
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.
     bool asleep = false;
+    /// A character's record, which also says how it stands and on what: a
+    /// client predicting it compares both, since a wrong one moves it only
+    /// ticks later. Neither is on the wire for any other body.
+    bool character = false;
+    Physics::Stance stance = Physics::Stance::Standing;
+    Physics::GroundState ground = Physics::GroundState::InAir;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when
-/// awake — the velocities, all at the resolutions Quantization() names.
+/// awake — the velocities, all at the resolutions Quantization() names; then,
+/// for a character, its stance and ground state.
 void WriteBodyState(const BodyState &state, Core::BitWriter &writer);
 
 /// @brief Inverse of WriteBodyState. Returns false on a truncated or malformed
