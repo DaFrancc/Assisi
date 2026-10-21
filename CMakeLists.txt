@@ -17,6 +17,27 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+# MSVC debug info goes into each object file (/Z7), not a shared .pdb (/Zi).
+# Every preset compiles through ccache, and ccache refuses /Zi outright — it
+# counts the compile as an unsupported option and runs cl.exe uncached — so on
+# CMake's default the debug and dev trees would never get a single cache hit.
+# The linker still writes the .pdb a debugger reads; only the .obj files grow.
+# Set here, before any target exists, so the fetched dependencies get it too.
+set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+
+# The presets name ccache as the launcher, but a preset's cache variables reach
+# a tree only when it is configured with that preset. Rebuilding re-runs CMake
+# without them, so a tree configured before the presets named ccache would
+# never compile through it. This gives such a tree the same launcher; a tree
+# that already has one, from a preset or by hand, keeps it.
+if (NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  find_program(ASSISI_CCACHE ccache)
+  if (ASSISI_CCACHE)
+    set(CMAKE_C_COMPILER_LAUNCHER "${ASSISI_CCACHE}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${ASSISI_CCACHE}")
+  endif()
+endif()
+
 # ------------------------------------------------------------
 # Project-wide knobs (driven by presets/CI, not hand-edited cache)
 # ------------------------------------------------------------
@@ -181,6 +202,9 @@ if (MSVC)
     /Zc:__cplusplus
     /Zc:preprocessor
     /EHsc
+    # Sources are UTF-8, as GCC and Clang assume; without this MSVC reads them in
+    # the Windows code page and a literal like U'é' stops compiling.
+    /utf-8
   )
   target_compile_definitions(Assisi-Options INTERFACE
     NOMINMAX
@@ -305,7 +329,7 @@ target_compile_definitions(Assisi-Options INTERFACE
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
 if (ASSISI_ENABLE_SANITIZERS)
   if (MSVC)
-    target_compile_options(Assisi-Sanitize INTERFACE /fsanitize=address /Zi)
+    target_compile_options(Assisi-Sanitize INTERFACE /fsanitize=address /Z7)
     target_link_options(Assisi-Sanitize INTERFACE /fsanitize=address)
   else()
     string(REPLACE ";" "," _assisi_san_list "${ASSISI_SANITIZER_SET}")
@@ -683,6 +707,36 @@ FetchContent_Declare(fastgltf
 )
 FetchContent_MakeAvailable(fastgltf)
 
+# fastgltf-unreachable-after-return.patch: AccessorBoundsArray::ForType and both
+# data() overloads end with FASTGLTF_UNREACHABLE after an if constexpr chain that
+# has already returned. MSVC's C4702 comes from the code generator, which SYSTEM
+# headers do not quiet, so under /WX the debug preset fails every file that
+# instantiates them. The patch moves each into an else, as upstream has since done
+# for data() but not yet ForType.
+#
+# Applied the way the NVRHI patches are, for the reason given there: the shared
+# source cache skips a FetchContent patch step.
+find_package(Git REQUIRED)
+set(_fastgltf_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/fastgltf-unreachable-after-return.patch")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_fastgltf_patch}"
+    WORKING_DIRECTORY "${fastgltf_SOURCE_DIR}"
+    RESULT_VARIABLE _fastgltf_patched
+    OUTPUT_QUIET ERROR_QUIET
+)
+if (NOT _fastgltf_patched EQUAL 0)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply "${_fastgltf_patch}"
+        WORKING_DIRECTORY "${fastgltf_SOURCE_DIR}"
+        RESULT_VARIABLE _fastgltf_patch_rc
+    )
+    if (NOT _fastgltf_patch_rc EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${_fastgltf_patch} to ${fastgltf_SOURCE_DIR}. "
+                            "Refresh the patch against the pinned fastgltf tag.")
+    endif()
+    message(STATUS "fastgltf: applied fastgltf-unreachable-after-return.patch")
+endif()
+
 # --- Jolt Physics
 set(FLOATING_POINT_EXCEPTIONS_ENABLED    OFF CACHE BOOL "" FORCE)
 set(USE_ASSERTS                          OFF CACHE BOOL "" FORCE)
@@ -698,6 +752,18 @@ set(TARGET_VIEWER                     OFF CACHE BOOL "" FORCE)
 # what keeps ObjectLayer one width here and inside Jolt — the two disagreeing
 # would corrupt every layer silently, so PhysicsWorld.cpp also static_asserts it.
 set(OBJECT_LAYER_BITS                 32  CACHE STRING "" FORCE)
+# Jolt never throws, but with exceptions off it puts _HAS_EXCEPTIONS=0 on its
+# PUBLIC interface for MSVC, which reaches every target above Physics and not
+# the ones below it. That macro changes the layout of std::exception, so the two
+# halves of the program build nlohmann::json's parse_error to two different
+# layouts and the linker keeps one: Core's parser then destroys a rejected
+# document's error with the other half's destructor and crashes on Windows. On,
+# everything is built against one standard library.
+set(CPP_EXCEPTIONS_ENABLED            ON  CACHE BOOL "" FORCE)
+# Jolt's own debug symbols are /Zi, which ccache refuses, and its CMake is too
+# old for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT to reach it. Off here, and given
+# /Z7 below like everything else.
+set(GENERATE_DEBUG_SYMBOLS            OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(JoltPhysics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
     GIT_TAG        v5.2.0
@@ -709,7 +775,7 @@ FetchContent_MakeAvailable(JoltPhysics)
 # Jolt v5.2.0 enables /WX; newer Windows SDK (10.0.26100+) emits a warning in
 # wingdi.h that would fail the build. Downgrade to warning-only for Jolt only.
 if (MSVC)
-    target_compile_options(Jolt PRIVATE /WX-)
+    target_compile_options(Jolt PRIVATE /WX- $<$<CONFIG:Debug,RelWithDebInfo>:/Z7>)
 endif()
 if (NOT TARGET Jolt::Jolt)
     add_library(Jolt::Jolt ALIAS Jolt)

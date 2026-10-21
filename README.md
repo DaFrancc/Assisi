@@ -21,8 +21,9 @@ that run on other distributions (optional; see *Building for every Linux distrib
 
 Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
 C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://www.python.org/) if you
-do not already have it on `PATH`, and [ccache](https://ccache.dev/) on `PATH`. Build from a
-*Developer Command Prompt* so the MSVC environment is set up.
+do not already have it on `PATH`, and [ccache](https://ccache.dev/) (`winget install -e --id Ccache.Ccache`,
+then open a new terminal so it is on `PATH`). Build from a *Developer Command Prompt* so the MSVC
+environment is set up.
 
 </details>
 

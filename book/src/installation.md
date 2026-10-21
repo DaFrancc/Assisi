@@ -40,8 +40,15 @@ them the first time you build.
 
 Install [Visual Studio 2022 or newer](https://visualstudio.microsoft.com/) with
 the **Desktop development with C++** workload. That gives you the MSVC compiler,
-CMake and Ninja. Also install [Python 3](https://www.python.org/) and
-[ccache](https://ccache.dev/), and make sure both are on your `PATH`.
+CMake and Ninja. Then install Python and ccache from any terminal:
+
+```bat
+winget install -e --id Python.Python.3.13
+winget install -e --id Ccache.Ccache
+```
+
+`winget` adds both to your `PATH`, but only terminals you open afterwards see
+the change, so close any that are open.
 
 Run every command in this book from a **Developer Command Prompt for VS**, which
 you'll find in the Start menu. A normal terminal can't find the compiler.

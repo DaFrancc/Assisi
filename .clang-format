@@ -13,3 +13,7 @@ AllowShortIfStatementsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: InlineOnly
 
 ColumnLimit: 120
+
+# Include order is the author's, as it is under uncrustify. Sorting has already put
+# <timeapi.h> above the <windows.h> it needs and broken the MSVC build.
+SortIncludes: Never

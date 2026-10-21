@@ -214,28 +214,34 @@ void PlayerSession::RelayControls(NetSync::NetSession &session, World &world, st
 
 void PlayerSession::CaptureLocalControls(World &world)
 {
-    for (auto [entity, controls, local] : world.scene.Query<Mut<PlayerInput>, LocalPlayer>())
+    // begin()/end() rather than a range-for that returns on its first pass: MSVC
+    // reads the loop's increment as unreachable and /WX turns C4702 into an error
+    // in the debug preset. Same reason as EditorApp::BlueprintSunEntity.
+    auto locals = world.scene.Query<Mut<PlayerInput>, LocalPlayer>();
+    auto first = locals.begin();
+    if (first == locals.end())
     {
-        (void)entity;
-        (void)local;
-        NetSync::InputCommand command;
-        command.actionBits = controls.held.bits | controls.pressed.bits;
-        command.moveX = controls.move.x;
-        command.moveY = controls.move.y;
-        command.lookYaw = controls.lookYaw;
-        command.lookPitch = controls.lookPitch;
-
-        // Turned here by exactly what the host will turn it by, which is what
-        // it accepts: a flick past the host's limit would otherwise leave the
-        // two facing different ways for good.
-        (void)NetSync::ClampInputCommand(command, NetSync::InputLimits{});
-        controls.move = {command.moveX, command.moveY};
-        controls.lookYaw = command.lookYaw;
-        controls.lookPitch = command.lookPitch;
-
-        _local = command;
         return;
     }
+    auto [entity, controls, local] = *first;
+    (void)entity;
+    (void)local;
+    NetSync::InputCommand command;
+    command.actionBits = controls.held.bits | controls.pressed.bits;
+    command.moveX = controls.move.x;
+    command.moveY = controls.move.y;
+    command.lookYaw = controls.lookYaw;
+    command.lookPitch = controls.lookPitch;
+
+    // Turned here by exactly what the host will turn it by, which is what
+    // it accepts: a flick past the host's limit would otherwise leave the
+    // two facing different ways for good.
+    (void)NetSync::ClampInputCommand(command, NetSync::InputLimits{});
+    controls.move = {command.moveX, command.moveY};
+    controls.lookYaw = command.lookYaw;
+    controls.lookPitch = command.lookPitch;
+
+    _local = command;
 }
 
 } // namespace Assisi::App

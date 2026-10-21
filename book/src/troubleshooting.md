@@ -7,7 +7,11 @@ Install that package and run the configure again. On Fedora, the most common one
 is `libstdc++-static`.
 
 **The build fails with "ccache: not found" (or similar).**
-Install ccache. The build expects it. See [Installation](installation.md).
+Install ccache. The build expects it. See [Installation](installation.md). If
+you just installed it, open a new terminal: an install only changes `PATH` for
+programs started afterwards, so terminals, editors and IDEs that were already
+open still can't find it. `./assisi doctor` shows what the current terminal can
+see.
 
 **A new dependency version isn't picked up.**
 Downloaded dependencies are cached in `out/_deps-src`. Run `./assisi clean

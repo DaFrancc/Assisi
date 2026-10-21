@@ -1698,7 +1698,10 @@ private:
         const Impl &_owner;
     };
 
-    CharacterCrowd characterVsCharacter{*this};
+    // std::as_const, not a bare *this: MSVC binding a bare *this to const Impl &
+    // here then reads *this as const in every member initializer after this one,
+    // and characterContacts{*this} below stops compiling.
+    CharacterCrowd characterVsCharacter{std::as_const(*this)};
 
     CharacterRecord *FindCharacter(ECS::Entity entity);
     const CharacterRecord *FindCharacter(ECS::Entity entity) const;

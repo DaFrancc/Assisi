@@ -1,0 +1,37 @@
+diff --git a/include/fastgltf/types.hpp b/include/fastgltf/types.hpp
+index c2af5b4..4b138e8 100644
+--- a/include/fastgltf/types.hpp
++++ b/include/fastgltf/types.hpp
+@@ -1619,8 +1619,9 @@ namespace fastgltf {
+ 				return AccessorBoundsArray(len, BoundsType::int64);
+ 			} else if constexpr(std::is_same_v<T, double>) {
+ 				return AccessorBoundsArray(len, BoundsType::float64);
++			} else {
++				FASTGLTF_UNREACHABLE
+ 			}
+-			FASTGLTF_UNREACHABLE
+ 		}
+ 
+ 		~AccessorBoundsArray() {
+@@ -1705,8 +1706,9 @@ namespace fastgltf {
+ 				return int64_buffer.get();
+ 			} else if constexpr (std::is_same_v<T, double>) {
+ 				return float64_buffer.get();
++			} else {
++				FASTGLTF_UNREACHABLE
+ 			}
+-			FASTGLTF_UNREACHABLE
+ 		}
+ 
+ 		template <typename T, std::enable_if_t<is_valid_type_v<T>, bool> = true>
+@@ -1716,8 +1718,9 @@ namespace fastgltf {
+ 				return int64_buffer.get();
+ 			} else if constexpr (std::is_same_v<T, double>) {
+ 				return float64_buffer.get();
++			} else {
++				FASTGLTF_UNREACHABLE
+ 			}
+-			FASTGLTF_UNREACHABLE
+ 		}
+ 
+ 		template <typename T, std::enable_if_t<is_valid_type_v<T>, bool> = true>

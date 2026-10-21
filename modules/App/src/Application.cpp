@@ -3,8 +3,8 @@
 
 // --- Platform timer (must come before other Windows headers) ----------------
 #ifdef _WIN32
-#include <timeapi.h>
 #include <windows.h>
+#include <timeapi.h> // after windows.h, whose types it uses
 #pragma comment(lib, "winmm.lib")
 #endif
 
