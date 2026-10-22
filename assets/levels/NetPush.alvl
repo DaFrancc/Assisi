@@ -1,0 +1,785 @@
+{
+  "entities": [
+    {
+      "components": {
+        "DirectionalLight": {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
+          "intensity": 0.6
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            -4.0,
+            0.0,
+            8.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            8.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart2"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            4.0,
+            0.0,
+            8.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart3"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            24.0,
+            0.5,
+            24.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.5,
+            -12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            24.0,
+            1.0,
+            0.5
+          ]
+        }
+      },
+      "name": "WallNorth"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.5,
+            12.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            24.0,
+            1.0,
+            0.5
+          ]
+        }
+      },
+      "name": "WallSouth"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -12.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            1.0,
+            24.0
+          ]
+        }
+      },
+      "name": "WallWest"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            12.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            1.0,
+            24.0
+          ]
+        }
+      },
+      "name": "WallEast"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            -4.0,
+            0.4,
+            4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "CrateLeft"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.4,
+            4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "CrateMiddle"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            4.0,
+            0.4,
+            4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "CrateRight"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.4,
+            -2.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "CrateContested"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            -7.0,
+            0.4,
+            -4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "StackBottom"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            -7.0,
+            1.2000000000000002,
+            -4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "StackMiddle"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 10.0
+        },
+        "Transform": {
+          "position": [
+            -7.0,
+            2.0,
+            -4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        }
+      },
+      "name": "StackTop"
+    },
+    {
+      "components": {
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 3.0
+        },
+        "Transform": {
+          "position": [
+            3.0,
+            0.35,
+            -4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        }
+      },
+      "name": "Ball"
+    },
+    {
+      "components": {
+        "Collider": {
+          "radius": 0.5,
+          "shape": 1
+        },
+        "HostSimulated": {},
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {
+          "mass": 3.0
+        },
+        "Transform": {
+          "position": [
+            5.0,
+            0.35,
+            -6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        }
+      },
+      "name": "HostBall"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBody": {},
+        "Transform": {
+          "position": [
+            7.0,
+            0.5,
+            -4.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "HeavyCrate"
+    }
+  ],
+  "systems": [],
+  "version": 2
+}

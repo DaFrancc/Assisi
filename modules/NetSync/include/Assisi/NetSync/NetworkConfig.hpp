@@ -73,6 +73,18 @@ struct NetworkConfig
     AFIELD() float relevancyExitRadius = RelevancyConfig{}.exitRadius;
     AFIELD() uint32_t relevancyDwellTicks = RelevancyConfig{}.dwellTicks;
 
+    // --- Ownership: which client simulates which body, and how far the host
+    // believes its reports. Not hashed, same reason.
+    AFIELD() float ownershipDistance = OwnershipConfig{}.ownershipDistance;
+    AFIELD() float ownershipLeaveDistance = OwnershipConfig{}.leaveDistance;
+    AFIELD() float reportReachSlack = OwnershipConfig{}.reportReachSlack;
+    AFIELD() float reportMaxSpeed = OwnershipConfig{}.reportMaxSpeed;
+    AFIELD() float reportMaxSpin = OwnershipConfig{}.reportMaxSpin;
+    AFIELD() uint32_t ownershipTouchDwellTicks = OwnershipConfig{}.touchDwellTicks;
+    AFIELD() uint32_t ownershipHoldTicks = OwnershipConfig{}.holdTicks;
+    AFIELD() uint32_t reportTimeoutTicks = OwnershipConfig{}.reportTimeoutTicks;
+    AFIELD() uint32_t ownershipMaxBodies = OwnershipConfig{}.maxBodiesPerClient;
+
     /// Which provider decides relevancy: `all` or `distance`. A name rather than
     /// a number so the file says what it means; a name this build does not know
     /// warns and leaves everything relevant.
@@ -84,7 +96,7 @@ struct NetworkConfig
 };
 
 /// @brief Apply @p config to this process: quantization, smoothing, the
-///        never-replicate list, and the relevancy settings.
+///        never-replicate list, and the relevancy and ownership settings.
 ///
 /// Each block is validated and refused independently — a typo in the
 /// quantization must not cost the smoothing, and vice versa. A refused block
@@ -107,5 +119,8 @@ void LoadNetworkConfig(std::string_view assetPath = "config/network.json");
 
 /// @brief The relevancy settings this game uses, as applied.
 [[nodiscard]] const RelevancyConfig &Relevancy();
+
+/// @brief The ownership settings this game uses, as applied.
+[[nodiscard]] const OwnershipConfig &Ownership();
 
 } // namespace Assisi::NetSync

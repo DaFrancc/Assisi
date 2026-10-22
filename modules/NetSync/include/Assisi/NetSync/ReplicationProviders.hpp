@@ -206,6 +206,12 @@ struct ConnectionDiagnostics
     std::uint64_t relevancyEnters    = 0;
     std::uint64_t relevancyExits     = 0;
 
+    /// Reports of the bodies this client simulates that the host believed and
+    /// wrote over them, and that it refused and took the body back over. An
+    /// honest client on a reasonable connection refuses none.
+    std::uint64_t reportsAccepted    = 0;
+    std::uint64_t reportsRefused     = 0;
+
     // ── Intents ──────────────────────────────────────────────────────────────
     // One counter per way an intent can be refused: "intents dropped" is not a
     // diagnosis. Rate-limited means a misbehaving client, stale means a clock

@@ -111,3 +111,24 @@ TEST_CASE("a provider this build does not know leaves everything relevant")
 
     CHECK(Relevancy().provider == RelevancyConfig::Provider::All);
 }
+
+TEST_CASE("the ownership settings reach the accessor, and a body is never lost nearer than it is given")
+{
+    REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig",
+                           "ownershipDistance": 3.0, "ownershipLeaveDistance": 5.0, "reportMaxSpeed": 12.0,
+                           "ownershipHoldTicks": 20, "ownershipMaxBodies": 3 })"));
+    CHECK(Ownership().ownershipDistance == doctest::Approx(3.f));
+    CHECK(Ownership().leaveDistance == doctest::Approx(5.f));
+    CHECK(Ownership().reportMaxSpeed == doctest::Approx(12.f));
+    CHECK(Ownership().holdTicks == 20u);
+    CHECK(Ownership().maxBodiesPerClient == 3u);
+
+    // Lost nearer than given, a body between two players would flip between
+    // them every tick; the block is refused and the last good one kept.
+    REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig",
+                           "ownershipDistance": 4.0, "ownershipLeaveDistance": 2.0 })"));
+    CHECK(Ownership().ownershipDistance == doctest::Approx(3.f));
+
+    REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig" })"));
+    CHECK(Ownership() == OwnershipConfig{});
+}

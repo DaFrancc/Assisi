@@ -809,6 +809,10 @@ struct PhysicsWorld::Impl
     /// bodies are locked by the step, and the contact callbacks are reading them.
     bool stepping = false;
 
+    /// True during StepCharacters: a step stepped again, in which a character
+    /// pushes no body, since the live step already pushed it.
+    bool characterOnlyStep = false;
+
     /// Scratch for the reconcile, kept so a frame that changes nothing allocates
     /// nothing.
     std::vector<ECS::Entity> scratchChanged;
@@ -1118,6 +1122,14 @@ private:
 
     /// In the order they were made, which is the order they are applied in.
     std::vector<BodyRequest> requests;
+
+    /// What MovedByGameplay() lists for the step under way or just run, and
+    /// the Teleports since the last Update(), which the next one lists.
+    std::vector<ECS::Entity> movedByGameplay;
+    std::vector<ECS::Entity> teleportedSinceUpdate;
+
+    /// Marks @p entity's owner as moved by gameplay in this step.
+    void NoteMovedByGameplay(ECS::Entity entity);
 
     /// Queues @p request for the next step.
     void Request(const BodyRequest &request);

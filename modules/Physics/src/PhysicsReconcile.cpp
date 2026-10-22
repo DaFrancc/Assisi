@@ -600,6 +600,8 @@ void PhysicsWorld::Impl::PushBodyState(ECS::Entity entity)
         return;
     }
 
+    NoteMovedByGameplay(entity);
+
     // Activated first: a body asleep on a surface ignores velocity written
     // while it sleeps.
     bodies.ActivateBody(slot->body);
@@ -654,6 +656,10 @@ void PhysicsWorld::Impl::PushTransform(ECS::Entity entity, float stepTime)
     const bool turned = !Math::Identical(transform.rotation, slot->stamp.rotation);
     const bool scaled = !Math::Identical(transform.scale, slot->stamp.scale);
     const Pose world = WorldPoseOf(scene, entity, transform);
+    if (moved || turned)
+    {
+        NoteMovedByGameplay(entity);
+    }
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
 
     // A piece moves inside its owner's shape; a follower is put where its

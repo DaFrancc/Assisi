@@ -493,7 +493,7 @@ FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
                              .linearVelocity = ToGlm(record->character->GetLinearVelocity())};
     }
     const Impl::BodySlot *slot = _impl->SlotFor(entity);
-    if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion != BodyMotion::Kinematic)
+    if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion == BodyMotion::Static)
     {
         return FollowerFrame{};
     }
@@ -502,7 +502,8 @@ FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
     return FollowerFrame{.pose = Pose{ToGlm(bodies.GetRotation(slot->body)),
                                       glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
                          .linearVelocity = ToGlm(bodies.GetLinearVelocity(slot->body)),
-                         .angularVelocity = ToGlm(bodies.GetAngularVelocity(slot->body))};
+                         .angularVelocity = ToGlm(bodies.GetAngularVelocity(slot->body)),
+                         .asleep = slot->motion == BodyMotion::Dynamic && !bodies.IsActive(slot->body)};
 }
 
 void PhysicsWorld::PlaceFollower(ECS::Entity entity, const FollowerFrame &frame)
@@ -604,6 +605,7 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     // is dropped at the end, or the next Update would resolve it as its own.
     _impl->events.clear();
     const std::size_t touchedBefore = _impl->touchedThisStep.size();
+    _impl->characterOnlyStep = true;
 
     // As Update runs them: the stance each asks for taken at the reconcile
     // before the step, then the sweeps in step order with denormals flushed.
@@ -640,10 +642,11 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     // Where each follower stood as the step began, moving as it moved through
     // it: what a character riding or meeting it reads during its sweep. A
     // kinematic body moves through a step as fast as the step leaves it; a
-    // character as fast as it moved when the step began.
+    // dynamic body or a character as fast as it moved when the step began.
     for (const FollowerStep &follower : placed)
     {
-        if (_impl->FindCharacter(follower.entity) != nullptr)
+        const Impl::BodySlot *slot = _impl->SlotFor(follower.entity);
+        if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion != BodyMotion::Kinematic)
         {
             _impl->PlaceFollower(follower.entity, follower.from);
             continue;
@@ -697,6 +700,7 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
 
     _impl->touchedThisStep.erase(_impl->touchedThisStep.begin() + static_cast<std::ptrdiff_t>(touchedBefore),
                                  _impl->touchedThisStep.end());
+    _impl->characterOnlyStep = false;
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const
@@ -1039,16 +1043,24 @@ void PhysicsWorld::Impl::PlaceFollower(ECS::Entity entity, const FollowerFrame &
         return;
     }
     const BodySlot *slot = SlotFor(entity);
-    if (slot == nullptr || slot->kind != SlotKind::Body || slot->motion != BodyMotion::Kinematic)
+    if (slot == nullptr || slot->kind != SlotKind::Body || slot->motion == BodyMotion::Static)
     {
         return;
     }
     JPH::BodyInterface &bodies = physicsSystem.GetBodyInterface();
-    const bool moving = glm::length(frame.linearVelocity) > 0.f || glm::length(frame.angularVelocity) > 0.f;
+    // A dynamic body wakes for anything but a frame at rest: asleep, Jolt
+    // would ignore the velocities written to it.
+    const bool moving = slot->motion == BodyMotion::Dynamic
+                            ? !frame.asleep
+                            : glm::length(frame.linearVelocity) > 0.f || glm::length(frame.angularVelocity) > 0.f;
     bodies.SetPositionAndRotation(slot->body, ToJolt(frame.pose.position), ToJolt(frame.pose.rotation),
                                   moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
     bodies.SetLinearAndAngularVelocity(slot->body, ToJoltVector(frame.linearVelocity),
                                        ToJoltVector(frame.angularVelocity));
+    if (slot->motion == BodyMotion::Dynamic && frame.asleep)
+    {
+        bodies.DeactivateBody(slot->body);
+    }
 }
 
 void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)

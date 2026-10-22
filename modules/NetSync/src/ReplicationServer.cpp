@@ -25,7 +25,7 @@ namespace Assisi::NetSync
 {
 ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene,
                                      Physics::PhysicsWorld *physics, ReplicationConfig config)
-    : _transport(transport), _scene(scene), _physics(physics), _config(config)
+    : _transport(transport), _scene(scene), _physics(physics), _config(config), _ownership(config.ownership)
 {
     // Clamp the snapshot rate to a divisor of the tick rate. A rate that does
     // not divide makes the send interval alternate between two tick counts,
@@ -148,6 +148,17 @@ void ReplicationServer::StripAuthoredControl()
                         "assigned at runtime, never saved.",
                         authored.size(), authored.size() == 1 ? "" : "s");
     }
+
+    std::vector<ECS::Entity> simulated;
+    for (auto [entity, simulator] : _scene.Query<SimulatedBy>())
+    {
+        (void)simulator;
+        simulated.push_back(entity);
+    }
+    for (const ECS::Entity entity : simulated)
+    {
+        _scene.Remove<SimulatedBy>(entity);
+    }
 }
 
 bool ReplicationServer::IsSnapshotTick(std::uint64_t simTick) const { return simTick % _snapshotDiv == 0; }
@@ -220,6 +231,23 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
         }
         _controlledByClient.erase(controlled);
     }
+
+    // What the leaver simulated, the host simulates until the next Tick hands
+    // it on, to whoever is nearest, with no hold.
+    std::vector<ECS::Entity> simulated;
+    for (auto [entity, simulator] : _scene.Query<SimulatedBy>())
+    {
+        if (simulator.client == client.value)
+        {
+            simulated.push_back(entity);
+        }
+    }
+    for (const ECS::Entity entity : simulated)
+    {
+        _scene.Remove<SimulatedBy>(entity);
+        _believed.erase(NetIdOf(entity));
+    }
+    _ownership.ForgetPlayer(client.value);
 
     // Otherwise a provider's per-client state (dwell counters, last-known
     // distances) is held for the life of the session against an id that will

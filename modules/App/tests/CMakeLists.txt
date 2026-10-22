@@ -56,6 +56,7 @@ if (ASSISI_ENABLE_NETWORKING)
   target_sources(Assisi-App-Tests PRIVATE
     TestBlueprintReplication.cpp
     PlayerSessionTesting.cpp
+    TestPlayerSessionBodies.cpp
     TestPlayerSessionContact.cpp
     TestPlayerSessionGaps.cpp
     TestPlayerSessionGapWalks.cpp

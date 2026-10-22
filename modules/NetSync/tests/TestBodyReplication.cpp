@@ -1375,16 +1375,26 @@ glm::vec3 MoveFor(const InputCommand *command, glm::vec3 held, std::uint32_t sta
 /// character at the origin.
 struct RigLevel
 {
+    /// Light crates on the floor, the host's and sent to the client, each
+    /// resting with its centre at this x and z.
+    std::vector<glm::vec3> crates = {};
     /// Another player's character: the host's to move, and on the client a
     /// mirror like any other.
-    std::optional<glm::vec3> other;
+    std::optional<glm::vec3> other = std::nullopt;
     /// A second character the client controls.
-    std::optional<glm::vec3> secondAt;
+    std::optional<glm::vec3> secondAt = std::nullopt;
     /// A moving deck the client's characters stand on, carried by it: a level's
     /// own kinematic platform, on both machines and never sent, moved by each
     /// from the tick alone as Oscillate moves one.
     bool deck = false;
+    /// The crates are kept for the host to simulate.
+    bool hostSimulated = false;
 };
+
+/// A light crate's half size (m), and its mass (kg): one a character shoves
+/// along at a walk.
+constexpr float kCrateHalf = 0.4f;
+constexpr float kCrateMass = 10.f;
 
 /// The deck's size (m), and where its top is.
 constexpr glm::vec3 kDeckHalfExtents{6.f, 0.25f, 6.f};
@@ -1433,6 +1443,9 @@ struct PredictionRig
     /// A second character the client controls, when the case asks for one.
     ECS::Entity second{ECS::NullEntity};
     ECS::Entity secondMirror{ECS::NullEntity};
+    /// The level's crates on the host, and their mirrors, in the same order.
+    std::vector<ECS::Entity> crates;
+    std::vector<ECS::Entity> crateMirrors;
     glm::vec3 move{1.f, 0.f, 0.f};
     InputCommandBuffer sent;
     /// What the host stepped its characters on last, and the steps in a row
@@ -1472,6 +1485,18 @@ struct PredictionRig
             (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
         }
+        for (const glm::vec3 at : level.crates)
+        {
+            const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics,
+                                               glm::vec3{at.x, kCrateHalf, at.z}, /*isStatic=*/ false,
+                                               glm::vec3{kCrateHalf});
+            harness.serverScene.GetMut<Physics::RigidBody>(crate)->mass = kCrateMass;
+            if (level.hostSimulated)
+            {
+                (void)harness.serverScene.Add<HostSimulated>(crate, HostSimulated{});
+            }
+            crates.push_back(crate);
+        }
         const ClientId client = harness.server.ClientIdOf(harness.serverSide());
         harness.server.SetControl(character, client);
         if (level.secondAt.has_value())
@@ -1490,6 +1515,11 @@ struct PredictionRig
         {
             secondMirror = MirrorOf(harness, second);
             REQUIRE(secondMirror != ECS::NullEntity);
+        }
+        for (const ECS::Entity crate : crates)
+        {
+            crateMirrors.push_back(MirrorOf(harness, crate));
+            REQUIRE(crateMirrors.back() != ECS::NullEntity);
         }
         Deliver();
         deckFrom = harness.tick;
@@ -1520,11 +1550,16 @@ struct PredictionRig
     void ReplayPending()
     {
         std::optional<ReplicationClient::Replay> replay = harness.client.BeginRollback();
+        const bool syncTest = !replay.has_value();
+        if (syncTest)
+        {
+            replay = harness.client.BeginSyncTest();
+        }
         if (!replay.has_value())
         {
             return;
         }
-        ++replays;
+        replays += syncTest ? 0u : 1u;
         glm::vec3 held = move;
         for (const std::uint64_t tick : replay->ticks)
         {
@@ -1539,6 +1574,10 @@ struct PredictionRig
             ++replayedSteps;
         }
         harness.client.EndRollback();
+        if (syncTest)
+        {
+            harness.client.EndSyncTest();
+        }
     }
 
     /// Hands every message waiting on the wire to its side.
@@ -1572,7 +1611,8 @@ struct PredictionRig
     std::deque<Net::NetEvent> forClient;
 
     /// The client's step for command @p tick, as a client takes one: any replay
-    /// first, then the step, its record, and its command sent.
+    /// first, then the step and the host's sleep verdicts held to, its record,
+    /// and its command sent.
     void StepClient(std::uint64_t tick)
     {
         clientTick = tick;
@@ -1587,6 +1627,7 @@ struct PredictionRig
         }
         MoveDeck(harness.clientScene, clientDeck, tick, deckFrom);
         harness.clientPhysics.Update(kFixedStep);
+        harness.client.EnforceSleep();
         if (afterStep)
         {
             afterStep(harness.clientScene, mirror, tick);
@@ -2099,4 +2140,325 @@ TEST_CASE("A client's world leaves breaking joints to the server")
 
     CHECK(harness.serverPhysics.BreaksJoints());
     CHECK_FALSE(harness.clientPhysics.BreaksJoints());
+}
+
+namespace
+{
+
+/// Where a crate rests in front of the client's character, which walks along
+/// +x from the origin: far enough that the crate is given before it is reached.
+constexpr glm::vec3 kCrateAhead{2.5f, 0.f, 0.f};
+
+/// Ticks a walk up to kCrateAhead takes, with room.
+constexpr std::uint32_t kReachTicks = 60;
+
+/// Ticks of a long push: several metres at a walk.
+constexpr std::uint32_t kLongPushTicks = 200;
+
+/// Further than a long push moves a crate when it is pushed at all (m).
+constexpr float kPushedCrateFar = 3.f;
+
+/// Ticks of walking away from a crate, past the leave distance.
+constexpr std::uint32_t kWalkAwayTicks = 120;
+
+/// How far apart two crates pushed one into the other may be drawn (m):
+/// the solver's contact slop, not a gap anyone sees.
+constexpr float kDrawnInContact = 0.02f;
+
+/// A speed far past what a report may claim (m/s), and a jump far past what
+/// one tick allows (m).
+constexpr float kCheatSpeed = 100.f;
+constexpr float kCheatJump = 10.f;
+
+/// Ticks for a refused report to reach the host and the host's word to come
+/// back: a few snapshots.
+constexpr std::uint32_t kRoundTripTicks = 12;
+
+/// How near the host's crate the client's is drawn once the host has it back
+/// and it has settled (m).
+constexpr float kBackWithHost = 0.05f;
+
+/// An upward kick on a light crate (N s): over 5 m/s.
+constexpr glm::vec3 kKickUp{0.f, 60.f, 0.f};
+
+/// Steps the rig a tick on both machines and hands everything over.
+void Tick(PredictionRig &rig)
+{
+    rig.StepBoth();
+    rig.Deliver();
+}
+
+/// Walks the rig's character until the host has given crate @p index to the
+/// client and the client knows; false if that never happened.
+bool WalkUntilGiven(PredictionRig &rig, std::size_t index = 0)
+{
+    const ClientId client = rig.harness.server.ClientIdOf(rig.harness.serverSide());
+    for (std::uint32_t i = 0; i < kReachTicks; ++i)
+    {
+        Tick(rig);
+        if (rig.harness.server.SimulatorOf(rig.crates[index]) == client &&
+            rig.harness.client.Simulates(rig.crateMirrors[index]))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Ticks the rig until the host simulates @p crate itself; false if it never
+/// does within a round trip.
+bool TickUntilTakenBack(PredictionRig &rig, ECS::Entity crate)
+{
+    for (std::uint32_t i = 0; i < kRoundTripTicks; ++i)
+    {
+        Tick(rig);
+        if (!rig.harness.server.SimulatorOf(crate).IsValid())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("a crate is given to the client whose character comes near it, and taken back once it walks away")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    const ClientId client = rig.harness.server.ClientIdOf(rig.harness.serverSide());
+    REQUIRE(rig.harness.server.SimulatorOf(rig.crates[0]) == InvalidClientId);
+
+    REQUIRE(WalkUntilGiven(rig));
+    CHECK(rig.harness.server.SimulatorOf(rig.crates[0]) == client);
+    // Given before it is reached, so the first push is already the client's.
+    CHECK_FALSE(rig.harness.serverPhysics.IsTouching(rig.character, rig.crates[0]));
+
+    rig.move = glm::vec3{-1.f, 0.f, 0.f};
+    for (std::uint32_t i = 0; i < kWalkAwayTicks; ++i)
+    {
+        Tick(rig);
+    }
+    CHECK(rig.harness.server.SimulatorOf(rig.crates[0]) == InvalidClientId);
+    CHECK_FALSE(rig.harness.client.Simulates(rig.crateMirrors[0]));
+}
+
+TEST_CASE("a crate its client pushes is never put back by the host on that client")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    REQUIRE(WalkUntilGiven(rig));
+    const ECS::Entity crate = rig.crateMirrors[0];
+    const float start = rig.harness.clientPhysics.GetBodyPose(crate).position.x;
+
+    std::uint32_t moved = 0;
+    float largestOffset = 0.f;
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        rig.StepBoth();
+        const Physics::Pose before = rig.harness.clientPhysics.GetBodyPose(crate);
+        rig.Deliver();
+        const Physics::Pose after = rig.harness.clientPhysics.GetBodyPose(crate);
+        moved += before.position == after.position && before.rotation == after.rotation ? 0u : 1u;
+        if (const ECS::RenderOffset *offset = rig.harness.clientScene.Get<ECS::RenderOffset>(crate))
+        {
+            largestOffset = std::max(largestOffset, glm::length(offset->position));
+        }
+    }
+    REQUIRE(rig.harness.clientPhysics.GetBodyPose(crate).position.x > start + kPushedCrateFar);
+    CHECK(rig.harness.client.Simulates(crate));
+    CHECK(moved == 0u);
+    CHECK(largestOffset == 0.f);
+}
+
+TEST_CASE("a client's character pushing the crate it simulates is not corrected by the host")
+{
+    // The host writes each report over its crate at the report's tick, so its
+    // copy of the character meets the crate where the client's met it.
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    REQUIRE(WalkUntilGiven(rig));
+    const ECS::Entity crate = rig.crates[0];
+    const float start = rig.harness.serverPhysics.GetBodyPose(crate).position.x;
+    const NetId own = rig.harness.client.NetIdOf(rig.mirror);
+    const std::uint64_t correctionsBefore = rig.harness.client.PredictionCountsOf(own)->physics.corrections;
+
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        Tick(rig);
+    }
+    const ReplicationClient::EntityPredictionCounts *counts = rig.harness.client.PredictionCountsOf(own);
+    REQUIRE(counts != nullptr);
+    REQUIRE(rig.harness.serverPhysics.GetBodyPose(crate).position.x > start + kPushedCrateFar);
+    REQUIRE(counts->physics.compares > 0u);
+    CHECK(counts->physics.corrections == correctionsBefore);
+    CHECK(rig.harness.server.Diagnostics(rig.harness.serverSide())->reportsRefused == 0u);
+    CHECK(rig.harness.server.Diagnostics(rig.harness.serverSide())->reportsAccepted > 0u);
+}
+
+TEST_CASE("a crate pushed into a second crate is drawn against it on the client the whole push")
+{
+    // The second crate is the client's too once the two touch, so both run on
+    // the client's own timeline; a mirror the host corrects a round trip late
+    // was drawn centimetres ahead of the crate pushing it.
+    // Given so near that the character never comes near enough the second
+    // crate for it: that one is the client's only by touching the first.
+    ReplicationConfig nearOnly;
+    nearOnly.ownership.ownershipDistance = 1.f;
+    nearOnly.ownership.leaveDistance = 2.f;
+    const glm::vec3 behind = kCrateAhead + glm::vec3{2.f * kCrateHalf + 0.05f, 0.f, 0.f};
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead, behind}}, nearOnly);
+    REQUIRE(WalkUntilGiven(rig, 0));
+    REQUIRE(WalkUntilGiven(rig, 1));
+    const ECS::Entity pushed = rig.crateMirrors[0];
+    const ECS::Entity ahead = rig.crateMirrors[1];
+    const float start = RenderedPosition(rig.harness.clientScene, ahead).x;
+
+    // From the tick the two first meet: the solver counts them touching a few
+    // centimetres before they do.
+    float widest = 0.f;
+    std::uint32_t together = 0;
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        Tick(rig);
+        const float gap = RenderedPosition(rig.harness.clientScene, ahead).x -
+                          RenderedPosition(rig.harness.clientScene, pushed).x - 2.f * kCrateHalf;
+        if (together == 0 && gap >= kDrawnInContact)
+        {
+            continue;
+        }
+        ++together;
+        widest = std::max(widest, gap);
+    }
+    REQUIRE(RenderedPosition(rig.harness.clientScene, ahead).x > start + kPushedCrateFar);
+    REQUIRE(together > kLongPushTicks / 2);
+    CHECK(rig.harness.client.Simulates(pushed));
+    CHECK(rig.harness.client.Simulates(ahead));
+    CHECK(widest < kDrawnInContact);
+}
+
+TEST_CASE("with the sync test on, a client pushing a crate it simulates steps each tick again as it did live")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    rig.harness.client.SetSyncTest(true);
+    REQUIRE(WalkUntilGiven(rig));
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        Tick(rig);
+    }
+    REQUIRE(rig.harness.serverPhysics.IsTouching(rig.character, rig.crates[0]));
+    CHECK(rig.harness.client.SyncTestResults().replays > 0u);
+    CHECK(rig.harness.client.SyncTestResults().differences == 0u);
+}
+
+TEST_CASE("a report the host does not believe is refused, and the client is shown the host's crate")
+{
+    SUBCASE("too fast")
+    {
+        PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+        REQUIRE(WalkUntilGiven(rig));
+        const ECS::Entity crate = rig.crateMirrors[0];
+        rig.move = glm::vec3{0.f};
+        rig.harness.clientPhysics.ApplyCorrection(crate, rig.harness.clientPhysics.GetBodyPose(crate),
+                                                  Physics::BodyState{.linearVelocity = {0.f, 0.f, kCheatSpeed}});
+        CHECK(TickUntilTakenBack(rig, rig.crates[0]));
+        CHECK(rig.harness.server.Diagnostics(rig.harness.serverSide())->reportsRefused > 0u);
+        for (std::uint32_t i = 0; i < kRoundTripTicks; ++i)
+        {
+            Tick(rig);
+        }
+        CHECK_FALSE(rig.harness.client.Simulates(crate));
+        CHECK(PoseError(rig.harness, rig.crates[0]) < kBackWithHost);
+    }
+    SUBCASE("out of reach")
+    {
+        PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+        REQUIRE(WalkUntilGiven(rig));
+        const ECS::Entity crate = rig.crateMirrors[0];
+        rig.move = glm::vec3{0.f};
+        Physics::Pose far = rig.harness.clientPhysics.GetBodyPose(crate);
+        far.position.z += kCheatJump;
+        rig.harness.clientPhysics.ApplyCorrection(crate, far, Physics::BodyState{});
+        CHECK(TickUntilTakenBack(rig, rig.crates[0]));
+        CHECK(rig.harness.server.Diagnostics(rig.harness.serverSide())->reportsRefused > 0u);
+        for (std::uint32_t i = 0; i < kRoundTripTicks; ++i)
+        {
+            Tick(rig);
+        }
+        CHECK_FALSE(rig.harness.client.Simulates(crate));
+        CHECK(PoseError(rig.harness, rig.crates[0]) < kBackWithHost);
+    }
+}
+
+TEST_CASE("a crate whose client stops reporting is taken back after the timeout")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    REQUIRE(WalkUntilGiven(rig));
+    rig.loseCommands = true;
+    const std::uint32_t timeout = ReplicationConfig{}.ownership.reportTimeoutTicks;
+    for (std::uint32_t i = 0; i + kRoundTripTicks < timeout; ++i)
+    {
+        Tick(rig);
+    }
+    REQUIRE(rig.harness.server.SimulatorOf(rig.crates[0]).IsValid());
+    for (std::uint32_t i = 0; i < 2u * kRoundTripTicks; ++i)
+    {
+        Tick(rig);
+    }
+    CHECK(rig.harness.server.SimulatorOf(rig.crates[0]) == InvalidClientId);
+}
+
+TEST_CASE("a kick the host's own game gives a crate a client simulates takes it back, and lands")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    REQUIRE(WalkUntilGiven(rig));
+    rig.move = glm::vec3{0.f};
+    const ECS::Entity crate = rig.crates[0];
+    rig.harness.serverPhysics.AddImpulse(crate, kKickUp);
+    rig.StepBoth();
+    CHECK(rig.harness.server.SimulatorOf(crate) == InvalidClientId);
+    CHECK(rig.harness.serverPhysics.GetBodyState(crate).linearVelocity.y > 1.f);
+
+    float highest = 0.f;
+    for (std::uint32_t i = 0; i < kRoundTripTicks * 2u; ++i)
+    {
+        Tick(rig);
+        highest = std::max(highest, rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.y);
+    }
+    CHECK(highest > kCrateHalf + 0.5f);
+}
+
+TEST_CASE("a crate kept for the host is never given to a client")
+{
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}, .hostSimulated = true});
+    std::uint32_t given = 0;
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        Tick(rig);
+        given += rig.harness.server.SimulatorOf(rig.crates[0]).IsValid() ? 1u : 0u;
+    }
+    REQUIRE(rig.harness.serverPhysics.GetBodyPose(rig.crates[0]).position.x > kCrateAhead.x + kPushedCrateFar);
+    CHECK(given == 0u);
+    CHECK_FALSE(rig.harness.client.Simulates(rig.crateMirrors[0]));
+}
+
+TEST_CASE("a crate asleep on the host before the client reaches it moves the tick the client pushes it")
+{
+    // The host's word that it is asleep came while it was the host's; held to
+    // it, the client would put the crate back to sleep after every step.
+    constexpr std::uint32_t kSettleTicks = 180;
+    PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
+    rig.move = glm::vec3{0.f};
+    for (std::uint32_t i = 0; i < kSettleTicks; ++i)
+    {
+        Tick(rig);
+    }
+    REQUIRE_FALSE(rig.harness.serverPhysics.IsBodyActive(rig.crates[0]));
+    REQUIRE_FALSE(rig.harness.clientPhysics.IsBodyActive(rig.crateMirrors[0]));
+
+    rig.move = glm::vec3{1.f, 0.f, 0.f};
+    REQUIRE(WalkUntilGiven(rig));
+    const float start = rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.x;
+    for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
+    {
+        Tick(rig);
+    }
+    CHECK(rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.x > start + kPushedCrateFar);
 }

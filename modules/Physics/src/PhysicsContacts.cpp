@@ -444,7 +444,7 @@ void PhysicsWorld::Impl::CharacterContacts::OnContactAdded(const JPH::CharacterV
     // opposite of how a character is authored: "can this body push the
     // character" is the character's Pushable.
     settings.mCanPushCharacter   = record.pushable && record.options.Has(CharacterOption::Pushable);
-    settings.mCanReceiveImpulses = record.options.Has(CharacterOption::PushesBodies);
+    settings.mCanReceiveImpulses = record.options.Has(CharacterOption::PushesBodies) && !_owner.characterOnlyStep;
 
     // The no-lock interface for the same reason RecordCharacterTouch gives:
     // the sweep may hold this body's lock already.

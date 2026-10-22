@@ -73,6 +73,12 @@ bool ReplicationClient::Predicts(ECS::Entity entity) const
     return false;
 }
 
+bool ReplicationClient::Simulates(ECS::Entity entity) const
+{
+    const SimulatedBy *simulator = _scene.Get<SimulatedBy>(entity);
+    return simulator != nullptr && _handshake.clientId.IsValid() && simulator->client == _handshake.clientId.value;
+}
+
 const ReplicationClient::Confirmed *ReplicationClient::ConfirmedOf(NetId netId) const
 {
     const std::unordered_map<NetId, Confirmed>::const_iterator found = _confirmed.find(netId);
@@ -122,11 +128,27 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
 {
     const ClientId local = _handshake.clientId;
     std::unordered_set<NetId> predicted;
+    _simulated.clear();
     for (const auto &[netId, entity] : _entityByNetId)
     {
         if (!_scene.IsAlive(entity))
         {
             continue;
+        }
+        const SimulatedBy *simulator = _scene.Get<SimulatedBy>(entity);
+        if (simulator != nullptr && local.IsValid() && simulator->client == local.value)
+        {
+            _simulated.insert(netId);
+            // Forgotten, so EnforceSleep leaves it alone: the host's last
+            // verdict that it was asleep is not this client's to hold it to
+            // any more, nor to put it back to once it is the host's again,
+            // which waits for the host's next word. ApplyBodyState sets none
+            // while it is this client's.
+            if (const std::unordered_map<NetId, MirrorBody>::iterator body = _bodies.find(netId);
+                body != _bodies.end())
+            {
+                body->second.asleep = false;
+            }
         }
         const bool controlled = ControlsEntity(entity);
         const Predicted *given = _scene.Get<Predicted>(entity);
@@ -338,6 +360,23 @@ void ReplicationClient::SendInput(const InputCommandBuffer &buffer)
     Core::BitWriter writer;
     WriteMessageType(MessageType::Input, writer);
     buffer.WritePacket(writer);
+
+    // The reports of the ticks whose commands the packet repeats, so a lost
+    // packet loses none of them either.
+    _reportsToSend.clear();
+    if (const InputCommand *latest = buffer.Latest(); latest != nullptr)
+    {
+        const std::uint64_t window = std::min<std::uint64_t>(buffer.Size(), latest->tick);
+        for (std::uint64_t tick = latest->tick + 1u - window; tick <= latest->tick; ++tick)
+        {
+            const BodyReport &report = _reports[tick % kPredictionHistoryTicks];
+            if (report.tick == tick && !report.bodies.empty())
+            {
+                _reportsToSend.push_back(&report);
+            }
+        }
+    }
+    WriteBodyReports(_reportsToSend, writer);
     _transport.Send(_connection, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Snapshot);
 }
 
