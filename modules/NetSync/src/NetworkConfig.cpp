@@ -52,7 +52,7 @@ OwnershipConfig gOwnership;
     return config.positionCorrectionTime > 0.f && config.positionCorrectionTimeFast > 0.f &&
            config.rotationCorrectionTime > 0.f && config.largeErrorDistance > config.smallErrorDistance &&
            config.predictionTolerance > 0.f && config.predictionRotationTolerance > 0.f &&
-           config.predictionVelocityTolerance > 0.f;
+           config.predictionVelocityTolerance > 0.f && config.predictionAngularVelocityTolerance > 0.f;
 }
 
 void ApplyQuantization(const NetworkConfig &config)
@@ -98,7 +98,8 @@ void ApplySmoothing(const NetworkConfig &config)
                                .hardSnapDistance           = config.hardSnapDistance,
                                .predictionTolerance        = config.predictionTolerance,
                                .predictionRotationTolerance = config.predictionRotationTolerance,
-                               .predictionVelocityTolerance = config.predictionVelocityTolerance};
+                               .predictionVelocityTolerance = config.predictionVelocityTolerance,
+                               .predictionAngularVelocityTolerance = config.predictionAngularVelocityTolerance};
     SetSmoothing(loaded);
     Core::Log::Info("NetSync: correction smoothing - converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
                     "below {:g} m and beyond {:g} m.",

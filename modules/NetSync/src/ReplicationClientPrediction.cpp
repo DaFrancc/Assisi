@@ -138,6 +138,11 @@ void ReplicationClient::Record(std::uint64_t tick, RecordedPart part)
         {
             record.character = _physics->CaptureCharacter(entity);
         }
+        record.hasBody = PredictsBody(netId, entity);
+        if (record.hasBody)
+        {
+            record.body = CaptureBody(netId, entity);
+        }
     }
     RecordFollowers(tick);
 }
@@ -328,20 +333,30 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
             differing.push_back(&counts.physics);
         }
     }
+    if (confirmed.physicsTick == serverTick && record.hasBody && !confirmed.body.character)
+    {
+        ++counts.physics.compares;
+        if (std::string difference = PredictedBodyDifference(record.body, confirmed.body, Smoothing());
+            !difference.empty())
+        {
+            counts.physics.firstDifference = std::move(difference);
+            differing.push_back(&counts.physics);
+        }
+    }
 
     if (confirmed.componentTick != serverTick)
     {
         return false;
     }
-    // A character's Transform is its body's pose, which its physics frame
-    // compares; the host sends that Transform only when the entity first
-    // arrives, so the confirmed copy of it is that old.
-    const bool character = _scene.Has<Physics::Character>(entity);
+    // A character's or a body's Transform is its body's pose, which its
+    // physics frame compares; the host sends that Transform only when the
+    // entity first arrives, so the confirmed copy of it is that old.
+    const bool framed = _scene.Has<Physics::Character>(entity) || record.hasBody;
     bool corrected = false;
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
     {
         const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
-        if ((character && meta.id == _transformComponentId) || (record.present & (std::uint64_t{1} << i)) == 0)
+        if ((framed && meta.id == _transformComponentId) || (record.present & (std::uint64_t{1} << i)) == 0)
         {
             continue;
         }
@@ -427,15 +442,19 @@ std::optional<std::size_t> ReplicationClient::TransformRecordOffset() const
 void ReplicationClient::HardSnap(NetId netId, ECS::Entity entity, const Confirmed &confirmed)
 {
     ++_corrections.hardSnaps;
-    const bool character = _scene.Has<Physics::Character>(entity);
+    const bool predictedBody = PredictsBody(netId, entity);
     if (confirmed.componentTick != 0)
     {
-        WriteHostComponents(entity, confirmed, character);
+        WriteHostComponents(entity, confirmed, _scene.Has<Physics::Character>(entity) || predictedBody);
     }
     if (_physics != nullptr && confirmed.physicsTick != 0 && confirmed.body.character &&
         PredictsCharacter(netId, entity))
     {
         PlaceCharacter(entity, _physics->CaptureCharacter(entity), confirmed.body);
+    }
+    if (predictedBody && confirmed.physicsTick != 0 && !confirmed.body.character)
+    {
+        PlaceBody(entity, confirmed.body);
     }
     if (_scene.Has<ECS::Transform>(entity))
     {
@@ -452,6 +471,13 @@ void ReplicationClient::HardSnap(NetId netId, ECS::Entity entity, const Confirme
 
 void ReplicationClient::Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host)
 {
+    // A body's Transform is its pose.
+    if (record.hasBody)
+    {
+        PlaceBody(entity, host != nullptr && host->physicsTick == record.tick ? host->body : record.body);
+        return;
+    }
+
     // Only what a replay steps again goes back: the Transform here and the
     // physics frame below. Every other predicted component stays as it is.
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
@@ -682,11 +708,9 @@ std::optional<ReplicationClient::Replay> ReplicationClient::RollBackTo(std::uint
         {
             continue;
         }
-        if (record.hasCharacter)
+        if (record.hasCharacter || record.hasBody)
         {
-            const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
-            const Physics::Pose simulated{transform != nullptr ? transform->rotation : glm::quat{1.f, 0.f, 0.f, 0.f},
-                                          _physics->CaptureCharacter(entity).position};
+            const Physics::Pose simulated = SimulatedPose(entity);
             const std::unordered_map<NetId, MirrorBody>::const_iterator body = _bodies.find(netId);
             _renderedBeforeReplay.push_back(RenderedBeforeReplay{
                     .pose = body == _bodies.end()
@@ -694,7 +718,14 @@ std::optional<ReplicationClient::Replay> ReplicationClient::RollBackTo(std::uint
                             : Physics::Pose{body->second.rotationError * simulated.rotation,
                                             simulated.position + body->second.positionError},
                     .netId = netId});
+        }
+        if (record.hasCharacter)
+        {
             replay.characters.push_back(entity);
+        }
+        if (record.hasBody)
+        {
+            replay.bodies.push_back(entity);
         }
         const std::unordered_map<NetId, Confirmed>::const_iterator host = _confirmed.find(netId);
         Restore(entity, record, mispredicted && host != _confirmed.end() ? &host->second : nullptr);
@@ -752,13 +783,11 @@ void ReplicationClient::EndRollback()
     {
         const ECS::Entity entity = EntityOf(before.netId);
         const std::unordered_map<NetId, MirrorBody>::iterator body = _bodies.find(before.netId);
-        const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
-        if (!_scene.IsAlive(entity) || body == _bodies.end() || transform == nullptr)
+        if (!_scene.IsAlive(entity) || body == _bodies.end() || !_scene.Has<ECS::Transform>(entity))
         {
             continue;
         }
-        AbsorbCorrection(body->second, before.pose,
-                         Physics::Pose{transform->rotation, _physics->CaptureCharacter(entity).position});
+        AbsorbCorrection(body->second, before.pose, SimulatedPose(entity));
     }
     _renderedBeforeReplay.clear();
 }

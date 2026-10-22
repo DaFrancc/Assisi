@@ -810,8 +810,12 @@ struct PhysicsWorld::Impl
     bool stepping = false;
 
     /// True during StepCharacters: a step stepped again, in which a character
-    /// pushes no body, since the live step already pushed it.
+    /// pushes no body but those of `solvedBodies`, since the live step already
+    /// pushed it.
     bool characterOnlyStep = false;
+
+    /// During StepCharacters, the bodies it solves again.
+    std::vector<JPH::BodyID> solvedBodies;
 
     /// Scratch for the reconcile, kept so a frame that changes nothing allocates
     /// nothing.
@@ -1735,6 +1739,11 @@ private:
     /// Reads every character's CharacterIntent and sweeps it by one step,
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
+
+    /// Solves one step for @p bodies alone, whose ids are `solvedBodies`, every other
+    /// awake body held where it is and every body it wakes put back to sleep,
+    /// and writes their poses and states. See PhysicsWorld::StepCharacters.
+    void SolveAgain(std::span<const ECS::Entity> bodies, float deltaTime);
 
     /// Where a character falls in stepOrder: unkeyed after keyed, then the key
     /// or the entity index.

@@ -47,6 +47,11 @@ struct BodyGroup
 /// the hold, though it can always be lost. No player is given more than the
 /// most bodies a client may own, nearest first. The host's own player is a
 /// player like any other here; a body it holds is simulated by the host.
+///
+/// A body two or more players touch at once is contested: the host simulates
+/// it, hold or no hold, and each player touching it predicts it. It stays
+/// contested until fewer than two have touched it for the touch dwell, and
+/// then goes at once to the one still touching it, if any.
 class BodyOwnership
 {
 public:
@@ -73,6 +78,8 @@ public:
         std::uint64_t changedTick = 0;
         /// When `challenger` began touching it while its owner did not.
         std::uint64_t challengedSince = 0;
+        /// The last tick two players touched it; 0 for not contested.
+        std::uint64_t contestedTick = 0;
         /// Who simulates it; 0 for no one.
         std::uint32_t client = 0;
         /// A player touching it that its owner's character does not; 0 for
@@ -89,6 +96,17 @@ public:
 private:
     /// Who @p group goes to this tick, given who holds its bodies.
     [[nodiscard]] std::uint32_t Choose(const BodyGroup &group, std::uint64_t tick);
+
+    /// Where a group's contest stands after a tick.
+    enum class ContestState
+    {
+        None,
+        Contested,
+        Ended
+    };
+
+    /// Starts, keeps or ends @p group's contest at @p tick.
+    ContestState Contest(const BodyGroup &group, std::uint64_t tick);
 
     /// Who holds @p group now: of its bodies' players, the nearest; 0 when
     /// none holds any.

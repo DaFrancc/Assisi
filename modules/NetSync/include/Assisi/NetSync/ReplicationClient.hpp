@@ -453,6 +453,8 @@ public:
         std::vector<std::uint64_t> ticks;
         /// The characters to step in them: the predicted ones.
         std::vector<ECS::Entity> characters;
+        /// The predicted bodies to solve in them.
+        std::vector<ECS::Entity> bodies;
         /// The tick the predicted set was put back to.
         std::uint64_t from = 0;
     };
@@ -578,9 +580,13 @@ private:
         /// `_predictedOffsets`.
         std::vector<std::byte> components;
         Physics::CharacterFrame character;
+        /// A predicted body's pose and motion, as the host's body record says
+        /// them.
+        BodyState body;
         std::uint64_t tick = 0;    ///< The command tick of the step; 0 for none yet.
         std::uint64_t present = 0; ///< Bit i: it had `_predictedComponents[i]`.
         bool hasCharacter = false;
+        bool hasBody = false;
     };
 
     /// What this client predicted of one entity, a ring of records by tick,
@@ -601,6 +607,20 @@ private:
     /// Whether @p entity, @p netId's mirror, is a character this client
     /// predicts and steps again.
     [[nodiscard]] bool PredictsCharacter(NetId netId, ECS::Entity entity) const;
+
+    /// Whether @p entity, @p netId's mirror, is a body other than a character
+    /// that this client predicts and solves again.
+    [[nodiscard]] bool PredictsBody(NetId netId, ECS::Entity entity) const;
+
+    /// Where this client simulates @p entity, a predicted character or body:
+    /// a character's feet and the way its Transform faces, a body's pose.
+    [[nodiscard]] Physics::Pose SimulatedPose(ECS::Entity entity) const;
+
+    /// @p entity's body as @p netId's body record would say it.
+    [[nodiscard]] BodyState CaptureBody(NetId netId, ECS::Entity entity) const;
+
+    /// Puts @p entity's body where @p host has it, moving and sleeping as it says.
+    void PlaceBody(ECS::Entity entity, const BodyState &host);
 
     /// One follower as one step left it.
     struct FollowerRecord
@@ -712,6 +732,10 @@ private:
     /// has stopped takes its confirmed components back, the host's word
     /// standing again.
     void RecomputePredictedSet(std::uint64_t serverTick);
+
+    /// Notes, at @p serverTick, every dynamic body one of this client's
+    /// characters touches, and forgets one untouched for too long.
+    void NoteTouchedBodies(std::uint64_t serverTick);
 
     /// Reads one ACOMP(predicted) component of a predicted entity off the wire
     /// into @p confirmed rather than into the entity. False if the block is
@@ -910,6 +934,9 @@ private:
 
     /// The bodies this client simulates; see Simulates.
     std::unordered_set<NetId> _simulated;
+    /// Each dynamic body one of this client's characters touched lately, and
+    /// the snapshot's tick it last did, for RecomputePredictedSet.
+    std::unordered_map<NetId, std::uint64_t> _touchedAt;
     /// Scratch for RecordFollowers, kept to keep its storage.
     std::vector<ECS::Entity> _followerEntities;
 

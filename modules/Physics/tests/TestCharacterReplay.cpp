@@ -16,8 +16,12 @@
 #include <cstdint>
 #include <vector>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -522,6 +526,173 @@ TEST_CASE("A character stepped again against a crate as a follower meets it wher
     }
     const Physics::Pose crate = test.world.GetBodyPose(run.crateEntity);
     CHECK(glm::length(crate.position - run.crate.back().pose.position) < kReplayTolerance);
+}
+
+namespace
+{
+
+/// How far a crate solved again with the character pushing it may land from
+/// where the live step put it (m): the solve starts without the contacts the
+/// live one carried over from the step before.
+constexpr float kSolvedTolerance = 0.01f;
+
+/// Puts @p run's crate and character back to how step @p index left them.
+void RewindPush(PhysicsTests::TestScene &test, const PushRun &run, std::size_t index)
+{
+    const Physics::FollowerFrame &crate = run.crate[index];
+    test.world.ApplyCorrection(run.crateEntity, crate.pose,
+                               Physics::BodyState{.linearVelocity = crate.linearVelocity,
+                                                  .angularVelocity = crate.angularVelocity,
+                                                  .asleep = crate.asleep});
+    test.world.RewindCharacter(run.pusher, run.frames[index]);
+}
+
+} // namespace
+
+TEST_CASE("A crate solved again with the character stepped again into it moves as it did live")
+{
+    PhysicsTests::TestScene test;
+    const PushRun run = PushCrate(test);
+    RewindPush(test, run, kPushRewindTo - 1);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    const std::array<ECS::Entity, 1> solved{run.crateEntity};
+    for (std::size_t i = kPushRewindTo; i < run.frames.size(); ++i)
+    {
+        CAPTURE(i);
+        *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[i].intent;
+        test.world.StepCharacters(only, {}, kStep, solved);
+        const Physics::Pose crate = test.world.GetBodyPose(run.crateEntity);
+        CHECK(glm::length(crate.position - run.crate[i].pose.position) < kSolvedTolerance);
+        const ECS::Transform *transform = test.scene.Get<ECS::Transform>(run.crateEntity);
+        REQUIRE(transform != nullptr);
+        CHECK(glm::length(transform->position - crate.position) < kReplayTolerance);
+    }
+    CHECK(test.world.ContactEvents().empty());
+}
+
+TEST_CASE("A crate solved again is drawn where the solve left it, not slid there from where it was")
+{
+    // A rollback eases the difference on screen itself; a blend on top would
+    // draw the crate part way back to where the rollback began.
+    constexpr float kPartWay = 0.25f;
+    PhysicsTests::TestScene test;
+    const PushRun run = PushCrate(test);
+    RewindPush(test, run, kPushRewindTo - 1);
+    std::uint64_t tick = ECS::PropagateTransforms(test.scene, 0);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    const std::array<ECS::Entity, 1> solved{run.crateEntity};
+    {
+        const ECS::FixedStepScope step(test.scene);
+        *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[kPushRewindTo].intent;
+        test.world.StepCharacters(only, {}, kStep, solved);
+    }
+    REQUIRE(glm::length(test.world.GetBodyPose(run.crateEntity).position - run.crate[kPushRewindTo - 1].pose.position) >
+            kSolvedTolerance);
+    ECS::SetBlendAlpha(test.scene, kPartWay);
+    tick = ECS::PropagateTransforms(test.scene, tick);
+    const glm::vec3 drawn = Math::TranslationOf(test.scene.Get<ECS::WorldMatrix>(run.crateEntity)->matrix);
+    CHECK(glm::length(drawn - test.world.GetBodyPose(run.crateEntity).position) < kReplayTolerance);
+}
+
+TEST_CASE("A follower that is also solved is solved, not put where its step left it")
+{
+    PhysicsTests::TestScene test;
+    const PushRun run = PushCrate(test);
+    RewindPush(test, run, kPushRewindTo - 1);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    const std::array<ECS::Entity, 1> solved{run.crateEntity};
+    Physics::FollowerFrame away = run.crate[kPushRewindTo];
+    away.pose.position.z += 5.f;
+    const std::array<Physics::FollowerStep, 1> crate{
+        Physics::FollowerStep{.from = run.crate[kPushRewindTo - 1], .to = away, .entity = run.crateEntity}};
+    *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[kPushRewindTo].intent;
+    test.world.StepCharacters(only, crate, kStep, solved);
+    CHECK(glm::length(test.world.GetBodyPose(run.crateEntity).position - run.crate[kPushRewindTo].pose.position) <
+          kSolvedTolerance);
+}
+
+TEST_CASE("A crate solved again on a moving deck is carried by it as it was live")
+{
+    // The deck, a follower, moves through the solve as it moved live: held
+    // still, it would drag the crate to a stop by its friction.
+    PhysicsTests::TestScene test;
+    PhysicsTests::BodySpec deckSpec =
+        PhysicsTests::Box({kDeckHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, /*isStatic=*/ false);
+    deckSpec.rigidBody->motion = Physics::MotionType::Kinematic;
+    const glm::vec3 deckStart{0.f, -kDeckHalfThickness, 0.f};
+    const ECS::Entity deck = PhysicsTests::AddBody(test.scene, deckStart, deckSpec);
+    PhysicsTests::BodySpec crateSpec = PhysicsTests::Box(glm::vec3(kCrateHalf), /*isStatic=*/ false);
+    crateSpec.rigidBody->mass = kCrateMass;
+    const ECS::Entity crate = PhysicsTests::AddBody(test.scene, {0.f, kCrateHalf, 0.f}, crateSpec);
+    PhysicsTests::Step(test.world, kSettleSteps);
+
+    std::vector<Physics::FollowerFrame> deckFrames{test.world.CaptureFollower(deck)};
+    std::vector<Physics::FollowerFrame> crateFrames{test.world.CaptureFollower(crate)};
+    for (int32_t i = 0; i < kRideSteps; ++i)
+    {
+        test.scene.GetMut<ECS::Transform>(deck)->position =
+            deckStart + glm::vec3(kDeckVelocity.x, 0.f, 0.f) * (static_cast<float>(i + 1) * kStep);
+        test.world.Update(kStep);
+        deckFrames.push_back(test.world.CaptureFollower(deck));
+        crateFrames.push_back(test.world.CaptureFollower(crate));
+    }
+
+    const Physics::FollowerFrame &rewound = crateFrames[kRewindTo];
+    test.world.ApplyCorrection(crate, rewound.pose,
+                               Physics::BodyState{.linearVelocity = rewound.linearVelocity,
+                                                  .angularVelocity = rewound.angularVelocity});
+    const std::array<ECS::Entity, 1> solved{crate};
+    for (std::size_t i = kRewindTo + 1; i < crateFrames.size(); ++i)
+    {
+        CAPTURE(i);
+        const std::array<Physics::FollowerStep, 1> carrier{
+            Physics::FollowerStep{.from = deckFrames[i - 1], .to = deckFrames[i], .entity = deck}};
+        test.world.StepCharacters({}, carrier, kStep, solved);
+        CHECK(glm::length(test.world.GetBodyPose(crate).position - crateFrames[i].pose.position) < kSolvedTolerance);
+    }
+}
+
+TEST_CASE("A solve stepped again moves no awake body but its own, and wakes none")
+{
+    PhysicsTests::TestScene test;
+    PhysicsTests::BodySpec spec = PhysicsTests::Box(glm::vec3(kCrateHalf), /*isStatic=*/ false);
+    spec.rigidBody->mass = kCrateMass;
+    // One falling far off, and one put to sleep just past the crate's far
+    // side, which the crate is pushed against.
+    constexpr glm::vec3 kFallingAt{-10.f, 20.f, 0.f};
+    constexpr glm::vec3 kFallingVelocity{0.f, -3.f, 0.f};
+    constexpr glm::vec3 kAsideAt{0.f, kCrateHalf, 10.f};
+    constexpr float kGap = 0.01f;
+    const glm::quat upright(1.f, 0.f, 0.f, 0.f);
+    const ECS::Entity falling = PhysicsTests::AddBody(test.scene, kFallingAt, spec);
+    const ECS::Entity sleeping = PhysicsTests::AddBody(test.scene, kAsideAt, spec);
+    const PushRun run = PushCrate(test);
+    const glm::vec3 pastCrate = run.crate.back().pose.position + glm::vec3(kCrateHalf * 2.f + kGap, 0.f, 0.f);
+    test.world.ApplyCorrection(sleeping, Physics::Pose{upright, pastCrate}, Physics::BodyState{.asleep = true});
+    test.world.ApplyCorrection(falling, Physics::Pose{upright, kFallingAt},
+                               Physics::BodyState{.linearVelocity = kFallingVelocity});
+    REQUIRE(test.world.IsBodyActive(falling));
+    REQUIRE_FALSE(test.world.IsBodyActive(sleeping));
+    const Physics::Pose slept = test.world.GetBodyPose(sleeping);
+
+    RewindPush(test, run, run.frames.size() - 1);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    const std::array<ECS::Entity, 1> solved{run.crateEntity};
+    for (std::size_t i = 0; i < kPushSteps / 2; ++i)
+    {
+        CAPTURE(i);
+        test.scene.GetMut<Physics::CharacterIntent>(run.pusher)->move = {1.f, 0.f, 0.f};
+        test.world.StepCharacters(only, {}, kStep, solved);
+        CHECK(test.world.GetBodyPose(falling).position == kFallingAt);
+        CHECK(test.world.GetBodyState(falling).linearVelocity == kFallingVelocity);
+        CHECK_FALSE(test.world.IsBodyActive(sleeping));
+        CHECK(glm::length(test.world.GetBodyPose(sleeping).position - slept.position) < kReplayTolerance);
+    }
+    // Pressed against it, not through it: sunk as deep as Jolt lets two
+    // bodies sink before it pushes them apart, and the little the sleeping
+    // one gives in each solve before it is put back.
+    constexpr float kSunk = 0.05f;
+    CHECK(test.world.GetBodyPose(run.crateEntity).position.x < slept.position.x - kCrateHalf * 2.f + kSunk);
 }
 
 TEST_CASE("A crate at rest placed as a follower stays asleep, and one moving is woken")

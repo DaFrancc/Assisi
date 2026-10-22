@@ -217,3 +217,72 @@ TEST_CASE("With no one holding a body, a player touching it beats a nearer one")
     ownership.Assign(std::vector<BodyGroup>{Lone(1, {At(kBob, 1.f), At(kAlice, 1.9f, /*touching=*/ true)})}, 1);
     CHECK(ownership.OwnerOf(NetId{1}) == kAlice);
 }
+
+namespace
+{
+
+constexpr std::uint32_t kCarol = 4;
+
+/// Whether @p netId is contested: the host simulating it for the players
+/// touching it.
+bool Contested(const BodyOwnership &ownership, NetId netId)
+{
+    return ownership.OwnerOf(netId) == 0u && ownership.Holdings().at(netId).contestedTick != 0;
+}
+
+} // namespace
+
+TEST_CASE("A body two players touch is the host's to simulate, at once and inside the hold")
+{
+    BodyOwnership ownership(Rules());
+    std::uint64_t tick = Run(ownership, {Lone(1, {At(kAlice, 0.6f, true)})}, 1, 1);
+    REQUIRE(ownership.OwnerOf(NetId{1}) == kAlice);
+
+    tick = Run(ownership, {Lone(1, {At(kAlice, 0.6f, true), At(kBob, 0.7f, true)})}, tick, 1);
+    CHECK(Contested(ownership, NetId{1}));
+}
+
+TEST_CASE("A contest outlasts the second player's touch by the dwell, then the one still touching has it at once")
+{
+    BodyOwnership ownership(Rules());
+    std::uint64_t tick = Run(ownership, {Lone(1, {At(kAlice, 0.6f, true)})}, 1, 1);
+    tick = Run(ownership, {Lone(1, {At(kAlice, 0.6f, true), At(kBob, 0.7f, true)})}, tick, 1);
+    REQUIRE(Contested(ownership, NetId{1}));
+
+    // Inside the hold the contest began, which the one left touching does not
+    // wait out.
+    const std::vector<BodyGroup> alone{Lone(1, {At(kAlice, 0.6f, true), At(kBob, 1.5f)})};
+    tick = Run(ownership, alone, tick, Rules().touchDwellTicks - 1);
+    CHECK(Contested(ownership, NetId{1}));
+    tick = Run(ownership, alone, tick, 1);
+    CHECK(ownership.OwnerOf(NetId{1}) == kAlice);
+    CHECK(ownership.Holdings().at(NetId{1}).contestedTick == 0u);
+}
+
+TEST_CASE("The host's own player contests a body like any other")
+{
+    BodyOwnership ownership(Rules());
+    Run(ownership, {Lone(1, {At(HostClientId.value, 0.6f, true), At(kAlice, 0.7f, true)})}, 1, 1);
+    CHECK(Contested(ownership, NetId{1}));
+}
+
+TEST_CASE("A body three players touch stays contested while any two of them still do")
+{
+    BodyOwnership ownership(Rules());
+    std::uint64_t tick =
+        Run(ownership, {Lone(1, {At(kAlice, 0.9f, true), At(kBob, 0.6f, true), At(kCarol, 0.7f, true)})}, 1, 1);
+    REQUIRE(Contested(ownership, NetId{1}));
+    tick = Run(ownership, {Lone(1, {At(kAlice, 1.5f), At(kBob, 0.6f, true), At(kCarol, 0.7f, true)})}, tick,
+               Rules().touchDwellTicks * 2);
+    CHECK(Contested(ownership, NetId{1}));
+}
+
+TEST_CASE("A body a contested one touches is contested with it")
+{
+    BodyOwnership ownership(Rules());
+    std::uint64_t tick = Run(ownership, {Lone(1, {At(kAlice, 0.6f, true), At(kBob, 0.7f, true)})}, 1, 1);
+    const BodyGroup pile{.bodies = {NetId{1}, NetId{2}}, .players = {At(kAlice, 0.6f, true), At(kBob, 1.5f)}};
+    tick = Run(ownership, {pile}, tick, 1);
+    CHECK(Contested(ownership, NetId{1}));
+    CHECK(Contested(ownership, NetId{2}));
+}

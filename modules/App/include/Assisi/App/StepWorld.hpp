@@ -25,12 +25,13 @@ struct SystemContext;
 /// a step the same on every machine.
 ///
 /// Live (`ctx.replaying` false), the physics step is the whole PhysicsWorld
-/// update and @p replayedCharacters and @p followers must be empty. Replaying,
-/// it steps only the characters of @p replayedCharacters, as a live step would,
-/// with each of @p followers moving as it did live and everything else as it
-/// stands (PhysicsWorld::StepCharacters), and only the systems marked
-/// `replayed` run.
+/// update and @p replayedCharacters, @p followers and @p replayedBodies must be
+/// empty. Replaying, it steps only the characters of @p replayedCharacters and
+/// solves only the bodies of @p replayedBodies, as a live step would, with each
+/// of @p followers moving as it did live and everything else as it stands
+/// (PhysicsWorld::StepCharacters), and only the systems marked `replayed` run.
 void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters = {},
-               std::span<const Physics::FollowerStep> followers = {});
+               std::span<const Physics::FollowerStep> followers = {},
+               std::span<const ECS::Entity> replayedBodies = {});
 
 } // namespace Assisi::App

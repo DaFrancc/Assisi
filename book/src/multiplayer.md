@@ -110,7 +110,9 @@ machine simulates (see below): each one is put back where it was at every step,
 so a character riding a platform or pushing a crate lands where it should.
 
 The tolerances are `predictionTolerance`, `predictionRotationTolerance` (in
-radians) and `predictionVelocityTolerance` in `assets/config/network.json`. The
+radians), `predictionVelocityTolerance` and, for a predicted physics object,
+`predictionAngularVelocityTolerance` (in radians a second) in
+`assets/config/network.json`. The
 editor's network panel counts how many of the host's answers were kept and how
 many were rolled back. On a quiet level, almost all of them should be kept.
 **Hard snaps** counts answers about a step older than the 64 your machine
@@ -181,13 +183,22 @@ host for a moment before it can be handed out again.
 
 You keep a body until your character is more than 4 m from it. Another player
 whose character pushes it while yours isn't touching it takes it over after a
-moment. When two players push one body at once, whoever has it keeps it, and
-the other feels it as heavy.
+moment.
+
+When two or more players push one body at once, no player's machine can
+simulate it for the others, so the host takes it over. Each machine whose
+character touches it then **predicts** it, as it predicts its own character:
+the body moves the step you push it, and when the host's word about that step
+arrives, a round trip later, your machine checks its guess and, if it was
+wrong, moves the body to where the host has it, easing the difference on
+screen. The other players' pushes reach you that late, so while they push too
+you will see small corrections. Once only one player has touched the body for
+`ownershipTouchDwellTicks`, it is handed to that player again.
 
 To keep a body for the host alone, add **`HostSimulated`** to it. Do it for
 something whose every move matters to more than one player, like the ball in a
-competitive game. The price is that such a body answers your push a round trip
-late.
+competitive game. No machine but the host's ever simulates it; yours predicts
+it while your character touches it, as above.
 
 The settings are in `assets/config/network.json`:
 

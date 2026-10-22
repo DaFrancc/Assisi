@@ -177,8 +177,9 @@ struct SimulatedBy
 /// given it to simulate, however close its player comes.
 ///
 /// For a body whose every move matters to more than one player, like the ball
-/// of a competitive game, at the price of it answering a client's push a round
-/// trip late. Authored.
+/// of a competitive game. A client whose character touches it predicts it, as
+/// it predicts any body the host simulates, so it answers that client's push
+/// at once and is corrected to the host's. Authored.
 ACOMP()
 struct HostSimulated
 {
