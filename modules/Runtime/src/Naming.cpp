@@ -11,7 +11,7 @@
 namespace Assisi::Runtime
 {
 
-std::string_view Describe(NameError error)
+std::string_view ToString(NameError error) noexcept
 {
     switch (error)
     {

@@ -58,5 +58,5 @@ struct AssetError
 /// @brief The code's description, followed by the detail in parentheses when
 ///        there is one: "the file's contents are corrupt (the audio could not
 ///        be decoded)".
-[[nodiscard]] std::string Describe(const AssetError &error);
+[[nodiscard]] std::string ToString(const AssetError &error);
 } // namespace Assisi::Core

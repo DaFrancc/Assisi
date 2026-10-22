@@ -104,7 +104,7 @@ bool GameApp::MountContent()
     if (!mounted)
     {
         Core::Log::Error("Game: cannot start - the content package '{}' cannot be read ({}).", pak.string(),
-                         Core::Describe(mounted.error()));
+                         Core::ToString(mounted.error()));
         return false;
     }
     Core::Log::Info("Game: reading content from '{}'.", pak.string());
@@ -181,7 +181,7 @@ void GameApp::OnStart()
         [&pak](std::string_view vpath) { return pak.Resolve(vpath).has_value(); });
     if (!scene)
     {
-        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", requested, Describe(scene.error()));
+        Core::Log::Error("Game: cannot start - startup scene '{}': {}.", requested, ToString(scene.error()));
         RefuseStart();
         return;
     }

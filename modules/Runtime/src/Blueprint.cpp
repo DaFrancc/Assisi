@@ -747,7 +747,7 @@ std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohm
 
 } // namespace
 
-std::string_view Describe(BlueprintError error)
+std::string_view ToString(BlueprintError error) noexcept
 {
     switch (error)
     {

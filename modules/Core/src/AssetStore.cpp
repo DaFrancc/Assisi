@@ -165,7 +165,7 @@ AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const st
                   {
                       live->failed.insert(id);
                       Log::Warn("AssetStore: asset {} did not load ({}); anything using it goes without.",
-                                id.ToString(), Describe(result.error()));
+                                id.ToString(), ToString(result.error()));
                       return;
                   }
                   live->resident.emplace(id, std::move(result->value));

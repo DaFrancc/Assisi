@@ -278,7 +278,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     if (const BlueprintResult definition = GetBlueprintDefinition(row.source); !definition)
     {
         Core::Log::Error("Blueprint: '{}' no longer loads ({}); instance {} is left as it was.", row.source,
-                         Describe(definition.error()), instanceId);
+                         ToString(definition.error()), instanceId);
         return std::unexpected(LevelError::BlueprintUnusable);
     }
 
@@ -315,7 +315,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
             // ever stops holding. No unwind is possible: the adopted members have
             // already been stripped, so all that is left is to say so loudly.
             Core::Log::Error("Blueprint: re-expanding '{}' failed part-way ({}). Reload the level.",
-                             row.source, Describe(ok.error()));
+                             row.source, ToString(ok.error()));
             return std::unexpected(ok.error());
         }
         CommitInstance(scene, staged, row.name);

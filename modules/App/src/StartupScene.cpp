@@ -10,7 +10,7 @@
 namespace Assisi::App
 {
 
-std::string_view Describe(StartupSceneError error)
+std::string_view ToString(StartupSceneError error) noexcept
 {
     switch (error)
     {
