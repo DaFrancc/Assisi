@@ -97,10 +97,13 @@ struct CharacterFrame
     bool withGround = false;
 };
 
-/// @brief Where a kinematic body is and how it moves, as a step left it.
+/// @brief Where a kinematic body or a character is and how it moves, as a step
+/// left it.
 ///
-/// What a client stepping its own characters again puts the platforms and
-/// carriers of the world back to, step by step, so they ride as they did.
+/// What a client stepping its own characters again puts the platforms,
+/// carriers and other players of the world back to, step by step, so its
+/// characters ride and meet them as they did. A character's pose is its feet,
+/// with no rotation and no turning: its capsule never turns.
 struct FollowerFrame
 {
     Pose pose;
@@ -696,10 +699,14 @@ public:
     /// their Transforms. Not while the world is stepping.
     ///
     /// They step in Update's order and meet each other, so two of them pushing
-    /// each other step as they did live. Each follower, a kinematic body,
-    /// stands where its step began and moves as fast as it did while they
-    /// sweep, then is put where its step left it, and the characters riding it
-    /// are carried with it. Everything else stays where it is: bodies are not
+    /// each other step as they did live. Each follower, a kinematic body or a
+    /// character not in @p entities, stands where its step began and moves as
+    /// fast as it did while they sweep, then is put where its step left it, and
+    /// the characters riding it are carried with it. A character follower is
+    /// put where its step left it in its turn in the order, so one that sweeps
+    /// before a stepped character is met there. A follower in @p entities is
+    /// stepped, not placed. A character follower's Transform and stance are
+    /// left as they are. Everything else stays where it is: bodies are not
     /// solved and the scene is not reconciled.
     ///
     /// Reports no contacts: ContactEvents() is empty after it, and the next
@@ -707,13 +714,20 @@ public:
     void StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
                         float deltaTime);
 
-    /// @brief Where @p entity's kinematic body is now and how it moves, for
-    /// StepCharacters to put it back to. A default frame for any other entity.
+    /// @brief Where @p entity's kinematic body or character is now and how it
+    /// moves, for StepCharacters to put it back to. A default frame for any
+    /// other entity.
     [[nodiscard]] FollowerFrame CaptureFollower(ECS::Entity entity) const;
 
+    /// @brief Puts @p entity's kinematic body or character where @p frame has
+    /// it, moving as fast, as StepCharacters puts a follower. Leaves the
+    /// Transform alone. Nothing for any other entity, and not while the world
+    /// is stepping.
+    void PlaceFollower(ECS::Entity entity, const FollowerFrame &frame);
+
     /// @brief Appends every entity StepCharacters can move as a follower, each
-    /// with a kinematic body, in an order that does not change between calls
-    /// while none is added or removed.
+    /// with a kinematic body or a character, in an order that does not change
+    /// between calls while none is added or removed.
     void Followers(std::vector<ECS::Entity> &out) const;
 
 private:

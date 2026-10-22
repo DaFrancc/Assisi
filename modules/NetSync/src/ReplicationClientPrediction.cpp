@@ -126,7 +126,41 @@ void ReplicationClient::RecordFollowers(std::uint64_t tick)
     _physics->Followers(_followerEntities);
     for (const ECS::Entity entity : _followerEntities)
     {
-        followers.push_back(FollowerRecord{.frame = _physics->CaptureFollower(entity), .entity = entity});
+        const Physics::FollowerFrame frame = _physics->CaptureFollower(entity);
+        followers.push_back(FollowerRecord{.frame = frame, .start = frame, .entity = entity});
+    }
+}
+
+void ReplicationClient::RecordFollowerNow(ECS::Entity entity)
+{
+    // Left out, the correction would be undone by the next rollback, which
+    // leaves each follower where the newest step left it, and a later one would
+    // step the next tick again from where the live step did not.
+    const std::uint64_t tick = _newestRecordedTick;
+    if (_physics == nullptr || tick == 0 || _recordedTicks[tick % kPredictionHistoryTicks] != tick)
+    {
+        return;
+    }
+    for (FollowerRecord &follower : _followers[tick % kPredictionHistoryTicks])
+    {
+        if (follower.entity == entity)
+        {
+            follower.start = _physics->CaptureFollower(entity);
+            return;
+        }
+    }
+}
+
+void ReplicationClient::PlaceFollowersNow()
+{
+    const std::uint64_t tick = _newestRecordedTick;
+    if (_physics == nullptr || tick == 0 || _recordedTicks[tick % kPredictionHistoryTicks] != tick)
+    {
+        return;
+    }
+    for (const FollowerRecord &follower : _followers[tick % kPredictionHistoryTicks])
+    {
+        _physics->PlaceFollower(follower.entity, follower.start);
     }
 }
 
@@ -145,13 +179,26 @@ std::vector<Physics::FollowerStep> ReplicationClient::FollowersAt(std::uint64_t 
     std::vector<FollowerRecord>::const_iterator start = from.begin();
     for (const FollowerRecord &end : to)
     {
+        // Other players follow only in the sync test, which no real rollback
+        // looks like. A rollback starts from the host's word, and the snapshot
+        // that brought it has just put every other player where the host had
+        // them then, so they stand where they are. The sync test steps a tick
+        // again from this client's own record instead, to check that a replay
+        // puts back everything it steps and steps it the same way twice; for
+        // that, everything the replay meets has to be what the live step met,
+        // other players included. Met where they are now, they would show as
+        // differences that are no fault of the replay and bury one that is.
+        if (!_syncTesting && _scene.Has<Physics::Character>(end.entity))
+        {
+            continue;
+        }
         const std::vector<FollowerRecord>::const_iterator found = std::find_if(
             start, from.end(), [&end](const FollowerRecord &record) { return record.entity == end.entity; });
         if (found == from.end())
         {
             continue;
         }
-        steps.push_back(Physics::FollowerStep{.from = found->frame, .to = end.frame, .entity = end.entity});
+        steps.push_back(Physics::FollowerStep{.from = found->start, .to = end.frame, .entity = end.entity});
         start = found + 1;
     }
     return steps;
@@ -483,11 +530,14 @@ std::optional<ReplicationClient::Replay> ReplicationClient::BeginSyncTest()
         }
     }
     _syncTick = now;
-    return RollBackTo(now - 1u);
+    std::optional<Replay> replay = RollBackTo(now - 1u);
+    _syncTesting = replay.has_value();
+    return replay;
 }
 
 void ReplicationClient::EndSyncTest()
 {
+    _syncTesting = false;
     ++_syncTestCounts.replays;
     for (const auto &[netId, live] : _syncLive)
     {
@@ -645,6 +695,7 @@ void ReplicationClient::EndRollback()
     ASSISI_ASSERT(_rollingBack, "ReplicationClient::EndRollback without BeginRollback");
     _rollingBack = false;
     _scene.EndReplay();
+    PlaceFollowersNow();
 
     // Only a live step blends; the replay's last pose is where each predicted
     // entity is, not a step to be drawn moving into.

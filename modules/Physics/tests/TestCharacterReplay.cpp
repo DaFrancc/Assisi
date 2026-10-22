@@ -270,6 +270,78 @@ TEST_CASE("Two characters pushing each other, rewound and stepped again together
     }
 }
 
+TEST_CASE("A character stepped again against another one as a follower meets it where the live step did")
+{
+    // The other is a player this machine does not step again: it crosses the
+    // walker's path and cannot be shoved, as another machine's player is. Left
+    // where it ends up, the walker would step again into empty floor.
+    // The crosser starts off the walker's path and walks across it.
+    constexpr glm::vec3 kWalkerStart{-1.f, 0.f, 0.f};
+    constexpr glm::vec3 kCrosserStart{0.f, 0.f, -1.5f};
+    // Steps of the replayed window the two must touch in, so the replay has
+    // something to meet.
+    constexpr int32_t kLeastStepsTouching = 5;
+    PhysicsTests::TestScene test;
+    (void)PhysicsTests::AddFloor(test.scene);
+    const ECS::Entity walker = PhysicsTests::AddCharacter(test.scene, kWalkerStart);
+    const ECS::Entity crosser = PhysicsTests::AddCharacter(test.scene, kCrosserStart);
+    test.world.SetCharacterOrderKey(walker, 0);
+    test.world.SetCharacterOrderKey(crosser, 1);
+    PhysicsTests::Step(test.world, kSettleSteps);
+    test.world.SetCharacterPushable(crosser, false);
+
+    std::vector<Physics::CharacterFrame> frames;
+    std::vector<Physics::FollowerFrame> crossings;
+    int32_t stepsTouching = 0;
+    for (int32_t i = 0; i < kRideSteps; ++i)
+    {
+        test.scene.GetMut<Physics::CharacterIntent>(walker)->move = {1.f, 0.f, 0.f};
+        test.scene.GetMut<Physics::CharacterIntent>(crosser)->move = {0.f, 0.f, 1.f};
+        test.world.Update(kStep);
+        frames.push_back(test.world.CaptureCharacter(walker));
+        crossings.push_back(test.world.CaptureFollower(crosser));
+        if (static_cast<std::size_t>(i) > kRewindTo && test.world.IsTouching(walker, crosser))
+        {
+            ++stepsTouching;
+        }
+    }
+    REQUIRE(stepsTouching >= kLeastStepsTouching);
+
+    test.world.RewindCharacter(walker, frames[kRewindTo]);
+    const std::array<ECS::Entity, 1> only{walker};
+    for (std::size_t i = kRewindTo + 1; i < frames.size(); ++i)
+    {
+        CAPTURE(i);
+        *test.scene.GetMut<Physics::CharacterIntent>(walker) = frames[i].intent;
+        const std::array<Physics::FollowerStep, 1> crossing{
+            Physics::FollowerStep{.from = crossings[i - 1], .to = crossings[i], .entity = crosser}};
+        test.world.StepCharacters(only, crossing, kStep);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+    }
+}
+
+TEST_CASE("A follower that is also stepped is stepped, not put back")
+{
+    // A world lists every character as a follower; the one a call steps must
+    // not be placed back where its record says on top of its own step.
+    PhysicsTests::TestScene test;
+    (void)PhysicsTests::AddFloor(test.scene);
+    const ECS::Entity walker = PhysicsTests::AddCharacter(test.scene, {0.f, 0.f, 0.f});
+    PhysicsTests::Step(test.world, kSettleSteps);
+
+    const Physics::FollowerFrame before = test.world.CaptureFollower(walker);
+    test.scene.GetMut<Physics::CharacterIntent>(walker)->move = {1.f, 0.f, 0.f};
+    test.world.Update(kStep);
+    const Physics::CharacterFrame live = test.world.CaptureCharacter(walker);
+
+    test.world.RewindCharacter(walker, live);
+    const std::array<ECS::Entity, 1> only{walker};
+    const std::array<Physics::FollowerStep, 1> itself{
+        Physics::FollowerStep{.from = before, .to = before, .entity = walker}};
+    test.world.StepCharacters(only, itself, kStep);
+    CHECK(test.world.CaptureCharacter(walker).position.x > live.position.x);
+}
+
 TEST_CASE("A push given in a step stepped again lands as it did live, and only once")
 {
     // A system shoves the character in one step, live and again in the replay

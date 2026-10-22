@@ -150,6 +150,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
                               Physics::BodyState{.linearVelocity = state.linearVelocity,
                                                  .angularVelocity = state.angularVelocity,
                                                  .asleep = state.asleep});
+    RecordFollowerNow(entity);
     if (character && targetRotation != simulatedRotation)
     {
         _scene.GetMut<ECS::Transform>(entity)->rotation = targetRotation;
