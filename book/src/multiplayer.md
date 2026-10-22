@@ -105,8 +105,9 @@ that same step:
 
 A rollback runs only the engine's own movement again. Your game's systems are
 not run again: each runs once per step, when the step happens. The rest of the
-world stays where it is, except moving platforms: each one is put back where it
-was at every step, so a character riding one lands where it should.
+world stays where it is, except moving platforms and the physics objects your
+machine simulates (see below): each one is put back where it was at every step,
+so a character riding a platform or pushing a crate lands where it should.
 
 The tolerances are `predictionTolerance`, `predictionRotationTolerance` (in
 radians) and `predictionVelocityTolerance` in `assets/config/network.json`. The
@@ -149,6 +150,62 @@ The build refuses one that breaks a rule. Anything else on your character,
 like a score, can stay plain `replicable`: the host's value is simply written
 over yours, a little later. Only predicted components are remembered and
 compared, so leave the rest plain.
+
+### Physics objects near your player
+
+A crate, a ball or a barrel your character walks up to becomes yours to
+simulate. When your character comes within 2 m of a body the physics solver
+moves (one with a `RigidBody` that isn't kinematic), the host hands it to your
+machine and marks it with a **`SimulatedBy`** component naming your client.
+From then on your machine moves it as a single-player game would: it moves the
+step you push it, and the host never corrects it. Bodies touching each other
+are handed out together, so the crate you push and the one it runs into are
+both yours, and stay together.
+
+Every step, your machine sends the host where your bodies ended up, along with
+your controls. The host puts its own copy of each one there, so on the host
+your character and your crate meet exactly as they did on your machine. Other
+players see your crate a moment late, as they see your character.
+
+The host checks what it's told. It takes a body back, and your machine is shown
+where the host has it, when your report:
+
+- puts it further from your character than it could be,
+- has it moving or spinning faster than a body may,
+- or has it further from your last report than that speed could carry it.
+
+It also takes a body back when your reports stop coming for a second and a half,
+and when the host's own game pushes or moves it, for example an explosion's
+`AddImpulse`: the host applies that itself. Taken back, a body stays with the
+host for a moment before it can be handed out again.
+
+You keep a body until your character is more than 4 m from it. Another player
+whose character pushes it while yours isn't touching it takes it over after a
+moment. When two players push one body at once, whoever has it keeps it, and
+the other feels it as heavy.
+
+To keep a body for the host alone, add **`HostSimulated`** to it. Do it for
+something whose every move matters to more than one player, like the ball in a
+competitive game. The price is that such a body answers your push a round trip
+late.
+
+The settings are in `assets/config/network.json`:
+
+| Key | What it is |
+|---|---|
+| `ownershipDistance` | How near your character a body is handed to you (m). |
+| `ownershipLeaveDistance` | How far away it goes back (m). Larger than the one above, so a body between two players doesn't flip between them. |
+| `ownershipTouchDwellTicks` | How long another player pushes a body yours isn't touching before it is theirs. |
+| `ownershipHoldTicks` | How long a body stays with whoever was last given it before someone else can be. |
+| `ownershipMaxBodies` | The most bodies one player simulates at once, nearest first. |
+| `reportMaxSpeed`, `reportMaxSpin` | The fastest a reported body may move (m/s) and spin (rad/s). |
+| `reportReachSlack` | How much further than `ownershipLeaveDistance` a reported body may be from your character (m). |
+| `reportTimeoutTicks` | How long the host waits for a report before it takes a body back. |
+
+To try it, open `levels/NetPush.alvl` and run it with **Host + 2 clients**. Each
+player has a crate to push. There is one in the middle to fight over, a stack to
+knock down, a ball, a crate too heavy to move, and `HostBall`, a ball kept for
+the host, to feel the difference.
 
 ### Your systems in multiplayer
 

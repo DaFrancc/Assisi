@@ -48,6 +48,7 @@ void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
     _bodies.erase(netId);
     _history.erase(netId);
+    _simulated.erase(netId);
 }
 
 void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
@@ -90,6 +91,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // It is a simulated mirror now, not an interpolated one.
     MirrorBody &record = _bodies[state.netId];
     _transformHistory.erase(state.netId);
+
+    // This client's to simulate: what the host says of it is this client's
+    // own report coming back, older than the body is now.
+    if (_simulated.contains(state.netId))
+    {
+        return;
+    }
 
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
@@ -480,6 +488,8 @@ void ReplicationClient::Reset()
     {
         followers.clear();
     }
+    _reports.fill(BodyReport{});
+    _simulated.clear();
     _newestRecordedTick = 0;
     _confirmed.clear();
     _transformHistory.clear();

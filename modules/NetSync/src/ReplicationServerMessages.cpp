@@ -199,6 +199,41 @@ void ReplicationServer::HandleInput(Connection &connection, Core::BitReader &rea
             ++connection.diagnostics.commandsClamped;
         connection.input.Accept(command);
     }
+
+    // The commands stand without them: a malformed section costs the reports
+    // alone, which the next packet repeats.
+    std::vector<BodyReport> reports;
+    if (!ReadBodyReports(reader, reports))
+    {
+        ++connection.diagnostics.inputPacketsDropped;
+        return;
+    }
+    for (BodyReport &report : reports)
+    {
+        HoldReport(connection, std::move(report));
+    }
+}
+
+void ReplicationServer::HoldReport(Connection &connection, BodyReport report)
+{
+    // A tick already stepped is one its report can no longer be applied at.
+    if (report.tick <= _simTick)
+    {
+        return;
+    }
+    std::deque<BodyReport> &held = connection.reports;
+    const std::deque<BodyReport>::iterator position =
+        std::lower_bound(held.begin(), held.end(), report.tick,
+                         [](const BodyReport &entry, std::uint64_t tick) { return entry.tick < tick; });
+    if (position != held.end() && position->tick == report.tick)
+    {
+        return;
+    }
+    held.insert(position, std::move(report));
+    if (held.size() > kMaxHeldReports)
+    {
+        held.pop_front();
+    }
 }
 
 const InputCommand *ReplicationServer::ConsumeInput(Net::ConnectionId connection, std::uint64_t tick)

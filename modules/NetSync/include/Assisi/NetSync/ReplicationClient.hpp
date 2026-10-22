@@ -16,6 +16,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/MessageDispatch.hpp>
@@ -203,6 +204,16 @@ public:
     /// @brief The host's word about the predicted entity @p netId, or null for
     /// one this client does not predict.
     [[nodiscard]] const Confirmed *ConfirmedOf(NetId netId) const;
+
+    /// @brief Whether this client simulates the body of @p entity for the
+    /// host: the host marked it `SimulatedBy` this client.
+    ///
+    /// Such a body is this machine's like any body in a single-player game:
+    /// the host's word about it is not applied, it is never put back to sleep
+    /// for the host, and each step's command carries where the step left it.
+    /// A step stepped again meets it where it was at that step. Worked out
+    /// after every snapshot.
+    [[nodiscard]] bool Simulates(ECS::Entity entity) const;
 
     /// @brief The host's copy of one ACOMP(predicted) component of @p netId, or
     /// null if this client does not predict it or it has no such component.
@@ -602,8 +613,13 @@ private:
         ECS::Entity entity{ECS::NullEntity};
     };
 
-    /// Records every follower of @p tick: each kinematic body and character.
+    /// Records every follower of @p tick: each kinematic body and character,
+    /// and each body this client simulates.
     void RecordFollowers(std::uint64_t tick);
+
+    /// Records where the step of @p tick left each body this client
+    /// simulates, for the host.
+    void RecordReports(std::uint64_t tick);
 
     /// Records where @p entity is now as where the step after the newest tick
     /// starts it, for a correction that moved it after that tick was recorded.
@@ -887,6 +903,13 @@ private:
     std::array<std::uint64_t, kPredictionHistoryTicks> _recordedTicks{};
     /// Every follower each recorded tick left, on the same ring.
     std::array<std::vector<FollowerRecord>, kPredictionHistoryTicks> _followers{};
+    /// Each live step's report of the bodies this client simulates, on the
+    /// same ring, and the ones SendInput sends.
+    std::array<BodyReport, kPredictionHistoryTicks> _reports{};
+    std::vector<const BodyReport *> _reportsToSend;
+
+    /// The bodies this client simulates; see Simulates.
+    std::unordered_set<NetId> _simulated;
     /// Scratch for RecordFollowers, kept to keep its storage.
     std::vector<ECS::Entity> _followerEntities;
 

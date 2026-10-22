@@ -24,6 +24,7 @@ constexpr const char *kProviderDistance = "distance";
 
 std::vector<std::string> gNeverReplicate;
 RelevancyConfig gRelevancy;
+OwnershipConfig gOwnership;
 
 [[nodiscard]] bool BitsInRange(std::uint32_t bits)
 {
@@ -136,6 +137,35 @@ void ApplyPolicy(const NetworkConfig &config)
     relevancy.dwellTicks = config.relevancyDwellTicks;
     gRelevancy           = relevancy;
 }
+
+/// @brief Whether @p config's ownership settings hand bodies out and back
+/// without flipping: a body has to be lost further out than it is given.
+[[nodiscard]] bool OwnershipInRange(const NetworkConfig &config)
+{
+    return config.ownershipDistance >= 0.f && config.ownershipLeaveDistance > config.ownershipDistance &&
+           config.reportReachSlack >= 0.f && config.reportMaxSpeed > 0.f && config.reportMaxSpin > 0.f &&
+           config.reportTimeoutTicks > 0u;
+}
+
+void ApplyOwnership(const NetworkConfig &config)
+{
+    if (!OwnershipInRange(config))
+    {
+        Core::Log::Warn("NetSync: the network config's ownership settings are out of range (ownershipLeaveDistance "
+                        "must exceed ownershipDistance, the report limits and timeout must be positive) - keeping "
+                        "the defaults.");
+        return;
+    }
+    gOwnership = OwnershipConfig{.ownershipDistance = config.ownershipDistance,
+                                 .leaveDistance = config.ownershipLeaveDistance,
+                                 .reportReachSlack = config.reportReachSlack,
+                                 .reportMaxSpeed = config.reportMaxSpeed,
+                                 .reportMaxSpin = config.reportMaxSpin,
+                                 .touchDwellTicks = config.ownershipTouchDwellTicks,
+                                 .holdTicks = config.ownershipHoldTicks,
+                                 .reportTimeoutTicks = config.reportTimeoutTicks,
+                                 .maxBodiesPerClient = config.ownershipMaxBodies};
+}
 } // namespace
 
 void ApplyNetworkConfig(const NetworkConfig &config)
@@ -144,6 +174,7 @@ void ApplyNetworkConfig(const NetworkConfig &config)
     ApplyQuantization(config);
     ApplySmoothing(config);
     ApplyPolicy(config);
+    ApplyOwnership(config);
 }
 
 void LoadNetworkConfig(std::string_view assetPath)
@@ -167,5 +198,7 @@ void LoadNetworkConfig(std::string_view assetPath)
 const std::vector<std::string> &NeverReplicate() { return gNeverReplicate; }
 
 const RelevancyConfig &Relevancy() { return gRelevancy; }
+
+const OwnershipConfig &Ownership() { return gOwnership; }
 
 } // namespace Assisi::NetSync

@@ -56,6 +56,56 @@ struct RelevancyConfig
     std::uint32_t dwellTicks = 30;
 };
 
+/// @brief When the host gives a client a dynamic body to simulate, and how far
+/// it believes that client's reports of it.
+///
+/// A body near a player is simulated by that player's machine, so it moves
+/// the step the player touches it. Not in the protocol hash: this decides who
+/// simulates what, never how bytes decode, and the host's numbers govern.
+struct OwnershipConfig
+{
+    /// @brief Metres from a client's character, centre to centre, inside which
+    /// a body is given to that client, before the character reaches it.
+    float ownershipDistance = 2.f;
+
+    /// @brief Metres beyond which the client simulating a body loses it.
+    ///
+    /// Larger than `ownershipDistance`, so a body between two players stays
+    /// with the one who has it rather than flipping between them.
+    float leaveDistance = 4.f;
+
+    /// @brief How much further than `leaveDistance` a report may put a body
+    /// from its simulator's character before the host refuses it (m): room
+    /// for a body knocked away in the tick it was hit.
+    float reportReachSlack = 1.f;
+
+    /// @brief The fastest a reported body may move (m/s), and spin (rad/s).
+    float reportMaxSpeed = 30.f;
+    float reportMaxSpin = 50.f;
+
+    /// @brief Ticks a client's character touches a body its simulator's does
+    /// not before that client takes the body over.
+    std::uint32_t touchDwellTicks = 10;
+
+    /// @brief Ticks a body stays with the client it was last given to before
+    /// another client may take it.
+    ///
+    /// Losing it is never held back: a body its simulator moved away from, or
+    /// stopped reporting, goes at once.
+    std::uint32_t holdTicks = 60;
+
+    /// @brief Ticks without a report the host accepts before it takes a body
+    /// back: comfortably more than a round trip, which the first report after
+    /// a body is given takes to arrive.
+    std::uint32_t reportTimeoutTicks = 90;
+
+    /// @brief The most bodies one client simulates at once, nearest first; 0
+    /// gives none to any client. The rest stay with the host.
+    std::uint32_t maxBodiesPerClient = 8;
+
+    bool operator==(const OwnershipConfig &) const = default;
+};
+
 /// @brief Tuning shared by both halves.
 struct ReplicationConfig
 {
@@ -162,6 +212,9 @@ struct ReplicationConfig
     /// server whose provider is `Distance` installs one at construction. Filled
     /// on the same terms as `neverReplicate`.
     RelevancyConfig relevancy;
+
+    /// Which client simulates which body. Filled on the same terms.
+    OwnershipConfig ownership;
 };
 
 } // namespace Assisi::NetSync

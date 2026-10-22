@@ -57,6 +57,34 @@ void ReplicationClient::RecordStep(const InputCommand &command)
     }
     _sentCommands[command.tick % kPredictionHistoryTicks] = command;
     Record(command.tick, RecordedPart::Everything);
+    RecordReports(command.tick);
+}
+
+void ReplicationClient::RecordReports(std::uint64_t tick)
+{
+    BodyReport &report = _reports[tick % kPredictionHistoryTicks];
+    report.tick = tick;
+    report.bodies.clear();
+    if (_physics == nullptr)
+    {
+        return;
+    }
+    for (const NetId netId : _simulated)
+    {
+        const ECS::Entity entity = EntityOf(netId);
+        if (!_scene.IsAlive(entity) || !_physics->HasBody(entity) || report.bodies.size() >= kMaxReportedBodies)
+        {
+            continue;
+        }
+        const Physics::Pose pose = _physics->GetBodyPose(entity);
+        const Physics::BodyState motion = _physics->GetBodyState(entity);
+        report.bodies.push_back(BodyState{.netId = netId,
+                                          .position = pose.position,
+                                          .rotation = pose.rotation,
+                                          .linearVelocity = motion.linearVelocity,
+                                          .angularVelocity = motion.angularVelocity,
+                                          .asleep = motion.asleep});
+    }
 }
 
 void ReplicationClient::RecordHistory(std::uint64_t tick)
@@ -124,6 +152,17 @@ void ReplicationClient::RecordFollowers(std::uint64_t tick)
     }
     _followerEntities.clear();
     _physics->Followers(_followerEntities);
+    // A body this client simulates was where its own steps put it, so a step
+    // stepped again meets it there, in a rollback as in the sync test: the
+    // host has it in the same place, from this client's reports.
+    for (const NetId netId : _simulated)
+    {
+        const ECS::Entity entity = EntityOf(netId);
+        if (_scene.IsAlive(entity) && _physics->HasBody(entity))
+        {
+            _followerEntities.push_back(entity);
+        }
+    }
     for (const ECS::Entity entity : _followerEntities)
     {
         const Physics::FollowerFrame frame = _physics->CaptureFollower(entity);

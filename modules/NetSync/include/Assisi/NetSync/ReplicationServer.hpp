@@ -17,6 +17,8 @@
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/BodyOwnership.hpp>
+#include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/MessageDispatch.hpp>
@@ -31,6 +33,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -146,6 +149,18 @@ public:
 
     /// @brief Who controls @p entity, or InvalidClientId.
     [[nodiscard]] ClientId ControllerOf(ECS::Entity entity) const;
+
+    /// @brief The client whose machine simulates @p entity's body and reports
+    /// it, or InvalidClientId when the host simulates it.
+    ///
+    /// Decided every Tick: a dynamic body near a client's character is given to
+    /// that client, and marked `SimulatedBy` so it knows. Its report for a tick
+    /// rides with that tick's command and is written over the body when the
+    /// host's Tick for that tick runs, after the step, so the client's character
+    /// and the body meet here as they met on its machine. A report the host
+    /// does not believe, or none for too long, or the host's own game pushing
+    /// or moving the body, takes it back.
+    [[nodiscard]] ClientId SimulatorOf(ECS::Entity entity) const;
 
     /// @brief Install the provider that decides who is told about what, or
     /// null to tell everyone about everything.
@@ -459,6 +474,10 @@ private:
         InputCommandQueue input;
         ConnectionDiagnostics diagnostics;
 
+        /// The client's reports of the bodies it simulates, by tick, oldest
+        /// first, each once: consumed by the Tick of their tick.
+        std::deque<BodyReport> reports;
+
         /// The queue's starved-tick count as of the last snapshot to this
         /// connection. The snapshot reports the ticks since, which is what the
         /// client's clock reads it as: the queue's own count is a total since
@@ -566,6 +585,14 @@ private:
     void HandleAck(Connection &connection, Core::BitReader &reader);
     void HandleInput(Connection &connection, Core::BitReader &reader);
 
+    /// Keeps @p report for the Tick of its tick, unless that tick has been
+    /// stepped or the connection already holds one for it.
+    void HoldReport(Connection &connection, BodyReport report);
+
+    /// The most reports one connection holds; past it the oldest goes. A
+    /// client's lead over the host is far fewer ticks than this.
+    static constexpr std::size_t kMaxHeldReports = 64;
+
     /// The single validated door every intent comes through, in the order the
     /// steps **have to** be in: envelope, direction, rate, staleness, decode,
     /// range, control, dispatch.
@@ -663,11 +690,54 @@ private:
     /// roughly one per player.
     void RebuildControlIndex();
 
-    /// Strip every `ControlledBy` the scene was loaded with. Control is
-    /// session-scoped state assigned at runtime; a level file carrying it is
-    /// carrying a claim from a session that ended. See the component's own
-    /// header comment.
+    /// Strip every `ControlledBy` and `SimulatedBy` the scene was loaded with.
+    /// Both are session-scoped state assigned at runtime; a level file carrying
+    /// one is carrying a claim from a session that ended. See the components'
+    /// own header comments.
     void StripAuthoredControl();
+
+    // --- Bodies clients simulate (ReplicationServerOwnership.cpp) -------------
+
+    /// Everything SimulatorOf describes, for @p tick: takes back what the host's
+    /// game acted on, writes the reports for @p tick over their bodies, takes
+    /// back what failed or went quiet, then hands bodies out again. After the
+    /// step and before the bodies are captured for the snapshot.
+    void SimulateReportedBodies(std::uint64_t tick);
+
+    /// Takes back every body a client simulates that the host's game pushed,
+    /// woke, put to sleep or moved in the step just run: the effect is the
+    /// host's, and it already landed.
+    void TakeBackMovedByGameplay(std::uint64_t tick);
+
+    /// Writes each connection's report for @p tick over the bodies it names,
+    /// those the host believes, and takes back each it does not.
+    void ApplyReports(Connection &connection, std::uint64_t tick);
+
+    /// Why the host does not believe @p client's report @p state at @p tick,
+    /// or empty when it does.
+    [[nodiscard]] std::string_view RefusalOf(const BodyState &state, std::uint32_t client, std::uint64_t tick) const;
+
+    /// Takes back every body whose client has sent no report the host
+    /// believed for longer than the timeout.
+    void TakeBackSilent(std::uint64_t tick);
+
+    /// Gives every body to the player the rules choose for @p tick, and marks
+    /// or unmarks it `SimulatedBy` to match.
+    void AssignSimulators(std::uint64_t tick);
+
+    /// Every dynamic body a client may simulate, in groups of bodies touching
+    /// one another, and how near each player's characters are to each group.
+    [[nodiscard]] std::vector<BodyGroup> BodyGroups() const;
+
+    /// Where each of @p client's characters stands now.
+    void FeetOf(std::uint32_t client, std::vector<glm::vec3> &out) const;
+
+    /// The host takes @p entity's body back at @p tick and simulates it.
+    void TakeBack(NetId netId, ECS::Entity entity, std::uint64_t tick);
+
+    /// Marks @p entity as simulated by @p client, or by the host for 0,
+    /// starting a client's reports from where the host has it now.
+    void PlaceSimulator(NetId netId, ECS::Entity entity, std::uint32_t client, std::uint64_t tick);
 
     /// This entity's authored exclusion policy, or an empty mask if it has no
     /// marker. Read live — see `Replicated::excluded` for why nothing caches it.
@@ -778,6 +848,19 @@ private:
 
     /// What the disconnect sweep despawns with; see SetDespawner.
     Despawner _despawner;
+
+    /// Who simulates each body; see SimulatorOf.
+    BodyOwnership _ownership;
+
+    /// The last report the host believed of a body a client simulates, and its
+    /// tick: where the next one is measured from. Until the first, the host's
+    /// own state when it gave the body.
+    struct BelievedReport
+    {
+        BodyState state;
+        std::uint64_t tick = 0;
+    };
+    std::unordered_map<NetId, BelievedReport> _believed;
 
     /// The next id a joining connection gets. Starts past the reserved values
     /// and only ever climbs; see ClientId on why ids are never reused.
