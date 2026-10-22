@@ -31,6 +31,7 @@
 #include <Jolt/Physics/PhysicsSettings.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -576,6 +577,13 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
 {
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::StepCharacters called while the world is stepping");
 
+    // A character-only step reports no contacts and leaves the pairs as the last
+    // Update left them: those are made by comparing a whole step's touches with
+    // the step before it, which this step has neither of. What its sweeps touch
+    // is dropped at the end, or the next Update would resolve it as its own.
+    _impl->events.clear();
+    const std::size_t touchedBefore = _impl->touchedThisStep.size();
+
     // As Update runs them: the stance each asks for taken at the reconcile
     // before the step, then the sweeps in step order with denormals flushed.
     std::vector<Impl::CharacterRecord *> stepped;
@@ -640,6 +648,9 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
         ECS::SnapTransform(_impl->scene, record->entity);
         _impl->WriteCharacterState(record->entity, _impl->BuildCharacterState(*record));
     }
+
+    _impl->touchedThisStep.erase(_impl->touchedThisStep.begin() + static_cast<std::ptrdiff_t>(touchedBefore),
+                                 _impl->touchedThisStep.end());
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const
