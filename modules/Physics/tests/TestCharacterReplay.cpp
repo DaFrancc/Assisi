@@ -436,3 +436,116 @@ TEST_CASE("A rewind places the character where the frame says, and the replay ca
         CheckSameFrame(test.world.CaptureCharacter(run.character), run.frames[i], shift, kShiftedTolerance);
     }
 }
+
+namespace
+{
+
+/// A light crate's half size (m) and mass (kg): one a character shoves along
+/// at a walk.
+constexpr float kCrateHalf = 0.4f;
+constexpr float kCrateMass = 10.f;
+
+/// Steps a character walks into a crate in front of it, the push included.
+constexpr int32_t kPushSteps = 60;
+
+/// The step of the push a replay goes back to: the character already
+/// pressing against the crate.
+constexpr std::size_t kPushRewindTo = 30;
+
+/// A character walking a crate along the floor: each step's frame, and the
+/// crate's after it.
+struct PushRun
+{
+    std::vector<Physics::CharacterFrame> frames;
+    std::vector<Physics::FollowerFrame> crate;
+    ECS::Entity pusher{ECS::NullEntity};
+    ECS::Entity crateEntity{ECS::NullEntity};
+};
+
+PushRun PushCrate(PhysicsTests::TestScene &test)
+{
+    (void)PhysicsTests::AddFloor(test.scene);
+    PhysicsTests::BodySpec spec = PhysicsTests::Box(glm::vec3(kCrateHalf), /*isStatic=*/ false);
+    spec.rigidBody->mass = kCrateMass;
+    PushRun run;
+    run.crateEntity = PhysicsTests::AddBody(test.scene, {1.f, kCrateHalf, 0.f}, spec);
+    run.pusher = PhysicsTests::AddCharacter(test.scene, {0.f, 0.f, 0.f});
+    PhysicsTests::Step(test.world, kSettleSteps);
+    for (int32_t i = 0; i < kPushSteps; ++i)
+    {
+        test.scene.GetMut<Physics::CharacterIntent>(run.pusher)->move = {1.f, 0.f, 0.f};
+        test.world.Update(kStep);
+        run.frames.push_back(test.world.CaptureCharacter(run.pusher));
+        run.crate.push_back(test.world.CaptureFollower(run.crateEntity));
+    }
+    return run;
+}
+
+} // namespace
+
+TEST_CASE("A character stepped again into a crate is stopped by it and does not push it")
+{
+    // The crate took the push when the step ran live. Pushed again by the step
+    // stepped again, it would carry a second push into the next step.
+    PhysicsTests::TestScene test;
+    const PushRun run = PushCrate(test);
+    REQUIRE(run.crate.back().pose.position.x > run.crate.front().pose.position.x);
+
+    test.world.ApplyCorrection(run.crateEntity, run.crate[kPushRewindTo].pose, Physics::BodyState{});
+    test.world.RewindCharacter(run.pusher, run.frames[kPushRewindTo - 1]);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    for (std::size_t i = kPushRewindTo; i < run.frames.size(); ++i)
+    {
+        *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[i].intent;
+        test.world.StepCharacters(only, {}, kStep);
+    }
+    CHECK(glm::length(test.world.GetBodyState(run.crateEntity).linearVelocity) == 0.f);
+    CHECK(test.world.CaptureCharacter(run.pusher).position.x < run.crate[kPushRewindTo].pose.position.x);
+}
+
+TEST_CASE("A character stepped again against a crate as a follower meets it where the live step did")
+{
+    PhysicsTests::TestScene test;
+    const PushRun run = PushCrate(test);
+    REQUIRE(test.world.IsTouching(run.pusher, run.crateEntity));
+
+    test.world.RewindCharacter(run.pusher, run.frames[kPushRewindTo]);
+    const std::array<ECS::Entity, 1> only{run.pusher};
+    for (std::size_t i = kPushRewindTo + 1; i < run.frames.size(); ++i)
+    {
+        CAPTURE(i);
+        *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[i].intent;
+        const std::array<Physics::FollowerStep, 1> crate{
+            Physics::FollowerStep{.from = run.crate[i - 1], .to = run.crate[i], .entity = run.crateEntity}};
+        test.world.StepCharacters(only, crate, kStep);
+        CheckSameFrame(test.world.CaptureCharacter(run.pusher), run.frames[i], glm::vec3(0.f), kReplayTolerance);
+    }
+    const Physics::Pose crate = test.world.GetBodyPose(run.crateEntity);
+    CHECK(glm::length(crate.position - run.crate.back().pose.position) < kReplayTolerance);
+}
+
+TEST_CASE("A crate at rest placed as a follower stays asleep, and one moving is woken")
+{
+    PhysicsTests::TestScene test;
+    (void)PhysicsTests::AddFloor(test.scene);
+    const ECS::Entity crate =
+        PhysicsTests::AddBody(test.scene, {0.f, kCrateHalf, 0.f}, PhysicsTests::Box(glm::vec3(kCrateHalf), false));
+    PhysicsTests::Step(test.world, kSettleSteps * 4);
+    REQUIRE_FALSE(test.world.IsBodyActive(crate));
+
+    const Physics::FollowerFrame resting = test.world.CaptureFollower(crate);
+    CHECK(resting.asleep);
+    test.world.PlaceFollower(crate, resting);
+    CHECK_FALSE(test.world.IsBodyActive(crate));
+
+    Physics::FollowerFrame sliding = resting;
+    sliding.asleep = false;
+    sliding.linearVelocity = {1.f, 0.f, 0.f};
+    test.world.PlaceFollower(crate, sliding);
+    CHECK(test.world.IsBodyActive(crate));
+    CHECK(test.world.GetBodyState(crate).linearVelocity.x == doctest::Approx(1.f));
+
+    test.world.PlaceFollower(crate, resting);
+    CHECK_FALSE(test.world.IsBodyActive(crate));
+    CHECK(glm::length(test.world.GetBodyState(crate).linearVelocity) == 0.f);
+}

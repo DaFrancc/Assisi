@@ -97,18 +97,20 @@ struct CharacterFrame
     bool withGround = false;
 };
 
-/// @brief Where a kinematic body or a character is and how it moves, as a step
-/// left it.
+/// @brief Where a kinematic body, a dynamic body or a character is and how it
+/// moves, as a step left it.
 ///
 /// What a client stepping its own characters again puts the platforms,
-/// carriers and other players of the world back to, step by step, so its
-/// characters ride and meet them as they did. A character's pose is its feet,
-/// with no rotation and no turning: its capsule never turns.
+/// carriers, crates and other players of the world back to, step by step, so
+/// its characters ride and meet them as they did. A character's pose is its
+/// feet, with no rotation and no turning: its capsule never turns.
 struct FollowerFrame
 {
     Pose pose;
     glm::vec3 linearVelocity{0.f};
     glm::vec3 angularVelocity{0.f};
+    /// A dynamic body at rest, which a placement leaves asleep.
+    bool asleep = false;
 };
 
 /// @brief One follower's part of a step stepped again: where it stood when the
@@ -561,6 +563,16 @@ public:
     /// @brief Whether the simulation currently considers @p entity's body awake.
     [[nodiscard]] bool IsBodyActive(ECS::Entity entity) const;
 
+    /// @brief Every entity whose body or character gameplay pushed, woke, put
+    /// to sleep, teleported, or moved by writing its Transform or its
+    /// BodyState, for the most recent Update(): each once, in no particular
+    /// order. A piece or a follower is listed as its owner.
+    ///
+    /// ApplyCorrection is not gameplay and never lists one: it tells the world
+    /// where a body is. Cleared at the top of every Update(), like
+    /// ContactEvents(); a Teleport between two Updates is listed by the second.
+    [[nodiscard]] std::span<const ECS::Entity> MovedByGameplay() const;
+
     /// @brief The entity whose body @p piece's collider answers for: @p piece
     /// itself when it has a body, its owner when it is a piece or a follower,
     /// NullEntity when there is none.
@@ -699,35 +711,45 @@ public:
     /// their Transforms. Not while the world is stepping.
     ///
     /// They step in Update's order and meet each other, so two of them pushing
-    /// each other step as they did live. Each follower, a kinematic body or a
-    /// character not in @p entities, stands where its step began and moves as
-    /// fast as it did while they sweep, then is put where its step left it, and
-    /// the characters riding it are carried with it. A character follower is
-    /// put where its step left it in its turn in the order, so one that sweeps
-    /// before a stepped character is met there. A follower in @p entities is
-    /// stepped, not placed. A character follower's Transform and stance are
-    /// left as they are. Everything else stays where it is: bodies are not
-    /// solved and the scene is not reconciled.
+    /// each other step as they did live. Each follower, a kinematic body, a
+    /// dynamic body or a character not in @p entities, stands where its step
+    /// began and moves as fast as it did while they sweep, then is put where
+    /// its step left it, and the characters riding it are carried with it. A
+    /// kinematic body moves through the sweep as fast as its step left it,
+    /// which is how fast it was swept; a dynamic body or a character as fast as
+    /// it moved when its step began. A character follower is put where its step
+    /// left it in its turn in the order, so one that sweeps before a stepped
+    /// character is met there. A follower in @p entities is stepped, not
+    /// placed. A character follower's Transform and stance are left as they
+    /// are. Everything else stays where it is: bodies are not solved and the
+    /// scene is not reconciled.
+    ///
+    /// A character pushes no body here: a dynamic body it meets stops it as it
+    /// did live, and is not given the push again, which the body's own step,
+    /// live, already took.
     ///
     /// Reports no contacts: ContactEvents() is empty after it, and the next
     /// Update finds touching pairs as the last Update left them.
     void StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
                         float deltaTime);
 
-    /// @brief Where @p entity's kinematic body or character is now and how it
-    /// moves, for StepCharacters to put it back to. A default frame for any
-    /// other entity.
+    /// @brief Where @p entity's kinematic body, dynamic body or character is
+    /// now and how it moves, for StepCharacters to put it back to. A default
+    /// frame for any other entity.
     [[nodiscard]] FollowerFrame CaptureFollower(ECS::Entity entity) const;
 
-    /// @brief Puts @p entity's kinematic body or character where @p frame has
-    /// it, moving as fast, as StepCharacters puts a follower. Leaves the
+    /// @brief Puts @p entity's kinematic body, dynamic body or character where
+    /// @p frame has it, moving as fast, as StepCharacters puts a follower; a
+    /// dynamic body at rest in @p frame is put to sleep there. Leaves the
     /// Transform alone. Nothing for any other entity, and not while the world
     /// is stepping.
     void PlaceFollower(ECS::Entity entity, const FollowerFrame &frame);
 
-    /// @brief Appends every entity StepCharacters can move as a follower, each
-    /// with a kinematic body or a character, in an order that does not change
-    /// between calls while none is added or removed.
+    /// @brief Appends every entity with a kinematic body or a character, in an
+    /// order that does not change between calls while none is added or
+    /// removed: the followers every step stepped again needs. A dynamic body
+    /// can follow too, but is never listed: which ones a step meets where they
+    /// were is the caller's to say.
     void Followers(std::vector<ECS::Entity> &out) const;
 
 private:

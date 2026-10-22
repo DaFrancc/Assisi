@@ -10,7 +10,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <span>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -300,4 +302,47 @@ TEST_CASE("GetBodyState reads the body as it is now")
     const Physics::BodyState none = test.world.GetBodyState(test.scene.Create());
     CHECK(none.linearVelocity == glm::vec3(0.f));
     CHECK(none.angularVelocity == glm::vec3(0.f));
+}
+
+namespace
+{
+
+/// Whether the most recent Update listed @p entity as moved by gameplay.
+bool MovedByGameplay(const PhysicsTests::TestScene &test, ECS::Entity entity)
+{
+    const std::span<const ECS::Entity> moved = test.world.MovedByGameplay();
+    return std::find(moved.begin(), moved.end(), entity) != moved.end();
+}
+
+} // namespace
+
+TEST_CASE("A step lists the bodies gameplay pushed or moved, and not one a correction placed")
+{
+    Weightless test;
+    const ECS::Entity pushed = BuiltFreeBall(test, {0.f, 0.f, 0.f});
+    const ECS::Entity moved = BuiltFreeBall(test, {4.f, 0.f, 0.f});
+    const ECS::Entity sped = BuiltFreeBall(test, {8.f, 0.f, 0.f});
+    const ECS::Entity teleported = BuiltFreeBall(test, {12.f, 0.f, 0.f});
+    const ECS::Entity corrected = BuiltFreeBall(test, {16.f, 0.f, 0.f});
+    const ECS::Entity untouched = BuiltFreeBall(test, {20.f, 0.f, 0.f});
+    Step(test.world);
+
+    test.world.AddImpulse(pushed, {1.f, 0.f, 0.f});
+    test.scene.GetMut<ECS::Transform>(moved)->position.y = 1.f;
+    test.scene.GetMut<Physics::BodyState>(sped)->linearVelocity = {0.f, 0.f, 2.f};
+    test.world.Teleport(teleported, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(12.f, 2.f, 0.f)});
+    test.world.ApplyCorrection(corrected, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(16.f, 3.f, 0.f)},
+                               Physics::BodyState{.linearVelocity = {1.f, 0.f, 0.f}});
+    Step(test.world);
+
+    CHECK(MovedByGameplay(test, pushed));
+    CHECK(MovedByGameplay(test, moved));
+    CHECK(MovedByGameplay(test, sped));
+    CHECK(MovedByGameplay(test, teleported));
+    CHECK_FALSE(MovedByGameplay(test, corrected));
+    CHECK_FALSE(MovedByGameplay(test, untouched));
+
+    // Each step says only what was done for it.
+    Step(test.world);
+    CHECK(test.world.MovedByGameplay().empty());
 }
