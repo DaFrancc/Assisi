@@ -102,7 +102,7 @@ TEST_CASE("Animator compile: a cooked graph reads back, and a damaged or empty o
     REQUIRE_MESSAGE(compiled.has_value(), compiled.error());
     const std::vector<std::byte> payload = Runtime::WriteAnimatorGraph(*compiled);
     const std::expected<Runtime::AnimatorGraph, Core::AssetError> read = Runtime::ReadAnimatorGraph(payload);
-    REQUIRE_MESSAGE(read.has_value(), Core::Describe(read.error()));
+    REQUIRE_MESSAGE(read.has_value(), Core::ToString(read.error()));
     CHECK(read->code == compiled->code);
     CHECK(read->layers[0].graph.nodes[4].name == "jump_start");
     CHECK(read->layers[0].states[4].then == 1);

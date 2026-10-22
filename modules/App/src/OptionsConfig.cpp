@@ -554,7 +554,7 @@ void OptionsConfig::SaveToJson() const
     const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", ToJsonText());
     if (!result)
     {
-        Core::Log::Warn("Could not write options.json ({}).", Core::Describe(result.error()));
+        Core::Log::Warn("Could not write options.json ({}).", Core::ToString(result.error()));
     }
 }
 

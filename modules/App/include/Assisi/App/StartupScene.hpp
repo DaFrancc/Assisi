@@ -32,7 +32,7 @@ enum class StartupSceneError : std::uint8_t
 };
 
 /// @brief One line saying what is wrong, for the log that refuses the launch.
-[[nodiscard]] std::string_view Describe(StartupSceneError error);
+[[nodiscard]] std::string_view ToString(StartupSceneError error) noexcept;
 
 /// @brief The virtual path of the asset with an id, where the install knows it.
 using ScenePathForId = std::function<std::optional<std::string>(const Core::AssetId &id)>;

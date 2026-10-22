@@ -43,7 +43,7 @@ class ProviderCookContext final : public AssetCookContext
         std::expected<std::vector<std::byte>, AssetError> bytes = _source->Open(*id);
         if (!bytes)
         {
-            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Describe(bytes.error())));
+            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, ToString(bytes.error())));
         }
         return std::move(*bytes);
     }
@@ -163,7 +163,7 @@ std::expected<std::vector<std::byte>, AssetError> CookingProvider::Open(AssetId 
     if (!cooked)
     {
         // Logged here, where the path is known; the caller has only the id.
-        Log::Warn("CookingProvider: '{}' does not cook as {}: {}", *path, kind->name, Describe(cooked.error()));
+        Log::Warn("CookingProvider: '{}' does not cook as {}: {}", *path, kind->name, ToString(cooked.error()));
         return std::unexpected(cooked.error());
     }
     return std::move(*cooked);

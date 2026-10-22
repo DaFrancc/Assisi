@@ -1119,7 +1119,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     if (!loaded)
     {
         Assisi::Core::Log::Error("Editor: could not open '{}' - {}.", virtualPath,
-                                 Assisi::Runtime::Describe(loaded.error()));
+                                 Assisi::Runtime::ToString(loaded.error()));
 
         // Two very different situations, and only `sceneReplaced` separates them. A
         // file that did not resolve, or whose version this build does not read, was

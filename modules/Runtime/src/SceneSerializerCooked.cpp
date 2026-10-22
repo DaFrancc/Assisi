@@ -907,7 +907,7 @@ std::expected<nlohmann::json, LevelError> ReadCookedDocument(const Core::AssetPr
     if (!cooked)
     {
         Core::Log::Error("SceneSerializer: '{}' is not a cooked scene this build reads: {}", vpath,
-                         Describe(cooked.error()));
+                         ToString(cooked.error()));
         return std::unexpected(cooked.error());
     }
     return CookedSceneToDocument(*cooked);

@@ -49,7 +49,7 @@ enum class LevelError : std::uint8_t
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
-[[nodiscard]] std::string_view Describe(LevelError error);
+[[nodiscard]] std::string_view ToString(LevelError error) noexcept;
 
 /// @brief A refused load: what was wrong with the file, and whether the attempt
 /// had already replaced the caller's scene before it gave up.
@@ -73,7 +73,7 @@ struct LevelFailure
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
-[[nodiscard]] inline std::string_view Describe(const LevelFailure &failure) { return Describe(failure.kind); }
+[[nodiscard]] inline std::string_view ToString(const LevelFailure &failure) noexcept { return ToString(failure.kind); }
 
 /// @brief A load either worked or it did not; there is nothing to hand back on
 /// success beyond that. The scene is the output.

@@ -188,7 +188,7 @@ void EditorApp::BuildJoinedWorld()
         // The reason, not just the fact: this string is what the host is told and
         // what the player sees, and "failed to load" has never helped anyone work
         // out which of a dozen things the level file did wrong.
-        FailJoin("'" + level.path + "' failed to load: " + std::string(Assisi::Runtime::Describe(loaded.error())) +
+        FailJoin("'" + level.path + "' failed to load: " + std::string(Assisi::Runtime::ToString(loaded.error())) +
                  ".");
         return;
     }
