@@ -7,9 +7,11 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 
 #include <Assisi/App/MotionSystems.hpp>
 #include <Assisi/App/StepWorld.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -102,8 +104,8 @@ bool StepUntilLanded(App::World &world, Core::EventQueue &events, ECS::Entity wa
     return false;
 }
 
-/// A system of the game reading a character the replay does not step: by
-/// handle, and by a query that names the frozen.
+/// A replayed system reading a character the replay does not step: by handle,
+/// and by a query that names the frozen.
 struct RemoteWatch
 {
     ECS::Entity remote{ECS::NullEntity};
@@ -124,27 +126,43 @@ struct RemoteWatch
 
 } // namespace
 
-TEST_CASE("A tick stepped live and then replayed runs a liveOnly system once and the rest twice")
+TEST_CASE("A tick stepped live and then replayed runs a game's systems once and a Replayed one twice")
 {
     App::World world{Physics::NoCollisionAssets()};
     Core::EventQueue events;
 
-    std::int32_t every = 0;
-    std::int32_t liveOnly = 0;
-    std::int32_t afterStep = 0;
-    world.systems.Register(App::SystemPhase::FixedUpdate, "Every", [&every](App::SystemContext &) { ++every; });
-    world.systems.Register(App::SystemPhase::FixedUpdate, "LiveOnly", [&liveOnly](App::SystemContext &)
-                           { ++liveOnly; })
-    .LiveOnly();
-    world.systems.Register(App::SystemPhase::PostFixedUpdate, "AfterStep", [&afterStep](App::SystemContext &)
-                           { ++afterStep; });
+    std::int32_t before = 0;
+    std::int32_t after = 0;
+    std::int32_t replayed = 0;
+    world.systems.Register(App::SystemPhase::FixedUpdate, "Before", [&before](App::SystemContext &) { ++before; });
+    world.systems.Register(App::SystemPhase::PostFixedUpdate, "After", [&after](App::SystemContext &) { ++after; });
+    world.systems.Register(App::SystemPhase::FixedUpdate, "Replayed", [&replayed](App::SystemContext &)
+                           { ++replayed; })
+    .Replayed();
 
     App::StepWorld(ContextFor(world, events, /*replaying=*/ false));
     App::StepWorld(ContextFor(world, events, /*replaying=*/ true));
 
-    CHECK(every == 2);
-    CHECK(afterStep == 2);
-    CHECK(liveOnly == 1);
+    CHECK(before == 1);
+    CHECK(after == 1);
+    CHECK(replayed == 2);
+}
+
+TEST_CASE("The engine's command and eye systems step again in a replay, and the rest of its systems do not")
+{
+    const App::SystemCatalog &catalog = App::SystemCatalog::Instance();
+    for (const std::string_view name : {"CharacterCommand", "CharacterEye"})
+    {
+        const App::SystemDefinition *definition = catalog.Find(name);
+        REQUIRE(definition != nullptr);
+        CHECK(definition->replayed);
+    }
+    for (const std::string_view name : {"LocalPlayer", "Oscillate", "TimeOfDay"})
+    {
+        const App::SystemDefinition *definition = catalog.Find(name);
+        REQUIRE(definition != nullptr);
+        CHECK_FALSE(definition->replayed);
+    }
 }
 
 TEST_CASE("A replayed step moves only the characters it is given")
@@ -196,7 +214,8 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
 
     RemoteWatch watch{.remote = remote};
     world.systems.Register(App::SystemPhase::FixedUpdate, "Watch",
-                           [&watch](App::SystemContext &ctx) { watch.Step(ctx); });
+                           [&watch](App::SystemContext &ctx) { watch.Step(ctx); })
+    .Replayed();
 
     for (std::int32_t i = 0; i < kSettleSteps; ++i)
     {

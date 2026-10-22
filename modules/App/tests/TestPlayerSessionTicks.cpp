@@ -33,6 +33,12 @@ namespace
 /// client's own are well apart.
 constexpr std::int32_t kHostHeadStart = 100;
 
+/// Pushed once per step by a replayed system in the event test.
+struct Stepped
+{
+    std::uint64_t tick = 0;
+};
+
 } // namespace
 
 TEST_CASE("A client's systems step at the host's tick, so a system of the tick alone agrees with the host's")
@@ -116,4 +122,28 @@ TEST_CASE("The sync test finds every tick a client steps a second time the same 
 
     CHECK(replication.SyncTestResults().replays > static_cast<std::uint64_t>(kLongWalkFrames) / 2u);
     CHECK(replication.SyncTestResults().differences == 0);
+}
+
+TEST_CASE("An event pushed in a tick a client steps again is delivered once, by the step that ran live")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_ticks");
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    // Replayed, so it runs in every step the sync test takes again.
+    client.world.systems.Register(App::SystemPhase::FixedUpdate, "PushStepped",
+                                  [](App::SystemContext &ctx) { ctx.events.Push(Stepped{.tick = ctx.simTick}); })
+    .Replayed();
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    replication.SetSyncTest(true);
+    const std::size_t stepsBefore = client.stepTicks.size();
+
+    session.Run(kCatchUpFrames);
+
+    REQUIRE(replication.SyncTestResults().replays > 0u);
+    CHECK(client.events.Read<Stepped>().size() == client.stepTicks.size() - stepsBefore);
 }

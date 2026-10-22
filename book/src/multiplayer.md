@@ -96,16 +96,17 @@ that same step:
   same way (upright or crouched) on the same kind of ground. Small differences
   like rounding never make your view jitter.
 - **Further off**, for example because something only the host knew about
-  pushed you, your machine goes back to that step. What the host disagreed
-  with is put where the host had it, and everything else you predict goes back
-  to what your own machine had then. Then every step since is run again: your
-  character's movement and the level's systems, on the controls the host
-  actually received from you. This is called a **rollback**. The picture eases
-  across over a tenth of a second instead of jumping.
+  pushed you, your machine goes back to that step. Your character is put where
+  the host had it, and any other character you predict where your own machine
+  had it then. Then every step since is run again for your characters and their
+  cameras, on the controls the host actually received from you. This is called
+  a **rollback**. The picture eases across over a tenth of a second instead of
+  jumping.
 
-Only what your machine predicts is run again. The rest of the world stays where
-it is, except moving platforms: each one is put back where it was at every step,
-so a character riding one lands where it should.
+A rollback runs only the engine's own movement again. Your game's systems are
+not run again: each runs once per step, when the step happens. The rest of the
+world stays where it is, except moving platforms: each one is put back where it
+was at every step, so a character riding one lands where it should.
 
 The tolerances are `predictionTolerance`, `predictionRotationTolerance` (in
 radians) and `predictionVelocityTolerance` in `assets/config/network.json`. The
@@ -120,9 +121,10 @@ host had it.
 Your machine predicts your character, everything in its blueprint (its camera,
 for example), and anything the host hands it with a **`Predicted`** component
 naming your client. On those entities, a component marked `predicted` is yours
-to change: when the host's older value for it arrives, your machine keeps that
-value to one side instead of writing it over yours. `Transform` is one, which is
-why your camera turns the moment you move the mouse.
+to change: when the host's older value for it arrives, your machine compares it
+with the value it had at that same step instead of writing it over yours.
+`Transform` is one, which is why your camera turns the moment you move the
+mouse.
 
 Mark a component of your own `predicted` when your player changes it and has to
 see the change at once, like ammo or a cooldown:
@@ -136,50 +138,42 @@ struct Ammo
 };
 ```
 
+When the host's value disagrees with what your machine had at that step, for
+example because the host refused a shot you fired, the host's value is written
+over yours. Your ammo can then show the host's older count for a moment, until
+the host's answers about your later steps arrive.
+
 A predicted component has to be a plain value: no lists or maps, no
 `AFIELD(norep)` field, no entity references, and no member without `AFIELD`.
 The build refuses one that breaks a rule. Anything else on your character,
 like a score, can stay plain `replicable`: the host's value is simply written
-over yours. Only predicted components are remembered and rolled back, so leave
-the rest plain.
+over yours, a little later. Only predicted components are remembered and
+compared, so leave the rest plain.
 
-### Systems during a rollback
+### Your systems in multiplayer
 
-A rollback runs your `FixedUpdate` and `PostFixedUpdate` systems again for steps
-they already ran. Your code never has to check whether that is happening, as
-long as you follow two rules:
+Your systems run once per step, as in a game with no network: a rollback never
+runs them again, so a sound you push from `FixedUpdate` plays once and a value
+you count down is counted down once. While a rollback runs, events pushed are
+dropped and physics reports no contacts; none of your systems are running then
+anyway.
 
-1. **A fixed-step system only changes components and pushes events.** It may
-   run more than once for the same step, so anything else, like playing a
-   sound directly or writing a file, would happen twice. Mark a system that has
-   to do something like that `liveOnly` (see
-   [Your first system](first-system.md#options)), and it is skipped when a step
-   runs again. For now an event pushed again during a rollback is also
-   delivered again, so an effect started from an event, like a sound, can play
-   twice after one.
-2. **A predicted component only depends on predicted things.** Ammo that goes
-   down when your own player fires is fine. A cooldown that ticks only while
-   your player stands in a zone the host moves will disagree with the host on
-   every answer: your machine can't know where the zone is going. The network
-   panel shows such a component being rolled back over and over.
+A predicted component works best when your machine can work it out from your
+own player alone. Ammo that goes down when your own player fires is fine. A
+cooldown that ticks only while your player stands in a zone the host moves will
+disagree with the host often, since your machine can't know where the zone is
+going: the network panel shows how often the host corrects it.
 
-While a step runs again, a `Query` only finds what your machine predicts, so the
-rest of the world is left alone. A system that needs to read everything anyway,
-say to see where other players stand, adds `ECS::IncludingFrozen`:
-
-```cpp
-for (auto [entity, other] : scene.Query<Assisi::Physics::Character, Assisi::ECS::IncludingFrozen>())
-```
-
-Reading one entity directly with `Get` or `GetMut` always works. Creating or
-destroying entities during a rollback, or adding or removing components on
-something your machine doesn't predict, stops a debug build with an error.
+A system that moves your character itself, say a dash that sets its velocity,
+runs once, live. When a rollback runs over the step the dash happened in, the
+dash isn't run again, and the host's next answers bring your character back in
+line over a moment.
 
 The network panel's **Sync test** checkbox, on a client, checks rollbacks while
 you develop: it runs every step a second time and compares the two. Each value
 that comes out different is written to the log with both versions. The count
-should stay at zero; anything else means some state isn't put back, or a system
-behaves differently the second time.
+should stay at zero; anything else means the engine's movement doesn't put
+something back.
 
 Every machine runs the level's systems, and every machine numbers its steps the
 host's way: `ctx.simTick` is the same on every machine for the same step. A

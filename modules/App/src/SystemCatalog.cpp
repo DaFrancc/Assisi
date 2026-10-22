@@ -116,9 +116,9 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         {
             handle.ActiveWorldOnly();
         }
-        if (definition->liveOnly)
+        if (definition->replayed)
         {
-            handle.LiveOnly();
+            handle.Replayed();
         }
     }
 }

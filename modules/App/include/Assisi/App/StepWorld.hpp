@@ -28,7 +28,8 @@ struct SystemContext;
 /// update and @p replayedCharacters and @p followers must be empty. Replaying,
 /// it steps only the characters of @p replayedCharacters, as a live step would,
 /// with each of @p followers moving as it did live and everything else as it
-/// stands (PhysicsWorld::StepCharacters); `liveOnly` systems are skipped.
+/// stands (PhysicsWorld::StepCharacters), and only the systems marked
+/// `replayed` run.
 void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters = {},
                std::span<const Physics::FollowerStep> followers = {});
 
