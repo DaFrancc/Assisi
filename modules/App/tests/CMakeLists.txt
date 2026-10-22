@@ -56,6 +56,7 @@ if (ASSISI_ENABLE_NETWORKING)
   target_sources(Assisi-App-Tests PRIVATE
     TestBlueprintReplication.cpp
     PlayerSessionTesting.cpp
+    TestPlayerSessionContact.cpp
     TestPlayerSessionGaps.cpp
     TestPlayerSessionGapWalks.cpp
     TestPlayerSessionOthers.cpp
@@ -135,6 +136,7 @@ Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
 # second CPU held for each keeps ctest from running them on a full machine.
 if (ASSISI_ENABLE_NETWORKING)
   set_tests_properties(
+    App.TestPlayerSessionContact
     App.TestPlayerSessionGaps
     App.TestPlayerSessionGapWalks
     App.TestPlayerSessionOthers

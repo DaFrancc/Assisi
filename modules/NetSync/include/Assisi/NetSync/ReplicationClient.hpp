@@ -488,6 +488,7 @@ public:
 
     /// @brief How every kinematic body moved through the step of @p tick, for
     /// that step stepped again, so a platform carries its riders where it did.
+    /// In the sync test, every other character too, so it is met where it was.
     [[nodiscard]] std::vector<Physics::FollowerStep> FollowersAt(std::uint64_t tick) const;
 
     /// @brief Ends the rollback BeginRollback started: the scene steps
@@ -593,12 +594,24 @@ private:
     /// One follower as one step left it.
     struct FollowerRecord
     {
+        /// Where the step left it: what a character stepped again meets.
         Physics::FollowerFrame frame;
+        /// Where the next step starts it: the same, unless a correction has
+        /// moved it since.
+        Physics::FollowerFrame start;
         ECS::Entity entity{ECS::NullEntity};
     };
 
-    /// Records every follower of @p tick: each kinematic body.
+    /// Records every follower of @p tick: each kinematic body and character.
     void RecordFollowers(std::uint64_t tick);
+
+    /// Records where @p entity is now as where the step after the newest tick
+    /// starts it, for a correction that moved it after that tick was recorded.
+    void RecordFollowerNow(ECS::Entity entity);
+
+    /// Puts every follower where the step after the newest tick starts it: a
+    /// replay leaves each where its last step left it.
+    void PlaceFollowersNow();
 
     /// What Record takes of each predicted entity.
     enum class RecordedPart : std::uint8_t
@@ -930,6 +943,7 @@ private:
     bool _deferHandshake     = false;
     bool _awaitingLevel      = false;
     bool _rollingBack        = false; ///< Between BeginRollback and EndRollback.
+    bool _syncTesting        = false; ///< Between BeginSyncTest and EndSyncTest.
     bool _syncTest           = false;
 
     /// The content-set hash and whether it has been supplied. A separate flag

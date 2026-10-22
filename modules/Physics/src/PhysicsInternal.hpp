@@ -1824,8 +1824,8 @@ private:
     /// CarryRiders for one riding character.
     void CarryRider(CharacterRecord &record);
 
-    /// Puts @p entity's kinematic body where @p frame has it, moving as fast.
-    /// Nothing for any other body.
+    /// Puts @p entity's kinematic body where @p frame has it, moving as fast, or
+    /// its character's feet there. Nothing for any other body.
     void PlaceFollower(ECS::Entity entity, const FollowerFrame &frame);
 
     /// Changes @p record's capsule to @p stance's. False when it does not fit,

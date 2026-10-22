@@ -172,6 +172,14 @@ float Approach(float from, float to, float maxDelta)
     return from < to ? glm::min(from + maxDelta, to) : glm::max(from - maxDelta, to);
 }
 
+/// The one of @p steps that moves @p entity, or null.
+const FollowerStep *StepOf(std::span<const FollowerStep> steps, ECS::Entity entity)
+{
+    const std::span<const FollowerStep>::iterator found =
+        std::find_if(steps.begin(), steps.end(), [entity](const FollowerStep &step) { return step.entity == entity; });
+    return found == steps.end() ? nullptr : &*found;
+}
+
 } // namespace
 
 PhysicsWorld::Impl::StepOrderKey PhysicsWorld::Impl::StepOrderOf(const CharacterRecord &record) const
@@ -478,6 +486,12 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
 
 FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
 {
+    if (const Impl::CharacterRecord *record = _impl->FindCharacter(entity); record != nullptr)
+    {
+        const JPH::RVec3 feet = record->character->GetPosition();
+        return FollowerFrame{.pose = Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                             .linearVelocity = ToGlm(record->character->GetLinearVelocity())};
+    }
     const Impl::BodySlot *slot = _impl->SlotFor(entity);
     if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion != BodyMotion::Kinematic)
     {
@@ -491,12 +505,19 @@ FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
                          .angularVelocity = ToGlm(bodies.GetAngularVelocity(slot->body))};
 }
 
+void PhysicsWorld::PlaceFollower(ECS::Entity entity, const FollowerFrame &frame)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::PlaceFollower called while the world is stepping");
+    _impl->PlaceFollower(entity, frame);
+}
+
 void PhysicsWorld::Followers(std::vector<ECS::Entity> &out) const
 {
     for (std::uint32_t index = 0; index < _impl->slots.size(); ++index)
     {
         const Impl::BodySlot &slot = _impl->slots[index];
-        if (slot.kind == Impl::SlotKind::Body && slot.motion == BodyMotion::Kinematic)
+        if ((slot.kind == Impl::SlotKind::Body && slot.motion == BodyMotion::Kinematic) ||
+            slot.kind == Impl::SlotKind::Character)
         {
             out.push_back(ECS::Entity{index, slot.generation});
         }
@@ -605,10 +626,28 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     // take; one for anything else stays for the next Update.
     _impl->ApplyCharacterRequests(stepped, deltaTime);
 
-    // Where each follower stood as the step began, moving as it moved through
-    // it: what a character riding or meeting it reads during its sweep.
+    // A character among the stepped ones steps; placing it too would undo its
+    // own step.
+    std::vector<FollowerStep> placed;
     for (const FollowerStep &follower : followers)
     {
+        if (std::find(entities.begin(), entities.end(), follower.entity) == entities.end())
+        {
+            placed.push_back(follower);
+        }
+    }
+
+    // Where each follower stood as the step began, moving as it moved through
+    // it: what a character riding or meeting it reads during its sweep. A
+    // kinematic body moves through a step as fast as the step leaves it; a
+    // character as fast as it moved when the step began.
+    for (const FollowerStep &follower : placed)
+    {
+        if (_impl->FindCharacter(follower.entity) != nullptr)
+        {
+            _impl->PlaceFollower(follower.entity, follower.from);
+            continue;
+        }
         _impl->PlaceFollower(follower.entity, FollowerFrame{.pose = follower.from.pose,
                                                             .linearVelocity = follower.to.linearVelocity,
                                                             .angularVelocity = follower.to.angularVelocity});
@@ -622,12 +661,19 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
             if (std::find(stepped.begin(), stepped.end(), record) != stepped.end())
             {
                 _impl->StepCharacter(*record, deltaTime);
+                continue;
+            }
+            // A character follower moves in its turn, so one that sweeps
+            // before a stepped character is met where its step left it.
+            if (const FollowerStep *follower = StepOf(placed, record->entity); follower != nullptr)
+            {
+                _impl->PlaceFollower(follower->entity, follower->to);
             }
         }
     }
 
     // Where the solve took each follower, and its riders with it.
-    for (const FollowerStep &follower : followers)
+    for (const FollowerStep &follower : placed)
     {
         _impl->PlaceFollower(follower.entity, follower.to);
     }
@@ -982,6 +1028,16 @@ void PhysicsWorld::Impl::CarryRider(CharacterRecord &record)
 
 void PhysicsWorld::Impl::PlaceFollower(ECS::Entity entity, const FollowerFrame &frame)
 {
+    // Only what a sweep meets: the Transform is the live step's to write, and
+    // the character's own contacts are not read until it steps.
+    if (CharacterRecord *record = FindCharacter(entity); record != nullptr)
+    {
+        const JPH::RVec3 feet(frame.pose.position.x, frame.pose.position.y, frame.pose.position.z);
+        record->character->SetPosition(feet);
+        record->character->SetLinearVelocity(ToJoltVector(frame.linearVelocity));
+        physicsSystem.GetBodyInterface().SetPosition(SlotFor(entity)->body, feet, JPH::EActivation::Activate);
+        return;
+    }
     const BodySlot *slot = SlotFor(entity);
     if (slot == nullptr || slot->kind != SlotKind::Body || slot->motion != BodyMotion::Kinematic)
     {
