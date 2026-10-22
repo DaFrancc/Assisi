@@ -362,7 +362,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         if (const std::expected<void, NameError> valid = ValidateName(name); !valid.has_value())
         {
             Core::Log::Error("SceneSerializer: entity #{} is named '{}': {}.", i, name,
-                             Describe(valid.error()));
+                             ToString(valid.error()));
             return refuse(LevelError::InvalidName);
         }
         names.push_back(std::move(name));

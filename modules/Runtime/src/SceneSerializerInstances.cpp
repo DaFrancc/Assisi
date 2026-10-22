@@ -171,7 +171,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         // The reason comes from the definition, not from here: the file that
         // actually failed may be nested several levels below `entry.source`.
         Core::Log::Error("Blueprint: instance '{}' cannot use '{}': {}.", entry.name, entry.source,
-                         Describe(loaded.error()));
+                         ToString(loaded.error()));
         return std::unexpected(LevelError::BlueprintUnusable);
     }
     const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;

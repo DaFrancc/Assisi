@@ -149,7 +149,7 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
         // Same as opening a level as a new world: the scene this may have emptied is
         // the throwaway one created two lines up, and it is destroyed here.
         Assisi::Core::Log::Error("Blueprint editor: '{}' failed to load - {}.", source,
-                                 Assisi::Runtime::Describe(loaded.error()));
+                                 Assisi::Runtime::ToString(loaded.error()));
         _worlds.Destroy(world.name);
         return;
     }

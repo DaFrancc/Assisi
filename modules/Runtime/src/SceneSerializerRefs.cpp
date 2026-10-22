@@ -23,7 +23,7 @@
 namespace Assisi::Runtime
 {
 
-std::string_view Describe(LevelError error)
+std::string_view ToString(LevelError error) noexcept
 {
     switch (error)
     {

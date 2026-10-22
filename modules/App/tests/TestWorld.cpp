@@ -376,7 +376,7 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     // build does not read, and those are three different repairs.
     const Assisi::Tests::LogCapture log;
     CHECK(worlds.LoadLevel("levels/DoesNotExist.alvl") == nullptr);
-    CHECK(log.Mentions(Assisi::Runtime::Describe(Assisi::Runtime::LevelError::FileUnreadable)));
+    CHECK(log.Mentions(Assisi::Runtime::ToString(Assisi::Runtime::LevelError::FileUnreadable)));
     CHECK(worlds.Active() == inA2); // still playing exactly where we were
     CHECK(worlds.Count() == 2u);    // no half-created world left behind
 

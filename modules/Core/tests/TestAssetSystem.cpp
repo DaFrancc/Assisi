@@ -141,8 +141,8 @@ TEST_CASE("AssetSystem::ReadUserText reports a clean error for a missing file")
 
 TEST_CASE("An asset error describes its code, and its detail when it has one")
 {
-    CHECK(Describe(AssetErrorCode::FileNotFound) == "the file does not exist");
-    CHECK(Describe(AssetError{AssetErrorCode::CorruptAsset, "the audio could not be decoded"}) ==
+    CHECK(ToString(AssetErrorCode::FileNotFound) == "the file does not exist");
+    CHECK(ToString(AssetError{AssetErrorCode::CorruptAsset, "the audio could not be decoded"}) ==
           "the file's contents are corrupt (the audio could not be decoded)");
 }
 

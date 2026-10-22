@@ -199,14 +199,14 @@ class SceneCooker final : public Cooker
         const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(scene, vpath, options);
         if (!loaded)
         {
-            return std::unexpected(Failure(vpath, std::string{Runtime::Describe(loaded.error())}));
+            return std::unexpected(Failure(vpath, std::string{Runtime::ToString(loaded.error())}));
         }
 
         const std::expected<std::vector<std::byte>, Runtime::LevelError> cooked =
             Runtime::SaveCookedScene(scene, header, &instances, idOf);
         if (!cooked)
         {
-            return std::unexpected(Failure(vpath, std::string{Runtime::Describe(cooked.error())}));
+            return std::unexpected(Failure(vpath, std::string{Runtime::ToString(cooked.error())}));
         }
         return *cooked;
     }
@@ -692,7 +692,7 @@ class TreeCookContext final : public Core::AssetCookContext
         std::expected<std::vector<std::byte>, Core::AssetError> bytes = Core::AssetSystem::ReadBinary(vpath);
         if (!bytes)
         {
-            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Core::Describe(bytes.error())));
+            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Core::ToString(bytes.error())));
         }
         return std::move(*bytes);
     }
@@ -766,7 +766,7 @@ class KindCooker final : public Cooker
         std::expected<std::vector<std::byte>, Core::AssetError> cooked = Core::CookAssetBytes(*_kind, *source, tree);
         if (!cooked)
         {
-            const std::string reason = Core::Describe(cooked.error());
+            const std::string reason = Core::ToString(cooked.error());
             return std::unexpected(Failure(vpath, tree.Reported().empty() ? reason : reason + "\n" + tree.Reported()));
         }
         return std::move(*cooked);

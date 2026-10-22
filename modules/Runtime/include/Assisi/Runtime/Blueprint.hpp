@@ -179,7 +179,7 @@ enum class BlueprintError : std::uint8_t
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
-[[nodiscard]] std::string_view Describe(BlueprintError error);
+[[nodiscard]] std::string_view ToString(BlueprintError error) noexcept;
 
 /// @brief A definition, or why the file could not become one. The success value is
 /// never null.

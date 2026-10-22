@@ -2456,7 +2456,7 @@ void EditorApp::DrawInspector()
         if (const auto allowed = Assisi::Runtime::CheckEntityName(*_scene, _selectedEntity, typed);
             !allowed.has_value())
         {
-            refusal = Assisi::Runtime::Describe(allowed.error());
+            refusal = Assisi::Runtime::ToString(allowed.error());
         }
 
         if (edited && refusal.empty())

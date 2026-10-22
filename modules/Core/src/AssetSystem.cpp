@@ -64,7 +64,7 @@ std::string_view ToString(AssetErrorCode code) noexcept
     return "unknown";
 }
 
-std::string Describe(const AssetError &error)
+std::string ToString(const AssetError &error)
 {
     if (error.detail.empty())
     {

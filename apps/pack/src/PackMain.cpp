@@ -124,7 +124,7 @@ int main(int argc, char **argv)
         if (!mounted)
         {
             std::fprintf(stderr, "pack: %s: previous pak does not mount: %s\n", previousPath.generic_string().c_str(),
-                         Assisi::Core::Describe(mounted.error()).c_str());
+                         Assisi::Core::ToString(mounted.error()).c_str());
             return kExitFailed;
         }
         previous.emplace(std::move(*mounted));

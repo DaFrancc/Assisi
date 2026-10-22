@@ -120,7 +120,7 @@ std::optional<Geometry::CollisionModel> CookedCollisionSource::Load(Core::AssetI
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = _provider->Open(id);
     if (!bytes)
     {
-        Core::Log::Warn("Physics: model {} cannot be read ({}).", id.ToString(), Core::Describe(bytes.error()));
+        Core::Log::Warn("Physics: model {} cannot be read ({}).", id.ToString(), Core::ToString(bytes.error()));
         return std::nullopt;
     }
     const std::expected<Geometry::CookedMesh, Geometry::CookedMeshError> mesh = Geometry::ReadCookedMesh(*bytes);

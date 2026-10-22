@@ -343,7 +343,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // Which refusal it was, not just that there was one: absent, malformed,
         // and a version this build does not read are three different repairs and
         // read identically without it.
-        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath, Runtime::Describe(loaded.error()),
+        Core::Log::Error("Travel to '{}' failed ({}); staying in '{}'.", levelPath, Runtime::ToString(loaded.error()),
                          outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
         EraseWorld(incoming);
         return nullptr;

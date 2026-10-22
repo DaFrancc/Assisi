@@ -72,7 +72,7 @@ enum class NameError : std::uint8_t
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
-[[nodiscard]] std::string_view Describe(NameError error);
+[[nodiscard]] std::string_view ToString(NameError error) noexcept;
 
 /// @brief Whether @p name may be given to an entity or an instance.
 ///
