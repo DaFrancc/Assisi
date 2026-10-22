@@ -66,6 +66,7 @@ struct NetworkConfig
     AFIELD() float predictionTolerance = ViewSmoothing{}.predictionTolerance;
     AFIELD() float predictionRotationTolerance = ViewSmoothing{}.predictionRotationTolerance;
     AFIELD() float predictionVelocityTolerance = ViewSmoothing{}.predictionVelocityTolerance;
+    AFIELD() float predictionAngularVelocityTolerance = ViewSmoothing{}.predictionAngularVelocityTolerance;
 
     // --- Relevancy: who is told about what. Not hashed, same reason as the
     // never-replicate list.

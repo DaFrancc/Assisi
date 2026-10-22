@@ -23,6 +23,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace Assisi::NetSync
@@ -159,6 +160,10 @@ struct ViewSmoothing
     /// ...and how far apart their velocities may be (m/s): four steps of the
     /// 62 mm/s a velocity is rounded to on the wire.
     float predictionVelocityTolerance = 0.25f;
+
+    /// ...and, for a predicted body, how far apart their spins may be (rad/s):
+    /// four steps of the 62.5 mrad/s an angular velocity is rounded to.
+    float predictionAngularVelocityTolerance = 0.25f;
 };
 
 /// @brief The parameters this process encodes and decodes body state with.
@@ -201,5 +206,12 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer);
 /// @brief Inverse of WriteBodyState. Returns false on a truncated or malformed
 /// record, having invalidated the reader.
 bool ReadBodyState(Core::BitReader &reader, BodyState &outState);
+
+/// @brief "quantity: mine vs host's" for the first way a predicted body @p mine
+/// is further from @p host than @p smoothing tolerates, or empty when it is
+/// close enough: position, rotation, linear and angular velocity, and whether
+/// it sleeps.
+[[nodiscard]] std::string PredictedBodyDifference(const BodyState &mine, const BodyState &host,
+                                                  const ViewSmoothing &smoothing);
 
 } // namespace Assisi::NetSync

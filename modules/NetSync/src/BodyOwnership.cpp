@@ -24,6 +24,9 @@ bool Nearer(const Choice &a, const Choice &b)
     return a.distance < b.distance;
 }
 
+/// How many players touching a body at once contest it.
+constexpr std::size_t kContestants = 2;
+
 } // namespace
 
 void BodyOwnership::Assign(std::span<const BodyGroup> groups, std::uint64_t tick)
@@ -95,6 +98,18 @@ void BodyOwnership::ForgetPlayer(std::uint32_t client)
 
 std::uint32_t BodyOwnership::Choose(const BodyGroup &group, std::uint64_t tick)
 {
+    switch (Contest(group, tick))
+    {
+    case ContestState::Contested:
+        return 0;
+    case ContestState::Ended:
+        // The hold the contest began is not waited out: the body has been the
+        // host's for the dwell already.
+        return NewHolderOf(group);
+    case ContestState::None:
+        break;
+    }
+
     const std::uint32_t holder = HolderOf(group);
     const PlayerReach *reach = holder != 0 ? ReachOf(group, holder) : nullptr;
     const bool kept = reach != nullptr && reach->distance <= _config.leaveDistance;
@@ -125,6 +140,47 @@ std::uint32_t BodyOwnership::Choose(const BodyGroup &group, std::uint64_t tick)
     }
     const std::uint32_t next = NewHolderOf(group);
     return next != 0 && Held(group, tick) ? 0u : next;
+}
+
+BodyOwnership::ContestState BodyOwnership::Contest(const BodyGroup &group, std::uint64_t tick)
+{
+    const std::size_t touching = static_cast<std::size_t>(
+        std::count_if(group.players.begin(), group.players.end(), [](const PlayerReach &player) { return player.touching; }));
+
+    // Whichever of its bodies was contested last speaks for the group: a body
+    // a contested one comes to touch joins the contest.
+    std::uint64_t contestedTick = 0;
+    if (touching >= kContestants)
+    {
+        contestedTick = tick;
+    }
+    else
+    {
+        for (const NetId netId : group.bodies)
+        {
+            const std::unordered_map<NetId, Holding>::const_iterator found = _holdings.find(netId);
+            if (found != _holdings.end())
+            {
+                contestedTick = std::max(contestedTick, found->second.contestedTick);
+            }
+        }
+        if (contestedTick == 0)
+        {
+            return ContestState::None;
+        }
+    }
+
+    // Kept for the dwell after the last but one player lets go, or two players
+    // leaning on a body by turns would hand it back and forth.
+    const bool over = touching < kContestants && tick - contestedTick >= _config.touchDwellTicks;
+    for (const NetId netId : group.bodies)
+    {
+        Holding &holding = _holdings[netId];
+        holding.contestedTick = over ? 0u : contestedTick;
+        holding.challenger = 0;
+        holding.challengedSince = 0;
+    }
+    return over ? ContestState::Ended : ContestState::Contested;
 }
 
 std::uint32_t BodyOwnership::HolderOf(const BodyGroup &group) const

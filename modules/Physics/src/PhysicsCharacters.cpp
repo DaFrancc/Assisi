@@ -26,6 +26,8 @@
 #include <Assisi/ECS/TransformPose.hpp>
 
 #include <Jolt/Core/FPFlushDenormals.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -179,6 +181,11 @@ const FollowerStep *StepOf(std::span<const FollowerStep> steps, ECS::Entity enti
         std::find_if(steps.begin(), steps.end(), [entity](const FollowerStep &step) { return step.entity == entity; });
     return found == steps.end() ? nullptr : &*found;
 }
+
+/// How far past where a body solved again moves in a step another can be and
+/// still be met by it (m): past Jolt's speculative contact distance, which is
+/// how near a contact is found before the two touch.
+constexpr float kSolveReach = 0.1f;
 
 } // namespace
 
@@ -594,18 +601,141 @@ void PhysicsWorld::ClearCharacterOrderKey(ECS::Entity entity)
     }
 }
 
+void PhysicsWorld::Impl::SolveAgain(std::span<const ECS::Entity> bodies, float deltaTime)
+{
+    // Every other awake body is put back as it was after the solve, velocities
+    // and all: what the sweeps pushed of it, and what the solve would have
+    // moved, is the live step's to have done. A dynamic one sleeps through it;
+    // a kinematic one, a character's capsule among them, moves through it as
+    // it did live, so what it carries or pushes is carried or pushed.
+    struct HeldBody
+    {
+        JPH::RVec3 position;
+        JPH::Quat rotation;
+        JPH::Vec3 linearVelocity;
+        JPH::Vec3 angularVelocity;
+        JPH::BodyID body;
+    };
+    JPH::BodyInterface &bodyInterface = physicsSystem.GetBodyInterface();
+    JPH::BodyIDVector active;
+    physicsSystem.GetActiveBodies(JPH::EBodyType::RigidBody, active);
+    std::vector<HeldBody> held;
+    JPH::BodyIDVector heldIds;
+    for (const JPH::BodyID &id : active)
+    {
+        if (std::find(solvedBodies.begin(), solvedBodies.end(), id) != solvedBodies.end())
+        {
+            continue;
+        }
+        held.push_back(HeldBody{.position = bodyInterface.GetPosition(id),
+                                .rotation = bodyInterface.GetRotation(id),
+                                .linearVelocity = bodyInterface.GetLinearVelocity(id),
+                                .angularVelocity = bodyInterface.GetAngularVelocity(id),
+                                .body = id});
+        if (bodyInterface.GetMotionType(id) == JPH::EMotionType::Dynamic)
+        {
+            heldIds.push_back(id);
+        }
+    }
+    // A sleeping body is woken by a solved one coming against it, and is put
+    // back where it slept after; only one this near can be.
+    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> near;
+    for (const JPH::BodyID &id : solvedBodies)
+    {
+        JPH::AABox bounds = BoundsOf(id);
+        bounds.ExpandBy(JPH::Vec3::sReplicate(bodyInterface.GetLinearVelocity(id).Length() * deltaTime + kSolveReach));
+        physicsSystem.GetBroadPhaseQuery().CollideAABox(bounds, near);
+    }
+    std::sort(near.mHits.begin(), near.mHits.end());
+    near.mHits.erase(std::unique(near.mHits.begin(), near.mHits.end()), near.mHits.end());
+    std::vector<HeldBody> sleeping;
+    for (const JPH::BodyID &id : near.mHits)
+    {
+        const bool solved = std::find(solvedBodies.begin(), solvedBodies.end(), id) != solvedBodies.end();
+        if (!solved && !bodyInterface.IsActive(id) && bodyInterface.GetMotionType(id) == JPH::EMotionType::Dynamic)
+        {
+            sleeping.push_back(HeldBody{.position = bodyInterface.GetPosition(id),
+                                        .rotation = bodyInterface.GetRotation(id),
+                                        .linearVelocity = JPH::Vec3::sZero(),
+                                        .angularVelocity = JPH::Vec3::sZero(),
+                                        .body = id});
+        }
+    }
+
+    bodyInterface.DeactivateBodies(heldIds.data(), static_cast<int32_t>(heldIds.size()));
+
+    // What the solve wakes, and what it says of the pairs it saw end, are the
+    // live step's to have found.
+    const std::size_t activatedBefore = activated.size();
+    const std::size_t removedBefore = removedThisStep.size();
+    stepping = true;
+    physicsSystem.Update(deltaTime, collisionSteps, &tempAlloc, &jolt.JobSystem());
+    stepping = false;
+
+    JPH::BodyIDVector woken;
+    for (std::size_t i = activatedBefore; i < activated.size(); ++i)
+    {
+        const JPH::BodyID id = activated[i];
+        const bool solved = std::find(solvedBodies.begin(), solvedBodies.end(), id) != solvedBodies.end();
+        if (!solved && std::find(heldIds.begin(), heldIds.end(), id) == heldIds.end())
+        {
+            woken.push_back(id);
+        }
+    }
+    for (const HeldBody &body : sleeping)
+    {
+        bodyInterface.SetPositionAndRotation(body.body, body.position, body.rotation, JPH::EActivation::DontActivate);
+    }
+    bodyInterface.DeactivateBodies(woken.data(), static_cast<int32_t>(woken.size()));
+    for (const HeldBody &body : held)
+    {
+        bodyInterface.SetPositionAndRotation(body.body, body.position, body.rotation, JPH::EActivation::Activate);
+        bodyInterface.SetLinearAndAngularVelocity(body.body, body.linearVelocity, body.angularVelocity);
+    }
+    activated.resize(activatedBefore);
+    removedThisStep.resize(removedBefore);
+
+    for (const ECS::Entity entity : bodies)
+    {
+        const BodySlot *slot = SlotFor(entity);
+        if (slot == nullptr || slot->kind != SlotKind::Body)
+        {
+            continue;
+        }
+        const JPH::RVec3 position = bodyInterface.GetPosition(slot->body);
+        WritePose(entity,
+                  Pose{ToGlm(bodyInterface.GetRotation(slot->body)),
+                       glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
+                  /*writeRotation=*/ true);
+        WriteBodyState(entity, BodyState{.linearVelocity = ToGlm(bodyInterface.GetLinearVelocity(slot->body)),
+                                         .angularVelocity = ToGlm(bodyInterface.GetAngularVelocity(slot->body)),
+                                         .asleep = !bodyInterface.IsActive(slot->body)});
+        ECS::SnapTransform(scene, entity);
+    }
+}
+
 void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
-                                  float deltaTime)
+                                  float deltaTime, std::span<const ECS::Entity> bodies)
 {
     ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::StepCharacters called while the world is stepping");
 
     // A character-only step reports no contacts and leaves the pairs as the last
     // Update left them: those are made by comparing a whole step's touches with
-    // the step before it, which this step has neither of. What its sweeps touch
-    // is dropped at the end, or the next Update would resolve it as its own.
+    // the step before it, which this step has neither of. What its sweeps and
+    // its solve touch is dropped at the end, or the next Update would resolve
+    // it as its own.
     _impl->events.clear();
     const std::size_t touchedBefore = _impl->touchedThisStep.size();
     _impl->characterOnlyStep = true;
+    _impl->solvedBodies.clear();
+    for (const ECS::Entity entity : bodies)
+    {
+        const Impl::BodySlot *slot = _impl->SlotFor(entity);
+        if (slot != nullptr && slot->kind == Impl::SlotKind::Body && slot->motion == BodyMotion::Dynamic)
+        {
+            _impl->solvedBodies.push_back(slot->body);
+        }
+    }
 
     // As Update runs them: the stance each asks for taken at the reconcile
     // before the step, then the sweeps in step order with denormals flushed.
@@ -628,12 +758,13 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     // take; one for anything else stays for the next Update.
     _impl->ApplyCharacterRequests(stepped, deltaTime);
 
-    // A character among the stepped ones steps; placing it too would undo its
-    // own step.
+    // A character among the stepped ones steps, and a body among the solved
+    // ones is solved; placing it too would undo its own step.
     std::vector<FollowerStep> placed;
     for (const FollowerStep &follower : followers)
     {
-        if (std::find(entities.begin(), entities.end(), follower.entity) == entities.end())
+        if (std::find(entities.begin(), entities.end(), follower.entity) == entities.end() &&
+            std::find(bodies.begin(), bodies.end(), follower.entity) == bodies.end())
         {
             placed.push_back(follower);
         }
@@ -675,6 +806,13 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
         }
     }
 
+    // As Update solves after the sweeps: what they pushed answers this step.
+    if (!_impl->solvedBodies.empty())
+    {
+        const JPH::FPFlushDenormals flushDenormals;
+        _impl->SolveAgain(bodies, deltaTime);
+    }
+
     // Where the solve took each follower, and its riders with it.
     for (const FollowerStep &follower : placed)
     {
@@ -701,6 +839,7 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     _impl->touchedThisStep.erase(_impl->touchedThisStep.begin() + static_cast<std::ptrdiff_t>(touchedBefore),
                                  _impl->touchedThisStep.end());
     _impl->characterOnlyStep = false;
+    _impl->solvedBodies.clear();
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const

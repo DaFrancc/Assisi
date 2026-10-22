@@ -36,6 +36,11 @@ constexpr std::size_t kPredictedRecordAlignment = __STDCPP_DEFAULT_NEW_ALIGNMENT
 /// One bit each in PredictedRecord::present.
 constexpr std::size_t kMaxPredictedComponents = 64;
 
+/// How long a body the host simulates stays predicted after this client's
+/// character last touched it (ticks): half a second, so a player pushing in
+/// bursts does not have it change hands with every one.
+constexpr std::uint64_t kPredictAfterTouchTicks = 30;
+
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
 ///
@@ -129,6 +134,7 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
     const ClientId local = _handshake.clientId;
     std::unordered_set<NetId> predicted;
     _simulated.clear();
+    NoteTouchedBodies(serverTick);
     for (const auto &[netId, entity] : _entityByNetId)
     {
         if (!_scene.IsAlive(entity))
@@ -136,7 +142,8 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
             continue;
         }
         const SimulatedBy *simulator = _scene.Get<SimulatedBy>(entity);
-        if (simulator != nullptr && local.IsValid() && simulator->client == local.value)
+        const bool simulatedHere = simulator != nullptr && local.IsValid() && simulator->client == local.value;
+        if (simulatedHere)
         {
             _simulated.insert(netId);
             // Forgotten, so EnforceSleep leaves it alone: the host's last
@@ -153,7 +160,11 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
         const bool controlled = ControlsEntity(entity);
         const Predicted *given = _scene.Get<Predicted>(entity);
         const bool givenHere = given != nullptr && local.IsValid() && given->client == local.value;
-        if (!controlled && !givenHere)
+        // A body someone else runs that this client's character touches, so
+        // it answers the push the tick it is given: one the host runs, a
+        // contested one among them, or one another client is about to lose.
+        const bool touched = !simulatedHere && _touchedAt.contains(netId);
+        if (!controlled && !givenHere && !touched)
         {
             continue;
         }
@@ -245,6 +256,36 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
         }
         _transformHistory.erase(netId);
     }
+}
+
+void ReplicationClient::NoteTouchedBodies(std::uint64_t serverTick)
+{
+    if (_physics == nullptr)
+    {
+        return;
+    }
+    std::vector<ECS::Entity> touching;
+    for (const auto &[netId, entity] : _entityByNetId)
+    {
+        if (!_scene.IsAlive(entity) || !_scene.Has<Physics::Character>(entity) || !ControlsEntity(entity) ||
+            !_physics->HasBody(entity))
+        {
+            continue;
+        }
+        _physics->Touching(entity, touching);
+        for (const ECS::Entity other : touching)
+        {
+            const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(other);
+            const NetId otherId = NetIdOf(other);
+            if (otherId.IsValid() && body != nullptr && body->motion == Physics::MotionType::Dynamic &&
+                !_scene.Has<Physics::Character>(other))
+            {
+                _touchedAt[otherId] = serverTick;
+            }
+        }
+    }
+    std::erase_if(_touchedAt, [serverTick](const std::pair<const NetId, std::uint64_t> &touched)
+                  { return serverTick > touched.second + kPredictAfterTouchTicks; });
 }
 
 bool CommandEcho::Applied(std::uint64_t tick) const

@@ -109,7 +109,7 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
         const NetSync::ReplicationClient::AppliedCommand applied = client->CommandAppliedAt(tick);
         _players.ReplayCommand(_world, applied.command, applied.starvedTicks);
         replayed.simTick = tick;
-        App::StepWorld(replayed, replay->characters, client->FollowersAt(tick));
+        App::StepWorld(replayed, replay->characters, client->FollowersAt(tick), replay->bodies);
         client->RecordHistory(tick);
         _players.RecordControls(_world, tick);
     }

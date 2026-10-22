@@ -4,14 +4,17 @@
 /// @brief A crate a client's player walks up to and pushes, in real sessions:
 ///        the client simulates it and the host takes its reports, its player
 ///        is not corrected while it pushes, a step stepped again meets the
-///        crate where it was, and a second player who takes over the pushing
-///        takes the crate over once.
+///        crate where it was, a second player who takes over the pushing
+///        takes the crate over once, and a crate three players push at once
+///        is the host's and predicted by each client.
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -21,6 +24,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
@@ -142,6 +146,45 @@ struct Pushing
     [[nodiscard]] NetSync::ClientId ClientId() const { return client->play.Session().LocalClientId(); }
 };
 
+/// @p first and @p second joined to @p host, each machine on a floor, with
+/// the players spread over @p starts in the order the host spreads them.
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::vec3> starts)
+{
+    for (const std::unique_ptr<Machine> &machine : session.machines)
+    {
+        const ECS::Entity floor = machine->world.scene.Create();
+        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
+        Physics::Collider collider;
+        collider.shape = Physics::ColliderShape::Box;
+        collider.halfExtents = {50.f, 1.f, 50.f};
+        (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
+    }
+    App::PlayerStart startAt;
+    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
+    for (const glm::vec3 at : starts)
+    {
+        const ECS::Entity start = host.world.scene.Create();
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
+        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
+    }
+    const std::uint16_t port = HostOnFreePort(host.play);
+    REQUIRE(port != 0);
+    REQUIRE(first.play.Join("127.0.0.1", port));
+    session.Run(kJoinSteps);
+    REQUIRE(second.play.Join("127.0.0.1", port));
+    session.Run(kJoinSteps);
+}
+
+/// A quarter turn to the left (rad): from facing -z to facing -x.
+constexpr float kQuarterLeft = 1.5707963f;
+
+/// Where the starts of the three-player case are, in the order the players
+/// are spread over them: the second client to the crate's left, the host to
+/// its right, and the first client behind it; each kCrateAhead from it.
+constexpr glm::vec3 kLeftOfCrate{-kCrateAhead, 0.f, -kCrateAhead};
+constexpr glm::vec3 kRightOfCrate{kCrateAhead, 0.f, -kCrateAhead};
+constexpr glm::vec3 kBehindCrate{0.f, 0.f, 0.f};
+
 } // namespace
 
 TEST_CASE("A client's player pushing a crate simulates it, and the host takes its reports without correcting it")
@@ -188,29 +231,8 @@ TEST_CASE("A crate a second player takes over pushing while the first stands by 
     Machine &host = session.Add();
     Machine &first = session.Add();
     Machine &second = session.Add();
-    for (const std::unique_ptr<Machine> &machine : session.machines)
-    {
-        const ECS::Entity floor = machine->world.scene.Create();
-        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
-        Physics::Collider collider;
-        collider.shape = Physics::ColliderShape::Box;
-        collider.halfExtents = {50.f, 1.f, 50.f};
-        (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
-    }
-    App::PlayerStart startAt;
-    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
-    for (const glm::vec3 at : {kSecondClientStart, kHostStart, kFirstClientStart})
-    {
-        const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
-        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
-    }
-    const std::uint16_t port = HostOnFreePort(host.play);
-    REQUIRE(port != 0);
-    REQUIRE(first.play.Join("127.0.0.1", port));
-    session.Run(kJoinSteps);
-    REQUIRE(second.play.Join("127.0.0.1", port));
-    session.Run(kJoinSteps);
+    const std::array<glm::vec3, 3> starts{kSecondClientStart, kHostStart, kFirstClientStart};
+    JoinTwo(session, host, first, second, starts);
 
     const ECS::Entity firstPlayer = LocalPlayerOf(first.world.scene);
     const ECS::Entity secondPlayer = LocalPlayerOf(second.world.scene);
@@ -249,4 +271,50 @@ TEST_CASE("A crate a second player takes over pushing while the first stands by 
     CHECK(simulators.seen.size() == 2u);
     NetSync::ReplicationClient &secondReplication = *second.play.Session().Client();
     CHECK(secondReplication.Simulates(secondReplication.EntityOf(server.NetIdOf(crate))));
+}
+
+TEST_CASE("A crate three players push at once is the host's to simulate, and each client predicts it")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_bodies_three");
+    WritePlayerBlueprint(root);
+    Session session;
+    Machine &host = session.Add();
+    Machine &first = session.Add();
+    Machine &second = session.Add();
+    const std::array<glm::vec3, 3> starts{kLeftOfCrate, kRightOfCrate, kBehindCrate};
+    JoinTwo(session, host, first, second, starts);
+
+    const ECS::Entity hostPlayer = LocalPlayerOf(host.world.scene);
+    const ECS::Entity firstPlayer = LocalPlayerOf(first.world.scene);
+    const ECS::Entity secondPlayer = LocalPlayerOf(second.world.scene);
+    REQUIRE(hostPlayer != ECS::NullEntity);
+    REQUIRE(firstPlayer != ECS::NullEntity);
+    REQUIRE(secondPlayer != ECS::NullEntity);
+    const ECS::Entity crate = AddCrate(host, kBehindCrate);
+    session.Run(kCatchUpFrames);
+    NetSync::ReplicationServer &server = *host.play.Session().Server();
+    NetSync::ReplicationClient &firstReplication = *first.play.Session().Client();
+    NetSync::ReplicationClient &secondReplication = *second.play.Session().Client();
+    const ECS::Entity firstCrate = firstReplication.EntityOf(server.NetIdOf(crate));
+    const ECS::Entity secondCrate = secondReplication.EntityOf(server.NetIdOf(crate));
+    REQUIRE(firstCrate != ECS::NullEntity);
+    REQUIRE(secondCrate != ECS::NullEntity);
+
+    // The first walks straight at it, the second turns right and the host's
+    // player left, so all three meet it from three sides.
+    bool hostTurned = false;
+    bool secondTurned = false;
+    std::int32_t together = 0;
+    session.Run(kPushFrames,
+                [&]
+    {
+        Walk(first.world.scene, firstPlayer);
+        WalkAt(second.world.scene, secondPlayer, kQuarterRight, secondTurned);
+        WalkAt(host.world.scene, hostPlayer, kQuarterLeft, hostTurned);
+        const bool shared = host.world.physics.IsTouching(hostPlayer, crate) && !server.SimulatorOf(crate).IsValid() &&
+                            firstReplication.Predicts(firstCrate) && secondReplication.Predicts(secondCrate);
+        together += shared ? 1 : 0;
+    });
+    // Longer than a brush: until it squeezes out from between them.
+    CHECK(together > static_cast<std::int32_t>(NetSync::ReplicationConfig{}.ownership.touchDwellTicks));
 }

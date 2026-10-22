@@ -24,12 +24,13 @@ namespace
 {
 
 /// Whether @p entity is a body a client may be given to simulate: one the
-/// solver moves, not a character, and not kept for the host.
+/// solver moves, not a character, not kept for the host, and not one the
+/// host's game gave a client to predict.
 bool Ownable(const ECS::Scene &scene, ECS::Entity entity)
 {
     const Physics::RigidBody *body = scene.Get<Physics::RigidBody>(entity);
     return body != nullptr && body->motion == Physics::MotionType::Dynamic && !scene.Has<Physics::Character>(entity) &&
-           !scene.Has<HostSimulated>(entity);
+           !scene.Has<HostSimulated>(entity) && !scene.Has<Predicted>(entity);
 }
 
 /// The root of @p index's set, halving the path to it on the way.

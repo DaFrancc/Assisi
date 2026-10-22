@@ -719,19 +719,24 @@ public:
     /// which is how fast it was swept; a dynamic body or a character as fast as
     /// it moved when its step began. A character follower is put where its step
     /// left it in its turn in the order, so one that sweeps before a stepped
-    /// character is met there. A follower in @p entities is stepped, not
-    /// placed. A character follower's Transform and stance are left as they
-    /// are. Everything else stays where it is: bodies are not solved and the
+    /// character is met there. A follower in @p entities or @p bodies is
+    /// stepped or solved, not placed. A character follower's Transform and
+    /// stance are left as they are.
+    ///
+    /// After the sweeps the dynamic bodies of @p bodies are solved as Update
+    /// solves them, every other awake body held where it is, and their
+    /// Transforms written and snapped. A body the solve wakes that is not one
+    /// of them is put back to sleep. Everything else stays where it is, and the
     /// scene is not reconciled.
     ///
-    /// A character pushes no body here: a dynamic body it meets stops it as it
-    /// did live, and is not given the push again, which the body's own step,
-    /// live, already took.
+    /// A character pushes only the bodies of @p bodies here: any other dynamic
+    /// body it meets stops it as it did live, and is not given the push again,
+    /// which the body's own step, live, already took.
     ///
     /// Reports no contacts: ContactEvents() is empty after it, and the next
     /// Update finds touching pairs as the last Update left them.
     void StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
-                        float deltaTime);
+                        float deltaTime, std::span<const ECS::Entity> bodies = {});
 
     /// @brief Where @p entity's kinematic body, dynamic body or character is
     /// now and how it moves, for StepCharacters to put it back to. A default

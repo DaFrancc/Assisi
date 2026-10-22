@@ -18,6 +18,7 @@
   "predictionTolerance": 0.02,
   "predictionRotationTolerance": 0.035,
   "predictionVelocityTolerance": 0.25,
+  "predictionAngularVelocityTolerance": 0.25,
   "relevancyRadius": 60.0,
   "relevancyExitRadius": 75.0,
   "relevancyDwellTicks": 30,
