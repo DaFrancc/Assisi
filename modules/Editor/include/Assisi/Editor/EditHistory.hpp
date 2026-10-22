@@ -28,6 +28,7 @@
 
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
+#include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 

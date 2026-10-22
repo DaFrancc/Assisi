@@ -34,7 +34,7 @@ environment is set up.
 <summary><b>Arch</b></summary>
 
 ```bash
-sudo pacman -S --needed base-devel git cmake ninja ccache python \
+sudo pacman -S --needed base-devel git cmake ninja ccache mold python \
                         wayland libxkbcommon \
                         libxcursor libxi libxinerama libxrandr \
                         vulkan-icd-loader
@@ -71,7 +71,7 @@ sudo pacman -S clang
 <summary><b>Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)</b></summary>
 
 ```bash
-sudo dnf install gcc-c++ make git cmake ninja-build ccache python3 pkgconf-pkg-config \
+sudo dnf install gcc-c++ make git cmake ninja-build ccache mold python3 pkgconf-pkg-config \
                  libstdc++-static \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
@@ -130,7 +130,7 @@ old at both ends: the engine is C++23 and asks for CMake 3.28+, while bookworm s
 3.25 — and `std::expected`, which this codebase returns its errors through, arrived in GCC 13.
 
 ```bash
-sudo apt install build-essential git cmake ninja-build ccache python3 pkg-config \
+sudo apt install build-essential git cmake ninja-build ccache mold python3 pkg-config \
                  libwayland-dev libwayland-bin libxkbcommon-dev \
                  libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
                  libvulkan1
@@ -175,6 +175,7 @@ Install the equivalents of the package groups below — they are the whole list.
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+| mold | **Optional.** A linker several times faster than the default one; every edit relinks a few large executables, so it saves seconds on each build. The build uses it whenever it is installed. |
 | podman or docker | **Optional**, only for the Steam Runtime build (`./assisi package ship --steam-runtime`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
 
 Optionally, installing `simdjson` (Arch) or `simdjson-devel` (Fedora) makes fastgltf link the system

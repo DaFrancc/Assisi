@@ -22,6 +22,6 @@ target_link_libraries(Assisi-Steam-Tests
     Assisi::Steam
 )
 
-add_test(NAME Steam COMMAND Assisi-Steam-Tests)
+Assisi_add_doctest_tests(Assisi-Steam-Tests NAME Steam)
 
 set_target_properties(Assisi-Steam-Tests PROPERTIES FOLDER "tests")

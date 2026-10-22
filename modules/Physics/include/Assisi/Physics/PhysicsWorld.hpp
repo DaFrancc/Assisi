@@ -16,7 +16,7 @@
 /// Update() inside an ECS::FixedStepScope, so the ECS draws those Transforms
 /// blended between steps.
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/CollisionSource.hpp>
@@ -394,8 +394,9 @@ public:
     /// @brief Every contact event produced by the most recent Update().
     ///
     /// Cleared at the top of every Update(), so the span describes exactly one
-    /// fixed step and a consumer cannot process the same event twice. Valid until
-    /// the next Update() or Clear().
+    /// fixed step and a consumer cannot process the same event twice, and by
+    /// StepCharacters(), which reports none. Valid until the next Update(),
+    /// StepCharacters() or Clear().
     ///
     /// Ordered by entity, then by what it touched, then by phase — the order Jolt
     /// discovers contacts in depends on how its jobs were scheduled, and a
@@ -700,6 +701,9 @@ public:
     /// sweep, then is put where its step left it, and the characters riding it
     /// are carried with it. Everything else stays where it is: bodies are not
     /// solved and the scene is not reconciled.
+    ///
+    /// Reports no contacts: ContactEvents() is empty after it, and the next
+    /// Update finds touching pairs as the last Update left them.
     void StepCharacters(std::span<const ECS::Entity> entities, std::span<const FollowerStep> followers,
                         float deltaTime);
 

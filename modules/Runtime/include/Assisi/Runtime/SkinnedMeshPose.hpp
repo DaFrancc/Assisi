@@ -10,7 +10,7 @@
 
 #include <cstdint>
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Runtime/Components.hpp>
 

@@ -157,17 +157,17 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
     return *this;
 }
 
-SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::LiveOnly()
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Replayed()
 {
-    if (!_setLiveOnly)
+    if (!_setReplayed)
     {
         // Only the fixed-step phases are ever run again for a tick, so anywhere
-        // else the author expected a skip that can never happen.
-        Core::Log::Error("SystemRegistry: LiveOnly() means something only on a FixedUpdate or "
+        // else the author expected a second run that can never happen.
+        Core::Log::Error("SystemRegistry: Replayed() means something only on a FixedUpdate or "
                          "PostFixedUpdate system and was ignored.");
         return *this;
     }
-    _setLiveOnly();
+    _setReplayed();
     return *this;
 }
 
@@ -194,7 +194,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                                                  std::string_view name,
                                                  std::function<void(Ctx &)> fn,
                                                  bool supportsActiveOnly,
-                                                 bool supportsLiveOnly)
+                                                 bool supportsReplayed)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -220,7 +220,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                              .after      = {},
                              .before     = {},
                              .activeOnly = false,
-                             .liveOnly   = false,
+                             .replayed   = false,
                              .enabled    = true,
                              .ran        = false,
                              .requireAny = {},
@@ -241,8 +241,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
             [phasePtr, entryIndex]
             { phasePtr->entries[entryIndex].activeOnly = true; })
                            : SystemHandle::SetFlag{},
-        supportsLiveOnly ? SystemHandle::SetFlag([phasePtr, entryIndex]
-                                                 { phasePtr->entries[entryIndex].liveOnly = true; })
+        supportsReplayed ? SystemHandle::SetFlag([phasePtr, entryIndex]
+                                                 { phasePtr->entries[entryIndex].replayed = true; })
                          : SystemHandle::SetFlag{},
         [phasePtr, entryIndex](Core::Reflect::ComponentId id)
         { phasePtr->entries[entryIndex].requireAny.push_back(id); });
@@ -268,7 +268,7 @@ bool Replaying(const RenderContext &) { return false; }
 struct Skips
 {
     bool activeOnly = false; ///< The world is not the active one.
-    bool liveOnly = false;   ///< The step is a replay.
+    bool replaying = false;  ///< The step is a replay, which runs only replayed entries.
 };
 
 /// Whether @p entry runs this dispatch: not muted, not gated out by the world
@@ -285,7 +285,7 @@ bool ShouldRun(const Entry &entry, Skips skips, const ECS::Scene &gateScene)
     {
         return false;
     }
-    if ((skips.activeOnly && entry.activeOnly) || (skips.liveOnly && entry.liveOnly))
+    if ((skips.activeOnly && entry.activeOnly) || (skips.replaying && !entry.replayed))
     {
         return false;
     }
@@ -328,7 +328,7 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
     for (std::size_t i : phase.sorted)
     {
         const typename Phase<Ctx>::Entry &entry = phase.entries[i];
-        if (!ShouldRun(entry, Skips{.activeOnly = skipActiveOnly, .liveOnly = Replaying(ctx)}, gateScene))
+        if (!ShouldRun(entry, Skips{.activeOnly = skipActiveOnly, .replaying = Replaying(ctx)}, gateScene))
         {
             continue;
         }
@@ -369,13 +369,13 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,
 {
     const bool fixedStep = phase == SystemPhase::FixedUpdate || phase == SystemPhase::PostFixedUpdate;
     return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/ true,
-               /*supportsLiveOnly=*/ fixedStep);
+               /*supportsReplayed=*/ fixedStep);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false, /*supportsLiveOnly=*/ false);
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false, /*supportsReplayed=*/ false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)

@@ -15,7 +15,7 @@
 #include <vector>
 
 #include <Assisi/ECS/Entity.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Prelude.hpp>

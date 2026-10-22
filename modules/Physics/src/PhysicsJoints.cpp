@@ -14,6 +14,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/Float.hpp>
 
 #include <Jolt/Physics/Body/BodyLock.h>

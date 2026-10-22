@@ -177,10 +177,36 @@ private:
 class EventQueue
 {
 public:
-    /// @brief Append an event of type E to its queue.
+    /// @brief Discards every Push made while it lives.
+    ///
+    /// A client holds one while it steps again ticks it has already stepped:
+    /// whatever those ticks had to say was pushed when they ran live.
+    class DropScope
+    {
+public:
+        explicit DropScope(EventQueue &queue) : _queue(queue), _wasDropping(queue._dropping)
+        {
+            queue._dropping = true;
+        }
+        ~DropScope() { _queue._dropping = _wasDropping; }
+
+        DropScope(const DropScope &) = delete;
+        DropScope &operator=(const DropScope &) = delete;
+
+private:
+        EventQueue &_queue;
+        bool _wasDropping;
+    };
+
+    /// @brief Append an event of type E to its queue, unless a DropScope is
+    /// holding it.
     template <typename E>
     void Push(E event)
     {
+        if (_dropping)
+        {
+            return;
+        }
         TypedQueue<E> &queue = GetOrCreate<E>();
         queue.events.push_back(std::move(event));
 #ifndef NDEBUG
@@ -257,6 +283,7 @@ private:
     }
 
     std::unordered_map<std::type_index, std::unique_ptr<IQueue>> _queues;
+    bool _dropping = false; ///< A DropScope is alive.
 };
 
 } // namespace Assisi::Core

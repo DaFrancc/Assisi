@@ -17,7 +17,6 @@
 /// field like any other field.
 
 #include <cstdint>
-#include <format>
 #include <functional>
 #include <string>
 #include <typeindex>
@@ -151,16 +150,6 @@ template <> struct IsStrongId<Reflect::MessageId> : std::true_type
 };
 static_assert(StrongId<Reflect::MessageId>);
 } // namespace Assisi::Core
-
-/// Prints as the bare number, so a log line reads "message 7" without every
-/// call site spelling `.value`.
-template <> struct std::formatter<Assisi::Core::Reflect::MessageId> : std::formatter<std::uint32_t>
-{
-    auto format(Assisi::Core::Reflect::MessageId id, std::format_context &ctx) const
-    {
-        return std::formatter<std::uint32_t>::format(id.value, ctx);
-    }
-};
 
 template <> struct std::hash<Assisi::Core::Reflect::MessageId>
 {

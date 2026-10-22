@@ -72,7 +72,7 @@ target_link_libraries(Assisi-Core-Tests
     Assisi::TestAssetKinds
 )
 
-add_test(NAME Core COMMAND Assisi-Core-Tests)
+Assisi_add_doctest_tests(Assisi-Core-Tests NAME Core)
 
 set_target_properties(Assisi-Core-Tests PROPERTIES FOLDER "tests")
 
@@ -98,6 +98,6 @@ target_link_libraries(Assisi-Core-RegistryPreFinalize-Tests
     Assisi::TestSupport
 )
 
-add_test(NAME Core-RegistryPreFinalize COMMAND Assisi-Core-RegistryPreFinalize-Tests)
+Assisi_add_doctest_tests(Assisi-Core-RegistryPreFinalize-Tests NAME Core-RegistryPreFinalize)
 
 set_target_properties(Assisi-Core-RegistryPreFinalize-Tests PROPERTIES FOLDER "tests")

@@ -65,6 +65,6 @@ target_sources(Assisi-NetSync-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-NetSync-TestComponents-Generated>
 )
 
-add_test(NAME NetSync COMMAND Assisi-NetSync-Tests)
+Assisi_add_doctest_tests(Assisi-NetSync-Tests NAME NetSync)
 
 set_target_properties(Assisi-NetSync-Tests PROPERTIES FOLDER "tests")

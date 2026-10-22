@@ -5,6 +5,7 @@
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/StepWorld.hpp>
+#include <Assisi/Core/EventQueue.hpp>
 
 #include <optional>
 #include <utility>
@@ -98,6 +99,8 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
         return;
     }
 
+    // What the replayed ticks push was delivered when they ran live.
+    const Core::EventQueue::DropScope dropping(live.events);
     _players.BeginReplay(_world, replay->from);
     SystemContext replayed = live;
     replayed.replaying = true;

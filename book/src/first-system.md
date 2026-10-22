@@ -142,7 +142,6 @@ The `SystemContext` your system receives holds everything it can reach:
 | `ctx.world` | The world (level) this system is running in. `ctx.world.scene` holds its entities; `ctx.world.physics` is its physics. |
 | `ctx.dt` | Seconds since the last run. In `FixedUpdate` it's the fixed step (1/60 s by default). |
 | `ctx.simTick` | Which fixed step this is. Useful as a clock. In a network session it's the same number on every machine for the same step. |
-| `ctx.replaying` | `true` while a client steps a tick again that it has already stepped. See `liveOnly` below. |
 | `ctx.input` | The keyboard and mouse. **Can be `nullptr`**: see [Input](input.md). |
 | `ctx.actions` | Named input actions like "Jump". See [Input](input.md). |
 | `ctx.worldManager` | Manages every loaded world. Use `ctx.worldManager->RequestTravel("levels/Other.alvl")` to change level. |
@@ -203,12 +202,6 @@ void ShootSystem(Assisi::App::SystemContext &ctx);
 - **`activeWorldOnly`** only runs the system in the world that's being shown and
   played. Use it for anything that reads input or controls the camera or HUD.
   When several worlds are loaded, only one should react to the player's keys.
-- **`liveOnly`** skips the system when a step is run a second time. In a network
-  session a client may step a tick again to correct what it predicted, and
-  `FixedUpdate` and `PostFixedUpdate` systems run again with it. A system that
-  only reads and writes components is fine to run twice. Mark it `liveOnly` if
-  it does something that must happen once, such as adding or removing
-  components. Only allowed on `FixedUpdate` and `PostFixedUpdate` systems.
 
 ## Tips
 

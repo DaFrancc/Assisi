@@ -18,6 +18,6 @@ target_link_libraries(Assisi-Math-Tests
     Assisi::Math
 )
 
-add_test(NAME Math COMMAND Assisi-Math-Tests)
+Assisi_add_doctest_tests(Assisi-Math-Tests NAME Math)
 
 set_target_properties(Assisi-Math-Tests PROPERTIES FOLDER "tests")

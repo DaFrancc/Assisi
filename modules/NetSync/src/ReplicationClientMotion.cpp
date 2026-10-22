@@ -1,5 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>

@@ -34,6 +34,14 @@ Warnings are treated as errors, on purpose, so they get fixed rather than piling
 up. Fix the warning. A common one is ignoring the result of `scene.Add<T>(...)`:
 write `(void)scene.Add<T>(...)` if you don't need the pointer.
 
+**It builds on Linux, but on Windows, or in `./assisi build ship
+--steam-runtime`, a file says a standard name like `std::vector` or
+`std::format` doesn't exist.**
+The file uses something it never includes. Most Linux builds include the
+standard library, nlohmann/json, glm and doctest into every file ahead of time
+(a *precompiled header*), so a missing `#include <vector>` goes unnoticed there;
+MSVC builds and the Steam Runtime build don't. Add the include.
+
 **reflectgen stops the build with an error about my header.**
 reflectgen reads the `ASYSTEM`, `ACOMP` and `AFIELD` annotations, and its
 message says what's wrong. The usual causes:

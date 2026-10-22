@@ -1,4 +1,5 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>

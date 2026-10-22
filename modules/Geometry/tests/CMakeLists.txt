@@ -46,6 +46,6 @@ target_sources(Assisi-Geometry-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Geometry-Generated>
 )
 
-add_test(NAME Geometry COMMAND Assisi-Geometry-Tests)
+Assisi_add_doctest_tests(Assisi-Geometry-Tests NAME Geometry)
 
 set_target_properties(Assisi-Geometry-Tests PROPERTIES FOLDER "tests")

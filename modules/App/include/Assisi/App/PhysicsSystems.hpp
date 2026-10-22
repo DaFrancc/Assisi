@@ -28,6 +28,9 @@ struct SystemContext;
 /// character's own, so the render blend moves both across the same two steps:
 /// a crouch is smooth at any refresh rate, and a crouch in the air — feet up,
 /// eye height down by as much — never shows one without the other.
-ASYSTEM(PostFixedUpdate, name = "CharacterEye") void CharacterEyeSystem(SystemContext &ctx);
+///
+/// `replayed`: a camera stepped again with its character is put at the height
+/// each replayed step leaves.
+ASYSTEM(PostFixedUpdate, name = "CharacterEye", replayed) void CharacterEyeSystem(SystemContext &ctx);
 
 } // namespace Assisi::App

@@ -54,6 +54,6 @@ target_sources(Assisi-ECS-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
 )
 
-add_test(NAME ECS COMMAND Assisi-ECS-Tests)
+Assisi_add_doctest_tests(Assisi-ECS-Tests NAME ECS)
 
 set_target_properties(Assisi-ECS-Tests PROPERTIES FOLDER "tests")

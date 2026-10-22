@@ -2,6 +2,7 @@
 #include <Assisi/App/SceneCamera.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 

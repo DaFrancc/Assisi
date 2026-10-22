@@ -55,6 +55,6 @@ target_sources(Assisi-Physics-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Physics-Generated>
 )
 
-add_test(NAME Physics COMMAND Assisi-Physics-Tests)
+Assisi_add_doctest_tests(Assisi-Physics-Tests NAME Physics)
 
 set_target_properties(Assisi-Physics-Tests PROPERTIES FOLDER "tests")

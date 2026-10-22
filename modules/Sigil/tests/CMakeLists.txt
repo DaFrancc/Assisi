@@ -35,6 +35,6 @@ target_compile_definitions(Assisi-Sigil-Tests PRIVATE
   ASSISI_SGLC_EXAMPLES="${PROJECT_SOURCE_DIR}/apps/sglc/examples"
 )
 
-add_test(NAME Sigil COMMAND Assisi-Sigil-Tests)
+Assisi_add_doctest_tests(Assisi-Sigil-Tests NAME Sigil)
 
 set_target_properties(Assisi-Sigil-Tests PROPERTIES FOLDER "tests")

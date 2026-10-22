@@ -11,7 +11,7 @@
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -415,11 +415,16 @@ public:
     // step left it: its character's physics frame and its ACOMP(predicted)
     // components. The host's word about a tick arrives a round trip later and
     // is compared with that record, section by section. Within the tolerances
-    // the client's result stands and nothing moves. Beyond them every predicted
-    // entity is put back to that tick, the one the host disagreed with to the
-    // host's word and every other to its own record, and the caller steps them
-    // all again to the present: BeginRollback, then for each tick
-    // CommandAppliedAt, one replayed step and RecordHistory, then EndRollback.
+    // the client's result stands and nothing moves.
+    //
+    // A predicted component the host disagrees with takes the host's value at
+    // once. A physics frame or a Transform it disagrees with is stepped again,
+    // since a step moves and turns them from controls: every predicted entity's
+    // are put back to that tick, the one the host disagreed with to the host's
+    // word and every other to its own record, and the caller steps them all
+    // again to the present: BeginRollback, then for each tick CommandAppliedAt,
+    // one replayed step and RecordHistory, then EndRollback. A replayed step
+    // runs only the engine's own systems that steer a character.
 
     /// @brief What a step stepped again runs on: the command the host applied
     /// for its tick, or none when the host had none and held or released the
@@ -442,13 +447,15 @@ public:
     };
 
     /// @brief How often one section of a predicted entity was compared with the
-    /// host's word and how often that started a rollback, with the first field
-    /// that differed the last time it did, and both its values.
+    /// host's word and how often the host's word corrected it, with the first
+    /// field that differed the last time it did, and both its values. The
+    /// physics frame is corrected by a rollback, a component by taking the
+    /// host's value.
     struct PredictionCounts
     {
         std::string firstDifference;
         std::uint64_t compares = 0;
-        std::uint64_t rollbacks = 0;
+        std::uint64_t corrections = 0;
     };
 
     /// @brief The counts for one predicted entity: its physics frame, and each
@@ -463,8 +470,10 @@ public:
     /// stamped for left it. Call once per live fixed step, after the step.
     void RecordStep(const InputCommand &command);
 
-    /// @brief Remember every predicted entity as the replayed step of @p tick
-    /// left it, in place of what the live step left.
+    /// @brief Remember what the replayed step of @p tick stepped of every
+    /// predicted entity, its physics frame and its Transform, in place of what
+    /// the live step left. Its other predicted components stay as the live step
+    /// recorded them.
     void RecordHistory(std::uint64_t tick);
 
     /// @brief Puts every predicted entity back to the tick the host's word
@@ -591,18 +600,28 @@ private:
     /// Records every follower of @p tick: each kinematic body.
     void RecordFollowers(std::uint64_t tick);
 
-    /// Records @p tick for every predicted entity; RecordStep and RecordHistory
-    /// both come here.
-    void Record(std::uint64_t tick);
+    /// What Record takes of each predicted entity.
+    enum class RecordedPart : std::uint8_t
+    {
+        Everything, ///< A live step: the physics frame and every predicted component.
+        Stepped,    ///< A replayed step: the physics frame and the Transform, which it steps again.
+        Count_,
+    };
+
+    /// Records @p part of @p tick for every predicted entity; RecordStep and
+    /// RecordHistory both come here.
+    void Record(std::uint64_t tick, RecordedPart part);
 
     /// Compares every predicted entity the snapshot of @p serverTick spoke of
     /// with what this client recorded for that tick.
     void ComparePredicted(std::uint64_t serverTick);
 
     /// Compares @p confirmed, the host's word about @p entity at @p serverTick,
-    /// with what @p history recorded for that tick, counting into it, and
-    /// appends each section that disagrees to @p differing.
-    void CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+    /// with what @p history recorded for that tick, counting into it. Appends
+    /// each section a rollback corrects that disagrees to @p differing, and
+    /// writes the host's value over each other predicted component that does.
+    /// @return Whether it wrote any.
+    bool CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
                        PredictionHistory &history, std::vector<PredictionCounts *> &differing);
 
     /// What differs between a character's physics frame as the host had it and
@@ -613,13 +632,18 @@ private:
     /// host's word is older than anything this client kept.
     void HardSnap(NetId netId, ECS::Entity entity, const Confirmed &confirmed);
 
-    /// Puts @p entity back as @p record has it, with the host's word in
-    /// @p host taking the place of each section it carries for that tick.
+    /// Puts what a replay steps of @p entity, its Transform and its physics
+    /// frame, back as @p record has it, with the host's word in @p host taking
+    /// the place of each it carries for that tick.
     void Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host);
 
     /// Writes the host's copy of each predicted component in @p confirmed over
     /// @p entity's own, all but its Transform when @p skipTransform.
     void WriteHostComponents(ECS::Entity entity, const Confirmed &confirmed, bool skipTransform);
+
+    /// Writes the host's copy of the component @p componentId in @p confirmed
+    /// over @p entity's own, when it carries one.
+    void WriteHostComponent(ECS::Entity entity, const Confirmed &confirmed, Core::Reflect::ComponentId componentId);
 
     /// Puts @p entity's character in @p frame, but where, how fast, how
     /// standing and facing which way @p host says.

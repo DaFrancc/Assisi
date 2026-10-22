@@ -91,6 +91,24 @@ TEST_CASE("EventQueue: flush clears every queue")
     CHECK(queue.Read<Damage>()[0].amount == 9);
 }
 
+TEST_CASE("EventQueue: a push inside a DropScope is discarded, and one after it is kept")
+{
+    EventQueue queue;
+    queue.Push(Damage{1});
+    {
+        const EventQueue::DropScope dropping(queue);
+        queue.Push(Damage{2});
+        queue.Push(Healed{3});
+    }
+    queue.Push(Damage{4});
+
+    const EventSpan<Damage> damage = queue.Read<Damage>();
+    REQUIRE(damage.size() == 2);
+    CHECK(damage[0].amount == 1);
+    CHECK(damage[1].amount == 4);
+    CHECK(queue.Read<Healed>().empty());
+}
+
 // The read-view invalidation guard. With a throwing contract handler installed,
 // a fired ASSISI_ASSERT surfaces as a catchable ContractViolation. Debug-only —
 // the check compiles out in release.

@@ -48,6 +48,11 @@ The list only covers the most recent physics step, so read it from a
 **`PostFixedUpdate`** system (right after the step) or a **`FixedUpdate`** system
 (just before the next one). Anything slower can miss events.
 
+In multiplayer, when your machine steps your character through a few steps
+again to catch up with the host (see [Multiplayer basics](multiplayer.md)),
+those steps report no contacts: the list is empty while they run, and every
+contact is reported once, by the step that really made it.
+
 ## Checking which bodies are touching
 
 `IsTouching(a, b)` says whether two entities' bodies are touching, and

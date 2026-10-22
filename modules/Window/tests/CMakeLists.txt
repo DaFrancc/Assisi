@@ -25,6 +25,6 @@ target_sources(Assisi-Window-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Window-Generated>
 )
 
-add_test(NAME Window COMMAND Assisi-Window-Tests)
+Assisi_add_doctest_tests(Assisi-Window-Tests NAME Window)
 
 set_target_properties(Assisi-Window-Tests PROPERTIES FOLDER "tests")

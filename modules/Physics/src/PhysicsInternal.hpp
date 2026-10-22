@@ -17,7 +17,7 @@
 
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Geometry/CollisionData.hpp>
 #include <Assisi/Math/Float.hpp>

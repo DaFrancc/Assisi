@@ -69,7 +69,7 @@
 #include <string_view>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/EntityRef.hpp>

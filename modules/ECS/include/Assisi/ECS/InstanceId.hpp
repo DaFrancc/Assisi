@@ -9,7 +9,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <format>
 #include <functional>
 
 namespace Assisi::ECS
@@ -68,16 +67,6 @@ template <> struct IsStrongId<ECS::InstanceId> : std::true_type
 };
 static_assert(StrongId<ECS::InstanceId>);
 } // namespace Assisi::Core
-
-/// Prints as the bare number, so a log line reads "instance 7" rather than making
-/// every call site spell `.value`.
-template <> struct std::formatter<Assisi::ECS::InstanceId> : std::formatter<std::uint32_t>
-{
-    auto format(Assisi::ECS::InstanceId id, std::format_context &ctx) const
-    {
-        return std::formatter<std::uint32_t>::format(id.value, ctx);
-    }
-};
 
 template <> struct std::hash<Assisi::ECS::InstanceId>
 {

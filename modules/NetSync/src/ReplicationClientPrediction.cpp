@@ -1,5 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Assert.hpp>
@@ -55,16 +56,16 @@ void ReplicationClient::RecordStep(const InputCommand &command)
         _newestRecordedTick = 0;
     }
     _sentCommands[command.tick % kPredictionHistoryTicks] = command;
-    Record(command.tick);
+    Record(command.tick, RecordedPart::Everything);
 }
 
 void ReplicationClient::RecordHistory(std::uint64_t tick)
 {
     ASSISI_ASSERT(_rollingBack, "ReplicationClient::RecordHistory outside a rollback");
-    Record(tick);
+    Record(tick, RecordedPart::Stepped);
 }
 
-void ReplicationClient::Record(std::uint64_t tick)
+void ReplicationClient::Record(std::uint64_t tick, RecordedPart part)
 {
     _recordedTicks[tick % kPredictionHistoryTicks] = tick;
     _newestRecordedTick = std::max(_newestRecordedTick, tick);
@@ -77,19 +78,32 @@ void ReplicationClient::Record(std::uint64_t tick)
             continue;
         }
         PredictedRecord &record = _history[netId].records[tick % kPredictionHistoryTicks];
+        // A replay steps only the Transform and the physics frame. The rest of
+        // the record stays what the live step had, which is what the host's
+        // answers about the tick are compared with.
+        const bool whole = part == RecordedPart::Everything || record.tick != tick;
         record.tick = tick;
-        record.present = 0;
-        record.components.resize(_predictedBytes);
+        if (whole)
+        {
+            record.present = 0;
+            record.components.resize(_predictedBytes);
+        }
         for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
         {
             const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
+            if (!whole && meta.id != _transformComponentId)
+            {
+                continue;
+            }
+            const std::uint64_t bit = std::uint64_t{1} << i;
+            record.present &= ~bit;
             const void *live = meta.getByEntity(&_scene, entity.index, entity.generation);
             if (live == nullptr)
             {
                 continue;
             }
             std::memcpy(record.components.data() + _predictedOffsets[i], live, meta.size);
-            record.present |= std::uint64_t{1} << i;
+            record.present |= bit;
         }
         record.hasCharacter = _physics != nullptr && PredictsCharacter(netId, entity) && _physics->HasBody(entity);
         if (record.hasCharacter)
@@ -180,10 +194,13 @@ void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
         }
 
         differing.clear();
-        CompareRecord(entity, confirmed, serverTick, history, differing);
+        const bool componentsCorrected = CompareRecord(entity, confirmed, serverTick, history, differing);
         if (differing.empty())
         {
-            ++_corrections.predictionsKept;
+            if (!componentsCorrected)
+            {
+                ++_corrections.predictionsKept;
+            }
             continue;
         }
 
@@ -200,14 +217,14 @@ void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
         }
         for (PredictionCounts *section : differing)
         {
-            ++section->rollbacks;
+            ++section->corrections;
         }
         history.mispredictedAt = serverTick;
         history.cooldownUntil = _newestRecordedTick + SnapshotIntervalTicks();
     }
 }
 
-void ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
                                       PredictionHistory &history, std::vector<PredictionCounts *> &differing)
 {
     const PredictedRecord &record = history.records[serverTick % kPredictionHistoryTicks];
@@ -228,12 +245,13 @@ void ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
 
     if (confirmed.componentTick != serverTick)
     {
-        return;
+        return false;
     }
     // A character's Transform is its body's pose, which its physics frame
     // compares; the host sends that Transform only when the entity first
     // arrives, so the confirmed copy of it is that old.
     const bool character = _scene.Has<Physics::Character>(entity);
+    bool corrected = false;
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
     {
         const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
@@ -254,8 +272,22 @@ void ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
             continue;
         }
         section.firstDifference = meta.predictedDifference(mine, host->second.data());
-        differing.push_back(&section);
+        // A replay steps the Transform again, from controls whose turning
+        // adds up; every other component no replay steps takes the host's
+        // value now.
+        if (meta.id == _transformComponentId)
+        {
+            differing.push_back(&section);
+            continue;
+        }
+        if (void *live = meta.getMutable(&_scene, entity.index, entity.generation); live != nullptr)
+        {
+            std::memcpy(live, host->second.data(), meta.size);
+            ++section.corrections;
+            corrected = true;
+        }
     }
+    return corrected;
 }
 
 std::string ReplicationClient::PhysicsDifference(const BodyState &host, const PredictedRecord &record) const
@@ -334,22 +366,24 @@ void ReplicationClient::HardSnap(NetId netId, ECS::Entity entity, const Confirme
 
 void ReplicationClient::Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host)
 {
+    // Only what a replay steps again goes back: the Transform here and the
+    // physics frame below. Every other predicted component stays as it is.
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
     {
-        if ((record.present & (std::uint64_t{1} << i)) == 0)
+        const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
+        if (meta.id != _transformComponentId || (record.present & (std::uint64_t{1} << i)) == 0)
         {
             continue;
         }
-        const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
         void *live = meta.getMutable(&_scene, entity.index, entity.generation);
         if (live != nullptr)
         {
             std::memcpy(live, record.components.data() + _predictedOffsets[i], meta.size);
         }
     }
-    if (host != nullptr && host->componentTick == record.tick)
+    if (host != nullptr && host->componentTick == record.tick && !_scene.Has<Physics::Character>(entity))
     {
-        WriteHostComponents(entity, *host, _scene.Has<Physics::Character>(entity));
+        WriteHostComponent(entity, *host, _transformComponentId);
     }
 
     if (!record.hasCharacter)
@@ -368,19 +402,29 @@ void ReplicationClient::Restore(ECS::Entity entity, const PredictedRecord &recor
 
 void ReplicationClient::WriteHostComponents(ECS::Entity entity, const Confirmed &confirmed, bool skipTransform)
 {
-    const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
     for (const auto &[componentId, bytes] : confirmed.components)
     {
+        (void)bytes;
         if (skipTransform && componentId == _transformComponentId)
         {
             continue;
         }
-        const Core::Reflect::ComponentMeta *meta = registry.ById(componentId);
-        void *live = meta != nullptr ? meta->getMutable(&_scene, entity.index, entity.generation) : nullptr;
-        if (live != nullptr && bytes.size() == meta->size)
-        {
-            std::memcpy(live, bytes.data(), meta->size);
-        }
+        WriteHostComponent(entity, confirmed, componentId);
+    }
+}
+
+void ReplicationClient::WriteHostComponent(ECS::Entity entity, const Confirmed &confirmed,
+                                           Core::Reflect::ComponentId componentId)
+{
+    const Confirmed::Components::const_iterator bytes = confirmed.components.find(componentId);
+    const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(componentId);
+    if (bytes == confirmed.components.end() || meta == nullptr || bytes->second.size() != meta->size)
+    {
+        return;
+    }
+    if (void *live = meta->getMutable(&_scene, entity.index, entity.generation); live != nullptr)
+    {
+        std::memcpy(live, bytes->second.data(), meta->size);
     }
 }
 

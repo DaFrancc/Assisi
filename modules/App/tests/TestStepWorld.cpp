@@ -7,9 +7,11 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 
 #include <Assisi/App/MotionSystems.hpp>
 #include <Assisi/App/StepWorld.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -65,8 +67,45 @@ constexpr std::uint64_t kReplayedSteps = 10;
 constexpr glm::vec3 kMoverOrigin{0.f, 3.f, 10.f};
 constexpr float kMoverAmplitude = 2.f;
 
-/// A system of the game reading a character the replay does not step: by
-/// handle, and by a query that names the frozen.
+/// Where a walker starts above the floor, so its landing is a contact Enter.
+constexpr glm::vec3 kDropFrom{0.f, 1.f, 0.f};
+
+/// Steps a walker is given to land, more than its fall from kDropFrom takes.
+constexpr std::int32_t kLandSteps = 120;
+
+/// Where a walker is lifted to, well clear of the floor.
+constexpr glm::vec3 kLiftedTo{0.f, 20.f, 0.f};
+
+/// Whether the most recent physics step reported @p phase for @p entity.
+bool Reported(const App::World &world, ECS::Entity entity, Physics::ContactPhase phase)
+{
+    for (const Physics::ContactEvent &event : world.physics.ContactEvents())
+    {
+        if (event.entity == entity && event.phase == phase)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Steps @p world live until @p walker reports landing on something, at most
+/// kLandSteps times. Returns whether it did.
+bool StepUntilLanded(App::World &world, Core::EventQueue &events, ECS::Entity walker)
+{
+    for (std::int32_t i = 0; i < kLandSteps; ++i)
+    {
+        App::StepWorld(ContextFor(world, events, /*replaying=*/ false));
+        if (Reported(world, walker, Physics::ContactPhase::Enter))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// A replayed system reading a character the replay does not step: by handle,
+/// and by a query that names the frozen.
 struct RemoteWatch
 {
     ECS::Entity remote{ECS::NullEntity};
@@ -87,27 +126,43 @@ struct RemoteWatch
 
 } // namespace
 
-TEST_CASE("A tick stepped live and then replayed runs a liveOnly system once and the rest twice")
+TEST_CASE("A tick stepped live and then replayed runs a game's systems once and a Replayed one twice")
 {
     App::World world{Physics::NoCollisionAssets()};
     Core::EventQueue events;
 
-    std::int32_t every = 0;
-    std::int32_t liveOnly = 0;
-    std::int32_t afterStep = 0;
-    world.systems.Register(App::SystemPhase::FixedUpdate, "Every", [&every](App::SystemContext &) { ++every; });
-    world.systems.Register(App::SystemPhase::FixedUpdate, "LiveOnly", [&liveOnly](App::SystemContext &)
-                           { ++liveOnly; })
-    .LiveOnly();
-    world.systems.Register(App::SystemPhase::PostFixedUpdate, "AfterStep", [&afterStep](App::SystemContext &)
-                           { ++afterStep; });
+    std::int32_t before = 0;
+    std::int32_t after = 0;
+    std::int32_t replayed = 0;
+    world.systems.Register(App::SystemPhase::FixedUpdate, "Before", [&before](App::SystemContext &) { ++before; });
+    world.systems.Register(App::SystemPhase::PostFixedUpdate, "After", [&after](App::SystemContext &) { ++after; });
+    world.systems.Register(App::SystemPhase::FixedUpdate, "Replayed", [&replayed](App::SystemContext &)
+                           { ++replayed; })
+    .Replayed();
 
     App::StepWorld(ContextFor(world, events, /*replaying=*/ false));
     App::StepWorld(ContextFor(world, events, /*replaying=*/ true));
 
-    CHECK(every == 2);
-    CHECK(afterStep == 2);
-    CHECK(liveOnly == 1);
+    CHECK(before == 1);
+    CHECK(after == 1);
+    CHECK(replayed == 2);
+}
+
+TEST_CASE("The engine's command and eye systems step again in a replay, and the rest of its systems do not")
+{
+    const App::SystemCatalog &catalog = App::SystemCatalog::Instance();
+    for (const std::string_view name : {"CharacterCommand", "CharacterEye"})
+    {
+        const App::SystemDefinition *definition = catalog.Find(name);
+        REQUIRE(definition != nullptr);
+        CHECK(definition->replayed);
+    }
+    for (const std::string_view name : {"LocalPlayer", "Oscillate", "TimeOfDay"})
+    {
+        const App::SystemDefinition *definition = catalog.Find(name);
+        REQUIRE(definition != nullptr);
+        CHECK_FALSE(definition->replayed);
+    }
 }
 
 TEST_CASE("A replayed step moves only the characters it is given")
@@ -159,7 +214,8 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
 
     RemoteWatch watch{.remote = remote};
     world.systems.Register(App::SystemPhase::FixedUpdate, "Watch",
-                           [&watch](App::SystemContext &ctx) { watch.Step(ctx); });
+                           [&watch](App::SystemContext &ctx) { watch.Step(ctx); })
+    .Replayed();
 
     for (std::int32_t i = 0; i < kSettleSteps; ++i)
     {
@@ -189,4 +245,38 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
     CHECK(world.scene.Get<ECS::Transform>(mover)->position == moverBefore);
     CHECK(watch.remoteSeen == static_cast<std::int32_t>(kReplayedSteps));
     CHECK(watch.charactersSeen == static_cast<std::int32_t>(2u * kReplayedSteps));
+}
+
+TEST_CASE("A replayed step reports no contacts, not the live step's again")
+{
+    App::World world{Physics::NoCollisionAssets()};
+    Core::EventQueue events;
+    AddFloor(world);
+    const ECS::Entity walker = AddWalker(world, kDropFrom);
+    REQUIRE(StepUntilLanded(world, events, walker));
+
+    const std::array<ECS::Entity, 1> replayed{walker};
+    App::StepWorld(ContextFor(world, events, /*replaying=*/ true), replayed);
+
+    CHECK(world.physics.ContactEvents().empty());
+}
+
+TEST_CASE("What a replayed step's sweep touched is not taken for the next live step's")
+{
+    App::World world{Physics::NoCollisionAssets()};
+    Core::EventQueue events;
+    AddFloor(world);
+    const ECS::Entity walker = AddWalker(world, kDropFrom);
+    REQUIRE(StepUntilLanded(world, events, walker));
+
+    // Standing on the floor, so the replayed sweep touches it.
+    const std::array<ECS::Entity, 1> replayed{walker};
+    App::StepWorld(ContextFor(world, events, /*replaying=*/ true), replayed);
+
+    // Clear of the floor for the live step: nothing it sweeps touches the floor,
+    // so the pair ends there.
+    world.physics.Teleport(walker, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), kLiftedTo});
+    App::StepWorld(ContextFor(world, events, /*replaying=*/ false));
+
+    CHECK(Reported(world, walker, Physics::ContactPhase::Exit));
 }
