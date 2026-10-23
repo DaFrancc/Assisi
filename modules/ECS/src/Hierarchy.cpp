@@ -23,7 +23,15 @@ namespace
 {
 
 /// translate(position) * rotate(rotation) * scale(scale), written out directly
-/// rather than as three matrix products.
+/// rather than as three matrix products. Never inlined: with fast math each
+/// inlined copy may round differently, and a compiler can copy one call into
+/// both arms of a branch before it, so an entity at rest would be drawn a
+/// rounding away from where the frame before drew it.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+[[gnu::noinline]]
+#endif
 glm::mat4 ComposeMatrix(const glm::quat &rotation, const glm::vec3 &position, const glm::vec3 &scale)
 {
     const float x = rotation.x;
@@ -231,9 +239,6 @@ struct Propagation
         {
             BlendPose(lanes._current[mark.entry], transform, position, scale, rotation);
         }
-        // One call whether or not the step moved it. With fast math the compiler
-        // may contract each inlined copy differently, so two copies would draw an
-        // entity at rest a rounding away from where the frame before drew it.
         return ComposeMatrix(rotation, position, scale);
     }
 
