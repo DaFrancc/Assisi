@@ -266,7 +266,7 @@ void NodeTree::SetNavOverride(NodeId id, NavDirection direction, NodeId target)
     }
 }
 
-void NodeTree::SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push)
+void NodeTree::SetOnActivate(NodeId id, std::function<void(const Core::EventRoute &)> push)
 {
     if (Node *node = GetMutable(id))
     {
@@ -274,7 +274,7 @@ void NodeTree::SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> 
     }
 }
 
-void NodeTree::SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push)
+void NodeTree::SetOnChange(NodeId id, std::function<void(const Core::EventRoute &, const Node &)> push)
 {
     if (Node *node = GetMutable(id))
     {
@@ -282,7 +282,7 @@ void NodeTree::SetOnChange(NodeId id, std::function<void(Core::EventQueue &, con
     }
 }
 
-void NodeTree::SetOnSubmit(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push)
+void NodeTree::SetOnSubmit(NodeId id, std::function<void(const Core::EventRoute &, const Node &)> push)
 {
     if (Node *node = GetMutable(id))
     {

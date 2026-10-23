@@ -32,9 +32,9 @@ constexpr float kStep = 1.f / 60.f;
 
 /// One whole fixed tick, in the order the hosts run it: the step, then the
 /// post-step systems, which read the CharacterState the step left.
-void Tick(World &world, Assisi::Core::EventQueue &events)
+void Tick(World &world, Assisi::Core::EventQueue &universal)
 {
-    SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, nullptr, events, true, nullptr};
+    SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, nullptr, universal, true, nullptr};
     const Assisi::ECS::FixedStepScope step(world.scene);
 
     world.physics.Update(kStep);
@@ -85,7 +85,7 @@ TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk sp
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -98,11 +98,11 @@ TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk sp
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     Ask(world, entity, {1.f, 0.f, 0.f}, /*jump=*/ false);
-    Tick(world, events);
+    Tick(world, universal);
 
     const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
@@ -116,7 +116,7 @@ TEST_CASE("Crouching applies the Character's speed scale")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -129,12 +129,12 @@ TEST_CASE("Crouching applies the Character's speed scale")
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     // Nothing overhead, so the crouch is granted and the scale applies.
     Ask(world, entity, {1.f, 0.f, 0.f}, /*jump=*/ false, Assisi::Physics::Stance::Crouching);
-    Tick(world, events);
+    Tick(world, universal);
 
     const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
@@ -148,7 +148,7 @@ TEST_CASE("A jump request is consumed once, not held")
     // reads as the character sticking to the ceiling.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -158,11 +158,11 @@ TEST_CASE("A jump request is consumed once, not held")
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ true);
-    Tick(world, events);
+    Tick(world, universal);
 
     CHECK_FALSE(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->jump);
     CHECK(world.scene.Get<Assisi::Physics::CharacterState>(entity)->velocity.y > 1.f);
@@ -172,7 +172,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -189,7 +189,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.eyeHeight));
     uint64_t tick = Assisi::ECS::PropagateTransforms(world.scene, 0);
@@ -197,7 +197,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     // One step into a crouch, a frame drawn half way between the two steps
     // sees the eye half way between them: it moves every frame, not every step.
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
-    Tick(world, events);
+    Tick(world, universal);
     const float afterOneStep = world.scene.Get<Assisi::Physics::CharacterState>(entity)->eyeHeight;
     REQUIRE(afterOneStep < descriptor.eyeHeight);
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(afterOneStep));
@@ -211,7 +211,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false, Assisi::Physics::Stance::Crouching);
-        Tick(world, events);
+        Tick(world, universal);
     }
     CHECK(world.scene.Get<Assisi::ECS::Transform>(eye)->position.y == doctest::Approx(descriptor.crouchEyeHeight));
 }
@@ -223,7 +223,7 @@ TEST_CASE("The step takes a character's facing from its Transform")
     // With the facing left at its default it would be slowed instead.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -242,18 +242,18 @@ TEST_CASE("The step takes a character's facing from its Transform")
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     // Backwards along -z at 10 m/s, two and a half times the walk speed.
     for (int32_t i = 0; i < 30; ++i)
     {
         Ask(world, entity, {0.f, 0.f, -2.5f}, /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     Ask(world, entity, glm::vec3(0.f), /*jump=*/ true);
-    Tick(world, events);
+    Tick(world, universal);
 
     const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);
@@ -265,7 +265,7 @@ TEST_CASE("The step publishes the CharacterState a later system reads")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
 
     (void)SpawnFloor(world);
 
@@ -278,7 +278,7 @@ TEST_CASE("The step publishes the CharacterState a later system reads")
     for (int32_t i = 0; i < 60; ++i)
     {
         Ask(world, entity, glm::vec3(0.f), /*jump=*/ false);
-        Tick(world, events);
+        Tick(world, universal);
     }
 
     CHECK(character->ground == Assisi::Physics::GroundState::OnGround);

@@ -669,11 +669,11 @@ namespace
 {
 // Runs one Update tick against a world's own registry, the way the frame loop
 // will. No window, so no input devices — see SystemContext's pointer fields.
-void TickUpdate(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld = true)
+void TickUpdate(World &world, Assisi::Core::EventQueue &universal, bool isActiveWorld = true)
 {
     world.systems.Run(SystemPhase::Update,
                       SystemContext{world, 0.016f, /*simTick=*/ 0,
-                                    /*input=*/ nullptr, /*actions=*/ nullptr, events, isActiveWorld});
+                                    /*input=*/ nullptr, /*actions=*/ nullptr, universal, isActiveWorld});
 }
 
 std::uint32_t Runs(const World &world, const char *system)
@@ -684,7 +684,7 @@ std::uint32_t Runs(const World &world, const char *system)
 
 TEST_CASE("A level's system list decides which systems its world runs")
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -694,8 +694,8 @@ TEST_CASE("A level's system list decides which systems its world runs")
     REQUIRE(worlds.ApplySystems(named, std::vector<std::string>{"Counter"}, "(test)"));
     REQUIRE(worlds.ApplySystems(unnamed, {}, "(test)"));
 
-    TickUpdate(named, events);
-    TickUpdate(unnamed, events);
+    TickUpdate(named, universal);
+    TickUpdate(unnamed, universal);
 
     CHECK(Runs(named, "Counter") == 1);
     CHECK(Runs(unnamed, "Counter") == 0);
@@ -707,7 +707,7 @@ TEST_CASE("Two worlds naming one system hold independent state")
     // The reason the registry is per world: a system's cross-frame state lives in
     // its registered lambda's captures, so one shared instance running over two
     // worlds would advance that state twice per frame.
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -718,9 +718,9 @@ TEST_CASE("Two worlds naming one system hold independent state")
     REQUIRE(worlds.ApplySystems(first, names, "(test)"));
     REQUIRE(worlds.ApplySystems(second, names, "(test)"));
 
-    TickUpdate(first, events);
-    TickUpdate(first, events);
-    TickUpdate(second, events);
+    TickUpdate(first, universal);
+    TickUpdate(first, universal);
+    TickUpdate(second, universal);
 
     CHECK(Runs(first, "Counter") == 2);
     CHECK(Runs(second, "Counter") == 1);
@@ -728,7 +728,7 @@ TEST_CASE("Two worlds naming one system hold independent state")
 
 TEST_CASE("A name this build does not declare fails the load instead of running short")
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -737,20 +737,20 @@ TEST_CASE("A name this build does not declare fails the load instead of running 
     // Nothing is installed, not even the names that *were* valid: a half-installed
     // world runs and looks nearly right, which is worse than a refused load.
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Nonexistent"}, "(test)"));
-    TickUpdate(world, events);
+    TickUpdate(world, universal);
     CHECK(Runs(world, "Counter") == 0);
 }
 
 TEST_CASE("The list is a union: naming a system twice installs it once")
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Doubled");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Counter"}, "(test)"));
-    TickUpdate(world, events);
+    TickUpdate(world, universal);
 
     // Once per tick. It matters beyond tidiness: re-registering a name corrupts
     // the ordering graph, because After()/Before() bind to the first entry.
@@ -759,7 +759,7 @@ TEST_CASE("The list is a union: naming a system twice installs it once")
 
 TEST_CASE("File order carries no meaning; after/before decides run order")
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -770,7 +770,7 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Follower", "Counter"}, "(test)"));
 
     std::vector<std::string> order;
-    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, 0, nullptr, nullptr, events, true});
+    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, 0, nullptr, nullptr, universal, true});
     CHECK(Runs(world, "Counter") == 1);
     CHECK(Runs(world, "Follower") == 1);
 }
@@ -795,18 +795,18 @@ TEST_CASE("A render system's after/before survives the install")
 
 TEST_CASE("Re-applying a list replaces the previous systems rather than stacking them")
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Reused");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "(test)"));
-    TickUpdate(world, events);
+    TickUpdate(world, universal);
     CHECK(Runs(world, "Counter") == 1);
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Follower"}, "(test)"));
-    TickUpdate(world, events);
+    TickUpdate(world, universal);
     CHECK(Runs(world, "Counter") == 1); // not run again — it is gone
     CHECK(Runs(world, "Follower") == 1);
     CHECK(world.systemNames == std::vector<std::string>{"Follower"});
@@ -845,7 +845,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     // systems. ApplySystems clears the registry and installs the new level's list,
     // so a surviving queue entry installs the old blueprint's system into a level
     // that never named it — a frame later, where nothing connects it to the load.
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -861,7 +861,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     DrainSystemInstalls(StartContext(world));
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
-    TickUpdate(world, events);
+    TickUpdate(world, universal);
     CHECK(Runs(world, "Follower") == 0);
 }
 
@@ -909,8 +909,8 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     CHECK(world.pendingSystems.names.empty());
     DrainSystemInstalls(StartContext(world));
 
-    Assisi::Core::EventQueue events;
-    TickUpdate(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    TickUpdate(world, universal);
     CHECK(Runs(world, "Counter") == 1);
     CHECK(Runs(world, "Follower") == 1);
 }
@@ -955,7 +955,7 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
     // The shape of the frame loop's per-world dispatch (P3), without an editor:
     // iterate the resident worlds, skip the ones that are not Active+simulate,
     // and mark the active one so ActiveWorldOnly systems can opt out of the rest.
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     Assisi::App::Test::RunCounts::Instance().Reset();
@@ -982,7 +982,7 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
     {
         if (world.state != WorldState::Active || !world.simulate)
             return;
-        TickUpdate(world, events, /*isActiveWorld=*/ &world == worlds.Active());
+        TickUpdate(world, universal, /*isActiveWorld=*/ &world == worlds.Active());
     });
 
     // Both simulated worlds ran the shared system...
@@ -1002,7 +1002,7 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     // Pause. Gating game phases on the per-world flag alone would leave it
     // ticking logic while the editor reads Paused. The host's play state is a
     // second, independent gate (EditorApp::OnFixedUpdate/OnUpdate).
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     Assisi::App::Test::RunCounts::Instance().Reset();
@@ -1031,7 +1031,7 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
         {
             if (world.state != WorldState::Active || !world.simulate)
                 return;
-            TickUpdate(world, events, /*isActiveWorld=*/ &world == worlds.Active());
+            TickUpdate(world, universal, /*isActiveWorld=*/ &world == worlds.Active());
         });
                           };
 
@@ -1124,7 +1124,7 @@ TEST_CASE("A background load's systems are installed when it is promoted")
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "A.alvl", header));
     }
 
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     Assisi::App::Test::RunCounts::Instance().Reset();
 
@@ -1138,13 +1138,13 @@ TEST_CASE("A background load's systems are installed when it is promoted")
     // while the world is still Loading: installing is main-thread work, and the
     // frame loop skips such worlds anyway. Ticking it proves the registry is empty.
     CHECK(loading->state == WorldState::Loading);
-    TickUpdate(*loading, events);
+    TickUpdate(*loading, universal);
     CHECK(Runs(*loading, "Counter") == 0);
 
     World *const promoted = worlds.PromotePendingLoad();
     REQUIRE(promoted != nullptr);
     CHECK(promoted->systemNames == std::vector<std::string>{"Counter"});
-    TickUpdate(*promoted, events);
+    TickUpdate(*promoted, universal);
     CHECK(Runs(*promoted, "Counter") == 1);
 
     std::filesystem::remove_all(root);

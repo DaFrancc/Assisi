@@ -56,10 +56,19 @@ World *WorldManager::ProcessTravelRequest()
     return LoadLevel(path);
 }
 
+Core::EventQueue &WorldEvents(World &world)
+{
+    return world.events;
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {
     ASSISI_ASSERT(screen != nullptr, "a world was given a screen that is not there");
+    // Its controls push into the queue it was built with, which only this
+    // world's systems read.
+    ASSISI_ASSERT(&screen->Events() == &world.events,
+                  "a world was given a screen built to push into another world's events");
 
     // Named in the install error if one of them is undeclared: the screen that
     // asked is what a programmer has to go and fix.
@@ -87,7 +96,7 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.events, vpath, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
         Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
@@ -210,7 +219,7 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
     // opening a level to edit replaces the scene in the world it already has and
     // never comes through here, so level-start logic cannot run over a scene
     // somebody is composing.
-    if (_services.events != nullptr)
+    if (_services.universalEvents != nullptr)
     {
         // dt and the tick are zero because no frame has run yet; everything else
         // is what any other phase would get.
@@ -219,7 +228,7 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
                     .simTick = 0,
                     .input = _services.input,
                     .actions = _services.actions,
-                    .events = *_services.events,
+                    .universalEvents = *_services.universalEvents,
                     .isActiveWorld = true,
                     .worldManager = this,
                     .ui = _services.ui,

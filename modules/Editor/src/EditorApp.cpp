@@ -306,7 +306,7 @@ void EditorApp::OnStart()
     _worlds.SetServices({.cache = &_assetCache,
                          .renderer = &_sceneRenderer,
                          .jobs = &Jobs(),
-                         .events = &GetEvents(),
+                         .universalEvents = &GetUniversalEvents(),
                          .input = &GetInput(),
                          .actions = &GetActions(),
                          .ui = GetUi(),
@@ -1403,7 +1403,7 @@ Assisi::App::SystemContext EditorApp::WorldContext(Assisi::App::World &world, fl
             .simTick = simTick,
             .input = &GetInput(),
             .actions = &GetActions(),
-            .events = GetEvents(),
+            .universalEvents = GetUniversalEvents(),
             .isActiveWorld = &world == _worlds.Active(),
             .worldManager = &_worlds,
             .ui = GetUi(),
@@ -1433,17 +1433,21 @@ void EditorApp::InstallQueuedSystems()
 
 void EditorApp::FlushDeferred()
 {
-    // Apply the entities Scene::Destroy() queued this frame. Runs after
+    // Every world's events end with the frame, as the universal ones just did.
+    // Then apply the entities Scene::Destroy() queued this frame. Runs after
     // RenderFrame, so a destroyed entity lives out its final frame before its pools
     // are touched — which is what keeps structural changes out of any mid-frame
     // Query. Every resident world, or a background world's destroys pile up until
-    // it is next shown and then land all at once. A world still Loading is skipped:
-    // its scene belongs to a worker until promotion.
+    // it is next shown and then land all at once. A world still Loading keeps its
+    // scene: it belongs to a worker until promotion.
     _worlds.ForEach(
         [](Assisi::App::World &world)
         {
+            world.events.Flush();
             if (world.state != Assisi::App::WorldState::Loading)
+            {
                 world.scene.FlushDestroyed();
+            }
         });
 }
 

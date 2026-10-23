@@ -389,9 +389,10 @@ void ServerApp::ReportStatus()
 
 void ServerApp::FlushDeferred()
 {
-    // End of frame: apply entities queued by Scene::Destroy() this tick. The
-    // windowed path does this too — deferred destruction is a scene invariant,
-    // not a rendering one.
+    // End of frame: the tick's events are over, and the entities queued by
+    // Scene::Destroy() this tick are applied. The windowed path does this too —
+    // deferred destruction is a scene invariant, not a rendering one.
+    _world.events.Flush();
     _world.scene.FlushDestroyed();
 }
 
@@ -418,7 +419,7 @@ Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
             .simTick       = tick,
             .input         = nullptr,
             .actions       = nullptr,
-            .events        = GetEvents(),
+            .universalEvents = GetUniversalEvents(),
             .isActiveWorld = true,
             .worldManager  = nullptr,
             .ui            = nullptr,

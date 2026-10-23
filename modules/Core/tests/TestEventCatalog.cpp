@@ -28,8 +28,10 @@ struct QuitRequested
 EventCatalog TwoEvents()
 {
     EventCatalog catalog;
-    catalog.Register({.name = "Game::ResumeClicked", .push = [](EventQueue &events) { events.Push(ResumeClicked{}); }});
-    catalog.Register({.name = "Game::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
+    catalog.Register(
+        {.name = "Game::ResumeClicked", .push = [](const EventRoute &events) { events.Push(ResumeClicked{}); }});
+    catalog.Register(
+        {.name = "Game::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
     return catalog;
 }
 
@@ -39,10 +41,11 @@ TEST_CASE("EventCatalog: a found entry pushes its own type")
 {
     const EventCatalog catalog = TwoEvents();
     EventQueue events;
+    EventQueue universal{EventScope::Universal};
 
     const EventDefinition *const entry = catalog.Find("Game::ResumeClicked");
     REQUIRE(entry != nullptr);
-    entry->push(events);
+    entry->push(EventRoute{events, universal});
 
     // The name resolved to one type and not the other, which is the whole claim:
     // a string became a typed push nothing along the way had to know about.
@@ -64,13 +67,18 @@ TEST_CASE("EventCatalog: a name nothing declared is not found")
 TEST_CASE("EventCatalog: the first registration of a name wins")
 {
     EventCatalog catalog;
-    catalog.Register(
-        {.name = "Game::ResumeClicked", .push = [](EventQueue &events) { events.Push(ResumeClicked{.marker = 1}); }});
-    catalog.Register(
-        {.name = "Game::ResumeClicked", .push = [](EventQueue &events) { events.Push(ResumeClicked{.marker = 2}); }});
+    catalog.Register({
+        .name = "Game::ResumeClicked",
+        .push = [](const EventRoute &events) { events.Push(ResumeClicked{.marker = 1}); },
+    });
+    catalog.Register({
+        .name = "Game::ResumeClicked",
+        .push = [](const EventRoute &events) { events.Push(ResumeClicked{.marker = 2}); },
+    });
 
     EventQueue events;
-    catalog.Find("Game::ResumeClicked")->push(events);
+    EventQueue universal{EventScope::Universal};
+    catalog.Find("Game::ResumeClicked")->push(EventRoute{events, universal});
 
     // Which one wins would otherwise be link order. It is refused rather than
     // replaced so that a duplicate cannot change what an existing file pushes.

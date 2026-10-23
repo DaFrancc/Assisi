@@ -45,13 +45,13 @@ Assisi::ECS::Entity SpawnOscillator(World &world, const Assisi::Runtime::Oscilla
 /// Runs the system for @p ticks fixed steps and returns the final position.
 glm::vec3 RunTo(World &world, Assisi::ECS::Entity entity, std::uint64_t ticks)
 {
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::Window::ActionMap actions;
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     for (std::uint64_t tick = 0; tick < ticks; ++tick)
     {
-        SystemContext ctx{world, kStep, tick, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, tick, nullptr, &actions, universal, true, &worlds};
         OscillateSystem(ctx);
     }
     const Assisi::ECS::Transform *transform = world.scene.Get<Assisi::ECS::Transform>(entity);
@@ -94,10 +94,10 @@ TEST_CASE("OscillateSystem: the pose at a tick does not depend on how it got the
     World &jumped                    = jumpedWorlds.Create("Jumped");
     const Assisi::ECS::Entity b = SpawnOscillator(jumped, spec);
 
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::Window::ActionMap actions;
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
-    SystemContext ctx{jumped, kStep, kTick, nullptr, &actions, events, true, &worlds};
+    SystemContext ctx{jumped, kStep, kTick, nullptr, &actions, universal, true, &worlds};
     OscillateSystem(ctx);
     const Assisi::ECS::Transform *transform = jumped.scene.Get<Assisi::ECS::Transform>(b);
     REQUIRE(transform != nullptr);
@@ -121,7 +121,7 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
                                                                .periodSeconds = 2.f,
                                                                .phase         = 0.f});
 
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::Window::ActionMap actions;
     WorldManager contextWorlds{Assisi::Physics::NoCollisionAssets()};
 
@@ -131,7 +131,7 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
     // drift would be plainly visible against a 3 m amplitude.
     for (std::uint64_t tick = 0; tick < 36000; ++tick)
     {
-        SystemContext ctx{world, kStep, tick, nullptr, &actions, events, true, &contextWorlds};
+        SystemContext ctx{world, kStep, tick, nullptr, &actions, universal, true, &contextWorlds};
         OscillateSystem(ctx);
 
         const Assisi::ECS::Transform *transform = world.scene.Get<Assisi::ECS::Transform>(entity);
@@ -182,10 +182,10 @@ TEST_CASE("OscillateSystem: phase separates movers that share a period")
     const Assisi::ECS::Entity first  = SpawnOscillator(world, base);
     const Assisi::ECS::Entity second = SpawnOscillator(world, offset);
 
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::Window::ActionMap actions;
     WorldManager contextWorlds{Assisi::Physics::NoCollisionAssets()};
-    SystemContext ctx{world, kStep, /*simTick=*/ 30, nullptr, &actions, events, true, &contextWorlds};
+    SystemContext ctx{world, kStep, /*simTick=*/ 30, nullptr, &actions, universal, true, &contextWorlds};
     OscillateSystem(ctx);
 
     const float a = world.scene.Get<Assisi::ECS::Transform>(first)->position.x;
@@ -203,7 +203,7 @@ TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fra
     // same way it smooths a body, so it does not stutter above the step rate.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Blend");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Assisi::Window::ActionMap actions;
 
     const Assisi::Runtime::Oscillator spec{.origin = {0.f, 0.f, 0.f},
@@ -220,7 +220,7 @@ TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fra
         before = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;
         propagationTick = Assisi::ECS::PropagateTransforms(world.scene, propagationTick);
         const Assisi::ECS::FixedStepScope step(world.scene);
-        SystemContext ctx{world, kStep, tick, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, tick, nullptr, &actions, universal, true, &worlds};
         OscillateSystem(ctx);
     }
     const float after = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;

@@ -67,7 +67,7 @@ struct Machine
 
     App::World world{Physics::NoCollisionAssets()};
     App::NetworkedPlay play{world};
-    Core::EventQueue events;
+    Core::EventQueue universal{Core::EventScope::Universal};
     App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
     /// The tick each step was, in order: the session's, not the local count.
     std::vector<std::uint64_t> stepTicks;

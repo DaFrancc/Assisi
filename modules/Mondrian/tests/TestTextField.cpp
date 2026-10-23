@@ -56,8 +56,9 @@ struct Field
     Assisi::Mondrian::Font font = FixtureFont();
     std::string clipboard;
     Assisi::Core::EventQueue events;
-    /// After the queue, so the queue outlives it.
-    Ui ui{events};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    /// After the queues, so they outlive it.
+    Ui ui{universal};
     /// After the Ui, so it is destroyed first: a screen may not outlive the UI
     /// it registered with.
     std::unique_ptr<Screen> held;
@@ -70,7 +71,7 @@ struct Field
         ui.SetClipboard(Clipboard{.read = [this] { return clipboard; },
                                   .write = [this](std::string_view text) { clipboard = text; }});
 
-        held = std::make_unique<Screen>(ui,
+        held = std::make_unique<Screen>(ui, events,
                                         ScreenTraits{.input = ScreenInput::ConsumeInput,
                                                      .beneath = ScreenBeneath::HidesBeneath,
                                                      .pause = ScreenPause::Pause},

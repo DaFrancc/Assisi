@@ -145,5 +145,5 @@ TEST_CASE("An event pushed in a tick a client steps again is delivered once, by 
     session.Run(kCatchUpFrames);
 
     REQUIRE(replication.SyncTestResults().replays > 0u);
-    CHECK(client.events.Read<Stepped>().size() == client.stepTicks.size() - stepsBefore);
+    CHECK(client.world.events.Read<Stepped>().size() == client.stepTicks.size() - stepsBefore);
 }

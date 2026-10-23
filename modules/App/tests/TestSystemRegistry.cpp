@@ -33,10 +33,10 @@ RenderContext MakeCtx(Assisi::ECS::Scene &scene)
 // A game-phase context with no input devices — the headless shape a dedicated
 // server (and these tests) run in. Null input is why SystemContext holds
 // pointers there: an InputContext cannot exist without a window.
-SystemContext MakeGameCtx(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld)
+SystemContext MakeGameCtx(World &world, Assisi::Core::EventQueue &universal, bool isActiveWorld)
 {
     return SystemContext{world,  0.016f, /*simTick=*/ 0, /*input=*/ nullptr,
-                         /*actions=*/ nullptr, events, isActiveWorld};
+                         /*actions=*/ nullptr, universal, isActiveWorld};
 }
 
 std::size_t IndexOf(const std::vector<std::string> &order, const std::string &name)
@@ -140,7 +140,7 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
     // that shape. Systems reach entities through ctx.world.scene.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     const Assisi::ECS::Entity entity = world.scene.Create();
@@ -156,7 +156,7 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
         CHECK(ctx.ui == nullptr);
     });
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, /*isActiveWorld=*/ true));
 
     CHECK(seenWorld == &world);
     CHECK(seenAlive == 1u);
@@ -170,7 +170,7 @@ TEST_CASE("SystemRegistry: every phase is a separate list, and PostFixedUpdate i
     // would run a post-step system before the step and nothing would say so.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     std::vector<std::string> order;
@@ -183,11 +183,11 @@ TEST_CASE("SystemRegistry: every phase is a separate list, and PostFixedUpdate i
     systems.Register(SystemPhase::PostFixedUpdate, "AfterStep", record("AfterStep"));
 
     // Running one phase runs only that phase's systems, whatever the other holds.
-    systems.Run(SystemPhase::FixedUpdate, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    systems.Run(SystemPhase::FixedUpdate, MakeGameCtx(world, universal, /*isActiveWorld=*/ true));
     REQUIRE(order.size() == 1u);
     CHECK(order[0] == "BeforeStep");
 
-    systems.Run(SystemPhase::PostFixedUpdate, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    systems.Run(SystemPhase::PostFixedUpdate, MakeGameCtx(world, universal, /*isActiveWorld=*/ true));
     REQUIRE(order.size() == 2u);
     CHECK(order[1] == "AfterStep");
 }
@@ -198,7 +198,7 @@ TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world"
     // same keypresses in every world.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t everywhere = 0;
@@ -208,11 +208,11 @@ TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world"
     systems.Register(SystemPhase::Update, "ActiveOnly", [&](SystemContext &) { ++activeOnly; })
     .ActiveWorldOnly();
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, /*isActiveWorld=*/ true));
     CHECK(everywhere == 1);
     CHECK(activeOnly == 1);
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ false));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, /*isActiveWorld=*/ false));
     CHECK(everywhere == 2); // world-agnostic system still ticks
     CHECK(activeOnly == 1); // ...the input-consuming one does not
 }
@@ -223,7 +223,7 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
     // keep the order their After()/Before() constraints define.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
     std::vector<std::string> order;
 
@@ -237,7 +237,7 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
     // declares no constraints — its absence must not disturb the others.
     systems.Register(SystemPhase::Update, "Gated", record("Gated")).ActiveWorldOnly();
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ false));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, /*isActiveWorld=*/ false));
 
     REQUIRE(order.size() == 3);
     CHECK(order[0] == "First");
@@ -251,7 +251,7 @@ TEST_CASE("SystemRegistry: only a Replayed system runs on a replayed step")
     // has not marked to step again runs once per tick, live.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t plain = 0;
@@ -260,12 +260,12 @@ TEST_CASE("SystemRegistry: only a Replayed system runs on a replayed step")
     systems.Register(SystemPhase::FixedUpdate, "Plain", [&](SystemContext &) { ++plain; });
     systems.Register(SystemPhase::FixedUpdate, "Replayed", [&](SystemContext &) { ++replayedRuns; }).Replayed();
 
-    SystemContext live = MakeGameCtx(world, events, /*isActiveWorld=*/ true);
+    SystemContext live = MakeGameCtx(world, universal, /*isActiveWorld=*/ true);
     systems.Run(SystemPhase::FixedUpdate, live);
     CHECK(plain == 1);
     CHECK(replayedRuns == 1);
 
-    SystemContext replayed = MakeGameCtx(world, events, /*isActiveWorld=*/ true);
+    SystemContext replayed = MakeGameCtx(world, universal, /*isActiveWorld=*/ true);
     replayed.replaying = true;
     systems.Run(SystemPhase::FixedUpdate, replayed);
     CHECK(plain == 1);
@@ -279,7 +279,7 @@ TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist"
     // close with the data, not just once at startup.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t gated   = 0;
@@ -289,20 +289,20 @@ TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist"
     .RequireAny<Assisi::ECS::Transform>();
 
     // Empty scene: the gated system has nothing to work on.
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
     CHECK(ungated == 1);
     CHECK(gated == 0);
 
     // One matching entity is enough to open it.
     const Assisi::ECS::Entity entity = world.scene.Create();
     (void)world.scene.Add<Assisi::ECS::Transform>(entity);
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
     CHECK(ungated == 2);
     CHECK(gated == 1);
 
     // ...and removing the last one closes it again.
     world.scene.Remove<Assisi::ECS::Transform>(entity);
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
     CHECK(ungated == 3);
     CHECK(gated == 1);
 }
@@ -311,20 +311,20 @@ TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is 
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t ticks = 0;
     systems.Register(SystemPhase::Update, "EitherOr", [&](SystemContext &) { ++ticks; })
     .RequireAny<Assisi::ECS::Transform, Assisi::Physics::Collider>();
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
     CHECK(ticks == 0);
 
     // Only the SECOND of the two listed components exists — still eligible.
     const Assisi::ECS::Entity entity = world.scene.Create();
     (void)world.scene.Add<Assisi::Physics::Collider>(entity);
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
     CHECK(ticks == 1);
 }
 
@@ -335,7 +335,7 @@ TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &withData = worlds.Create("WithData");
     World &empty    = worlds.Create("Empty");
-    Assisi::Core::EventQueue events;
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t ticks = 0;
@@ -344,9 +344,9 @@ TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
 
     (void)withData.scene.Add<Assisi::ECS::Transform>(withData.scene.Create());
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(empty, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(empty, universal, true));
     CHECK(ticks == 0);
-    systems.Run(SystemPhase::Update, MakeGameCtx(withData, events, true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(withData, universal, true));
     CHECK(ticks == 1);
 }
 

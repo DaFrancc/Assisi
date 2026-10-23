@@ -89,7 +89,7 @@ void Step(Machine &machine, std::uint64_t localTick)
     }
 
     machine.play.StepWorld(
-        App::SystemContext{machine.world, kStep, tick, nullptr, nullptr, machine.events, true, nullptr});
+        App::SystemContext{machine.world, kStep, tick, nullptr, nullptr, machine.universal, true, nullptr});
     machine.world.scene.FlushDestroyed();
     if (machine.silentSteps > 0)
     {

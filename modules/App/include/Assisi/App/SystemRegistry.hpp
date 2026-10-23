@@ -26,7 +26,7 @@
 ///     });
 ///
 /// // Dispatch
-/// _systems.Run(SystemPhase::Update, {world, dt, simTick, &input, &actions, events, isActive});
+/// _systems.Run(SystemPhase::Update, {world, dt, simTick, &input, &actions, universalEvents, isActive});
 /// _systems.RunRender({ world.scene, 0.f, view, proj });
 /// @endcode
 ///
@@ -34,6 +34,7 @@
 /// Systems with no ordering relationship run in registration order.
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventRoute.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
@@ -89,11 +90,16 @@ class WorldManager;
 ///
 /// A system cannot reach the window or the application, and should not: what
 /// quitting means is the host's to decide. A game asks by pushing this; the
-/// editor answers it by leaving play, and a shipped game by closing.
-AEVENT()
+/// editor answers it by leaving play, and a shipped game by closing. Universal,
+/// because the application reads it, not a world.
+AEVENT(universal)
 struct QuitRequested
 {
 };
+
+/// @brief @p world's own event queue. A function rather than the member so that
+/// SystemContext, which sees World only declared, can build its route from it.
+[[nodiscard]] Core::EventQueue &WorldEvents(World &world);
 
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
 ///
@@ -121,7 +127,10 @@ struct SystemContext
     Window::InputContext *input;
     Window::ActionMap *actions;
 
-    Core::EventQueue &events;
+    /// The host's queue for the events declared `AEVENT(universal)`, which
+    /// every world shares. Systems push and read through `events`, which
+    /// reaches this one for those.
+    Core::EventQueue &universalEvents;
 
     /// True when `world` is the one the app treats as active — the world being
     /// rendered and driven by input. Systems registered ActiveWorldOnly() are
@@ -168,6 +177,11 @@ struct SystemContext
     /// fixed-step systems marked `replayed` run then; every other system runs
     /// once per tick, live. Always false in the per-frame and one-shot phases.
     bool replaying = false;
+
+    /// Where a system pushes and reads events: `world`'s own queue, or
+    /// `universalEvents` for an event declared universal. Built from `world`
+    /// rather than handed in, so a system cannot reach another world's events.
+    Core::EventRoute events{WorldEvents(world), universalEvents};
 };
 
 /// @brief Passed to render systems (Render phase only).

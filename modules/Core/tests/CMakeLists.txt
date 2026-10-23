@@ -45,6 +45,7 @@ add_executable(Assisi-Core-Tests
   TestDisplayedString.cpp
   TestEventCatalog.cpp
   TestEventQueue.cpp
+  TestEventRoute.cpp
   TestFieldBounds.cpp
   TestInternedString.cpp
   TestJobSystem.cpp

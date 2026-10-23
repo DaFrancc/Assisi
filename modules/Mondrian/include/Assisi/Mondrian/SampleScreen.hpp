@@ -23,11 +23,11 @@ class Ui;
 /// The name the sample screen is created under, for finding it again.
 inline constexpr std::string_view kSampleScreenName = "Sample";
 
-/// @brief The sample screen, built into @p ui and hidden until it is shown.
-/// Its picture shows @p picture.
+/// @brief The sample screen, built into @p ui and hidden until it is shown,
+/// pushing its world events into @p events. Its picture shows @p picture.
 ///
 /// Owned by the caller, like any screen: whatever holds it decides how long it
 /// lasts, and the UI stops drawing it when it goes.
-[[nodiscard]] std::unique_ptr<Screen> AddSampleScreen(Ui &ui, TextureId picture);
+[[nodiscard]] std::unique_ptr<Screen> AddSampleScreen(Ui &ui, Core::EventQueue &events, TextureId picture);
 
 } // namespace Assisi::Mondrian

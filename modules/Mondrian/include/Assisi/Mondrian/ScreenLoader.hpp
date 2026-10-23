@@ -26,7 +26,8 @@
 namespace Assisi::Core
 {
 class EventCatalog;
-}
+class EventQueue;
+} // namespace Assisi::Core
 
 namespace Assisi::Mondrian
 {
@@ -84,7 +85,7 @@ struct LoadedScreen
 };
 
 /// @brief Builds @p document into a screen on @p ui called @p name, hidden,
-/// owned by the caller.
+/// owned by the caller, pushing its world events into @p events.
 ///
 /// @p name is the path the document was loaded from, which is what the screen
 /// is found by: a document does not name itself, so a renamed file cannot
@@ -92,7 +93,8 @@ struct LoadedScreen
 ///
 /// @p catalog is what an event name is resolved against — taken rather than
 /// reached for, so a caller can hand over exactly the events a case is about.
-[[nodiscard]] std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, std::string_view name,
+[[nodiscard]] std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::EventQueue &events,
+                                                                             std::string_view name,
                                                                              const ScreenDocument &document,
                                                                              const Core::EventCatalog &catalog);
 

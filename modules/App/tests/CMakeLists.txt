@@ -41,6 +41,7 @@ add_executable(Assisi-App-Tests
   TestUiInputBridge.cpp
   TestWorld.cpp
   TestWorldContacts.cpp
+  TestWorldEvents.cpp
   TestWorldStart.cpp
 )
 
@@ -99,6 +100,7 @@ target_link_libraries(Assisi-App-Tests
   PRIVATE
     Assisi::App
     Assisi-App-TestSystems
+    Assisi::TestSupport
 )
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen
