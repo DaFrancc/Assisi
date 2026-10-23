@@ -27,6 +27,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -64,11 +65,16 @@ ImVec4 PingColor(std::int32_t pingMs)
 
 constexpr ImVec4 kWarnColor{0.9f, 0.8f, 0.3f, 1.f};
 constexpr ImVec4 kErrorColor{0.9f, 0.4f, 0.4f, 1.f};
+/// A count at its normal value.
+constexpr ImVec4 kQuietColor{0.6f, 0.6f, 0.6f, 1.f};
+
+/// Where a row's value starts, so the values line up under one another.
+constexpr float kValueColumn = 180.f;
 
 void LabelledValue(const char *label, const std::string &value)
 {
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(180.f);
+    ImGui::SameLine(kValueColumn);
     ImGui::TextUnformatted(value.c_str());
 }
 
@@ -80,11 +86,34 @@ void LabelledValue(const char *label, const std::string &value)
 template <typename T> void NetCounterRow(const char *label, T value, const char *tooltip)
 {
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(180.f);
+    ImGui::SameLine(kValueColumn);
     ImGui::TextColored(value > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
                        static_cast<unsigned long long>(value));
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%s", tooltip);
+}
+
+/// One part of a predicted entity, its physics or one predicted component: how
+/// often the host's word was compared with it and corrected it, and the last
+/// field that differed, with both values.
+void PredictionSectionRow(const char *section, const Assisi::NetSync::ReplicationClient::PredictionCounts &counts)
+{
+    ImGui::TextUnformatted(section);
+    ImGui::SameLine(kValueColumn);
+    ImGui::TextColored(counts.corrections > 0 ? kWarnColor : kQuietColor, "%llu compared, %llu corrected",
+                       static_cast<unsigned long long>(counts.compares),
+                       static_cast<unsigned long long>(counts.corrections));
+    ImGui::SameLine();
+    ImGui::TextColored(kQuietColor, "(%llu starved)", static_cast<unsigned long long>(counts.starvedCorrections));
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Corrected at a step the host took without this client's controls, which arrived "
+                          "late or not at all: the connection's doing, not a misprediction.");
+    }
+    if (!counts.firstDifference.empty())
+    {
+        ImGui::TextDisabled("    last differed: %s", counts.firstDifference.c_str());
+    }
 }
 
 /// "levels/Materials.alvl" -> "Materials". The Levels UI works in bare stems.
@@ -400,6 +429,44 @@ void EditorApp::SmoothNetView()
 // Panels
 // ---------------------------------------------------------------------------
 
+void EditorApp::DrawPredictedEntities(const Assisi::NetSync::ReplicationClient &client)
+{
+    const std::vector<Assisi::NetSync::NetId> predicted = client.PredictedEntities();
+    if (!ImGui::TreeNodeEx("Predicted entities", ImGuiTreeNodeFlags_None, "Predicted entities (%zu)",
+                           predicted.size()))
+    {
+        return;
+    }
+    for (const Assisi::NetSync::NetId netId : predicted)
+    {
+        const Assisi::NetSync::ReplicationClient::EntityPredictionCounts *counts = client.PredictionCountsOf(netId);
+        // The NetId keeps two entities of one name apart, in the label and in
+        // the id ImGui keeps each node's open state under.
+        const std::string label = std::format("{} [{}]", EntityDisplayName(client.EntityOf(netId)), netId.value);
+        if (counts == nullptr || !ImGui::TreeNode(label.c_str()))
+        {
+            continue;
+        }
+        PredictionSectionRow("Physics", counts->physics);
+        // By id, which is alphabetical, so the rows keep their places.
+        std::vector<Assisi::Core::Reflect::ComponentId> components;
+        for (const auto &[id, section] : counts->components)
+        {
+            (void)section;
+            components.push_back(id);
+        }
+        std::ranges::sort(components);
+        for (const Assisi::Core::Reflect::ComponentId id : components)
+        {
+            const Assisi::Core::Reflect::ComponentMeta *meta =
+                Assisi::Core::Reflect::ComponentRegistry::Instance().ById(id);
+            PredictionSectionRow(meta != nullptr ? meta->name.c_str() : "Component", counts->components.at(id));
+        }
+        ImGui::TreePop();
+    }
+    ImGui::TreePop();
+}
+
 void EditorApp::DrawHostAuthoringWarnings()
 {
     if (_scene == nullptr)
@@ -584,7 +651,7 @@ void EditorApp::DrawNetworkWindow()
         DrawHostAuthoringWarnings();
 
     ImGui::TextUnformatted("Ping");
-    ImGui::SameLine(180.f);
+    ImGui::SameLine(kValueColumn);
     ImGui::TextColored(PingColor(stats.pingMs), "%d ms", stats.pingMs);
 
     LabelledValue("Bandwidth in", std::format("{:.1f} kB/s", stats.inBytesPerSec / 1024.f));
@@ -645,7 +712,7 @@ void EditorApp::DrawNetworkWindow()
         // budget is binding and correction *frequency* is degrading — which the
         // priority accumulator makes fair, not free.
         ImGui::TextUnformatted("Dirty backlog");
-        ImGui::SameLine(180.f);
+        ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.dirtyBacklog > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%u entit%s",
                            stats.dirtyBacklog, stats.dirtyBacklog == 1 ? "y" : "ies");
         LabelledValue("Keyframe sweeps", std::format("{}", stats.keyframeSweeps));
@@ -661,7 +728,7 @@ void EditorApp::DrawNetworkWindow()
 
             const bool thrashing = stats.relevancyExits > 0 && stats.relevancyEnters > stats.relevancyExits * 2;
             ImGui::TextUnformatted("Left");
-            ImGui::SameLine(180.f);
+            ImGui::SameLine(kValueColumn);
             ImGui::TextColored(thrashing ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
                                static_cast<unsigned long long>(stats.relevancyExits));
             if (ImGui::IsItemHovered())
@@ -741,22 +808,24 @@ void EditorApp::DrawNetworkWindow()
         // different schedule, so "same binary" buys nothing here.
         LabelledValue("Divergence (mean)", std::format("{:.1f} mm", stats.divergenceMean * 1000.f));
         ImGui::TextUnformatted("Divergence (max)");
-        ImGui::SameLine(180.f);
+        ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
                            static_cast<double>(stats.divergenceMax) * 1000.0);
 
         // How often the host disagreed with what this client predicted. Every
         // replay is a correction the player may feel.
         LabelledValue("Predictions kept", std::format("{}", stats.predictionsKept));
-        LabelledValue("Predictions replayed", std::format("{}", stats.predictionsReplayed));
+        LabelledValue("Rollbacks", std::format("{}", stats.predictionsReplayed));
         NetCounterRow("Hard snaps", stats.hardSnaps,
                       "The host's word was older than any tick this client kept, so it was snapped to with "
                       "nothing replayed on top.");
 
-        // Steps every tick again and compares it with the live step: a check of
-        // the replay itself, for while something is being built.
         if (Assisi::NetSync::ReplicationClient *client = _networkedPlay->Session().Client(); client != nullptr)
         {
+            DrawPredictedEntities(*client);
+
+            // Steps every tick again and compares it with the live step: a check
+            // of the replay itself, for while something is being built.
             bool syncTest = client->SyncTest();
             if (ImGui::Checkbox("Sync test", &syncTest))
             {
@@ -823,14 +892,14 @@ void EditorApp::DrawNetworkWindow()
         // Nonzero is never normal: either corruption the transport did not catch,
         // or a protocol bug. Red, not amber.
         ImGui::TextUnformatted("Snapshots rejected");
-        ImGui::SameLine(180.f);
+        ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.snapshotsRejected > 0 ? kErrorColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
                            static_cast<unsigned long long>(stats.snapshotsRejected));
 
         // Buffer depth is the honest health signal for the clock: zero means the
         // server ran out of our input, which the player feels as dropped input.
         ImGui::TextUnformatted("Input buffer");
-        ImGui::SameLine(180.f);
+        ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.inputBufferDepth == 0 ? kWarnColor : ImVec4{0.4f, 0.9f, 0.4f, 1.f}, "%u command%s",
                            stats.inputBufferDepth, stats.inputBufferDepth == 1 ? "" : "s");
 

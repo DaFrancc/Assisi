@@ -464,11 +464,16 @@ public:
     /// field that differed the last time it did, and both its values. The
     /// physics frame is corrected by a rollback, a component by taking the
     /// host's value.
+    ///
+    /// A correction at a tick the host stepped without this client's command
+    /// is counted apart: the host stepped this client's player on what it held,
+    /// so the difference is the connection's doing rather than a misprediction.
     struct PredictionCounts
     {
         std::string firstDifference;
         std::uint64_t compares = 0;
-        std::uint64_t corrections = 0;
+        std::uint64_t corrections = 0;        ///< at ticks the host had this client's command for
+        std::uint64_t starvedCorrections = 0; ///< at ticks the host stepped without it
     };
 
     /// @brief The counts for one predicted entity: its physics frame, and each
@@ -512,6 +517,9 @@ public:
     /// @brief How the host's word about the predicted entity @p netId compared
     /// with this client's, or null for one it does not predict.
     [[nodiscard]] const EntityPredictionCounts *PredictionCountsOf(NetId netId) const;
+
+    /// @brief Every entity this client predicts, lowest NetId first.
+    [[nodiscard]] std::vector<NetId> PredictedEntities() const;
 
     // --- Sync test ---------------------------------------------------------------
     //

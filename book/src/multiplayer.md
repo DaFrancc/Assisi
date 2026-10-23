@@ -119,6 +119,14 @@ many were rolled back. On a quiet level, almost all of them should be kept.
 remembers: those can't be rolled back to, so your character is put where the
 host had it.
 
+Under **Predicted entities**, the panel lists everything your machine
+predicts. For each one, it shows its physics and each of its predicted
+components separately: how many of the host's answers were compared with it,
+how many corrected it, and the last value that differed, yours and the host's.
+A correction at a step the host took without your controls, because they
+arrived late or not at all, is counted as **starved** instead. The connection
+caused that one, not your game code.
+
 ### Components you predict
 
 Your machine predicts your character, everything in its blueprint (its camera,
