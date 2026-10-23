@@ -8,6 +8,7 @@ add_executable(Assisi-Editor-Tests
   TestColliderBlueprint.cpp
   TestColliderPose.cpp
   TestEditHistory.cpp
+  TestEditorEvents.cpp
   TestEntityPicking.cpp
   TestGizmoDrag.cpp
   TestInspectorFieldChrome.cpp
@@ -21,6 +22,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorEvents.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"

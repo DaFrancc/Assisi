@@ -31,10 +31,12 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/StateRecorder.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <map>
@@ -438,6 +440,91 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     return jumping;
 }
 
+namespace
+{
+
+/// The physics' state stream, written onto the end of a frame's bytes.
+class StateWriter final : public JPH::StateRecorder
+{
+public:
+    explicit StateWriter(std::vector<std::byte> &bytes) : _bytes(bytes) {}
+
+    void WriteBytes(const void *inData, size_t inNumBytes) override
+    {
+        const std::byte *const from = static_cast<const std::byte *>(inData);
+        _bytes.insert(_bytes.end(), from, from + inNumBytes);
+    }
+    void ReadBytes(void *outData, size_t inNumBytes) override
+    {
+        std::memset(outData, 0, inNumBytes);
+        _failed = true;
+    }
+    [[nodiscard]] bool IsEOF() const override { return true; }
+    [[nodiscard]] bool IsFailed() const override { return _failed; }
+
+private:
+    std::vector<std::byte> &_bytes;
+    bool _failed = false;
+};
+
+/// The physics' state stream, read from a frame's bytes. Reading past their
+/// end fails rather than reading anything else.
+class StateReader final : public JPH::StateRecorder
+{
+public:
+    explicit StateReader(std::span<const std::byte> bytes) : _bytes(bytes) {}
+
+    void WriteBytes(const void *inData, size_t inNumBytes) override
+    {
+        (void)inData;
+        (void)inNumBytes;
+        _failed = true;
+    }
+    void ReadBytes(void *outData, size_t inNumBytes) override
+    {
+        if (inNumBytes > _bytes.size() - _read)
+        {
+            std::memset(outData, 0, inNumBytes);
+            _failed = true;
+            return;
+        }
+        std::memcpy(outData, _bytes.data() + _read, inNumBytes);
+        _read += inNumBytes;
+    }
+    [[nodiscard]] bool IsEOF() const override { return _read >= _bytes.size(); }
+    [[nodiscard]] bool IsFailed() const override { return _failed; }
+
+private:
+    std::span<const std::byte> _bytes;
+    std::size_t _read = 0;
+    bool _failed = false;
+};
+
+} // namespace
+
+void PhysicsWorld::Impl::RestoreCharacter(CharacterRecord &record, const CharacterFrame &frame)
+{
+    StateReader reader(frame.physicsState);
+    record.character->RestoreState(reader);
+    const JPH::Vec3 restoredVelocity = record.character->GetLinearVelocity();
+    const JPH::RVec3 restoredFeet = record.character->GetPosition();
+    // The state is where the frame was taken; a frame since moved or set going
+    // another way is placed there instead, and finds its ground again.
+    const bool taken = glm::vec3(restoredFeet.GetX(), restoredFeet.GetY(), restoredFeet.GetZ()) == frame.position &&
+                       ToGlm(restoredVelocity) == frame.velocity;
+    if (reader.IsFailed() || !reader.IsEOF() || !taken)
+    {
+        PlaceCharacter(record, frame.position, frame.velocity);
+        return;
+    }
+    const JPH::RVec3 feet = record.character->GetPosition();
+    physicsSystem.GetBodyInterface().SetPosition(SlotFor(record.entity)->body, feet, JPH::EActivation::Activate);
+    WritePose(record.entity,
+              Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+              /*writeRotation=*/ false);
+    ECS::SnapTransform(scene, record.entity);
+}
+
 void PhysicsWorld::Impl::PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity)
 {
     const JPH::RVec3 position(feet.x, feet.y, feet.z);
@@ -469,7 +556,11 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
     }
     const JPH::RVec3 position = record->character->GetPosition();
     const CharacterState state = _impl->BuildCharacterState(*record);
-    return CharacterFrame{.intent = record->lastIntent,
+    std::vector<std::byte> physicsState;
+    StateWriter writer(physicsState);
+    record->character->SaveState(writer);
+    return CharacterFrame{.physicsState = std::move(physicsState),
+                          .intent = record->lastIntent,
                           .baseRotation = ToGlm(record->baseRotation),
                           .position = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
                           .velocity = ToGlm(record->character->GetLinearVelocity()),
@@ -550,7 +641,14 @@ void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &fra
     // The stance first: in the air a change of stance moves the feet, and the
     // frame's feet are the ones that count.
     (void)_impl->ApplyStance(*record, frame.stance);
-    _impl->PlaceCharacter(*record, frame.position, frame.velocity);
+    if (frame.physicsState.empty())
+    {
+        _impl->PlaceCharacter(*record, frame.position, frame.velocity);
+    }
+    else
+    {
+        _impl->RestoreCharacter(*record, frame);
+    }
 
     record->lastIntent = frame.intent;
     record->facing = frame.facing;
@@ -777,6 +875,10 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     for (const FollowerStep &follower : placed)
     {
         const Impl::BodySlot *slot = _impl->SlotFor(follower.entity);
+        if (slot != nullptr && slot->kind == Impl::SlotKind::Body)
+        {
+            _impl->followerBodies.push_back(slot->body);
+        }
         if (slot == nullptr || slot->kind != Impl::SlotKind::Body || slot->motion != BodyMotion::Kinematic)
         {
             _impl->PlaceFollower(follower.entity, follower.from);
@@ -840,6 +942,7 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
                                  _impl->touchedThisStep.end());
     _impl->characterOnlyStep = false;
     _impl->solvedBodies.clear();
+    _impl->followerBodies.clear();
 }
 
 ECS::Entity PhysicsWorld::Impl::CarrierUnder(const CharacterRecord &record) const

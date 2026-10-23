@@ -810,12 +810,19 @@ struct PhysicsWorld::Impl
     bool stepping = false;
 
     /// True during StepCharacters: a step stepped again, in which a character
-    /// pushes no body but those of `solvedBodies`, since the live step already
-    /// pushed it.
+    /// pushes no body but those of `solvedBodies` and `followerBodies`, since
+    /// the live step already pushed it.
     bool characterOnlyStep = false;
 
     /// During StepCharacters, the bodies it solves again.
     std::vector<JPH::BodyID> solvedBodies;
+
+    /// During StepCharacters, the bodies it places as followers. A character
+    /// pushes one as it did live: a body pushed moves off at once, within the
+    /// sweep, and a character that met it standing still would stop short of
+    /// where its live sweep followed it. The follower is put where its step
+    /// left it after the sweeps, so the push does not last.
+    std::vector<JPH::BodyID> followerBodies;
 
     /// Scratch for the reconcile, kept so a frame that changes nothing allocates
     /// nothing.
@@ -1778,6 +1785,10 @@ private:
     /// @p velocity, finds what it touches there, and writes and snaps its
     /// Transform.
     void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
+    /// Puts the character back as @p frame's physics state has it, ground and
+    /// contacts included; placed as PlaceCharacter does when that state does
+    /// not read back.
+    void RestoreCharacter(CharacterRecord &record, const CharacterFrame &frame);
 
     /// The carrier under @p record that it may ride: the owner of its ground
     /// body, when that is a body with a Carrier and the character

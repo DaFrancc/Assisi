@@ -65,6 +65,7 @@ namespace Assisi::Editor
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
 {
+    DeclareEditorEvents();
     // Before Initialize, which loads the post-process shaders through it.
     (void)Assisi::Render::SetAssetSource(&_assetSource);
     LoadAssetsFrom(_cookedSources);

@@ -325,6 +325,29 @@ TEST_CASE("BitStream: quantized floats round-trip within their step size")
     }
 }
 
+TEST_CASE("BitStream: a quantized float over a range around zero gives zero back exactly")
+{
+    // A body at rest is sent with no velocity. Read back as half a step either
+    // way, it creeps on the far end, and whatever it touches is pushed by it.
+    constexpr float kVelocityMax = 128.f;
+    constexpr std::uint32_t kVelocityBits = 12;
+    constexpr float kExtent = 256.f;
+    constexpr std::uint32_t kPositionBits = 18;
+
+    BitWriter writer;
+    writer.WriteFloatQuantized(0.f, -kVelocityMax, kVelocityMax, kVelocityBits);
+    writer.WriteFloatQuantized(0.f, -kExtent, kExtent, kPositionBits);
+    writer.WriteFloatQuantized(kVelocityMax, -kVelocityMax, kVelocityMax, kVelocityBits);
+    writer.WriteFloatQuantized(-kExtent, -kExtent, kExtent, kPositionBits);
+
+    BitReader reader(writer.Data());
+    CHECK(reader.ReadFloatQuantized(-kVelocityMax, kVelocityMax, kVelocityBits) == 0.f);
+    CHECK(reader.ReadFloatQuantized(-kExtent, kExtent, kPositionBits) == 0.f);
+    // The ends stay exact too.
+    CHECK(reader.ReadFloatQuantized(-kVelocityMax, kVelocityMax, kVelocityBits) == kVelocityMax);
+    CHECK(reader.ReadFloatQuantized(-kExtent, kExtent, kPositionBits) == -kExtent);
+}
+
 TEST_CASE("BitStream: a 32-bit quantized float round-trips at the top of its range")
 {
     // At bits == 32 the level count is 0xFFFFFFFF, which a float rounds *up* to
