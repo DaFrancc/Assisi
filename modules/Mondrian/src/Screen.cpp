@@ -153,6 +153,7 @@ ToggleId Screen::AddToggle(NodeId parent, bool on)
 
 ContinuousSliderId Screen::AddContinuousSlider(NodeId parent, SliderRange range, float value)
 {
+    ASSISI_ASSERT(range.step > 0.f, "a slider needs a step: with none, a press moves it nowhere and is swallowed");
     const NodeId node = _tree.Create(parent);
     _tree.SetBehaviour(node, static_cast<uint32_t>(BuiltinWidget::ContinuousSlider));
     _tree.SetFocusable(node, true);
@@ -363,6 +364,9 @@ void Screen::Step(NodeId slider, int32_t moves)
 
 void Screen::SetRange(ContinuousSliderId slider, SliderRange range)
 {
+    // Here as well as where it is built: a new range keeps no step from the
+    // one it replaces.
+    ASSISI_ASSERT(range.step > 0.f, "a slider needs a step: with none, a press moves it nowhere and is swallowed");
     _tree.SetRange(slider.node, range);
     SetValue(slider, GetValue(slider));
 }

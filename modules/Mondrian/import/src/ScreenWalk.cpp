@@ -454,6 +454,20 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     return {};
 }
 
+/// Whether the step @p element writes, if it writes one, has a value in the
+/// scope open now. In a template's own check, one naming a parameter with no
+/// default has none until an instance gives it one.
+bool StepKnown(const Walk &walk, const MarkupElement &element)
+{
+    const MarkupAttribute *const step = element.Find("step");
+    if (step == nullptr)
+    {
+        return true;
+    }
+    const std::expected<Substituted, MarkupError> value = Substitute(walk, step->value, step->line, step->column);
+    return value.has_value() && value->known;
+}
+
 } // namespace
 
 std::string_view CurrentPrefix(const Walk &walk)
@@ -687,6 +701,9 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     const MarkupElement base = TemplateBase(root, overrides);
     walk.scopes.push_back(std::move(scope));
     const std::expected<void, MarkupError> inside = CompileTemplatePart(walk, instance, base, index);
+    // Read while the template's scope is open, which is where its root's step
+    // takes its value.
+    const bool baseStepKnown = StepKnown(walk, base);
     const Scope left = std::move(walk.scopes.back());
     walk.scopes.pop_back();
     if (!inside)
@@ -699,7 +716,9 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
         return std::unexpected(own.error());
     }
     const bool stepWritten = base.Find("step") != nullptr || overrides.Find("step") != nullptr;
-    if (const std::expected<void, MarkupError> required = Required(instance, walk.document.nodes[index], stepWritten);
+    const bool stepKnown = baseStepKnown && StepKnown(walk, overrides);
+    if (const std::expected<void, MarkupError> required =
+            Required(instance, walk.document.nodes[index], stepWritten, stepKnown);
         !required)
     {
         return std::unexpected(required.error());
@@ -782,7 +801,7 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         return std::unexpected(attributes.error());
     }
     if (const std::expected<void, MarkupError> required =
-            Required(element, walk.document.nodes[index], element.Find("step") != nullptr);
+            Required(element, walk.document.nodes[index], element.Find("step") != nullptr, StepKnown(walk, element));
         !required)
     {
         return std::unexpected(required.error());
