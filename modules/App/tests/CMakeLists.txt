@@ -65,6 +65,7 @@ if (ASSISI_ENABLE_NETWORKING)
     TestPlayerSessionOwnCharacter.cpp
     TestPlayerSessionPlayers.cpp
     TestPlayerSessionTicks.cpp
+    TestPlayerSessionWalls.cpp
   )
 endif()
 
@@ -146,6 +147,7 @@ if (ASSISI_ENABLE_NETWORKING)
     App.TestPlayerSessionOwnCharacter
     App.TestPlayerSessionPlayers
     App.TestPlayerSessionTicks
+    App.TestPlayerSessionWalls
     PROPERTIES PROCESSORS 2)
 endif()
 

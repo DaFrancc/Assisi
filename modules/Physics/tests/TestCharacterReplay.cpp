@@ -531,6 +531,103 @@ TEST_CASE("A character stepped again against a crate as a follower meets it wher
 namespace
 {
 
+/// Steps a character walks past a crate's corner, from a standing start well
+/// short of it.
+constexpr int32_t kGlanceSteps = 90;
+
+/// How far the crate stands ahead, and to the side so the walk catches its
+/// corner (m).
+constexpr glm::vec3 kGlanceCrateAt{1.5f, kCrateHalf, 0.4f};
+
+/// The walk, a little to the side of the crate's centre.
+constexpr glm::vec3 kGlanceMove{1.f, 0.f, 0.25f};
+
+} // namespace
+
+TEST_CASE("A character glancing off a crate as a follower, stepped again from each step, lands where it did live")
+{
+    // The sync test's shape: each step stepped again on its own from the frame
+    // before it, so the first touch is one of them.
+    PhysicsTests::TestScene test;
+    (void)PhysicsTests::AddFloor(test.scene);
+    PhysicsTests::BodySpec spec = PhysicsTests::Box(glm::vec3(kCrateHalf), /*isStatic=*/ false);
+    spec.rigidBody->mass = kCrateMass;
+    const ECS::Entity crate = PhysicsTests::AddBody(test.scene, kGlanceCrateAt, spec);
+    const ECS::Entity walker = PhysicsTests::AddCharacter(test.scene, {0.f, 0.f, 0.f});
+    PhysicsTests::Step(test.world, kSettleSteps);
+    std::vector<Physics::CharacterFrame> frames{test.world.CaptureCharacter(walker)};
+    std::vector<Physics::FollowerFrame> crateFrames{test.world.CaptureFollower(crate)};
+    bool touched = false;
+    for (int32_t i = 0; i < kGlanceSteps; ++i)
+    {
+        test.scene.GetMut<Physics::CharacterIntent>(walker)->move = glm::normalize(kGlanceMove);
+        test.world.Update(kStep);
+        frames.push_back(test.world.CaptureCharacter(walker));
+        crateFrames.push_back(test.world.CaptureFollower(crate));
+        touched = touched || test.world.IsTouching(walker, crate);
+    }
+    REQUIRE(touched);
+
+    const std::array<ECS::Entity, 1> only{walker};
+    for (std::size_t i = 1; i < frames.size(); ++i)
+    {
+        CAPTURE(i);
+        test.world.RewindCharacter(walker, frames[i - 1]);
+        *test.scene.GetMut<Physics::CharacterIntent>(walker) = frames[i].intent;
+        const std::array<Physics::FollowerStep, 1> follower{
+            Physics::FollowerStep{.from = crateFrames[i - 1], .to = crateFrames[i], .entity = crate}};
+        test.world.StepCharacters(only, follower, kStep);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+    }
+}
+
+namespace
+{
+
+/// A step lower than a character climbs, across its way ahead: walked onto and
+/// off its far edge in the steps given.
+constexpr glm::vec3 kLedgeStepAt{1.5f, 0.1f, 0.f};
+constexpr glm::vec3 kLedgeStepHalf{1.f, 0.1f, 2.f};
+constexpr int32_t kLedgeSteps = 120;
+
+/// Higher than this (m), the character stands on the step.
+constexpr float kOnLedgeStep = 0.15f;
+
+} // namespace
+
+TEST_CASE("A character climbing onto a step and off it, stepped again from each step, lands where it did live")
+{
+    // Climbing, it stands on the step's edge even where the edge alone reads
+    // as too steep, which a rewind that only placed it would not find again.
+    PhysicsTests::TestScene test;
+    (void)PhysicsTests::AddFloor(test.scene);
+    (void)PhysicsTests::AddBody(test.scene, kLedgeStepAt, PhysicsTests::Box(kLedgeStepHalf, /*isStatic=*/ true));
+    const ECS::Entity walker = PhysicsTests::AddCharacter(test.scene, {0.f, 0.f, 0.f});
+    PhysicsTests::Step(test.world, kSettleSteps);
+    std::vector<Physics::CharacterFrame> frames{test.world.CaptureCharacter(walker)};
+    bool climbed = false;
+    for (int32_t i = 0; i < kLedgeSteps; ++i)
+    {
+        test.scene.GetMut<Physics::CharacterIntent>(walker)->move = {1.f, 0.f, 0.f};
+        test.world.Update(kStep);
+        frames.push_back(test.world.CaptureCharacter(walker));
+        climbed = climbed || frames.back().position.y > kOnLedgeStep;
+    }
+    REQUIRE(climbed);
+    REQUIRE(frames.back().position.x > kLedgeStepAt.x + kLedgeStepHalf.x);
+
+    for (std::size_t i = 1; i < frames.size(); ++i)
+    {
+        CAPTURE(i);
+        test.world.RewindCharacter(walker, frames[i - 1]);
+        StepAgain(test, walker, frames[i]);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+    }
+}
+
+namespace
+{
+
 /// How far a crate solved again with the character pushing it may land from
 /// where the live step put it (m): the solve starts without the contacts the
 /// live one carried over from the step before.

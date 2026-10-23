@@ -22,6 +22,7 @@
 #include <Assisi/Physics/CollisionSource.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -62,6 +63,15 @@ struct Pose
 /// step that takes it; here it is kept.
 struct CharacterFrame
 {
+    /// The physics' own record of the character after the step: where it
+    /// stood, on what, and what it was touching. A rewind to this frame puts
+    /// that back as it was. Placing the character and asking again what it
+    /// stands on does not always give the same answer: a step it has just
+    /// climbed counts as ground even where the step's edge alone reads as too
+    /// steep, and only what it ran into steers it along a wall. Put back only
+    /// while `position` and `velocity` are the ones it was taken with: a frame
+    /// given others, such as the host's word, is placed there and asks again.
+    std::vector<std::byte> physicsState;
     CharacterIntent intent;
     /// While riding, its base's rotation when `localFeet` was taken.
     glm::quat baseRotation{1.f, 0.f, 0.f, 0.f};
