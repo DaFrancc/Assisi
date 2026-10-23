@@ -19,17 +19,18 @@ namespace Assisi::App::Test
 /// @brief What BeginWorld, SettleWorld and DrainSystemInstalls are handed: the
 /// world, and nothing a frame would supply.
 ///
-/// The queue is shared across every caller because nothing reads back out of it
-/// here; what is being asserted is which systems ran, not what they published.
+/// The universal queue is shared across every caller because nothing reads back
+/// out of it here; what is being asserted is which systems ran, not what they
+/// published.
 inline SystemContext StartContext(World &world)
 {
-    static Core::EventQueue events;
+    static Core::EventQueue universal{Core::EventScope::Universal};
     return {.world         = world,
             .dt            = 0.f,
             .simTick       = 0,
             .input         = nullptr,
             .actions       = nullptr,
-            .events        = events,
+            .universalEvents = universal,
             .isActiveWorld = true,
             .worldManager  = nullptr,
             .ui            = nullptr};

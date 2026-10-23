@@ -29,6 +29,7 @@ using namespace Assisi::Mondrian;
 using namespace Assisi::Mondrian::Import;
 using Assisi::Core::EventCatalog;
 using Assisi::Core::EventQueue;
+using Assisi::Core::EventRoute;
 using namespace ScreenTesting;
 
 namespace
@@ -892,9 +893,9 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     };
     EventCatalog catalog;
     catalog.Register(
-        {.name = "Assisi::App::QuitRequested", .push = [](EventQueue &events) { events.Push(QuitRequested{}); }});
+        {.name = "Assisi::App::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
     catalog.Register(
-        {.name = "Game::ResumeRequested", .push = [](EventQueue &events) { events.Push(ResumeStandIn{}); }});
+        {.name = "Game::ResumeRequested", .push = [](const EventRoute &events) { events.Push(ResumeStandIn{}); }});
 
     // The table the shipped file's keys name, read in place like the file.
     std::ifstream tableFile{ASSISI_PAUSE_TABLE_PATH};
@@ -1187,14 +1188,15 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     EventQueue events;
-    Ui ui{events};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
     const EventCatalog catalog = OneEvent();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, "ui/Controls.amdn", *document, catalog);
+        InstantiateScreen(ui, events, "ui/Controls.amdn", *document, catalog);
     REQUIRE(loaded.has_value());
 
-    Screen twin{ui, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
+    Screen twin{ui, events, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
     BuildTwin(twin);
 
     for (const std::string_view name : kComparedControls)

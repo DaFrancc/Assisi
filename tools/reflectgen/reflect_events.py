@@ -5,7 +5,9 @@
 An event reaches C++ by its type, which the compiler checks. It reaches a file
 by its name, which nothing checks — so a screen written in markup says
 `on_click="Game::ResumeClicked"` and something has to turn that string into a
-push. This pass builds that table.
+push. This pass builds that table, and records which events are declared
+`AEVENT(universal)`: the ones every world hears rather than only the world they
+were pushed in.
 
 Its own module rather than three more shapes inside the parser and the
 generator: the walk reads no struct body, the entry holds no fields, and
@@ -43,6 +45,7 @@ class EventInfo:
     name:       str    # unqualified struct name
     namespaces: list   # enclosing namespaces at the declaration
     header:     str    # source header, for diagnostics
+    universal:  bool = False  # AEVENT(universal): one queue for the whole program
 
     @property
     def fqn(self) -> str:
@@ -66,11 +69,13 @@ def find_events(text: str, path: Path) -> list:
     for match in _AEVENT_RE.finditer(text):
         where = f"{path.name}: event '{match.group('name')}'"
 
-        if match.group('args').strip():
+        args = match.group('args').strip()
+        if args not in ('', 'universal'):
             raise ValueError(
-                f"{where} passes arguments to AEVENT, which takes none. An event's catalog name is "
-                f"its fully-qualified type name, so there is nothing to configure — and an argument "
-                f"that parsed as nothing would be a name somebody expected to matter.")
+                f"{where} passes AEVENT '{args}', which it does not take. The only argument is "
+                f"`universal`, for an event every world hears; its catalog name is its "
+                f"fully-qualified type name, so there is nothing else to configure — and an "
+                f"argument that parsed as nothing would be one somebody expected to matter.")
 
         if match.group('kind') != 'struct':
             raise ValueError(
@@ -79,7 +84,8 @@ def find_events(text: str, path: Path) -> list:
 
         events.append(EventInfo(name=match.group('name'),
                                 namespaces=_namespaces_at(text, match.start()),
-                                header=str(path)))
+                                header=str(path),
+                                universal=args == 'universal'))
     return events
 
 
@@ -97,7 +103,12 @@ def gen_event_registration(event: EventInfo) -> str:
 
     The type is named with a leading `::` and constructed inside the lambda, so
     nothing about which type is pushed depends on where this lands.
+
+    A universal event is declared so before main runs, which is before anything
+    can push one: every push asks which queue its type belongs in.
     """
+    universal = (f"    Assisi::Core::DeclareUniversal(typeid({event.fqn}));\n"
+                 if event.universal else '')
     return f"""\
 // ── {event.catalog_name} (event) {'─' * max(0, 62 - len(event.catalog_name))}
 static const bool _reflectgen_event_{event.name} = []() -> bool
@@ -107,9 +118,9 @@ static const bool _reflectgen_event_{event.name} = []() -> bool
     // first file that names it.
     static_assert(std::is_default_constructible_v<{event.fqn}>,
                   "an AEVENT type is built by name from markup, so it must be default-constructible");
-    Assisi::Core::EventCatalog::Instance().Register({{
+{universal}    Assisi::Core::EventCatalog::Instance().Register({{
         "{event.catalog_name}",
-        [](Assisi::Core::EventQueue &events) {{ events.Push({event.fqn}{{}}); }},
+        [](const Assisi::Core::EventRoute &events) {{ events.Push({event.fqn}{{}}); }},
     }});
     return true;
 }}();
@@ -150,5 +161,5 @@ def check_events(headers) -> list:
 
     lines = [f'{len(by_name)} event(s)']
     for name in sorted(by_name):
-        lines.append(f'  {name}')
+        lines.append(f'  {name} (universal)' if by_name[name].universal else f'  {name}')
     return lines

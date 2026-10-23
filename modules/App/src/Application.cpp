@@ -347,7 +347,7 @@ bool Application::InitializePresentation()
             Core::Log::Fatal("Failed to initialize the UI pass.");
             return false;
         }
-        _ui = std::make_unique<Mondrian::Ui>(_events);
+        _ui = std::make_unique<Mondrian::Ui>(_universalEvents);
         _ui->SetHoverFocuses(_config.uiHoverFocuses);
         _ui->SetScaleMatch(_config.uiScaleMatch);
         // The window outlives the UI: both belong to this Application, and the
@@ -887,13 +887,13 @@ void Application::Run()
         const Clock::time_point renderEnd = Clock::now();
         // Before the flush, which is what clears the frame's events. Once per
         // frame however many systems asked, since the answer is the same.
-        if (!_events.Read<QuitRequested>().empty())
+        if (!_universalEvents.Read<QuitRequested>().empty())
         {
             OnQuitRequested();
         }
         {
             ASSISI_PROFILE_SCOPE("flush");
-            _events.Flush();
+            _universalEvents.Flush();
             FlushDeferred();
         }
         const Clock::time_point flushEnd = Clock::now();

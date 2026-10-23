@@ -99,7 +99,8 @@ UiInput Holding(UiAction action, double time)
 struct Sample
 {
     Assisi::Core::EventQueue events;
-    Ui ui{events};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
     /// After the Ui, so it is destroyed first: a screen may not outlive the UI
     /// it registered with.
     std::unique_ptr<Screen> held;
@@ -107,7 +108,7 @@ struct Sample
 
     Sample()
     {
-        held = AddSampleScreen(ui, kPlaceholder);
+        held = AddSampleScreen(ui, events, kPlaceholder);
         screen = held.get();
         ui.Show(*screen);
         Frame(ui, kLandscape);
@@ -204,7 +205,8 @@ TEST_CASE("Mondrian: without a font the screen draws no text")
 TEST_CASE("Mondrian: the clipboard reads and writes through what the host supplied, and is inert without it")
 {
     Assisi::Core::EventQueue events;
-    Ui ui{events};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
     CHECK(ui.GetClipboard().Read().empty());
     ui.GetClipboard().Write("dropped");
 
@@ -261,8 +263,9 @@ TEST_CASE("Mondrian: the sample screen's list scrolls its content and keeps it i
 TEST_CASE("Mondrian: input before any layout hits nothing and does not assert")
 {
     Assisi::Core::EventQueue events;
-    Ui ui{events};
-    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, kPlaceholder);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, events, kPlaceholder);
     ui.Show(*screen);
     const InputResult result = ui.ProcessInput(Pressing({.x = 640.f, .y = 360.f}));
     CHECK_FALSE(result.pointerUsed);
@@ -467,8 +470,9 @@ TEST_CASE("Mondrian: hovering focuses only when the developer asks, and never wh
 TEST_CASE("Mondrian: focus set before the first layout survives it")
 {
     Assisi::Core::EventQueue events;
-    Ui ui{events};
-    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, kPlaceholder);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, events, kPlaceholder);
     ui.Show(*screen);
     ui.SetFocus(*screen, screen->Find("Resume"));
     Frame(ui, kLandscape);
@@ -585,14 +589,16 @@ TEST_CASE("Mondrian: the two frame steps must alternate, input first")
     SUBCASE("sync before any input asserts")
     {
         Assisi::Core::EventQueue events;
-        Ui ui{events};
+        Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
         CHECK_THROWS_AS(ui.Sync(kLandscape), Assisi::Core::ContractViolation);
     }
 
     SUBCASE("input twice without a sync asserts")
     {
         Assisi::Core::EventQueue events;
-        Ui ui{events};
+        Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
         ui.ProcessInput({});
         CHECK_THROWS_AS(ui.ProcessInput({}), Assisi::Core::ContractViolation);
     }
@@ -600,7 +606,8 @@ TEST_CASE("Mondrian: the two frame steps must alternate, input first")
     SUBCASE("sync twice without input asserts")
     {
         Assisi::Core::EventQueue events;
-        Ui ui{events};
+        Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
         ui.ProcessInput({});
         ui.Sync(kLandscape);
         CHECK_THROWS_AS(ui.Sync(kLandscape), Assisi::Core::ContractViolation);
@@ -609,7 +616,8 @@ TEST_CASE("Mondrian: the two frame steps must alternate, input first")
     SUBCASE("alternating frames are accepted")
     {
         Assisi::Core::EventQueue events;
-        Ui ui{events};
+        Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
         CHECK_NOTHROW(Frame(ui, kLandscape));
         CHECK_NOTHROW(Frame(ui, kPortrait));
     }

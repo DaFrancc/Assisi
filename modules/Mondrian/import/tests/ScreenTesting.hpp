@@ -32,7 +32,7 @@ inline Assisi::Core::EventCatalog OneEvent()
 {
     Assisi::Core::EventCatalog catalog;
     catalog.Register({.name = "Game::QuitRequested",
-                      .push = [](Assisi::Core::EventQueue &events) { events.Push(QuitRequested{}); }});
+                      .push = [](const Assisi::Core::EventRoute &events) { events.Push(QuitRequested{}); }});
     return catalog;
 }
 

@@ -98,8 +98,9 @@ enum class NestVerdict : std::uint8_t
 // ---------------------------------------------------------------------------
 
 /// @brief Emitted when the user clicks to select (or deselect) an entity.
-/// NullEntity means the click landed on empty space.
-AEVENT()
+/// NullEntity means the click landed on empty space. Universal: the selection
+/// is the editor's, not any one world's.
+AEVENT(universal)
 struct EntitySelectionChangedEvent
 {
     Assisi::ECS::Entity entity;

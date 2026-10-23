@@ -15,7 +15,7 @@
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
-#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventRoute.hpp>
 
 #include <array>
 #include <cstddef>
@@ -62,16 +62,16 @@ struct Node
     /// What this node does when it is clicked or accepted; empty for none. Set
     /// through Screen::OnActivate, which is what knows whether it pushes an
     /// event or acts on the screen — one that acts on the screen ignores the
-    /// queue it is handed.
-    std::function<void(Core::EventQueue &)> onActivate;
+    /// route it is handed.
+    std::function<void(const Core::EventRoute &)> onActivate;
     /// Pushes this node's event when its value changes; empty for none. Set
     /// through Ui::OnChange, which is what knows the event's type. Given the
     /// node rather than the value, because what a control holds is not always
     /// one: a field holds text, which lives in the node.
-    std::function<void(Core::EventQueue &, const Node &)> onChange;
+    std::function<void(const Core::EventRoute &, const Node &)> onChange;
     /// Pushes this node's event when what it holds is finished rather than
     /// merely changed: Enter in a field. Empty for none.
-    std::function<void(Core::EventQueue &, const Node &)> onSubmit;
+    std::function<void(const Core::EventRoute &, const Node &)> onSubmit;
     /// Where the caret is and what may be typed, on a node holding text.
     TextEdit edit;
     /// What the control on this node holds; nothing on a node that is none.
@@ -156,11 +156,11 @@ class NodeTree
     /// target takes the override off.
     void SetNavOverride(NodeId id, NavDirection direction, NodeId target);
     /// @brief What @p id does when clicked or accepted, replacing what it did.
-    void SetOnActivate(NodeId id, std::function<void(Core::EventQueue &)> push);
+    void SetOnActivate(NodeId id, std::function<void(const Core::EventRoute &)> push);
     /// @brief What @p id does when its value changes, replacing what it did.
-    void SetOnChange(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push);
+    void SetOnChange(NodeId id, std::function<void(const Core::EventRoute &, const Node &)> push);
     /// @brief What @p id does when what it holds is finished, replacing what it did.
-    void SetOnSubmit(NodeId id, std::function<void(Core::EventQueue &, const Node &)> push);
+    void SetOnSubmit(NodeId id, std::function<void(const Core::EventRoute &, const Node &)> push);
     /// @brief Where the caret is and what may be typed on @p id.
     void SetTextEdit(NodeId id, const TextEdit &edit);
     /// @brief What the control on @p id holds.

@@ -139,7 +139,7 @@ void GameApp::OnStart()
     _worlds.SetServices({.cache = &_assetCache,
                          .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
                          .jobs = &Jobs(),
-                         .events = &GetEvents(),
+                         .universalEvents = &GetUniversalEvents(),
                          .input = HasPresentation() ? &GetInput() : nullptr,
                          .actions = &GetActions(),
                          .ui = GetUi(),
@@ -343,7 +343,7 @@ SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTic
             .simTick = simTick,
             .input = HasPresentation() ? &GetInput() : nullptr,
             .actions = &GetActions(),
-            .events = GetEvents(),
+            .universalEvents = GetUniversalEvents(),
             .isActiveWorld = &world == _worlds.Active(),
             .worldManager = &_worlds,
             .ui = GetUi(),
@@ -564,14 +564,16 @@ void GameApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferIn
 
 void GameApp::FlushDeferred()
 {
-    // Apply the entities Scene::Destroy() queued this frame. Runs after the frame
-    // is recorded, so a destroyed entity lives out its final frame before its
-    // pools are touched — which keeps structural changes out of any mid-frame
-    // Query. A world still Loading is skipped: a worker owns its scene until
-    // promotion.
+    // Every world's events end with the frame, as the universal ones just did.
+    // Then apply the entities Scene::Destroy() queued this frame. Runs after the
+    // frame is recorded, so a destroyed entity lives out its final frame before
+    // its pools are touched — which keeps structural changes out of any
+    // mid-frame Query. A world still Loading keeps its scene: a worker owns it
+    // until promotion.
     _worlds.ForEach(
         [](World &world)
         {
+            world.events.Flush();
             if (world.state != WorldState::Loading)
             {
                 world.scene.FlushDestroyed();

@@ -100,7 +100,7 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
     }
 
     // What the replayed ticks push was delivered when they ran live.
-    const Core::EventQueue::DropScope dropping(live.events);
+    const Core::EventRoute::DropScope dropping(live.events);
     _players.BeginReplay(_world, replay->from);
     SystemContext replayed = live;
     replayed.replaying = true;

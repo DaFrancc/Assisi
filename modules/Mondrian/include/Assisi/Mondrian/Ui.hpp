@@ -41,14 +41,15 @@ namespace Assisi::Mondrian
 class Ui
 {
   public:
-    /// @brief A UI holding no screens, pushing what its screens announce into
-    /// @p events. A game makes the screens it needs.
+    /// @brief A UI holding no screens, pushing the universal events its screens
+    /// announce into @p universal. A game makes the screens it needs, and each
+    /// pushes every other event into the queue it was built with.
     ///
     /// The queue is taken here rather than set afterwards so that there is no
     /// moment where the UI has nowhere to push: a callback firing then would
     /// have had to be skipped, and skipping one that only works the UI is a
-    /// button that quietly does nothing. @p events must outlive the UI.
-    explicit Ui(Core::EventQueue &events);
+    /// button that quietly does nothing. @p universal must outlive the UI.
+    explicit Ui(Core::EventQueue &universal);
     ~Ui();
 
     Ui(const Ui &) = delete;
@@ -273,7 +274,7 @@ class Ui
     InputSession _session;
     /// Which screen the session belongs to; null when none takes input.
     Screen *_inputScreen = nullptr;
-    Core::EventQueue &_events;
+    Core::EventQueue &_universal;
     const Font *_font = nullptr;
     const StringTables *_tables = nullptr;
     /// How many screens have ever been shown, which orders those sharing a

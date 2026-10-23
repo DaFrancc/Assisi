@@ -26,7 +26,7 @@
 /// registration nobody references still runs — the same path `ACOMP` and
 /// `ASYSTEM` already ride.
 
-#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventRoute.hpp>
 
 #include <functional>
 #include <span>
@@ -43,9 +43,9 @@ struct EventDefinition
     /// The fully-qualified type name, which is what a file writes.
     std::string name;
 
-    /// Pushes a default-constructed event of that type. Generated code holds
-    /// the type; nothing here does.
-    std::function<void(EventQueue &)> push;
+    /// Pushes a default-constructed event of that type into the queue its
+    /// scope names. Generated code holds the type; nothing here does.
+    std::function<void(const EventRoute &)> push;
 };
 
 /// @brief The table of declared event types.

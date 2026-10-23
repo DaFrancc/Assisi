@@ -125,7 +125,7 @@ WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
 
 } // namespace
 
-Ui::Ui(Core::EventQueue &events) : _events(events)
+Ui::Ui(Core::EventQueue &universal) : _universal(universal)
 {
 }
 Ui::~Ui() = default;
@@ -371,9 +371,12 @@ void Ui::Announce(Screen *screen)
     _announcing = true;
 
     const NodeTree &tree = screen->Tree();
+    // What a control announces is heard by the screen's own world, unless the
+    // event is universal and so heard by every one.
+    const Core::EventRoute events{screen->Events(), _universal};
     if (const Node *activated = tree.Get(activatedId); activated != nullptr && activated->onActivate)
     {
-        activated->onActivate(_events);
+        activated->onActivate(events);
     }
     // What the activation moved is this frame's change too: a button that
     // steps a slider is heard in the frame it was pressed in, as the key it
@@ -390,7 +393,7 @@ void Ui::Announce(Screen *screen)
     {
         if (const Node *node = tree.Get(id); node != nullptr && node->onChange)
         {
-            node->onChange(_events, *node);
+            node->onChange(events, *node);
         }
     }
     // After the changes, so a field that was edited and then finished in one
@@ -399,7 +402,7 @@ void Ui::Announce(Screen *screen)
     {
         if (const Node *node = tree.Get(id); node != nullptr && node->onSubmit)
         {
-            node->onSubmit(_events, *node);
+            node->onSubmit(events, *node);
         }
     }
     _announcing = false;

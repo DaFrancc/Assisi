@@ -13,8 +13,8 @@
 /// answered the same frame. Within a frame, stops, pauses and resumes are
 /// answered before plays: a stop and a play for one emitter restart it.
 ///
-/// Emitters live in one world each, and these events name an entity only; a
-/// game with several worlds running emitters at once can reach the wrong one.
+/// They are world events, so the entity one names is looked for only in the
+/// world it was pushed in.
 
 #include <Assisi/Audio/Clip.hpp>
 #include <Assisi/Audio/SoundOutput.hpp>

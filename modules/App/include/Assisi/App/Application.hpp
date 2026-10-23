@@ -230,10 +230,11 @@ protected:
     virtual void OnRenderTargetsChanged(const nvrhi::FramebufferInfo & /*framebufferInfo*/) {}
 
     /// @brief Called once per frame at end of frame (after RenderFrame and the
-    /// event-queue flush) to apply deferred per-frame work. Override to drain the
-    /// app's active scene(s) — notably ECS::Scene::FlushDestroyed(), where queued
-    /// entity destruction is applied so it never mutates pools mid-Query. Default
-    /// is a no-op: Application owns no scene, so the app must opt in.
+    /// universal event flush) to apply deferred per-frame work. Override to
+    /// flush each world's events and drain its scene — notably
+    /// ECS::Scene::FlushDestroyed(), where queued entity destruction is applied
+    /// so it never mutates pools mid-Query. Default is a no-op: Application owns
+    /// no world, so the app must opt in.
     virtual void FlushDeferred() {}
 
     /// @brief Called once per frame at the main-thread safe point — after the
@@ -309,10 +310,12 @@ protected:
     /// OnUpdate/OnRender.
     float GetInterpolationAlpha() const { return _interpolationAlpha; }
 
-    /// @brief The per-frame event queue, owned by Application and flushed once
-    /// per frame in Run(). Systems normally reach it through SystemContext
-    /// (ctx.events); this accessor is for app code outside a system.
-    Core::EventQueue &GetEvents() { return _events; }
+    /// @brief The queue for the events declared `AEVENT(universal)`, which every
+    /// world shares, flushed once per frame in Run(). Systems reach it through
+    /// `ctx.events`; this accessor is for app code outside a system, which
+    /// pushes only universal events here — each world's own events are in its
+    /// World::events.
+    Core::EventQueue &GetUniversalEvents() { return _universalEvents; }
 
     /// @brief The engine's shared task scheduler. Owned by Application; its main-thread
     /// queue is drained once per frame in Run() just before OnUpdate. Use
@@ -521,7 +524,7 @@ private:
     Core::AssetStore _assets;
 
     Render::PostProcess _postProcess;
-    Core::EventQueue _events;
+    Core::EventQueue _universalEvents{Core::EventScope::Universal};
     bool _initialized = false;
 
     bool _headless = false;

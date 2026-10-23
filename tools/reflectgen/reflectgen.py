@@ -629,7 +629,7 @@ def main():
             for system in systems:
                 print(f'  found: {system.name} (system, {system.phase})')
             for event in events:
-                print(f'  found: {event.catalog_name} (event)')
+                print(f'  found: {event.catalog_name} ({"universal event" if event.universal else "event"})')
 
             cpp = generate_cpp(components, include_path, messages, handlers, systems, events,
                                allow_c_arrays=args.allow_c_arrays)

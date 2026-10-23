@@ -57,6 +57,11 @@ for (const Assisi::App::QuitRequested &event :
 }
 ```
 
+The event goes to the world the screen belongs to, so only that world's
+systems read it. `QuitRequested` is declared universal, so every world's
+systems read it, and so does the application, which quits. See
+[Events every world hears](events.md#events-every-world-hears).
+
 See [Events](events.md) for how events work, and
 [Audio](audio.md#sounds-from-the-ui) for a button that plays a sound.
 
