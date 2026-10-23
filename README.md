@@ -122,18 +122,28 @@ sudo dnf install clang
 <details>
 <summary><b>Debian and Ubuntu — untested</b></summary>
 
-Nobody has built the engine on a Debian-based distribution yet. What follows is a translation of the
-two lists above, not a tested recipe; corrections are welcome.
+The engine builds and passes its tests on Ubuntu 24.04 with the steps below. On Debian they are a
+translation, not a tested recipe; corrections are welcome.
 
-It needs **Debian 13 (trixie) or newer**, or **Ubuntu 24.04 or newer**. Debian 12 (bookworm) is too
-old at both ends: the engine is C++23 and asks for CMake 3.28+, while bookworm ships GCC 12 and CMake
-3.25 — and `std::expected`, which this codebase returns its errors through, arrived in GCC 13.
+It needs **GCC 15 or newer** and **CMake 3.28 or newer**. GCC 13 and 14 report false warnings from
+inside the standard library (`-Wstringop-overflow`, `-Warray-bounds`) where the editor and the tests
+join strings, and the build treats warnings as errors. Ubuntu 24.04 has CMake 3.28 but ships GCC 13, and Debian 13
+(trixie) ships GCC 14, so both need a newer GCC.
 
 ```bash
 sudo apt install build-essential git cmake ninja-build ccache mold python3 pkg-config \
                  libwayland-dev libwayland-bin libxkbcommon-dev \
                  libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
                  libvulkan1
+```
+
+On Ubuntu 24.04, GCC 15 comes from the Ubuntu toolchain PPA. The build calls the compiler `gcc` and
+`g++`, so point those names at it (a later upgrade of the `gcc` or `g++` package points them back):
+```bash
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt install g++-15
+sudo ln -sf gcc-15 /usr/bin/gcc
+sudo ln -sf g++-15 /usr/bin/g++
 ```
 
 Plus a Vulkan driver for your GPU.
