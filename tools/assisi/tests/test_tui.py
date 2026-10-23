@@ -12,8 +12,10 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import select
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
@@ -41,6 +43,11 @@ SMALL_SIZE = (80, 24)
 MANY_RECIPES = 30
 
 HAVE_PTY = hasattr(os, "openpty")
+
+# The longest a pseudo-terminal test waits for what the terminal wrote to reach
+# the other side. It arrives in milliseconds on an idle machine; this only has
+# to outlast a busy one, and a test that gets what it waits for never waits it.
+PTY_DELIVERY_TIMEOUT_S = 5.0
 
 
 def make_context(root: Path) -> core.Context:
@@ -587,12 +594,23 @@ class PosixTerminalTest(unittest.TestCase):
         os.close(self.master)
         os.close(self.slave)
 
-    def written(self) -> bytes:
-        os.set_blocking(self.master, False)
-        try:
-            return os.read(self.master, 1 << 16)
-        except BlockingIOError:
-            return b""
+    def written_through(self, end: bytes) -> bytes:
+        """What the terminal wrote, read until it ends with @p end or the
+        delivery timeout passes.
+
+        Output reaches the master side of a pseudo-terminal from a kernel
+        worker, not during the write, so a single read straight after it comes
+        back empty or short whenever that worker has yet to run, which is what
+        a machine busy running the rest of the suite makes likely.
+        """
+        received = b""
+        deadline = time.monotonic() + PTY_DELIVERY_TIMEOUT_S
+        while not received.endswith(end):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.master], [], [], remaining)[0]:
+                break
+            received += os.read(self.master, 1 << 16)
+        return received
 
     def test_the_mode_comes_back_after_an_exception(self):
         before = self.termios.tcgetattr(self.slave)
@@ -602,7 +620,8 @@ class PosixTerminalTest(unittest.TestCase):
                 raise RuntimeError("boom")
         self.assertEqual(self.termios.tcgetattr(self.slave), before)
         self.assertNotEqual(inside, before)
-        self.assertTrue(self.written().endswith(b"\x1b[?1049l"))
+        leave = b"\x1b[?1049l"
+        self.assertTrue(self.written_through(leave).endswith(leave))
 
     def test_ctrl_c_still_interrupts_inside_a_session(self):
         with self.terminal.session():
@@ -613,9 +632,9 @@ class PosixTerminalTest(unittest.TestCase):
     def test_keys_are_read_whole_and_a_lone_escape_is_escape(self):
         with self.terminal.session():
             os.write(self.master, b"\x1b[A")
-            self.assertEqual(self.terminal.read_key(1.0), "up")
+            self.assertEqual(self.terminal.read_key(PTY_DELIVERY_TIMEOUT_S), "up")
             os.write(self.master, b"\x1b")
-            self.assertEqual(self.terminal.read_key(1.0), "esc")
+            self.assertEqual(self.terminal.read_key(PTY_DELIVERY_TIMEOUT_S), "esc")
             self.assertIsNone(self.terminal.read_key(0.0))
 
 
