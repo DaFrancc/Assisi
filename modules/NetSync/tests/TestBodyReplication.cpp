@@ -2092,6 +2092,80 @@ TEST_CASE("a predicted component the host disagrees with takes the host's value 
     CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.mirror)->level == hostCharge.level);
 }
 
+namespace
+{
+
+/// The client's counts for the rig's character as they stand.
+ReplicationClient::EntityPredictionCounts CharacterCounts(const PredictionRig &rig)
+{
+    const ReplicationClient::EntityPredictionCounts *counts =
+        rig.harness.client.PredictionCountsOf(rig.harness.server.NetIdOf(rig.character));
+    REQUIRE(counts != nullptr);
+    return *counts;
+}
+
+/// The Charge section of @p counts.
+ReplicationClient::PredictionCounts ChargeOf(const ReplicationClient::EntityPredictionCounts &counts)
+{
+    const std::unordered_map<Core::Reflect::ComponentId, ReplicationClient::PredictionCounts>::const_iterator charge =
+        counts.components.find(Core::Reflect::ComponentIdOf<Test::Charge>());
+    REQUIRE(charge != counts.components.end());
+    return charge->second;
+}
+
+/// Steps both machines @p ticks times, delivering and replaying after each.
+void RunFed(PredictionRig &rig, std::uint32_t ticks)
+{
+    for (std::uint32_t i = 0; i < ticks; ++i)
+    {
+        rig.StepBoth();
+        rig.Deliver();
+        rig.ReplayPending();
+    }
+}
+
+} // namespace
+
+TEST_CASE("a correction at a tick the host stepped without the client's command is counted as starved")
+{
+    // The host raises the charge every tick and the client never does, so every
+    // snapshot corrects it. While the client's commands arrive each correction
+    // is a divergence; while they are lost on the wire the host steps on what it
+    // held, and each is counted apart, as the connection's doing.
+    PredictionRig rig;
+    RunFed(rig, kAgreeingTicks);
+    rig.afterStep = [&rig](ECS::Scene &scene, ECS::Entity entity, std::uint64_t tick)
+                    {
+                        (void)tick;
+                        if (&scene == &rig.harness.serverScene)
+                        {
+                            ++scene.GetMut<Test::Charge>(entity)->level;
+                        }
+                    };
+    RunFed(rig, kBurstTicks);
+    const ReplicationClient::EntityPredictionCounts fed = CharacterCounts(rig);
+    CHECK(ChargeOf(fed).corrections > 0);
+    CHECK(ChargeOf(fed).starvedCorrections == 0);
+    CHECK(fed.physics.starvedCorrections == 0);
+
+    // The commands already on their way still arrive: the host steps on them
+    // until the client's lead and a snapshot have passed. Then it holds the
+    // last controls a few steps and lets go, so the character it stops is
+    // rolled back to on the client, which kept walking.
+    rig.loseCommands = true;
+    RunFed(rig, kLeadTicks + kSnapshotIntervalTicks);
+    const ReplicationClient::EntityPredictionCounts lost = CharacterCounts(rig);
+    RunFed(rig, kRigHoldTicks + kBurstTicks);
+    const ReplicationClient::EntityPredictionCounts starved = CharacterCounts(rig);
+    CHECK(ChargeOf(starved).corrections == ChargeOf(lost).corrections);
+    CHECK(ChargeOf(starved).starvedCorrections > ChargeOf(lost).starvedCorrections);
+    CHECK(starved.physics.corrections == lost.physics.corrections);
+    CHECK(starved.physics.starvedCorrections > lost.physics.starvedCorrections);
+
+    const std::vector<NetId> predicted = rig.harness.client.PredictedEntities();
+    CHECK(std::ranges::find(predicted, rig.harness.server.NetIdOf(rig.character)) != predicted.end());
+}
+
 TEST_CASE("a client walking its character into another player does not shove that player's mirror")
 {
     // Shoved here, the mirror would be put back by the host's next word, into

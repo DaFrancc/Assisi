@@ -43,6 +43,20 @@ template <typename T> std::string Difference(std::string_view name, const T &min
                        Core::Reflect::PredictedFieldText(host));
 }
 
+/// Counts a correction the host's word for @p tick made to @p section, apart
+/// when the host stepped that tick without this client's command.
+void CountCorrection(ReplicationClient::PredictionCounts &section, const CommandEcho &echo, std::uint64_t tick)
+{
+    if (echo.Applied(tick))
+    {
+        ++section.corrections;
+    }
+    else
+    {
+        ++section.starvedCorrections;
+    }
+}
+
 } // namespace
 
 void ReplicationClient::RecordStep(const InputCommand &command)
@@ -308,7 +322,7 @@ void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
         }
         for (PredictionCounts *section : differing)
         {
-            ++section->corrections;
+            CountCorrection(*section, _echo, serverTick);
         }
         history.mispredictedAt = serverTick;
         history.cooldownUntil = _newestRecordedTick + SnapshotIntervalTicks();
@@ -384,7 +398,7 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
         if (void *live = meta.getMutable(&_scene, entity.index, entity.generation); live != nullptr)
         {
             std::memcpy(live, host->second.data(), meta.size);
-            ++section.corrections;
+            CountCorrection(section, _echo, serverTick);
             corrected = true;
         }
     }
@@ -796,6 +810,19 @@ const ReplicationClient::EntityPredictionCounts *ReplicationClient::PredictionCo
 {
     const std::unordered_map<NetId, PredictionHistory>::const_iterator found = _history.find(netId);
     return found == _history.end() ? nullptr : &found->second.counts;
+}
+
+std::vector<NetId> ReplicationClient::PredictedEntities() const
+{
+    std::vector<NetId> predicted;
+    predicted.reserve(_history.size());
+    for (const auto &[netId, history] : _history)
+    {
+        (void)history;
+        predicted.push_back(netId);
+    }
+    std::ranges::sort(predicted);
+    return predicted;
 }
 
 std::uint64_t ReplicationClient::SnapshotIntervalTicks() const

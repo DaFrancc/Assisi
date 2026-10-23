@@ -484,6 +484,9 @@ class EditorApp : public Assisi::App::Application
     /// Replicated, and dynamic bodies that will run as cosmetic local physics.
     /// Both describe a gap between what was marked and what clients will see.
     void DrawHostAuthoringWarnings();
+    /// @brief On a client, every entity it predicts with, for its physics and
+    /// each predicted component, how often the host's word corrected it.
+    void DrawPredictedEntities(const Assisi::NetSync::ReplicationClient &client);
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: the wire, the step's tick, players, join progress
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing

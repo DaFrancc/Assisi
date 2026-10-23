@@ -1214,6 +1214,12 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         return false;
     _corrections.bytesApplied += (reader.BitsRead() - bodySectionStart + 7u) / 8u;
 
+    // Before the compare, which counts a correction at a tick this says the
+    // host stepped without this client's command apart from the others.
+    _echo = CommandEcho{.serverTick = header.serverTick,
+                        .lastAppliedCommandTick = header.lastAppliedCommandTick,
+                        .starvedMask = header.starvedMask};
+
     // After both sections, so each predicted entity is judged on everything
     // this snapshot said of it.
     ComparePredicted(header.serverTick);
@@ -1226,9 +1232,6 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     ++_snapshotsApplied;
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
-    _echo          = CommandEcho{.serverTick = header.serverTick,
-                                 .lastAppliedCommandTick = header.lastAppliedCommandTick,
-                                 .starvedMask = header.starvedMask};
 
     // After the state, never before: a handler for an event about an entity
     // spawned in this same packet must find that entity already there, and the
