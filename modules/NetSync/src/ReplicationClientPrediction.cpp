@@ -164,6 +164,7 @@ void ReplicationClient::Record(std::uint64_t tick, RecordedPart part)
 void ReplicationClient::RecordFollowers(std::uint64_t tick)
 {
     std::vector<FollowerRecord> &followers = _followers[tick % kPredictionHistoryTicks];
+    _replacedFollowers.swap(followers);
     followers.clear();
     if (_physics == nullptr)
     {
@@ -184,6 +185,21 @@ void ReplicationClient::RecordFollowers(std::uint64_t tick)
     }
     for (const ECS::Entity entity : _followerEntities)
     {
+        // A replay only puts back a follower it does not step, where the live
+        // record of the tick has it. That record's start may hold a correction
+        // made since, which a record taken again would lose, and the end of
+        // the replay would undo.
+        if (_rollingBack && !_scene.IsReplayed(entity))
+        {
+            const std::vector<FollowerRecord>::const_iterator live =
+                std::find_if(_replacedFollowers.begin(), _replacedFollowers.end(),
+                             [entity](const FollowerRecord &record) { return record.entity == entity; });
+            if (live != _replacedFollowers.end())
+            {
+                followers.push_back(*live);
+                continue;
+            }
+        }
         const Physics::FollowerFrame frame = _physics->CaptureFollower(entity);
         followers.push_back(FollowerRecord{.frame = frame, .start = frame, .entity = entity});
     }
