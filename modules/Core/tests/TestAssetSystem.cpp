@@ -2,8 +2,16 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Errors.hpp>
@@ -116,6 +124,134 @@ TEST_CASE("AssetSystem::WriteText creates missing parent directories")
     REQUIRE(AssetSystem::WriteText("a/b/c/note.txt", "hi").has_value());
     CHECK(std::filesystem::exists(root / "a" / "b" / "c" / "note.txt"));
 }
+
+namespace
+{
+// The names directly inside @p dir, sorted.
+std::vector<std::string> Entries(const std::filesystem::path &dir)
+{
+    std::vector<std::string> names;
+    for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(dir))
+    {
+        names.push_back(entry.path().filename().string());
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
+// What @p path holds right now, read in one go.
+std::string ReadWhole(const std::filesystem::path &path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+} // namespace
+
+TEST_CASE("AssetSystem::WriteText replaces a file whole and leaves nothing beside it")
+{
+    const std::filesystem::path root = MakeUserRoot("replace");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+
+    // Longer first, so a write that kept any of the old file would show it.
+    REQUIRE(AssetSystem::WriteText("options.json", "{\"old\":\"and longer than the new\"}").has_value());
+    REQUIRE(AssetSystem::WriteText("options.json", "{\"new\":1}").has_value());
+
+    CHECK(ReadWhole(root / "options.json") == "{\"new\":1}");
+    CHECK(Entries(root) == std::vector<std::string>{"options.json"});
+}
+
+TEST_CASE("AssetSystem::WriteText takes the place of what a crash mid-save left behind")
+{
+    const std::filesystem::path root = MakeUserRoot("leftover");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    std::ofstream{root / "options.json.tmp"} << "half a file";
+
+    REQUIRE(AssetSystem::WriteText("options.json", "{}").has_value());
+
+    CHECK(ReadWhole(root / "options.json") == "{}");
+    CHECK(Entries(root) == std::vector<std::string>{"options.json"});
+}
+
+TEST_CASE("AssetSystem::WriteText that cannot put its file in place leaves the target and nothing else")
+{
+    // A directory where the file goes: the new contents are written in full
+    // beside it, and replacing a directory with them is refused.
+    const std::filesystem::path root = MakeUserRoot("blocked");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    std::filesystem::create_directories(root / "options.json");
+    std::ofstream{root / "options.json" / "kept.txt"} << "kept";
+
+    CHECK_FALSE(AssetSystem::WriteText("options.json", "{}").has_value());
+
+    CHECK(ReadWhole(root / "options.json" / "kept.txt") == "kept");
+    CHECK(Entries(root) == std::vector<std::string>{"options.json"});
+}
+
+TEST_CASE("AssetSystem::WriteText that cannot write its new contents leaves the old file as it was")
+{
+    // A directory holding something where the new contents would be written
+    // first: the write fails before the file it replaces is touched.
+    const std::filesystem::path root = MakeUserRoot("unwritable");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    REQUIRE(AssetSystem::WriteText("options.json", "{\"old\":1}").has_value());
+    std::filesystem::create_directories(root / "options.json.tmp");
+    std::ofstream{root / "options.json.tmp" / "in-the-way.txt"} << "in the way";
+
+    CHECK_FALSE(AssetSystem::WriteText("options.json", "{\"new\":1}").has_value());
+
+    CHECK(ReadWhole(root / "options.json") == "{\"old\":1}");
+}
+
+// Windows refuses to replace a file another handle has open, so a reader
+// there makes the save fail instead of showing it anything.
+#if !defined(_WIN32)
+namespace
+{
+// Large enough that writing it takes many reads' worth of time.
+constexpr std::size_t kLargeFileBytes = std::size_t{1} << 20;
+constexpr std::int32_t kRewrites = 40;
+
+// Reads @p path until @p done, counting the reads that were neither @p first
+// nor @p second whole.
+std::int32_t CountTornReads(const std::filesystem::path &path, const std::string &first, const std::string &second,
+                            const std::atomic<bool> &done)
+{
+    std::int32_t torn = 0;
+    while (!done.load())
+    {
+        const std::string read = ReadWhole(path);
+        if (read != first && read != second)
+        {
+            ++torn;
+        }
+    }
+    return torn;
+}
+} // namespace
+
+TEST_CASE("AssetSystem::WriteText never shows a reader a file part written")
+{
+    // Written in place, the file is cut to nothing and grows back while it is
+    // written, which a reader polling it all but certainly catches.
+    const std::filesystem::path root = MakeUserRoot("torn");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+    const std::string first(kLargeFileBytes, 'a');
+    const std::string second(kLargeFileBytes, 'b');
+    REQUIRE(AssetSystem::WriteText("save.sav", first).has_value());
+
+    std::atomic<bool> done{false};
+    std::int32_t torn = 0;
+    std::thread reader([&] { torn = CountTornReads(root / "save.sav", first, second, done); });
+    for (std::int32_t rewrite = 0; rewrite < kRewrites; ++rewrite)
+    {
+        REQUIRE(AssetSystem::WriteText("save.sav", rewrite % 2 == 0 ? second : first).has_value());
+    }
+    done.store(true);
+    reader.join();
+
+    CHECK(torn == 0);
+}
+#endif
 
 TEST_CASE("AssetSystem::ResolveUser rejects paths escaping the user root")
 {
