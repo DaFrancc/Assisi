@@ -221,6 +221,13 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
         {
             return std::unexpected(WhyUnopenable(path));
         }
+        /* Some libstdc++ versions open a directory as though it were a file and
+           put its end at the largest offset there is. */
+        std::error_code ec;
+        if (fs::is_directory(path, ec))
+        {
+            return std::unexpected(AssetErrorCode::IsDirectory);
+        }
 
         /* tellg() can fail (e.g., non-seekable streams); treat as read failure. */
         const std::streampos end = file.tellg();
