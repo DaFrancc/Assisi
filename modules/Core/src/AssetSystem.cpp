@@ -3,7 +3,9 @@
 
 #include "Assisi/Core/Logger.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
@@ -15,6 +17,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/types.h>
 #include <unistd.h>
 #endif
 
@@ -243,7 +248,127 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
     }
 }
 
-/* Writes bytes to path, creating parent directories and truncating any existing file. */
+/* The name a write is staged under before it takes the target's place: beside
+   the target, so the rename stays on one filesystem, and always the same, so
+   the next save overwrites one a crash left behind. */
+fs::path StagingPathFor(const fs::path &path)
+{
+    fs::path staging = path;
+    staging += ".tmp";
+    return staging;
+}
+
+#ifdef _WIN32
+/* The most handed to one WriteFile call, whose length is a DWORD. */
+constexpr std::size_t kMostBytesPerWrite = std::size_t{1} << 30;
+
+/* Writes all of data to path, truncating it, and has it on the disk before it
+   closes it; false if any of it failed. A rename of a file only part on the
+   disk could, after a power cut, leave the target holding that part. */
+bool WriteDurably(const fs::path &path, std::span<const std::byte> data)
+{
+    const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+    bool written = true;
+    for (std::size_t at = 0; written && at < data.size();)
+    {
+        const DWORD chunk = static_cast<DWORD>(std::min(data.size() - at, kMostBytesPerWrite));
+        DWORD wrote = 0;
+        written = WriteFile(file, data.data() + at, chunk, &wrote, nullptr) != 0 && wrote == chunk;
+        at += wrote;
+    }
+    const bool flushed = written && FlushFileBuffers(file) != 0;
+    const bool closed = CloseHandle(file) != 0;
+    return flushed && closed;
+}
+
+/* Puts staging in path's place in one step, on the disk before it returns. */
+bool ReplaceDurably(const fs::path &staging, const fs::path &path, std::error_code &ec)
+{
+    if (MoveFileExW(staging.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0)
+    {
+        ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        return false;
+    }
+    return true;
+}
+#else
+/* Writes all of data to path, truncating it, and has it on the disk before it
+   closes it; false if any of it failed. A rename of a file only part on the
+   disk could, after a power cut, leave the target holding that part. */
+bool WriteDurably(const fs::path &path, std::span<const std::byte> data)
+{
+    /* The mode umask trims, as an ofstream's would be. */
+    constexpr mode_t kNewFileMode = 0666;
+    const int file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, kNewFileMode);
+    if (file < 0)
+    {
+        return false;
+    }
+    bool written = true;
+    for (std::size_t at = 0; written && at < data.size();)
+    {
+        const ssize_t wrote = ::write(file, data.data() + at, data.size() - at);
+        if (wrote < 0)
+        {
+            written = errno == EINTR;
+            continue;
+        }
+        at += static_cast<std::size_t>(wrote);
+    }
+    const bool synced = written && ::fsync(file) == 0;
+    const bool closed = ::close(file) == 0;
+    return synced && closed;
+}
+
+/* Has the entries of dir on the disk: a rename is a change to the directory
+   holding the file, and is not kept through a power cut until it is synced. */
+void SyncDirectory(const fs::path &dir)
+{
+    const int handle = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (handle < 0)
+    {
+        Log::Warn("AssetSystem: cannot open '{}' to keep a save through a power cut.", dir.string());
+        return;
+    }
+    /* EINVAL is a filesystem that keeps no directory to sync, which has
+       nothing more to do. */
+    if (::fsync(handle) != 0 && errno != EINVAL)
+    {
+        Log::Warn("AssetSystem: cannot sync '{}'; a save there may not survive a power cut.", dir.string());
+    }
+    ::close(handle);
+}
+
+/* Puts staging in path's place in one step, on the disk before it returns. */
+bool ReplaceDurably(const fs::path &staging, const fs::path &path, std::error_code &ec)
+{
+    fs::rename(staging, path, ec);
+    if (ec)
+    {
+        return false;
+    }
+    SyncDirectory(path.has_parent_path() ? path.parent_path() : fs::path{"."});
+    return true;
+}
+#endif
+
+/* Removes a staging file a failed write made, if it made one. */
+void RemoveStaging(const fs::path &staging) noexcept
+{
+    std::error_code ec;
+    fs::remove(staging, ec);
+}
+
+/* Writes bytes to path, creating parent directories. The bytes go to a staging
+   file first, on the disk in full before it is renamed over the target and the
+   rename on the disk before this returns, so the file is always the whole old
+   contents or the whole new ones: a crash, a power cut or a failure part-way
+   leaves the target as it was. */
 VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data) noexcept
 {
     if (path.has_parent_path())
@@ -259,29 +384,32 @@ VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data)
         }
     }
 
-    /* The try covers the ofstream below, which reports through exceptions when a
-       stream's exception mask is set and can throw from its own allocations. */
+    /* The try covers the path below, which can throw from its own allocations. */
+    fs::path staging;
     try
     {
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        if (!file)
+        staging = StagingPathFor(path);
+        if (!WriteDurably(staging, data))
         {
+            RemoveStaging(staging);
             return std::unexpected(AssetErrorCode::FileWriteFailed);
         }
-
-        file.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
-        if (!file.good())
-        {
-            return std::unexpected(AssetErrorCode::FileWriteFailed);
-        }
-
-        return {};
     }
     catch (const std::exception &e)
     {
         Log::Warn("AssetSystem: exception writing '{}': {}", path.string(), e.what());
+        RemoveStaging(staging);
         return std::unexpected(AssetErrorCode::FileWriteFailed);
     }
+
+    std::error_code ec;
+    if (!ReplaceDurably(staging, path, ec))
+    {
+        Log::Warn("AssetSystem: cannot put '{}' in place ({}); it is left as it was.", path.string(), ec.message());
+        RemoveStaging(staging);
+        return std::unexpected(AssetErrorCode::FileWriteFailed);
+    }
+    return {};
 }
 } // namespace
 

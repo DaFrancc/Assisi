@@ -79,6 +79,10 @@ change. The window size, rebound keys and bus volumes are stored only once the
 player sets them; until then they follow your defaults, even when you change
 them in a later version.
 
+The file is saved whole or not at all. If the game crashes or the power goes
+while it is saving, `options.json` keeps the settings it had before. You may
+find an `options.json.tmp` beside it afterwards; the next save replaces it.
+
 <details>
 <summary>Logs and crash reports</summary>
 
