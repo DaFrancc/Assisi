@@ -642,7 +642,8 @@ private:
     };
 
     /// Records every follower of @p tick: each kinematic body and character,
-    /// and each body this client simulates.
+    /// and each body this client simulates. In a replay, one the replay does
+    /// not step keeps the tick's live record.
     void RecordFollowers(std::uint64_t tick);
 
     /// Records where the step of @p tick left each body this client
@@ -947,6 +948,8 @@ private:
     std::unordered_map<NetId, std::uint64_t> _touchedAt;
     /// Scratch for RecordFollowers, kept to keep its storage.
     std::vector<ECS::Entity> _followerEntities;
+    /// Scratch for RecordFollowers: the record it replaces.
+    std::vector<FollowerRecord> _replacedFollowers;
 
     /// Where each ACOMP(predicted) component sits in a record, by its index in
     /// `_predictedComponents`, and a record's size.
