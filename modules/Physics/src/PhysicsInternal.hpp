@@ -809,6 +809,21 @@ struct PhysicsWorld::Impl
     /// bodies are locked by the step, and the contact callbacks are reading them.
     bool stepping = false;
 
+    /// True during StepCharacters: a step stepped again, in which a character
+    /// pushes no body but those of `solvedBodies` and `followerBodies`, since
+    /// the live step already pushed it.
+    bool characterOnlyStep = false;
+
+    /// During StepCharacters, the bodies it solves again.
+    std::vector<JPH::BodyID> solvedBodies;
+
+    /// During StepCharacters, the bodies it places as followers. A character
+    /// pushes one as it did live: a body pushed moves off at once, within the
+    /// sweep, and a character that met it standing still would stop short of
+    /// where its live sweep followed it. The follower is put where its step
+    /// left it after the sweeps, so the push does not last.
+    std::vector<JPH::BodyID> followerBodies;
+
     /// Scratch for the reconcile, kept so a frame that changes nothing allocates
     /// nothing.
     std::vector<ECS::Entity> scratchChanged;
@@ -1118,6 +1133,14 @@ private:
 
     /// In the order they were made, which is the order they are applied in.
     std::vector<BodyRequest> requests;
+
+    /// What MovedByGameplay() lists for the step under way or just run, and
+    /// the Teleports since the last Update(), which the next one lists.
+    std::vector<ECS::Entity> movedByGameplay;
+    std::vector<ECS::Entity> teleportedSinceUpdate;
+
+    /// Marks @p entity's owner as moved by gameplay in this step.
+    void NoteMovedByGameplay(ECS::Entity entity);
 
     /// Queues @p request for the next step.
     void Request(const BodyRequest &request);
@@ -1724,6 +1747,11 @@ private:
     /// before the bodies are solved. See PhysicsWorld::Update.
     void StepCharacters(float deltaTime);
 
+    /// Solves one step for @p bodies alone, whose ids are `solvedBodies`, every other
+    /// awake body held where it is and every body it wakes put back to sleep,
+    /// and writes their poses and states. See PhysicsWorld::StepCharacters.
+    void SolveAgain(std::span<const ECS::Entity> bodies, float deltaTime);
+
     /// Where a character falls in stepOrder: unkeyed after keyed, then the key
     /// or the entity index.
     using StepOrderKey = std::pair<bool, std::uint64_t>;
@@ -1757,6 +1785,10 @@ private:
     /// @p velocity, finds what it touches there, and writes and snaps its
     /// Transform.
     void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
+    /// Puts the character back as @p frame's physics state has it, ground and
+    /// contacts included; placed as PlaceCharacter does when that state does
+    /// not read back.
+    void RestoreCharacter(CharacterRecord &record, const CharacterFrame &frame);
 
     /// The carrier under @p record that it may ride: the owner of its ground
     /// body, when that is a body with a Carrier and the character
@@ -1824,8 +1856,8 @@ private:
     /// CarryRiders for one riding character.
     void CarryRider(CharacterRecord &record);
 
-    /// Puts @p entity's kinematic body where @p frame has it, moving as fast.
-    /// Nothing for any other body.
+    /// Puts @p entity's kinematic body where @p frame has it, moving as fast, or
+    /// its character's feet there. Nothing for any other body.
     void PlaceFollower(ECS::Entity entity, const FollowerFrame &frame);
 
     /// Changes @p record's capsule to @p stance's. False when it does not fit,

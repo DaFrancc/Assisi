@@ -135,9 +135,12 @@
 /// nearest StringPool above it: its own struct's, or its holder's.
 #define ASTRUCT(...)
 
-/// AEVENT() — marks a struct as an event type.
-/// Compiles to nothing today; reserved for future reflectgen support
-/// (serialization, network replication interception).
+/// AEVENT() — marks a struct as an event type, which a screen file can then
+/// name to push. An event stays in the world it was pushed in.
+///
+/// AEVENT(universal) — an event of the whole program rather than of one world,
+/// such as quitting: every world's systems read it. `ctx.events` routes each
+/// event by this, so a push and a read never have to say which queue they mean.
 #define AEVENT(...)
 
 /// AMSG(direction, reliability[, flags]) — marks a struct as a network message,

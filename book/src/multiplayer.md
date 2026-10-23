@@ -96,33 +96,46 @@ that same step:
   same way (upright or crouched) on the same kind of ground. Small differences
   like rounding never make your view jitter.
 - **Further off**, for example because something only the host knew about
-  pushed you, your machine goes back to that step. What the host disagreed
-  with is put where the host had it, and everything else you predict goes back
-  to what your own machine had then. Then every step since is run again: your
-  character's movement and the level's systems, on the controls the host
-  actually received from you. This is called a **rollback**. The picture eases
-  across over a tenth of a second instead of jumping.
+  pushed you, your machine goes back to that step. Your character is put where
+  the host had it, and any other character you predict where your own machine
+  had it then. Then every step since is run again for your characters and their
+  cameras, on the controls the host actually received from you. This is called
+  a **rollback**. The picture eases across over a tenth of a second instead of
+  jumping.
 
-Only what your machine predicts is run again. The rest of the world stays where
-it is, except moving platforms: each one is put back where it was at every step,
-so a character riding one lands where it should.
+A rollback runs only the engine's own movement again. Your game's systems are
+not run again: each runs once per step, when the step happens. The rest of the
+world stays where it is, except moving platforms and the physics objects your
+machine simulates (see below): each one is put back where it was at every step,
+so a character riding a platform or pushing a crate lands where it should.
 
 The tolerances are `predictionTolerance`, `predictionRotationTolerance` (in
-radians) and `predictionVelocityTolerance` in `assets/config/network.json`. The
+radians), `predictionVelocityTolerance` and, for a predicted physics object,
+`predictionAngularVelocityTolerance` (in radians a second) in
+`assets/config/network.json`. The
 editor's network panel counts how many of the host's answers were kept and how
 many were rolled back. On a quiet level, almost all of them should be kept.
 **Hard snaps** counts answers about a step older than the 64 your machine
 remembers: those can't be rolled back to, so your character is put where the
 host had it.
 
+Under **Predicted entities**, the panel lists everything your machine
+predicts. For each one, it shows its physics and each of its predicted
+components separately: how many of the host's answers were compared with it,
+how many corrected it, and the last value that differed, yours and the host's.
+A correction at a step the host took without your controls, because they
+arrived late or not at all, is counted as **starved** instead. The connection
+caused that one, not your game code.
+
 ### Components you predict
 
 Your machine predicts your character, everything in its blueprint (its camera,
 for example), and anything the host hands it with a **`Predicted`** component
 naming your client. On those entities, a component marked `predicted` is yours
-to change: when the host's older value for it arrives, your machine keeps that
-value to one side instead of writing it over yours. `Transform` is one, which is
-why your camera turns the moment you move the mouse.
+to change: when the host's older value for it arrives, your machine compares it
+with the value it had at that same step instead of writing it over yours.
+`Transform` is one, which is why your camera turns the moment you move the
+mouse.
 
 Mark a component of your own `predicted` when your player changes it and has to
 see the change at once, like ammo or a cooldown:
@@ -136,50 +149,107 @@ struct Ammo
 };
 ```
 
+When the host's value disagrees with what your machine had at that step, for
+example because the host refused a shot you fired, the host's value is written
+over yours. Your ammo can then show the host's older count for a moment, until
+the host's answers about your later steps arrive.
+
 A predicted component has to be a plain value: no lists or maps, no
 `AFIELD(norep)` field, no entity references, and no member without `AFIELD`.
 The build refuses one that breaks a rule. Anything else on your character,
 like a score, can stay plain `replicable`: the host's value is simply written
-over yours. Only predicted components are remembered and rolled back, so leave
-the rest plain.
+over yours, a little later. Only predicted components are remembered and
+compared, so leave the rest plain.
 
-### Systems during a rollback
+### Physics objects near your player
 
-A rollback runs your `FixedUpdate` and `PostFixedUpdate` systems again for steps
-they already ran. Your code never has to check whether that is happening, as
-long as you follow two rules:
+A crate, a ball or a barrel your character walks up to becomes yours to
+simulate. When your character comes within 2 m of a body the physics solver
+moves (one with a `RigidBody` that isn't kinematic), the host hands it to your
+machine and marks it with a **`SimulatedBy`** component naming your client.
+From then on your machine moves it as a single-player game would: it moves the
+step you push it, and the host never corrects it. Bodies touching each other
+are handed out together, so the crate you push and the one it runs into are
+both yours, and stay together.
 
-1. **A fixed-step system only changes components and pushes events.** It may
-   run more than once for the same step, so anything else, like playing a
-   sound directly or writing a file, would happen twice. Mark a system that has
-   to do something like that `liveOnly` (see
-   [Your first system](first-system.md#options)), and it is skipped when a step
-   runs again. For now an event pushed again during a rollback is also
-   delivered again, so an effect started from an event, like a sound, can play
-   twice after one.
-2. **A predicted component only depends on predicted things.** Ammo that goes
-   down when your own player fires is fine. A cooldown that ticks only while
-   your player stands in a zone the host moves will disagree with the host on
-   every answer: your machine can't know where the zone is going. The network
-   panel shows such a component being rolled back over and over.
+Every step, your machine sends the host where your bodies ended up, along with
+your controls. The host puts its own copy of each one there, so on the host
+your character and your crate meet exactly as they did on your machine. Other
+players see your crate a moment late, as they see your character.
 
-While a step runs again, a `Query` only finds what your machine predicts, so the
-rest of the world is left alone. A system that needs to read everything anyway,
-say to see where other players stand, adds `ECS::IncludingFrozen`:
+The host checks what it's told. It takes a body back, and your machine is shown
+where the host has it, when your report:
 
-```cpp
-for (auto [entity, other] : scene.Query<Assisi::Physics::Character, Assisi::ECS::IncludingFrozen>())
-```
+- puts it further from your character than it could be,
+- has it moving or spinning faster than a body may,
+- or has it further from your last report than that speed could carry it.
 
-Reading one entity directly with `Get` or `GetMut` always works. Creating or
-destroying entities during a rollback, or adding or removing components on
-something your machine doesn't predict, stops a debug build with an error.
+It also takes a body back when your reports stop coming for a second and a half,
+and when the host's own game pushes or moves it, for example an explosion's
+`AddImpulse`: the host applies that itself. Taken back, a body stays with the
+host for a moment before it can be handed out again.
+
+You keep a body until your character is more than 4 m from it. Another player
+whose character pushes it while yours isn't touching it takes it over after a
+moment.
+
+When two or more players push one body at once, no player's machine can
+simulate it for the others, so the host takes it over. Each machine whose
+character touches it then **predicts** it, as it predicts its own character:
+the body moves the step you push it, and when the host's word about that step
+arrives, a round trip later, your machine checks its guess and, if it was
+wrong, moves the body to where the host has it, easing the difference on
+screen. The other players' pushes reach you that late, so while they push too
+you will see small corrections. Once only one player has touched the body for
+`ownershipTouchDwellTicks`, it is handed to that player again.
+
+To keep a body for the host alone, add **`HostSimulated`** to it. Do it for
+something whose every move matters to more than one player, like the ball in a
+competitive game. No machine but the host's ever simulates it; yours predicts
+it while your character touches it, as above.
+
+The settings are in `assets/config/network.json`:
+
+| Key | What it is |
+|---|---|
+| `ownershipDistance` | How near your character a body is handed to you (m). |
+| `ownershipLeaveDistance` | How far away it goes back (m). Larger than the one above, so a body between two players doesn't flip between them. |
+| `ownershipTouchDwellTicks` | How long another player pushes a body yours isn't touching before it is theirs. |
+| `ownershipHoldTicks` | How long a body stays with whoever was last given it before someone else can be. |
+| `ownershipMaxBodies` | The most bodies one player simulates at once, nearest first. |
+| `reportMaxSpeed`, `reportMaxSpin` | The fastest a reported body may move (m/s) and spin (rad/s). |
+| `reportReachSlack` | How much further than `ownershipLeaveDistance` a reported body may be from your character (m). |
+| `reportTimeoutTicks` | How long the host waits for a report before it takes a body back. |
+
+To try it, open `levels/NetPush.alvl` and run it with **Host + 2 clients**. Each
+player has a crate to push. There is one in the middle to fight over, a stack to
+knock down, a ball, a crate too heavy to move, and `HostBall`, a ball kept for
+the host, to feel the difference.
+
+### Your systems in multiplayer
+
+Your systems run once per step, as in a game with no network: a rollback never
+runs them again, so a sound you push from `FixedUpdate` plays once and a value
+you count down is counted down once. While a rollback runs, events pushed are
+dropped and physics reports no contacts; none of your systems are running then
+anyway.
+
+A predicted component works best when your machine can work it out from your
+own player alone. Ammo that goes down when your own player fires is fine. A
+cooldown that ticks only while your player stands in a zone the host moves will
+disagree with the host often, since your machine can't know where the zone is
+going: the network panel shows how often the host corrects it.
+
+A system that moves your character itself, say a dash that sets its velocity,
+runs once, live. When a rollback runs over the step the dash happened in, the
+dash isn't run again, and the host's next answers bring your character back in
+line over a moment.
 
 The network panel's **Sync test** checkbox, on a client, checks rollbacks while
 you develop: it runs every step a second time and compares the two. Each value
 that comes out different is written to the log with both versions. The count
-should stay at zero; anything else means some state isn't put back, or a system
-behaves differently the second time.
+should stay at zero; anything else means the engine's movement doesn't put
+something back.
 
 Every machine runs the level's systems, and every machine numbers its steps the
 host's way: `ctx.simTick` is the same on every machine for the same step. A

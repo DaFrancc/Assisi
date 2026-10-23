@@ -244,7 +244,12 @@ enum class RejectReason : std::uint8_t
 ///    of the header, so a v9 client reads the rest of it shifted.
 ///  - 10 → 11: a body record says whether it is a character's, and a
 ///    character's carries its stance and ground state after the velocities.
-inline constexpr std::uint32_t kNetProtocolVersion = 11;
+///  - 11 → 12: an input packet carries, after its commands, the client's
+///    reports of the bodies it simulates.
+///  - 12 → 13: a quantized float's range is cut into an even number of steps,
+///    so zero is a level and a body at rest is sent at rest. The same bits mean
+///    slightly different values, so a v12 peer reads every pose a little off.
+inline constexpr std::uint32_t kNetProtocolVersion = 13;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

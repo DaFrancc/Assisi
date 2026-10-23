@@ -41,8 +41,8 @@ Style TextFieldStyle()
     return style;
 }
 
-Screen::Screen(Ui &ui, ScreenTraits traits, int32_t sortKey, std::string name)
-    : _ui(ui), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
+Screen::Screen(Ui &ui, Core::EventQueue &events, ScreenTraits traits, int32_t sortKey, std::string name)
+    : _ui(ui), _events(events), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
 {
     // Before anything is built on it, so the nodes it makes can name the
     // built-ins: a widget registry is per tree, and so per screen.
@@ -67,10 +67,10 @@ void Screen::Hide()
 
 void Screen::OnActivate(NodeId node, std::function<void(Screen &)> act)
 {
-    // The queue is ignored: this is the half of a screen's behaviour that
+    // The route is ignored: this is the half of a screen's behaviour that
     // reaches nothing outside the UI, which is what lets it work in a level
     // that names no systems.
-    _tree.SetOnActivate(node, [this, act = std::move(act)](Core::EventQueue &) { act(*this); });
+    _tree.SetOnActivate(node, [this, act = std::move(act)](const Core::EventRoute &) { act(*this); });
 }
 
 bool Screen::Held(NodeId id) const

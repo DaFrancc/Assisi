@@ -42,6 +42,22 @@ constexpr float kPressing = 0.7f;
 /// position is rounded to on the wire.
 constexpr float kMostShakeWhilePressing = 0.0005f;
 
+/// Frames another player stands still after walking, for its last snapshots to
+/// arrive and the corrections they make to be eased away.
+constexpr std::int32_t kStandFrames = 60;
+
+/// How far from where the host has it another player standing still may be
+/// drawn (m): a few wire steps.
+constexpr float kMostDrawnOffStanding = 0.01f;
+
+/// Where @p scene draws @p entity: its Transform and the correction it is still
+/// easing away.
+glm::vec3 Drawn(ECS::Scene &scene, ECS::Entity entity)
+{
+    const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
+    return scene.Get<ECS::Transform>(entity)->position + (offset != nullptr ? offset->position : glm::vec3(0.f));
+}
+
 } // namespace
 
 TEST_CASE("Another player pressing against this one does not tremble up and down with the wire's rounding")
@@ -133,4 +149,36 @@ TEST_CASE("Another player walking is drawn at its feet, without bobbing above th
     });
 
     CHECK(highestDrawn < kMostDrawnOffFloor);
+}
+
+TEST_CASE("With the sync test on, another player that walked and stopped is drawn where it stands")
+{
+    // The sync test steps the newest tick again with the other players placed
+    // where its live step left them. Recorded again from there, a correction
+    // the host's word made since was lost and the next tick put back: the
+    // other player stayed where it started, drawn metres off and shaking.
+    const std::filesystem::path root = FreshRoot("assisi_players_others");
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    const ECS::Entity hostOnClient = replication.EntityOf(host.play.Session().Server()->NetIdOf(hostOwn));
+    REQUIRE(hostOnClient != ECS::NullEntity);
+    replication.SetSyncTest(true);
+
+    // Controls hold until they are changed, so it walks and then stands.
+    REQUIRE(host.world.scene.Has<App::PlayerInput>(hostOwn));
+    host.world.scene.GetMut<App::PlayerInput>(hostOwn)->move = {0.f, 1.f};
+    session.Run(kLongWalkFrames);
+    host.world.scene.GetMut<App::PlayerInput>(hostOwn)->move = {0.f, 0.f};
+    session.Run(kStandFrames);
+
+    const glm::vec3 standing = host.world.scene.Get<ECS::Transform>(hostOwn)->position;
+    REQUIRE(replication.SyncTestResults().replays > 0u);
+    CHECK(glm::length(Drawn(client.world.scene, hostOnClient) - standing) < kMostDrawnOffStanding);
 }

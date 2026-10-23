@@ -74,7 +74,7 @@ void EditorApp::HandleEntityPicking()
         // Ctrl *and* Shift both mean "add this one too" out here. A range needs an
         // order to run through, which a list has and the viewport does not, so giving
         // Shift its list meaning would only add a key that does nothing.
-        GetEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
+        GetUniversalEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
     }
 }
 

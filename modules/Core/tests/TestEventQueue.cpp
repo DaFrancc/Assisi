@@ -7,6 +7,7 @@
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 #include <cstdint>
+#include <typeinfo>
 #include <vector>
 
 using namespace Assisi::Core;
@@ -91,6 +92,24 @@ TEST_CASE("EventQueue: flush clears every queue")
     CHECK(queue.Read<Damage>()[0].amount == 9);
 }
 
+TEST_CASE("EventQueue: a push inside a DropScope is discarded, and one after it is kept")
+{
+    EventQueue queue;
+    queue.Push(Damage{1});
+    {
+        const EventQueue::DropScope dropping(queue);
+        queue.Push(Damage{2});
+        queue.Push(Healed{3});
+    }
+    queue.Push(Damage{4});
+
+    const EventSpan<Damage> damage = queue.Read<Damage>();
+    REQUIRE(damage.size() == 2);
+    CHECK(damage[0].amount == 1);
+    CHECK(damage[1].amount == 4);
+    CHECK(queue.Read<Healed>().empty());
+}
+
 // The read-view invalidation guard. With a throwing contract handler installed,
 // a fired ASSISI_ASSERT surfaces as a catchable ContractViolation. Debug-only —
 // the check compiles out in release.
@@ -166,5 +185,56 @@ TEST_CASE("EventQueue guard: copying out then pushing after the loop is allowed"
     CHECK_NOTHROW(queue.Push(Damage{100}));
     CHECK(collected.size() == 4);
     CHECK(queue.Read<Damage>().size() == 5);
+}
+
+// A queue holds one scope. A universal event in a world's queue reaches nobody
+// looking for it, and a world event in the universal queue reaches every world.
+namespace
+{
+
+/// Belongs to the whole program, as an AEVENT(universal) would.
+struct Broadcast
+{
+};
+
+void DeclareBroadcast()
+{
+    DeclareUniversal(typeid(Broadcast));
+}
+
+} // namespace
+
+TEST_CASE("EventQueue guard: a universal event pushed into a world's queue is caught")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    DeclareBroadcast();
+    EventQueue world;
+
+    CHECK_THROWS_AS(world.Push(Broadcast{}), ContractViolation);
+    CHECK_NOTHROW(world.Push(Damage{1}));
+}
+
+TEST_CASE("EventQueue guard: a world event pushed into the universal queue is caught")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    DeclareBroadcast();
+    EventQueue universal{EventScope::Universal};
+
+    CHECK_THROWS_AS(universal.Push(Damage{1}), ContractViolation);
+    CHECK_NOTHROW(universal.Push(Broadcast{}));
+}
+
+TEST_CASE("EventQueue guard: reading an event from the queue of the other scope is caught")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    DeclareBroadcast();
+    EventQueue world;
+    EventQueue universal{EventScope::Universal};
+
+    // Always empty, so a reader looking there would never hear of one.
+    CHECK_THROWS_AS((void)world.Read<Broadcast>(), ContractViolation);
+    CHECK_THROWS_AS((void)universal.Read<Damage>(), ContractViolation);
+    CHECK_NOTHROW((void)world.Read<Damage>());
+    CHECK_NOTHROW((void)universal.Read<Broadcast>());
 }
 #endif // !NDEBUG

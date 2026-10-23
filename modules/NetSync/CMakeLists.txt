@@ -3,6 +3,8 @@ Assisi_apply_defaults(Assisi-NetSync)
 
 target_sources(Assisi-NetSync
   PUBLIC
+    "include/Assisi/NetSync/BodyOwnership.hpp"
+    "include/Assisi/NetSync/BodyReport.hpp"
     "include/Assisi/NetSync/BodyState.hpp"
     "include/Assisi/NetSync/DistanceRelevancy.hpp"
     "include/Assisi/NetSync/InputCommand.hpp"
@@ -18,6 +20,8 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/ReplicationProviders.hpp"
     "include/Assisi/NetSync/ReplicationServer.hpp"
   PRIVATE
+    "src/BodyOwnership.cpp"
+    "src/BodyReport.cpp"
     "src/BodyState.cpp"
     "src/DistanceRelevancy.cpp"
     "src/InputCommand.cpp"
@@ -32,6 +36,7 @@ target_sources(Assisi-NetSync
     "src/ReplicationInternal.hpp"
     "src/ReplicationServer.cpp"
     "src/ReplicationServerMessages.cpp"
+    "src/ReplicationServerOwnership.cpp"
     "src/ReplicationServerSnapshot.cpp"
     "src/ReplicationServerState.cpp"
 )

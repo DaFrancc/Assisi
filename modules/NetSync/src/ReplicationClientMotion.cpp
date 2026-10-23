@@ -48,6 +48,8 @@ void ReplicationClient::DestroyMirrorBody(NetId netId)
 {
     _bodies.erase(netId);
     _history.erase(netId);
+    _simulated.erase(netId);
+    _touchedAt.erase(netId);
 }
 
 void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
@@ -91,6 +93,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     MirrorBody &record = _bodies[state.netId];
     _transformHistory.erase(state.netId);
 
+    // This client's to simulate: what the host says of it is this client's
+    // own report coming back, older than the body is now.
+    if (_simulated.contains(state.netId))
+    {
+        return;
+    }
+
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
     // folding in the cosmetic offset would flatter the number.
@@ -115,7 +124,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // Only what this client predicts is its own to move. A character it does
     // not, shoved here by the one it does, would be put back by the host's next
     // word, into the way of the character it was shoved by.
-    const bool predicted = character && PredictsCharacter(state.netId, entity);
+    const bool predicted = character ? PredictsCharacter(state.netId, entity) : PredictsBody(state.netId, entity);
     if (character)
     {
         _physics->SetCharacterPushable(entity, predicted);
@@ -125,9 +134,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
 
     // Compared with where the client had it at the same tick, not where it is
     // now, a round trip further on: ComparePredicted does that, after the
-    // whole snapshot is in.
+    // whole snapshot is in. The rest pose is kept, for when it stops being
+    // predicted and is a mirror EnforceSleep holds again.
     if (predicted)
     {
+        record.asleep       = state.asleep;
+        record.restPosition = state.position;
+        record.restRotation = state.rotation;
         return;
     }
 
@@ -150,6 +163,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
                               Physics::BodyState{.linearVelocity = state.linearVelocity,
                                                  .angularVelocity = state.angularVelocity,
                                                  .asleep = state.asleep});
+    RecordFollowerNow(entity);
     if (character && targetRotation != simulatedRotation)
     {
         _scene.GetMut<ECS::Transform>(entity)->rotation = targetRotation;
@@ -204,6 +218,43 @@ void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose
 bool ReplicationClient::PredictsCharacter(NetId netId, ECS::Entity entity) const
 {
     return _confirmed.contains(netId) && _scene.Has<Physics::Character>(entity);
+}
+
+bool ReplicationClient::PredictsBody(NetId netId, ECS::Entity entity) const
+{
+    return _physics != nullptr && _confirmed.contains(netId) && !_scene.Has<Physics::Character>(entity) &&
+           _physics->HasBody(entity);
+}
+
+Physics::Pose ReplicationClient::SimulatedPose(ECS::Entity entity) const
+{
+    if (!_scene.Has<Physics::Character>(entity))
+    {
+        return _physics->GetBodyPose(entity);
+    }
+    const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
+    return Physics::Pose{transform != nullptr ? transform->rotation : glm::quat{1.f, 0.f, 0.f, 0.f},
+                         _physics->CaptureCharacter(entity).position};
+}
+
+BodyState ReplicationClient::CaptureBody(NetId netId, ECS::Entity entity) const
+{
+    const Physics::Pose pose = _physics->GetBodyPose(entity);
+    const Physics::BodyState motion = _physics->GetBodyState(entity);
+    return BodyState{.netId = netId,
+                     .position = pose.position,
+                     .rotation = pose.rotation,
+                     .linearVelocity = motion.linearVelocity,
+                     .angularVelocity = motion.angularVelocity,
+                     .asleep = motion.asleep};
+}
+
+void ReplicationClient::PlaceBody(ECS::Entity entity, const BodyState &host)
+{
+    _physics->ApplyCorrection(entity, Physics::Pose{host.rotation, host.position},
+                              Physics::BodyState{.linearVelocity = host.linearVelocity,
+                                                 .angularVelocity = host.angularVelocity,
+                                                 .asleep = host.asleep});
 }
 
 void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
@@ -280,7 +331,9 @@ void ReplicationClient::EnforceSleep()
 
     for (const auto &[netId, record] : _bodies)
     {
-        if (!record.asleep)
+        // A predicted body is this client's to wake: the host hears of the
+        // push that woke it a round trip later.
+        if (!record.asleep || _confirmed.contains(netId))
             continue;
 
         const auto it = _entityByNetId.find(netId);
@@ -479,6 +532,9 @@ void ReplicationClient::Reset()
     {
         followers.clear();
     }
+    _reports.fill(BodyReport{});
+    _simulated.clear();
+    _touchedAt.clear();
     _newestRecordedTick = 0;
     _confirmed.clear();
     _transformHistory.clear();

@@ -131,11 +131,11 @@ public:
 
     /// @brief Maps @p value from [@p min, @p max] onto @p bits of resolution.
     ///
-    /// Reserved for the quantizers deferred past v1 (positions, velocities,
-    /// smallest-three quaternions): the field encoders in
-    /// Reflect/BinaryCodec.hpp stay whole-value, so nothing calls this yet — it
-    /// exists so the primitive is provably bit-capable. Values outside the range
-    /// are clamped; @p bits must be in 1..32 and @p max must exceed @p min.
+    /// What a body's pose and motion are sent as; the field encoders in
+    /// Reflect/BinaryCodec.hpp stay whole-value. Both ends and the middle of the
+    /// range are levels, so a range around zero gives zero back exactly. Values
+    /// outside the range are clamped; @p bits must be in 1..32 and @p max must
+    /// exceed @p min.
     void WriteFloatQuantized(float value, float min, float max, std::uint32_t bits);
 
     /// @brief Advances to the next byte boundary, zero-filling. Only needed by a
@@ -242,8 +242,7 @@ public:
     /// string on failure. @p maxBytes is clamped to kMaxStringBytes.
     std::string ReadString(std::size_t maxBytes = kMaxStringBytes);
 
-    /// @brief Inverse of BitWriter::WriteFloatQuantized. Deferred alongside it —
-    /// nothing in v1 calls it; the round-trip test does.
+    /// @brief Inverse of BitWriter::WriteFloatQuantized.
     float ReadFloatQuantized(float min, float max, std::uint32_t bits);
 
     /// @brief Skips to the next byte boundary. Fails if that would pass the end.

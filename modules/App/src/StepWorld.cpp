@@ -12,9 +12,9 @@ namespace Assisi::App
 {
 
 void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters,
-               std::span<const Physics::FollowerStep> followers)
+               std::span<const Physics::FollowerStep> followers, std::span<const ECS::Entity> replayedBodies)
 {
-    ASSISI_ASSERT(ctx.replaying || (replayedCharacters.empty() && followers.empty()),
+    ASSISI_ASSERT(ctx.replaying || (replayedCharacters.empty() && followers.empty() && replayedBodies.empty()),
                   "StepWorld: a live step steps every character and every body");
     World &world = ctx.world;
 
@@ -31,7 +31,7 @@ void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCh
         ASSISI_PROFILE_SCOPE("physics-step");
         if (ctx.replaying)
         {
-            world.physics.StepCharacters(replayedCharacters, followers, ctx.dt);
+            world.physics.StepCharacters(replayedCharacters, followers, ctx.dt, replayedBodies);
         }
         else
         {

@@ -181,7 +181,7 @@ struct Stage
     Core::JobSystem jobs{kWorkers};
     MemoryPackage package;
     Core::AssetStore store;
-    Core::EventQueue events;
+    Core::EventQueue universal{Core::EventScope::Universal};
     RecordingOutput output;
     App::WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     App::World &world = worlds.Create("Audio");
@@ -201,31 +201,39 @@ struct Stage
         REQUIRE(store.Resolve<Audio::PcmClip>(clip) != nullptr);
     }
 
-    ECS::Entity Emitter()
+    ECS::Entity Emitter() { return Emitter(world); }
+
+    ECS::Entity Emitter(App::World &in)
     {
-        const ECS::Entity entity = world.scene.Create();
+        const ECS::Entity entity = in.scene.Create();
         AudioEmitter emitter;
         emitter.clip = clip;
-        (void)world.scene.Add<AudioEmitter>(entity, emitter);
+        (void)in.scene.Add<AudioEmitter>(entity, emitter);
         return entity;
+    }
+
+    /// What the AudioEmitters system runs under in @p in.
+    App::SystemContext Context(App::World &in)
+    {
+        return {.world = in,
+                .dt = 0.f,
+                .simTick = 0,
+                .input = nullptr,
+                .actions = nullptr,
+                .universalEvents = universal,
+                .isActiveWorld = true,
+                .worldManager = &worlds,
+                .mixer = &output,
+                .assets = &store};
     }
 
     /// One frame: the mixer's update first, as the application runs it, then the system.
     void RunFrame()
     {
         output.held.clear();
-        App::SystemContext ctx{.world = world,
-                               .dt = 0.f,
-                               .simTick = 0,
-                               .input = nullptr,
-                               .actions = nullptr,
-                               .events = events,
-                               .isActiveWorld = true,
-                               .worldManager = &worlds,
-                               .mixer = &output,
-                               .assets = &store};
+        App::SystemContext ctx = Context(world);
         App::AudioEmitterSystem(ctx);
-        events.Flush();
+        world.events.Flush();
     }
 };
 
@@ -391,12 +399,35 @@ TEST_CASE("PlaySound plays its target's emitter, and one naming no entity plays 
     Stage stage;
     const ECS::Entity emitter = stage.Emitter();
 
-    stage.events.Push(App::PlaySound{});
+    stage.world.events.Push(App::PlaySound{});
     stage.RunFrame();
     CHECK(stage.output.played.empty());
 
-    stage.events.Push(App::PlaySound{.target = emitter});
+    stage.world.events.Push(App::PlaySound{.target = emitter});
     stage.RunFrame();
+    CHECK(stage.output.played.size() == 1);
+}
+
+TEST_CASE("A PlaySound in one world plays that world's emitter, not one with the same id in another")
+{
+    // Two worlds' first entities share an id, so the event alone cannot say
+    // which one it means: the world it was pushed in has to.
+    Stage stage;
+    App::World &other = stage.worlds.Create("Other");
+    const ECS::Entity here = stage.Emitter();
+    const ECS::Entity there = stage.Emitter(other);
+    REQUIRE(here == there);
+
+    // One frame of both worlds, each system run before anything is flushed, as
+    // the application runs them.
+    App::SystemContext inHere = stage.Context(stage.world);
+    App::SystemContext inThere = stage.Context(other);
+    inHere.events.Push(App::PlaySound{.target = here});
+    App::AudioEmitterSystem(inHere);
+    App::AudioEmitterSystem(inThere);
+
+    CHECK(stage.world.scene.Get<AudioEmitter>(here)->playing.size() == 1);
+    CHECK(other.scene.Get<AudioEmitter>(there)->playing.empty());
     CHECK(stage.output.played.size() == 1);
 }
 
@@ -410,7 +441,7 @@ TEST_CASE("A paused world pauses its emitters, except the default one and those 
     (void)stage.world.scene.Add<Runtime::DefaultEmitter>(speaker);
     for (const ECS::Entity entity : {plain, ignoring, speaker})
     {
-        stage.events.Push(App::PlaySound{.target = entity});
+        stage.world.events.Push(App::PlaySound{.target = entity});
     }
     stage.RunFrame();
     REQUIRE(stage.output.played.size() == 3);
@@ -434,7 +465,7 @@ TEST_CASE("A destroyed emitter's sounds are no longer held, and its queue never 
     emitter->maxQueuedRequests = 2;
     for (std::uint32_t i = 0; i < 3; ++i)
     {
-        stage.events.Push(App::PlaySound{.target = entity});
+        stage.world.events.Push(App::PlaySound{.target = entity});
     }
     stage.RunFrame();
     REQUIRE(stage.output.played.size() == 1);

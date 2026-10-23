@@ -113,7 +113,11 @@ class Screen
     /// screen decides how long it lasts and the UI is never told separately.
     /// @p ui must outlive it, which a world's screens get for nothing: worlds
     /// are destroyed before the UI they were drawn in.
-    Screen(Ui &ui, ScreenTraits traits, int32_t sortKey, std::string name);
+    ///
+    /// Its controls push into @p events, the queue of the world it belongs to,
+    /// except for a universal event, which goes to the UI's. Taken here for the
+    /// reason the UI takes its own: there is no moment it has nowhere to push.
+    Screen(Ui &ui, Core::EventQueue &events, ScreenTraits traits, int32_t sortKey, std::string name);
 
     Screen(const Screen &) = delete;
     Screen &operator=(const Screen &) = delete;
@@ -132,6 +136,9 @@ class Screen
     [[nodiscard]] std::string_view Name() const { return _name; }
     [[nodiscard]] bool IsShown() const { return _shown; }
 
+    /// @brief The queue this screen's controls push every world event into.
+    [[nodiscard]] Core::EventQueue &Events() const { return _events; }
+
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
     [[nodiscard]] NodeId Root() const { return _tree.Root(); }
@@ -145,7 +152,7 @@ class Screen
 
     /// @brief Makes @p node push a copy of @p event each time it is clicked or
     /// accepted, replacing whatever it pushed before. Game code reads it with
-    /// EventQueue::Read<E>() in any phase after the UI's input step.
+    /// `ctx.events.Read<E>()` in any phase after the UI's input step.
     ///
     /// For what reaches the world — quitting, loading, respawning — which the
     /// UI cannot do itself and a system must answer.
@@ -153,7 +160,7 @@ class Screen
         requires(!std::invocable<E, Screen &>)
     void OnActivate(NodeId node, E event)
     {
-        _tree.SetOnActivate(node, [event](Core::EventQueue &events) { events.Push(event); });
+        _tree.SetOnActivate(node, [event](const Core::EventRoute &events) { events.Push(event); });
     }
 
     /// @brief Makes @p node run @p act on this screen each time it is clicked
@@ -391,7 +398,7 @@ class Screen
         static_assert(std::is_invocable_v<Recipe, T>,
                       "a control's OnChange recipe takes the value that control carries: a float for a "
                       "slider, a bool for a toggle");
-        _tree.SetOnChange(node, [recipe](Core::EventQueue &events, const Node &changed)
+        _tree.SetOnChange(node, [recipe](const Core::EventRoute &events, const Node &changed)
                           { events.Push(recipe(Held<T>(changed.value))); });
     }
 
@@ -399,11 +406,11 @@ class Screen
     /// the recipe is handed a view of it and builds its event there and then;
     /// a recipe that keeps the view rather than copying from it outlives it.
     template <typename Recipe>
-    [[nodiscard]] static std::function<void(Core::EventQueue &, const Node &)> TextPusher(Recipe recipe)
+    [[nodiscard]] static std::function<void(const Core::EventRoute &, const Node &)> TextPusher(Recipe recipe)
     {
         static_assert(std::is_invocable_v<Recipe, std::string_view>,
                       "a text field's recipe takes the text it holds, as a std::string_view");
-        return [recipe](Core::EventQueue &events, const Node &node)
+        return [recipe](const Core::EventRoute &events, const Node &node)
         { events.Push(recipe(std::string_view{node.text})); };
     }
 
@@ -415,6 +422,7 @@ class Screen
     [[nodiscard]] const TextLayout *TextOf(const LayoutNode &placed) const;
 
     Ui &_ui;
+    Core::EventQueue &_events;
     NodeTree _tree;
     LayoutResult _layout;
     std::string _name;

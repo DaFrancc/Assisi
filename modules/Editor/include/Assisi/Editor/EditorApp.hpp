@@ -58,6 +58,7 @@
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/EditorEvents.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
@@ -91,22 +92,6 @@ enum class NestVerdict : std::uint8_t
     Valid,      ///< Nothing stands in the way.
     WouldCycle, ///< Its closure already reaches the edited file; the pair would expand forever.
     Unreadable, ///< It does not flatten at all — a cycle of its own, a missing nested file, bad JSON.
-};
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-/// @brief Emitted when the user clicks to select (or deselect) an entity.
-/// NullEntity means the click landed on empty space.
-AEVENT()
-struct EntitySelectionChangedEvent
-{
-    Assisi::ECS::Entity entity;
-    /// Ctrl or Shift was held: fold the entity into the selection instead of
-    /// replacing it. Both modifiers do the same thing in the viewport — a range
-    /// needs an order to walk through, and the 3D view has none.
-    bool additive = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -483,6 +468,9 @@ class EditorApp : public Assisi::App::Application
     /// Replicated, and dynamic bodies that will run as cosmetic local physics.
     /// Both describe a gap between what was marked and what clients will see.
     void DrawHostAuthoringWarnings();
+    /// @brief On a client, every entity it predicts with, for its physics and
+    /// each predicted component, how often the host's word corrected it.
+    void DrawPredictedEntities(const Assisi::NetSync::ReplicationClient &client);
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: the wire, the step's tick, players, join progress
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing

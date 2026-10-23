@@ -46,14 +46,15 @@ constexpr ScreenTraits kLocked{
 struct Stage
 {
     Assisi::Core::EventQueue events;
-    Ui ui{events};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
     std::vector<std::unique_ptr<Screen>> owned;
 
     /// A screen behaving as @p traits say, at @p sortKey, its root filled with
     /// @p color so its quads can be told from another's.
     Screen &Add(ScreenTraits traits, int32_t sortKey, std::string_view name, const Color &color)
     {
-        owned.push_back(std::make_unique<Screen>(ui, traits, sortKey, std::string{name}));
+        owned.push_back(std::make_unique<Screen>(ui, events, traits, sortKey, std::string{name}));
         Screen &screen = *owned.back();
 
         Style root;

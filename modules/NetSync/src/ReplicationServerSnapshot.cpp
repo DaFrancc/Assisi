@@ -601,6 +601,7 @@ void ReplicationServer::Tick(std::uint64_t simTick)
     // Once per tick, before any connection is served, so every client sees the
     // same world rather than a per-connection view of it.
     ReconcileNetIds();
+    SimulateReportedBodies(simTick);
     CaptureBodyStates();
 
     if (!IsSnapshotTick(simTick))

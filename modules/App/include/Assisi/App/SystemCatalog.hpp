@@ -68,9 +68,9 @@ struct SystemDefinition
     /// apply the same keypresses in every one.
     bool activeWorldOnly = false;
 
-    /// Skipped when a client steps a tick again. Only on FixedUpdate and
-    /// PostFixedUpdate systems, which reflectgen enforces.
-    bool liveOnly = false;
+    /// Steps again when a client steps a tick again. Only on the engine's own
+    /// FixedUpdate and PostFixedUpdate systems, which reflectgen enforces.
+    bool replayed = false;
 };
 
 /// @brief The process-wide table of declared systems.

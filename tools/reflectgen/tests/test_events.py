@@ -64,12 +64,37 @@ class EventTest(unittest.TestCase):
                              "/* AEVENT()\nstruct AlsoGhost { }; */\n")
         self.assertEqual(found, [])
 
-    def test_arguments_are_refused(self):
-        # AEVENT carries nothing today. Accepting an argument silently would let a
-        # name someone expected to matter do nothing at all.
-        with self.assertRaises(ValueError) as caught:
-            self._events("AEVENT(name = \"Resume\")\nstruct ResumeClicked { };\n")
-        self.assertIn("AEVENT", str(caught.exception))
+    def test_arguments_other_than_universal_are_refused(self):
+        # Accepting an argument silently would let a name someone expected to
+        # matter do nothing at all.
+        for args in ('name = "Resume"', 'universal, name = "Resume"', 'global'):
+            with self.assertRaises(ValueError) as caught:
+                self._events(f"AEVENT({args})\nstruct ResumeClicked {{ }};\n")
+            self.assertIn("universal", str(caught.exception))
+
+    def test_universal_is_recorded_and_the_default_is_world(self):
+        found = {e.name: e for e in self._events("AEVENT(universal)\nstruct Quit { };\n"
+                                                 "AEVENT()\nstruct Hit { };\n")}
+        self.assertTrue(found["Quit"].universal)
+        self.assertFalse(found["Hit"].universal)
+
+    def test_a_universal_registration_declares_its_scope_and_a_world_one_does_not(self):
+        # A push asks which queue its type belongs in, so a universal event that
+        # never said so would land in the world it was pushed from.
+        universal, world = self._events("namespace Game {\nAEVENT(universal)\nstruct Quit { };\n"
+                                        "AEVENT()\nstruct Hit { };\n}\n")
+        self.assertIn("DeclareUniversal(typeid(::Game::Quit))",
+                      reflect_events.gen_event_registration(universal))
+        self.assertNotIn("DeclareUniversal", reflect_events.gen_event_registration(world))
+
+    def test_the_whole_tree_summary_marks_universal_events(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text("namespace Game {\nAEVENT(universal)\nstruct Quit { };\n"
+                            "AEVENT()\nstruct Hit { };\n}\n", encoding="utf-8")
+            lines = reflect_events.check_events([path])
+            self.assertIn("  Game::Quit (universal)", lines)
+            self.assertIn("  Game::Hit", lines)
 
     def test_a_class_is_refused(self):
         # Markup builds an event by naming its type, so every member has to be

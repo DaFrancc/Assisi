@@ -261,10 +261,6 @@ The `AudioEmitters` system answers them in `PostUpdate`, so push them from
 `Update` or earlier. An event that names no entity, or an entity with no
 `AudioEmitter`, logs a warning and does nothing.
 
-Emitters belong to the world they are in, and these events name an entity
-only. With several worlds playing sounds at once, an event can reach an entity
-in the wrong one.
-
 ### When sounds end
 
 - **A destroyed emitter's sounds stop.** They fade out as the entity goes. A

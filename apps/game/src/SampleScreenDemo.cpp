@@ -21,7 +21,8 @@ void SampleScreenSystem(Assisi::App::SystemContext &ctx)
     }
     // The engine registered a texture for an image with nothing else to show;
     // the sample's picture is exactly that case.
-    Assisi::App::AddScreen(ctx.world, Assisi::Mondrian::AddSampleScreen(*ctx.ui, ctx.ui->GetPlaceholderTexture()), {});
+    Assisi::App::AddScreen(
+        ctx.world, Assisi::Mondrian::AddSampleScreen(*ctx.ui, ctx.world.events, ctx.ui->GetPlaceholderTexture()), {});
 }
 
 void SampleScreenToggleSystem(Assisi::App::SystemContext &ctx)

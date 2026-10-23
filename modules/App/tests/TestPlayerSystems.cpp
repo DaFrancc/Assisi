@@ -48,9 +48,9 @@ inline constexpr PlayerActionName kTestActions[] = {
 };
 ASSISI_PLAYER_ACTIONS(kTestActions);
 
-SystemContext Context(World &world, Assisi::Core::EventQueue &events)
+SystemContext Context(World &world, Assisi::Core::EventQueue &universal)
 {
-    return SystemContext{world, kStep, /*simTick=*/ 0, nullptr, nullptr, events, true, nullptr};
+    return SystemContext{world, kStep, /*simTick=*/ 0, nullptr, nullptr, universal, true, nullptr};
 }
 
 /// A character with the components the systems read, and no body: nothing here
@@ -103,8 +103,8 @@ TEST_CASE("A player's move is taken in the character's own frame")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity entity = SpawnCharacter(world, /*player=*/ true);
     // Turned a quarter left: forward is -X.
@@ -124,8 +124,8 @@ TEST_CASE("A character with no controls is left to whatever else moves it")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity npc = SpawnCharacter(world, /*player=*/ false);
     world.scene.GetMut<Assisi::Physics::CharacterIntent>(npc)->move = {0.f, 0.f, 1.f};
@@ -140,8 +140,8 @@ TEST_CASE("A jump press asks for one jump, however long it is held")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity entity = SpawnCharacter(world, /*player=*/ true);
     PlayerInput &input = Controls(world, entity);
@@ -162,8 +162,8 @@ TEST_CASE("Holding crouch asks the character to crouch")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity entity = SpawnCharacter(world, /*player=*/ true);
     Controls(world, entity).held = PlayerButtons::Of(PlayerAction::Crouch);
@@ -180,8 +180,8 @@ TEST_CASE("Turning is applied once, on the body, and looking up on its camera")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity entity = SpawnCharacter(world, /*player=*/ true);
     const Assisi::ECS::Entity eye = SpawnEye(world, entity);
@@ -215,8 +215,8 @@ TEST_CASE("Offline, every player and only players are this machine's")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity player = SpawnCharacter(world, /*player=*/ true);
     const Assisi::ECS::Entity npc = SpawnCharacter(world, /*player=*/ false);
@@ -234,8 +234,8 @@ TEST_CASE("In a session, the player this machine controls is its player")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     constexpr uint32_t kMine = 2;
     constexpr uint32_t kTheirs = 3;
@@ -263,8 +263,8 @@ TEST_CASE("A session that has not said who this machine is drives nothing")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     world.resources.Get<LocalClient>() = LocalClient{.id = 0, .networked = true};
     const Assisi::ECS::Entity player = SpawnCharacter(world, /*player=*/ true);
@@ -278,8 +278,8 @@ TEST_CASE("Only this machine's player looks through its camera")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Players");
-    Assisi::Core::EventQueue events;
-    SystemContext ctx = Context(world, events);
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
 
     const Assisi::ECS::Entity mine = SpawnCharacter(world, /*player=*/ true);
     const Assisi::ECS::Entity theirs = SpawnCharacter(world, /*player=*/ true);

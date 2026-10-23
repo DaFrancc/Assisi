@@ -128,6 +128,11 @@ struct World
     /// client this machine is. Discarded with the world.
     ResourceStore resources;
 
+    /// The events pushed by this world's systems and screens, and read only by
+    /// them: an event naming an entity means nothing in another world. A system
+    /// reaches it through `ctx.events`; the host flushes it once a frame.
+    Core::EventQueue events;
+
     /// This world's game systems, installed once from its level's list (see
     /// WorldManager::ApplySystems). Per world rather than per app because a
     /// system's cross-frame state lives in its registered lambda's captures: one
@@ -429,9 +434,10 @@ public:
         ///
         /// Null in a host that has none: a dedicated server has no window and so
         /// no input, exactly as it passes null to every other phase. A world
-        /// whose manager has no event queue does not begin at all — BeginWorld
-        /// needs one to build a context, and half a world is worse than none.
-        Core::EventQueue *events = nullptr;
+        /// whose manager has no universal event queue does not begin at all —
+        /// BeginWorld needs one to build a context, and half a world is worse
+        /// than none.
+        Core::EventQueue *universalEvents = nullptr;
         Window::InputContext *input = nullptr;
         Window::ActionMap *actions = nullptr;
         Mondrian::Ui *ui = nullptr;

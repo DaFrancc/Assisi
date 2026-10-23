@@ -16,6 +16,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/MessageDispatch.hpp>
@@ -203,6 +204,16 @@ public:
     /// @brief The host's word about the predicted entity @p netId, or null for
     /// one this client does not predict.
     [[nodiscard]] const Confirmed *ConfirmedOf(NetId netId) const;
+
+    /// @brief Whether this client simulates the body of @p entity for the
+    /// host: the host marked it `SimulatedBy` this client.
+    ///
+    /// Such a body is this machine's like any body in a single-player game:
+    /// the host's word about it is not applied, it is never put back to sleep
+    /// for the host, and each step's command carries where the step left it.
+    /// A step stepped again meets it where it was at that step. Worked out
+    /// after every snapshot.
+    [[nodiscard]] bool Simulates(ECS::Entity entity) const;
 
     /// @brief The host's copy of one ACOMP(predicted) component of @p netId, or
     /// null if this client does not predict it or it has no such component.
@@ -415,11 +426,16 @@ public:
     // step left it: its character's physics frame and its ACOMP(predicted)
     // components. The host's word about a tick arrives a round trip later and
     // is compared with that record, section by section. Within the tolerances
-    // the client's result stands and nothing moves. Beyond them every predicted
-    // entity is put back to that tick, the one the host disagreed with to the
-    // host's word and every other to its own record, and the caller steps them
-    // all again to the present: BeginRollback, then for each tick
-    // CommandAppliedAt, one replayed step and RecordHistory, then EndRollback.
+    // the client's result stands and nothing moves.
+    //
+    // A predicted component the host disagrees with takes the host's value at
+    // once. A physics frame or a Transform it disagrees with is stepped again,
+    // since a step moves and turns them from controls: every predicted entity's
+    // are put back to that tick, the one the host disagreed with to the host's
+    // word and every other to its own record, and the caller steps them all
+    // again to the present: BeginRollback, then for each tick CommandAppliedAt,
+    // one replayed step and RecordHistory, then EndRollback. A replayed step
+    // runs only the engine's own systems that steer a character.
 
     /// @brief What a step stepped again runs on: the command the host applied
     /// for its tick, or none when the host had none and held or released the
@@ -437,18 +453,27 @@ public:
         std::vector<std::uint64_t> ticks;
         /// The characters to step in them: the predicted ones.
         std::vector<ECS::Entity> characters;
+        /// The predicted bodies to solve in them.
+        std::vector<ECS::Entity> bodies;
         /// The tick the predicted set was put back to.
         std::uint64_t from = 0;
     };
 
     /// @brief How often one section of a predicted entity was compared with the
-    /// host's word and how often that started a rollback, with the first field
-    /// that differed the last time it did, and both its values.
+    /// host's word and how often the host's word corrected it, with the first
+    /// field that differed the last time it did, and both its values. The
+    /// physics frame is corrected by a rollback, a component by taking the
+    /// host's value.
+    ///
+    /// A correction at a tick the host stepped without this client's command
+    /// is counted apart: the host stepped this client's player on what it held,
+    /// so the difference is the connection's doing rather than a misprediction.
     struct PredictionCounts
     {
         std::string firstDifference;
         std::uint64_t compares = 0;
-        std::uint64_t rollbacks = 0;
+        std::uint64_t corrections = 0;        ///< at ticks the host had this client's command for
+        std::uint64_t starvedCorrections = 0; ///< at ticks the host stepped without it
     };
 
     /// @brief The counts for one predicted entity: its physics frame, and each
@@ -463,8 +488,10 @@ public:
     /// stamped for left it. Call once per live fixed step, after the step.
     void RecordStep(const InputCommand &command);
 
-    /// @brief Remember every predicted entity as the replayed step of @p tick
-    /// left it, in place of what the live step left.
+    /// @brief Remember what the replayed step of @p tick stepped of every
+    /// predicted entity, its physics frame and its Transform, in place of what
+    /// the live step left. Its other predicted components stay as the live step
+    /// recorded them.
     void RecordHistory(std::uint64_t tick);
 
     /// @brief Puts every predicted entity back to the tick the host's word
@@ -479,6 +506,7 @@ public:
 
     /// @brief How every kinematic body moved through the step of @p tick, for
     /// that step stepped again, so a platform carries its riders where it did.
+    /// In the sync test, every other character too, so it is met where it was.
     [[nodiscard]] std::vector<Physics::FollowerStep> FollowersAt(std::uint64_t tick) const;
 
     /// @brief Ends the rollback BeginRollback started: the scene steps
@@ -489,6 +517,9 @@ public:
     /// @brief How the host's word about the predicted entity @p netId compared
     /// with this client's, or null for one it does not predict.
     [[nodiscard]] const EntityPredictionCounts *PredictionCountsOf(NetId netId) const;
+
+    /// @brief Every entity this client predicts, lowest NetId first.
+    [[nodiscard]] std::vector<NetId> PredictedEntities() const;
 
     // --- Sync test ---------------------------------------------------------------
     //
@@ -557,9 +588,13 @@ private:
         /// `_predictedOffsets`.
         std::vector<std::byte> components;
         Physics::CharacterFrame character;
+        /// A predicted body's pose and motion, as the host's body record says
+        /// them.
+        BodyState body;
         std::uint64_t tick = 0;    ///< The command tick of the step; 0 for none yet.
         std::uint64_t present = 0; ///< Bit i: it had `_predictedComponents[i]`.
         bool hasCharacter = false;
+        bool hasBody = false;
     };
 
     /// What this client predicted of one entity, a ring of records by tick,
@@ -581,28 +616,70 @@ private:
     /// predicts and steps again.
     [[nodiscard]] bool PredictsCharacter(NetId netId, ECS::Entity entity) const;
 
+    /// Whether @p entity, @p netId's mirror, is a body other than a character
+    /// that this client predicts and solves again.
+    [[nodiscard]] bool PredictsBody(NetId netId, ECS::Entity entity) const;
+
+    /// Where this client simulates @p entity, a predicted character or body:
+    /// a character's feet and the way its Transform faces, a body's pose.
+    [[nodiscard]] Physics::Pose SimulatedPose(ECS::Entity entity) const;
+
+    /// @p entity's body as @p netId's body record would say it.
+    [[nodiscard]] BodyState CaptureBody(NetId netId, ECS::Entity entity) const;
+
+    /// Puts @p entity's body where @p host has it, moving and sleeping as it says.
+    void PlaceBody(ECS::Entity entity, const BodyState &host);
+
     /// One follower as one step left it.
     struct FollowerRecord
     {
+        /// Where the step left it: what a character stepped again meets.
         Physics::FollowerFrame frame;
+        /// Where the next step starts it: the same, unless a correction has
+        /// moved it since.
+        Physics::FollowerFrame start;
         ECS::Entity entity{ECS::NullEntity};
     };
 
-    /// Records every follower of @p tick: each kinematic body.
+    /// Records every follower of @p tick: each kinematic body and character,
+    /// and each body this client simulates. In a replay, one the replay does
+    /// not step keeps the tick's live record.
     void RecordFollowers(std::uint64_t tick);
 
-    /// Records @p tick for every predicted entity; RecordStep and RecordHistory
-    /// both come here.
-    void Record(std::uint64_t tick);
+    /// Records where the step of @p tick left each body this client
+    /// simulates, for the host.
+    void RecordReports(std::uint64_t tick);
+
+    /// Records where @p entity is now as where the step after the newest tick
+    /// starts it, for a correction that moved it after that tick was recorded.
+    void RecordFollowerNow(ECS::Entity entity);
+
+    /// Puts every follower where the step after the newest tick starts it: a
+    /// replay leaves each where its last step left it.
+    void PlaceFollowersNow();
+
+    /// What Record takes of each predicted entity.
+    enum class RecordedPart : std::uint8_t
+    {
+        Everything, ///< A live step: the physics frame and every predicted component.
+        Stepped,    ///< A replayed step: the physics frame and the Transform, which it steps again.
+        Count_,
+    };
+
+    /// Records @p part of @p tick for every predicted entity; RecordStep and
+    /// RecordHistory both come here.
+    void Record(std::uint64_t tick, RecordedPart part);
 
     /// Compares every predicted entity the snapshot of @p serverTick spoke of
     /// with what this client recorded for that tick.
     void ComparePredicted(std::uint64_t serverTick);
 
     /// Compares @p confirmed, the host's word about @p entity at @p serverTick,
-    /// with what @p history recorded for that tick, counting into it, and
-    /// appends each section that disagrees to @p differing.
-    void CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+    /// with what @p history recorded for that tick, counting into it. Appends
+    /// each section a rollback corrects that disagrees to @p differing, and
+    /// writes the host's value over each other predicted component that does.
+    /// @return Whether it wrote any.
+    bool CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
                        PredictionHistory &history, std::vector<PredictionCounts *> &differing);
 
     /// What differs between a character's physics frame as the host had it and
@@ -613,13 +690,18 @@ private:
     /// host's word is older than anything this client kept.
     void HardSnap(NetId netId, ECS::Entity entity, const Confirmed &confirmed);
 
-    /// Puts @p entity back as @p record has it, with the host's word in
-    /// @p host taking the place of each section it carries for that tick.
+    /// Puts what a replay steps of @p entity, its Transform and its physics
+    /// frame, back as @p record has it, with the host's word in @p host taking
+    /// the place of each it carries for that tick.
     void Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host);
 
     /// Writes the host's copy of each predicted component in @p confirmed over
     /// @p entity's own, all but its Transform when @p skipTransform.
     void WriteHostComponents(ECS::Entity entity, const Confirmed &confirmed, bool skipTransform);
+
+    /// Writes the host's copy of the component @p componentId in @p confirmed
+    /// over @p entity's own, when it carries one.
+    void WriteHostComponent(ECS::Entity entity, const Confirmed &confirmed, Core::Reflect::ComponentId componentId);
 
     /// Puts @p entity's character in @p frame, but where, how fast, how
     /// standing and facing which way @p host says.
@@ -659,6 +741,10 @@ private:
     /// has stopped takes its confirmed components back, the host's word
     /// standing again.
     void RecomputePredictedSet(std::uint64_t serverTick);
+
+    /// Notes, at @p serverTick, every dynamic body one of this client's
+    /// characters touches, and forgets one untouched for too long.
+    void NoteTouchedBodies(std::uint64_t serverTick);
 
     /// Reads one ACOMP(predicted) component of a predicted entity off the wire
     /// into @p confirmed rather than into the entity. False if the block is
@@ -850,8 +936,20 @@ private:
     std::array<std::uint64_t, kPredictionHistoryTicks> _recordedTicks{};
     /// Every follower each recorded tick left, on the same ring.
     std::array<std::vector<FollowerRecord>, kPredictionHistoryTicks> _followers{};
+    /// Each live step's report of the bodies this client simulates, on the
+    /// same ring, and the ones SendInput sends.
+    std::array<BodyReport, kPredictionHistoryTicks> _reports{};
+    std::vector<const BodyReport *> _reportsToSend;
+
+    /// The bodies this client simulates; see Simulates.
+    std::unordered_set<NetId> _simulated;
+    /// Each dynamic body one of this client's characters touched lately, and
+    /// the snapshot's tick it last did, for RecomputePredictedSet.
+    std::unordered_map<NetId, std::uint64_t> _touchedAt;
     /// Scratch for RecordFollowers, kept to keep its storage.
     std::vector<ECS::Entity> _followerEntities;
+    /// Scratch for RecordFollowers: the record it replaces.
+    std::vector<FollowerRecord> _replacedFollowers;
 
     /// Where each ACOMP(predicted) component sits in a record, by its index in
     /// `_predictedComponents`, and a record's size.
@@ -906,6 +1004,7 @@ private:
     bool _deferHandshake     = false;
     bool _awaitingLevel      = false;
     bool _rollingBack        = false; ///< Between BeginRollback and EndRollback.
+    bool _syncTesting        = false; ///< Between BeginSyncTest and EndSyncTest.
     bool _syncTest           = false;
 
     /// The content-set hash and whether it has been supplied. A separate flag

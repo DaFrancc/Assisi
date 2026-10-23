@@ -26,7 +26,7 @@
 ///     });
 ///
 /// // Dispatch
-/// _systems.Run(SystemPhase::Update, {world, dt, simTick, &input, &actions, events, isActive});
+/// _systems.Run(SystemPhase::Update, {world, dt, simTick, &input, &actions, universalEvents, isActive});
 /// _systems.RunRender({ world.scene, 0.f, view, proj });
 /// @endcode
 ///
@@ -34,6 +34,7 @@
 /// Systems with no ordering relationship run in registration order.
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventRoute.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
@@ -89,11 +90,16 @@ class WorldManager;
 ///
 /// A system cannot reach the window or the application, and should not: what
 /// quitting means is the host's to decide. A game asks by pushing this; the
-/// editor answers it by leaving play, and a shipped game by closing.
-AEVENT()
+/// editor answers it by leaving play, and a shipped game by closing. Universal,
+/// because the application reads it, not a world.
+AEVENT(universal)
 struct QuitRequested
 {
 };
+
+/// @brief @p world's own event queue. A function rather than the member so that
+/// SystemContext, which sees World only declared, can build its route from it.
+[[nodiscard]] Core::EventQueue &WorldEvents(World &world);
 
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
 ///
@@ -121,7 +127,10 @@ struct SystemContext
     Window::InputContext *input;
     Window::ActionMap *actions;
 
-    Core::EventQueue &events;
+    /// The host's queue for the events declared `AEVENT(universal)`, which
+    /// every world shares. Systems push and read through `events`, which
+    /// reaches this one for those.
+    Core::EventQueue &universalEvents;
 
     /// True when `world` is the one the app treats as active — the world being
     /// rendered and driven by input. Systems registered ActiveWorldOnly() are
@@ -164,10 +173,15 @@ struct SystemContext
     Steam::Services *steam = nullptr;
 
     /// True while a client steps again a tick it has already stepped, to bring
-    /// what it predicted in line with what the host sent. A fixed-step system
-    /// then runs exactly as it did live, unless it is declared `liveOnly`, which
-    /// is skipped. Always false in the per-frame and one-shot phases.
+    /// what it predicted in line with what the host sent. Only the engine's own
+    /// fixed-step systems marked `replayed` run then; every other system runs
+    /// once per tick, live. Always false in the per-frame and one-shot phases.
     bool replaying = false;
+
+    /// Where a system pushes and reads events: `world`'s own queue, or
+    /// `universalEvents` for an event declared universal. Built from `world`
+    /// rather than handed in, so a system cannot reach another world's events.
+    Core::EventRoute events{WorldEvents(world), universalEvents};
 };
 
 /// @brief Passed to render systems (Render phase only).
@@ -268,13 +282,14 @@ class SystemRegistry
         /// there logs an error and changes nothing.
         SystemHandle &ActiveWorldOnly();
 
-        /// @brief Skip this system on a replayed step (SystemContext::replaying).
+        /// @brief Run this system on a replayed step (SystemContext::replaying)
+        /// too; every other system is skipped there.
         ///
-        /// For a fixed-step system whose effect lies outside the components a
-        /// replay puts back, such as one that adds or removes components: run
-        /// again for a tick it already ran, it would do it twice. Meaningless
-        /// outside FixedUpdate and PostFixedUpdate, which are all a replay runs.
-        SystemHandle &LiveOnly();
+        /// For the engine's own systems that step the predicted character again
+        /// from its recorded controls, whose every effect a replay puts back.
+        /// Meaningless outside FixedUpdate and PostFixedUpdate, which are all a
+        /// replay runs.
+        SystemHandle &Replayed();
 
         /// @brief Skip this system while the scene holds none of @p Ts.
         ///
@@ -308,16 +323,16 @@ class SystemRegistry
         /// Non-template half of RequireAny, so the fold above stays a one-liner.
         void Require(Core::Reflect::ComponentId id);
 
-        SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setLiveOnly,
+        SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setReplayed,
                      AddRequirement addRequirement)
             : _addDependency(std::move(addDependency)), _setActiveOnly(std::move(setActiveOnly)),
-            _setLiveOnly(std::move(setLiveOnly)), _addRequirement(std::move(addRequirement))
+            _setReplayed(std::move(setReplayed)), _addRequirement(std::move(addRequirement))
         {
         }
 
         AddDependency _addDependency;
         SetFlag _setActiveOnly;
-        SetFlag _setLiveOnly;
+        SetFlag _setReplayed;
         AddRequirement _addRequirement;
     };
 
@@ -417,8 +432,8 @@ class SystemRegistry
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool activeOnly = false;
-            /// Set by SystemHandle::LiveOnly(). Always false for render entries.
-            bool liveOnly = false;
+            /// Set by SystemHandle::Replayed(). Always false for render entries.
+            bool replayed = false;
             /// Cleared by SetEnabled to skip this system at dispatch while leaving
             /// everything else about it in place — the editor's per-system mute.
             bool enabled = true;
@@ -461,11 +476,11 @@ class SystemRegistry
 
     /// @brief Append a system to @p phase and return a handle bound to its slot.
     /// @p supportsActiveOnly is false for the render phase, whose handles reject
-    /// ActiveWorldOnly(); @p supportsLiveOnly is true only for the fixed-step
-    /// phases, whose handles alone take LiveOnly().
+    /// ActiveWorldOnly(); @p supportsReplayed is true only for the fixed-step
+    /// phases, whose handles alone take Replayed().
     template <typename Ctx>
     SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly,
-                     bool supportsLiveOnly);
+                     bool supportsReplayed);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>

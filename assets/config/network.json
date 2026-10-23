@@ -18,8 +18,18 @@
   "predictionTolerance": 0.02,
   "predictionRotationTolerance": 0.035,
   "predictionVelocityTolerance": 0.25,
+  "predictionAngularVelocityTolerance": 0.25,
   "relevancyRadius": 60.0,
   "relevancyExitRadius": 75.0,
   "relevancyDwellTicks": 30,
-  "relevancyProvider": "all"
+  "relevancyProvider": "all",
+  "ownershipDistance": 2.0,
+  "ownershipLeaveDistance": 4.0,
+  "reportReachSlack": 1.0,
+  "reportMaxSpeed": 30.0,
+  "reportMaxSpin": 50.0,
+  "ownershipTouchDwellTicks": 10,
+  "ownershipHoldTicks": 60,
+  "reportTimeoutTicks": 90,
+  "ownershipMaxBodies": 8
 }

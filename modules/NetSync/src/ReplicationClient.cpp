@@ -36,6 +36,11 @@ constexpr std::size_t kPredictedRecordAlignment = __STDCPP_DEFAULT_NEW_ALIGNMENT
 /// One bit each in PredictedRecord::present.
 constexpr std::size_t kMaxPredictedComponents = 64;
 
+/// How long a body the host simulates stays predicted after this client's
+/// character last touched it (ticks): half a second, so a player pushing in
+/// bursts does not have it change hands with every one.
+constexpr std::uint64_t kPredictAfterTouchTicks = 30;
+
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
 ///
@@ -71,6 +76,12 @@ bool ReplicationClient::Predicts(ECS::Entity entity) const
         }
     }
     return false;
+}
+
+bool ReplicationClient::Simulates(ECS::Entity entity) const
+{
+    const SimulatedBy *simulator = _scene.Get<SimulatedBy>(entity);
+    return simulator != nullptr && _handshake.clientId.IsValid() && simulator->client == _handshake.clientId.value;
 }
 
 const ReplicationClient::Confirmed *ReplicationClient::ConfirmedOf(NetId netId) const
@@ -122,16 +133,38 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
 {
     const ClientId local = _handshake.clientId;
     std::unordered_set<NetId> predicted;
+    _simulated.clear();
+    NoteTouchedBodies(serverTick);
     for (const auto &[netId, entity] : _entityByNetId)
     {
         if (!_scene.IsAlive(entity))
         {
             continue;
         }
+        const SimulatedBy *simulator = _scene.Get<SimulatedBy>(entity);
+        const bool simulatedHere = simulator != nullptr && local.IsValid() && simulator->client == local.value;
+        if (simulatedHere)
+        {
+            _simulated.insert(netId);
+            // Forgotten, so EnforceSleep leaves it alone: the host's last
+            // verdict that it was asleep is not this client's to hold it to
+            // any more, nor to put it back to once it is the host's again,
+            // which waits for the host's next word. ApplyBodyState sets none
+            // while it is this client's.
+            if (const std::unordered_map<NetId, MirrorBody>::iterator body = _bodies.find(netId);
+                body != _bodies.end())
+            {
+                body->second.asleep = false;
+            }
+        }
         const bool controlled = ControlsEntity(entity);
         const Predicted *given = _scene.Get<Predicted>(entity);
         const bool givenHere = given != nullptr && local.IsValid() && given->client == local.value;
-        if (!controlled && !givenHere)
+        // A body someone else runs that this client's character touches, so
+        // it answers the push the tick it is given: one the host runs, a
+        // contested one among them, or one another client is about to lose.
+        const bool touched = !simulatedHere && _touchedAt.contains(netId);
+        if (!controlled && !givenHere && !touched)
         {
             continue;
         }
@@ -223,6 +256,36 @@ void ReplicationClient::RecomputePredictedSet(std::uint64_t serverTick)
         }
         _transformHistory.erase(netId);
     }
+}
+
+void ReplicationClient::NoteTouchedBodies(std::uint64_t serverTick)
+{
+    if (_physics == nullptr)
+    {
+        return;
+    }
+    std::vector<ECS::Entity> touching;
+    for (const auto &[netId, entity] : _entityByNetId)
+    {
+        if (!_scene.IsAlive(entity) || !_scene.Has<Physics::Character>(entity) || !ControlsEntity(entity) ||
+            !_physics->HasBody(entity))
+        {
+            continue;
+        }
+        _physics->Touching(entity, touching);
+        for (const ECS::Entity other : touching)
+        {
+            const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(other);
+            const NetId otherId = NetIdOf(other);
+            if (otherId.IsValid() && body != nullptr && body->motion == Physics::MotionType::Dynamic &&
+                !_scene.Has<Physics::Character>(other))
+            {
+                _touchedAt[otherId] = serverTick;
+            }
+        }
+    }
+    std::erase_if(_touchedAt, [serverTick](const std::pair<const NetId, std::uint64_t> &touched)
+                  { return serverTick > touched.second + kPredictAfterTouchTicks; });
 }
 
 bool CommandEcho::Applied(std::uint64_t tick) const
@@ -338,6 +401,23 @@ void ReplicationClient::SendInput(const InputCommandBuffer &buffer)
     Core::BitWriter writer;
     WriteMessageType(MessageType::Input, writer);
     buffer.WritePacket(writer);
+
+    // The reports of the ticks whose commands the packet repeats, so a lost
+    // packet loses none of them either.
+    _reportsToSend.clear();
+    if (const InputCommand *latest = buffer.Latest(); latest != nullptr)
+    {
+        const std::uint64_t window = std::min<std::uint64_t>(buffer.Size(), latest->tick);
+        for (std::uint64_t tick = latest->tick + 1u - window; tick <= latest->tick; ++tick)
+        {
+            const BodyReport &report = _reports[tick % kPredictionHistoryTicks];
+            if (report.tick == tick && !report.bodies.empty())
+            {
+                _reportsToSend.push_back(&report);
+            }
+        }
+    }
+    WriteBodyReports(_reportsToSend, writer);
     _transport.Send(_connection, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Snapshot);
 }
 
@@ -1134,6 +1214,12 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         return false;
     _corrections.bytesApplied += (reader.BitsRead() - bodySectionStart + 7u) / 8u;
 
+    // Before the compare, which counts a correction at a tick this says the
+    // host stepped without this client's command apart from the others.
+    _echo = CommandEcho{.serverTick = header.serverTick,
+                        .lastAppliedCommandTick = header.lastAppliedCommandTick,
+                        .starvedMask = header.starvedMask};
+
     // After both sections, so each predicted entity is judged on everything
     // this snapshot said of it.
     ComparePredicted(header.serverTick);
@@ -1146,9 +1232,6 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     ++_snapshotsApplied;
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
-    _echo          = CommandEcho{.serverTick = header.serverTick,
-                                 .lastAppliedCommandTick = header.lastAppliedCommandTick,
-                                 .starvedMask = header.starvedMask};
 
     // After the state, never before: a handler for an event about an entity
     // spawned in this same packet must find that entity already there, and the

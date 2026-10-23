@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <format>
 
 namespace Assisi::NetSync
 {
@@ -203,6 +205,45 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
 
     outState = state;
     return true;
+}
+
+namespace
+{
+
+/// "@p name: mine vs host's".
+template <typename T> std::string Difference(std::string_view name, const T &mine, const T &host)
+{
+    return std::format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
+                       Core::Reflect::PredictedFieldText(host));
+}
+
+} // namespace
+
+std::string PredictedBodyDifference(const BodyState &mine, const BodyState &host, const ViewSmoothing &smoothing)
+{
+    if (glm::length(mine.position - host.position) > smoothing.predictionTolerance)
+    {
+        return Difference("position", mine.position, host.position);
+    }
+    // The angle between them, whichever of q and -q each is.
+    const float angle = 2.f * std::acos(std::min(1.f, std::abs(glm::dot(mine.rotation, host.rotation))));
+    if (angle > smoothing.predictionRotationTolerance)
+    {
+        return Difference("rotation", mine.rotation, host.rotation);
+    }
+    if (glm::length(mine.linearVelocity - host.linearVelocity) > smoothing.predictionVelocityTolerance)
+    {
+        return Difference("velocity", mine.linearVelocity, host.linearVelocity);
+    }
+    if (glm::length(mine.angularVelocity - host.angularVelocity) > smoothing.predictionAngularVelocityTolerance)
+    {
+        return Difference("angular velocity", mine.angularVelocity, host.angularVelocity);
+    }
+    if (mine.asleep != host.asleep)
+    {
+        return Difference("asleep", mine.asleep, host.asleep);
+    }
+    return {};
 }
 
 } // namespace Assisi::NetSync

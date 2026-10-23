@@ -32,6 +32,10 @@ NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, Replic
     // Same terms, same reason: only when the caller has left it at the default.
     if (_config.relevancy.provider == RelevancyConfig::Provider::All)
         _config.relevancy = Relevancy();
+    if (_config.ownership == OwnershipConfig{})
+    {
+        _config.ownership = Ownership();
+    }
 }
 
 NetSession::~NetSession() { Disconnect(); }

@@ -35,14 +35,20 @@
 /// runs AFTER X within the same frame, before Flush().
 ///
 /// @par Access
-/// The queue is owned by Application and reached through SystemContext, not a
-/// global — systems receive it as @c ctx.events, and Application exposes it to
-/// derived apps via GetEvents(). This keeps the frame-loop ordering explicit
-/// and lets tests construct a throwaway queue instead of sharing process state.
+/// Each world owns a queue, and the application owns one more for the events
+/// declared `AEVENT(universal)`. None is a global: systems reach both through
+/// @c ctx.events, an EventRoute that picks the queue by the event's type, so a
+/// system cannot see another world's events. Tests construct throwaway queues
+/// instead of sharing process state.
+///
+/// A queue knows which scope it holds. Pushing or reading an event of the
+/// other scope is a bug, and asserts: a world event in the universal queue
+/// reaches every world, and a universal one in a world's queue reaches nobody
+/// looking for it.
 ///
 /// @par Example
 /// @code
-/// // Define an event (annotate with AEVENT() to mark intent)
+/// // Define an event
 /// AEVENT()
 /// struct CollisionEvent { Entity a; Entity b; };
 ///
@@ -50,7 +56,7 @@
 /// ctx.events.Push(CollisionEvent{entityA, entityB});
 ///
 /// // Consume (e.g. in a PostUpdate system)
-/// for (const auto& e : ctx.events.Read<CollisionEvent>())
+/// for (const CollisionEvent &e : ctx.events.Read<CollisionEvent>())
 ///     HandleCollision(e);
 /// @endcode
 ///
@@ -65,6 +71,7 @@
 #include <vector>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/EventScope.hpp>
 
 namespace Assisi::Core
 {
@@ -177,10 +184,44 @@ private:
 class EventQueue
 {
 public:
-    /// @brief Append an event of type E to its queue.
+    /// @brief A queue holding events of @p scope, and only those.
+    explicit EventQueue(EventScope scope = EventScope::World) : _scope(scope) {}
+
+    [[nodiscard]] EventScope Scope() const { return _scope; }
+
+    /// @brief Discards every Push made while it lives.
+    ///
+    /// A client holds one while it steps again ticks it has already stepped:
+    /// whatever those ticks had to say was pushed when they ran live.
+    class DropScope
+    {
+public:
+        explicit DropScope(EventQueue &queue) : _queue(queue), _wasDropping(queue._dropping)
+        {
+            queue._dropping = true;
+        }
+        ~DropScope() { _queue._dropping = _wasDropping; }
+
+        DropScope(const DropScope &) = delete;
+        DropScope &operator=(const DropScope &) = delete;
+
+private:
+        EventQueue &_queue;
+        bool _wasDropping;
+    };
+
+    /// @brief Append an event of type E to its queue, unless a DropScope is
+    /// holding it.
     template <typename E>
     void Push(E event)
     {
+        ASSISI_ASSERT(ScopeOf<E>() == _scope,
+                      "EventQueue: this event belongs in the other queue, a world's or the universal one. Push "
+                      "through ctx.events, which picks the queue the event's declaration names.");
+        if (_dropping)
+        {
+            return;
+        }
         TypedQueue<E> &queue = GetOrCreate<E>();
         queue.events.push_back(std::move(event));
 #ifndef NDEBUG
@@ -204,6 +245,9 @@ public:
     template <typename E>
     EventSpan<E> Read() const
     {
+        ASSISI_ASSERT(ScopeOf<E>() == _scope,
+                      "EventQueue: this event is never in this queue, which holds the other scope. Read through "
+                      "ctx.events, which picks the queue the event's declaration names.");
         auto it = _queues.find(typeid(E));
         if (it == _queues.end())
             return {};
@@ -257,6 +301,8 @@ private:
     }
 
     std::unordered_map<std::type_index, std::unique_ptr<IQueue>> _queues;
+    EventScope _scope;
+    bool _dropping = false; ///< A DropScope is alive.
 };
 
 } // namespace Assisi::Core

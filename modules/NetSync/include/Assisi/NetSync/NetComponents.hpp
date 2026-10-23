@@ -155,6 +155,36 @@ struct Predicted
     AFIELD() uint32_t client = 0;
 };
 
+/// @brief Which client's machine simulates this dynamic body, and reports it
+/// to the host with its commands.
+///
+/// The host places it on a body near a client's character and takes it away
+/// again: when the character moves off, when another player takes the body
+/// over, when a report fails the host's checks or stops arriving, when the
+/// host's own game pushes or moves the body, and when the client leaves. A
+/// body with none is simulated by the host, as is one the host's own player
+/// is nearest. Never authored, for the reason ControlledBy gives, and stripped
+/// from a scene at session start.
+ACOMP(replicable)
+struct SimulatedBy
+{
+    /// @brief The simulating client's session id, a `NetSync::ClientId`
+    /// value, as in ControlledBy.
+    AFIELD() uint32_t client = 0;
+};
+
+/// @brief Keeps this body simulated by the host alone: no client is ever
+/// given it to simulate, however close its player comes.
+///
+/// For a body whose every move matters to more than one player, like the ball
+/// of a competitive game. A client whose character touches it predicts it, as
+/// it predicts any body the host simulates, so it answers that client's push
+/// at once and is corrected to the host's. Authored.
+ACOMP()
+struct HostSimulated
+{
+};
+
 /// @brief Marks a locally-created *mirror* of a remote entity: this machine
 /// receives it, it does not own it.
 ///

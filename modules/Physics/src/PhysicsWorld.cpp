@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -444,6 +445,8 @@ void PhysicsWorld::Update(float deltaTime)
     // the mutex: no Jolt worker is inside a callback at this point.
     _impl->events.clear();
     _impl->brokenJoints.clear();
+    _impl->movedByGameplay.swap(_impl->teleportedSinceUpdate);
+    _impl->teleportedSinceUpdate.clear();
 
     // First, so the step simulates the scene as it is now: bodies for what was
     // added, none for what was destroyed, and every Transform written since the
@@ -579,6 +582,25 @@ void PhysicsWorld::Teleport(ECS::Entity entity, const Pose &pose)
     // Then snapped, so it is drawn there at once rather than slid to.
     _impl->WritePose(entity, pose, slot->kind != Impl::SlotKind::Character);
     ECS::SnapTransform(_impl->scene, entity);
+    if (std::find(_impl->teleportedSinceUpdate.begin(), _impl->teleportedSinceUpdate.end(), entity) ==
+        _impl->teleportedSinceUpdate.end())
+    {
+        _impl->teleportedSinceUpdate.push_back(entity);
+    }
+}
+
+std::span<const ECS::Entity> PhysicsWorld::MovedByGameplay() const
+{
+    return {_impl->movedByGameplay.data(), _impl->movedByGameplay.size()};
+}
+
+void PhysicsWorld::Impl::NoteMovedByGameplay(ECS::Entity entity)
+{
+    const ECS::Entity owner = OwnerOf(entity);
+    if (std::find(movedByGameplay.begin(), movedByGameplay.end(), owner) == movedByGameplay.end())
+    {
+        movedByGameplay.push_back(owner);
+    }
 }
 
 void PhysicsWorld::ActiveBodies(std::vector<ECS::Entity> &out) const
@@ -662,6 +684,7 @@ void PhysicsWorld::Impl::ApplyRequests(float deltaTime)
         {
             continue;
         }
+        NoteMovedByGameplay(owner);
         if (slot->kind == SlotKind::Character)
         {
             ApplyCharacterRequest(*FindCharacter(owner), request, deltaTime);

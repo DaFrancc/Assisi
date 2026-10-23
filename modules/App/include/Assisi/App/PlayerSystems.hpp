@@ -41,10 +41,7 @@ inline constexpr float kMaxPitchDegrees = 89.f;
 ///
 /// Reads the world's LocalClient. Until a session has said who this machine is,
 /// nothing is its player.
-///
-/// `liveOnly`: it adds and removes components, which a replayed step must not
-/// do again.
-ASYSTEM(FixedUpdate, name = "LocalPlayer", before = "CharacterCommand", liveOnly)
+ASYSTEM(FixedUpdate, name = "LocalPlayer", before = "CharacterCommand")
 void LocalPlayerSystem(SystemContext &ctx);
 
 /// @brief Fills in the controls of this machine's player from the keyboard and
@@ -76,7 +73,10 @@ void PlayerGatherSystem(SystemContext &ctx);
 ///
 /// Every machine runs it on every character with controls, which is what makes
 /// a host move a remote player exactly as that player's own machine does.
-ASYSTEM(FixedUpdate, name = "CharacterCommand")
+///
+/// `replayed`: a client stepping its character again turns and moves it from
+/// the controls it recorded for each tick.
+ASYSTEM(FixedUpdate, name = "CharacterCommand", replayed)
 void CharacterCommandSystem(SystemContext &ctx);
 
 /// @brief Makes the camera of this machine's player the active one, and every

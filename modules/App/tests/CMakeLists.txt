@@ -41,6 +41,7 @@ add_executable(Assisi-App-Tests
   TestUiInputBridge.cpp
   TestWorld.cpp
   TestWorldContacts.cpp
+  TestWorldEvents.cpp
   TestWorldStart.cpp
 )
 
@@ -56,12 +57,15 @@ if (ASSISI_ENABLE_NETWORKING)
   target_sources(Assisi-App-Tests PRIVATE
     TestBlueprintReplication.cpp
     PlayerSessionTesting.cpp
+    TestPlayerSessionBodies.cpp
+    TestPlayerSessionContact.cpp
     TestPlayerSessionGaps.cpp
     TestPlayerSessionGapWalks.cpp
     TestPlayerSessionOthers.cpp
     TestPlayerSessionOwnCharacter.cpp
     TestPlayerSessionPlayers.cpp
     TestPlayerSessionTicks.cpp
+    TestPlayerSessionWalls.cpp
   )
 endif()
 
@@ -97,6 +101,7 @@ target_link_libraries(Assisi-App-Tests
   PRIVATE
     Assisi::App
     Assisi-App-TestSystems
+    Assisi::TestSupport
 )
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen
@@ -135,12 +140,14 @@ Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
 # second CPU held for each keeps ctest from running them on a full machine.
 if (ASSISI_ENABLE_NETWORKING)
   set_tests_properties(
+    App.TestPlayerSessionContact
     App.TestPlayerSessionGaps
     App.TestPlayerSessionGapWalks
     App.TestPlayerSessionOthers
     App.TestPlayerSessionOwnCharacter
     App.TestPlayerSessionPlayers
     App.TestPlayerSessionTicks
+    App.TestPlayerSessionWalls
     PROPERTIES PROCESSORS 2)
 endif()
 
