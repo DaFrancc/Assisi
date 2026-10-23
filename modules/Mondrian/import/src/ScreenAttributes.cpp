@@ -533,21 +533,22 @@ void Seed(ScreenNode &node)
     }
 }
 
-std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node, bool stepWritten)
+std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node, bool stepWritten,
+                                          bool stepKnown)
 {
     if (node.widget != BuiltinWidget::ContinuousSlider)
     {
         return {};
     }
-    // Left out, a slider would take a step sized for a 0-to-1 range whatever
-    // its own ends are: on 0 to 100 that is a thousand presses end to end.
+    // Left out, a slider would have no step, which building it refuses: the
+    // cook says so first, at the line that left it out.
     if (!stepWritten)
     {
         return std::unexpected(At(element, "a slider says how far one press moves it, with step."));
     }
     // A step of none moves nothing, so the slider swallows the key and stays
-    // where it is.
-    if (node.range.step <= 0.f)
+    // where it is. One with no value yet has been left at none, not set to it.
+    if (stepKnown && node.range.step <= 0.f)
     {
         return std::unexpected(At(element, "a slider's step is what moves it, so it cannot be none."));
     }

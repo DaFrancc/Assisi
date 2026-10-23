@@ -1734,6 +1734,34 @@ TEST_CASE("ScreenCompiler: an attribute using a required parameter is checked pe
               .nodes.size() == 1);
 }
 
+TEST_CASE("ScreenCompiler: a slider's step from a parameter is checked where an instance gives it a value")
+{
+    // Inside a template's own element as well as at its root: neither has a
+    // value until an instance passes one, and none is refused then.
+    CHECK(Compiled(R"amdn(<screen>
+  <template name="ranged" params="s"><row><slider step="@s" /></row></template>
+</screen>)amdn")
+          .nodes.size() == 1);
+    // Nor an instance overriding its template's step with the parameter of the
+    // template it is inside.
+    CHECK(Compiled(R"amdn(<screen>
+  <template name="ranged"><slider step="5" /></template>
+  <template name="wrapped" params="s"><row><ranged step="@s" /></row></template>
+</screen>)amdn")
+          .nodes.size() == 1);
+    CHECK(Refused(R"amdn(<screen>
+  <template name="ranged" params="s"><slider step="@s" /></template>
+  <ranged s="0" />
+</screen>)amdn")
+          .message.find("step") != std::string::npos);
+
+    // A step written outright has its value in the template's own check.
+    CHECK(Refused(R"amdn(<screen>
+  <template name="ranged"><slider step="0" /></template>
+</screen>)amdn")
+          .message.find("step") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: a file that does not parse fails before it compiles")
 {
     const std::expected<std::vector<std::byte>, MarkupError> bytes =

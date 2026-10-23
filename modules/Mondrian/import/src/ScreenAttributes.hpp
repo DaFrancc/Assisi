@@ -132,9 +132,11 @@ void Seed(ScreenNode &node);
 /// What an element has to say for itself, as against what it may say.
 /// @p stepWritten is whether `step` was written anywhere the node took its
 /// attributes from: on an instance, that is its template's root as well as the
-/// instance. Errors point at @p element.
+/// instance. @p stepKnown is whether that step has a value yet: in a template's
+/// own check, one naming a parameter with no default has none, and is checked
+/// per instance instead. Errors point at @p element.
 [[nodiscard]] std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node,
-                                                        bool stepWritten);
+                                                        bool stepWritten, bool stepKnown);
 
 /// The verb a file spells @p name, or nullopt.
 [[nodiscard]] std::optional<ScreenVerb> LookUpVerb(std::string_view name);

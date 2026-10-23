@@ -232,12 +232,17 @@ struct ToggleId
 
 /// @brief What a slider's ends mean, and how far one press of a key or a button
 /// moves it. A stepped slider moves a step at a time and ignores @p step.
+///
+/// @p step has no usable default: no one size suits every range, and one sized
+/// for 0 to 1 is a thousand presses end to end on 0 to 100. Left out it is zero,
+/// which a continuous slider refuses, so a range written without one fails
+/// where it is used rather than moving a slider almost nowhere.
 ASTRUCT()
 struct SliderRange
 {
     AFIELD() float min = 0.f;
     AFIELD() float max = 1.f;
-    AFIELD() float step = 0.1f;
+    AFIELD() float step = 0.f;
 
     [[nodiscard]] friend constexpr bool operator==(const SliderRange &, const SliderRange &) = default;
 };

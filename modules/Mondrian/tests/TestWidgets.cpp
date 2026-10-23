@@ -2,6 +2,9 @@
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
+#include <Assisi/Core/Assert.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
@@ -331,6 +334,28 @@ TEST_CASE("Widgets: a slider says what it reads, where its handle is, and what e
     CHECK(thumb.x + thumb.width <= rect.x + rect.width);
     CHECK(thumb.x > rect.x); // a quarter of the way along, not at the start
 }
+
+#ifndef NDEBUG
+TEST_CASE("Widgets: a slider given no step is refused, whether built with it or changed to it")
+{
+    // With no step a press would move it nowhere and still be swallowed, so a
+    // player's key would do nothing at all.
+    const Assisi::Testing::ThrowOnContractViolation guard;
+    Panel panel;
+    CHECK_THROWS_AS(panel.screen->AddContinuousSlider(panel.row, SliderRange{.min = 0.f, .max = 100.f}, 0.f),
+                    Assisi::Core::ContractViolation);
+
+    const ContinuousSliderId volume = panel.screen->AddContinuousSlider(panel.row, kPercent, 0.f);
+    CHECK_THROWS_AS(panel.screen->SetRange(volume, SliderRange{.min = 0.f, .max = 1.f}),
+                    Assisi::Core::ContractViolation);
+    CHECK(panel.screen->GetRange(volume) == kPercent);
+
+    // A stepped slider moves a position at a time and has no use for one.
+    const SteppedSliderId quality =
+        panel.screen->AddSteppedSlider(panel.row, SliderRange{.min = 0.f, .max = 3.f}, 4, 0);
+    CHECK_NOTHROW(panel.screen->SetRange(quality, SliderRange{.min = 0.f, .max = 1.f}));
+}
+#endif // !NDEBUG
 
 TEST_CASE("Widgets: a toggle flips on a click and on Accept, and says which way it went")
 {
