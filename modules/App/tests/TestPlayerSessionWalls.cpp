@@ -207,3 +207,47 @@ TEST_CASE("With the sync test on, a client pushing a crate into a wall steps eac
     CHECK(walker.Replication().SyncTestResults().replays > 0u);
     CHECK(walker.Replication().SyncTestResults().differences == 0u);
 }
+
+namespace
+{
+
+/// A crate as NetPush's heavy one is: a metre a side and as dense as water, so
+/// a character leans on it rather than shoving it along.
+constexpr float kHeavyHalf = 0.5f;
+constexpr float kHeavyAhead = 1.5f;
+
+/// The way walked into it: enough to the side to catch its corner and slide
+/// round it.
+constexpr float kAcrossHeavy = -0.33f;
+
+/// Rollbacks a walk past it may take: the host's copy slides as the client's
+/// did, so its word has next to nothing to correct.
+constexpr std::uint64_t kMostRollbacksPastHeavy = 3;
+
+} // namespace
+
+TEST_CASE("A client walking into a heavy crate at an angle slides past it, and the host's copy slides with it")
+{
+    // A crate the client holds still has to reach the host still. Sent creeping
+    // at half a quantization step, it pushed the host's copy of the character
+    // into its corner and held it there, and the client was put back to it
+    // every few ticks.
+    Walker walker("assisi_players_walls_heavy");
+    const glm::vec3 crateAt = walker.start + glm::vec3{0.f, kHeavyHalf, -kHeavyAhead};
+    ECS::Scene &hostScene = walker.host->world.scene;
+    const ECS::Entity crate = hostScene.Create();
+    (void)hostScene.Add<ECS::Transform>(crate, ECS::Transform{.position = crateAt});
+    Physics::Collider collider;
+    collider.shape = Physics::ColliderShape::Box;
+    collider.halfExtents = glm::vec3{kHeavyHalf};
+    (void)hostScene.Add<Physics::Collider>(crate, collider);
+    (void)hostScene.Add<Physics::RigidBody>(crate, Physics::RigidBody{});
+    (void)hostScene.Add<NetSync::Replicated>(crate, NetSync::Replicated{});
+    walker.session.Run(kCatchUpFrames);
+    const std::uint64_t rollbacksBefore = walker.Replication().Corrections().predictionsReplayed;
+
+    walker.session.Run(kWalkFrames, [&] { Walk(walker.client->world.scene, walker.player, kAcrossHeavy); });
+
+    CHECK(walker.Position().z < crateAt.z - kHeavyHalf);
+    CHECK(walker.Replication().Corrections().predictionsReplayed - rollbacksBefore <= kMostRollbacksPastHeavy);
+}

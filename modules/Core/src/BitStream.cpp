@@ -28,6 +28,17 @@ constexpr std::uint64_t LowBitMask(std::uint32_t bitCount)
     return bitCount >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bitCount) - 1u;
 }
 
+/// The steps a quantized float's range is cut into at @p bitCount bits: an even
+/// number, so the middle of the range is a level of its own and a range around
+/// zero holds zero exactly. With every code used the count is odd and zero
+/// falls between two levels, so a body at rest is sent creeping at half a step.
+/// One code goes unused; a single bit keeps both its codes, for the two ends.
+std::uint32_t QuantizedSteps(std::uint32_t bitCount)
+{
+    const std::uint32_t all = static_cast<std::uint32_t>(LowBitMask(bitCount));
+    return bitCount > 1 ? all - 1u : all;
+}
+
 } // namespace
 
 // ── BitWriter ─────────────────────────────────────────────────────────────────
@@ -128,7 +139,7 @@ void BitWriter::WriteFloatQuantized(float value, float min, float max, std::uint
     if (bits == 0 || bits > 32 || !(max > min))
         return;
 
-    const std::uint32_t levels = static_cast<std::uint32_t>(LowBitMask(bits)); // 2^bits - 1
+    const std::uint32_t levels = QuantizedSteps(bits);
     const float span   = max - min;
     const float t      = std::clamp((value - min) / span, 0.f, 1.f);
 
@@ -313,8 +324,9 @@ float BitReader::ReadFloatQuantized(float min, float max, std::uint32_t bits)
     if (bits == 0 || bits > 32 || !(max > min))
         return min;
 
-    const std::uint32_t levels = static_cast<std::uint32_t>(LowBitMask(bits));
-    const std::uint32_t raw    = ReadBits(bits);
+    const std::uint32_t levels = QuantizedSteps(bits);
+    // The code past the last level is never written; read, it is the top.
+    const std::uint32_t raw = std::min(ReadBits(bits), levels);
     return min + static_cast<float>(static_cast<double>(raw) / static_cast<double>(levels)) * (max - min);
 }
 
