@@ -58,6 +58,7 @@
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/EditorEvents.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
@@ -91,23 +92,6 @@ enum class NestVerdict : std::uint8_t
     Valid,      ///< Nothing stands in the way.
     WouldCycle, ///< Its closure already reaches the edited file; the pair would expand forever.
     Unreadable, ///< It does not flatten at all — a cycle of its own, a missing nested file, bad JSON.
-};
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-/// @brief Emitted when the user clicks to select (or deselect) an entity.
-/// NullEntity means the click landed on empty space. Universal: the selection
-/// is the editor's, not any one world's.
-AEVENT(universal)
-struct EntitySelectionChangedEvent
-{
-    Assisi::ECS::Entity entity;
-    /// Ctrl or Shift was held: fold the entity into the selection instead of
-    /// replacing it. Both modifiers do the same thing in the viewport — a range
-    /// needs an order to walk through, and the 3D view has none.
-    bool additive = false;
 };
 
 // ---------------------------------------------------------------------------
