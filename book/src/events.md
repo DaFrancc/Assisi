@@ -48,26 +48,38 @@ for (const CoinCollected &coin : ctx.events.Read<CoinCollected>())
 }
 ```
 
-`Read` gives you every event of that type pushed so far this frame, in the order
-they were pushed. If there were none, the loop just doesn't run.
+`Read` gives you the events of that type your system can see, in the order they
+were pushed. If there were none, the loop just doesn't run.
 
-## Events last one frame
+## Who reads an event
 
-At the end of every frame, all events are cleared. So a reader must run
-**after** the pusher, in the same frame:
+An event is read by the systems that run after the one that pushed it, and no
+system reads the same event twice:
 
-| Pushed in | Can be read in |
+| Pushed in | Read in |
 |---|---|
-| `FixedUpdate` | `Update`, `PostUpdate` |
-| `Update` | `PostUpdate`, or a later `Update` system (use `after =`) |
-| `PostUpdate` | a later `PostUpdate` system (use `after =`) |
+| A button's `on_click` | `PreUpdate`, the next `FixedUpdate` step, `Update`, `Ui` |
+| `PreUpdate` | the next `FixedUpdate` step, `Update`, `Ui` |
+| `FixedUpdate` or `PostFixedUpdate` | the rest of that step, `Update`, `Ui` |
+| `Update` | a later `Update` system (use `after =`), `Ui` |
+| `Ui` | a later `Ui` system (use `after =`) |
 
-If a reader runs *before* the pusher, it misses the event: by the next frame
-it's gone. When two systems in the same phase are involved, order them with
-`after =` or `before =` (see [Your first system](first-system.md#options)).
+A **step** is one run of `FixedUpdate`, the physics and `PostFixedUpdate`. A
+frame can run several steps, or none (see
+[Your first system](first-system.md#phases-when-a-system-runs)). Each step reads
+only what was pushed since the step before it ended, so it never sees an event
+an earlier step already read, or anything `Update` or `Ui` pushed.
 
-A common pattern is to push in `FixedUpdate` or `Update` and react in
-`PostUpdate`, which always runs after both.
+At the end of every frame, events are cleared. The one exception is a frame
+that runs no step: a click's events and `PreUpdate`'s then wait for the next
+step, which reads them once.
+
+If a reader runs *before* the pusher, it misses the event. When two systems in
+the same phase are involved, order them with `after =` or `before =` (see
+[Your first system](first-system.md#options)).
+
+A common pattern is to push in `FixedUpdate` or `Update` and react in an
+`Update` system marked `last`, which runs after both.
 
 ## Each world has its own events
 
@@ -107,7 +119,10 @@ that names an entity is never universal, because the entity is in one world.
   loop. Debug builds stop with an error when this happens. Collect what you want
   to push, and push it after the loop.
 - **Events aren't saved**, and in multiplayer they aren't sent over the
-  network. They only exist inside one frame on one machine.
+  network. They only exist on one machine, until the end of the frame or, for
+  those waiting for a step, until that step. To tell another machine something,
+  send a message: it arrives there as an event, `Received<YourMessage>`, which
+  its systems read the same way. See [Messages](multiplayer.md#messages).
 
 > **Not yet available:** the engine doesn't raise input events (like "Jump was
 > pressed") yet, so input is still read by checking every frame. See

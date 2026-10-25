@@ -27,8 +27,22 @@
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 #include <Assisi/Core/StrongId.hpp>
 
+namespace Assisi::Core
+{
+class BitReader;
+}
+
 namespace Assisi::Core::Reflect
 {
+
+class DecodedMessage;
+struct CodecContext;
+struct MessageMeta;
+
+/// @brief Reads one message body off the wire into a fresh value of the type
+/// @p meta describes. Empty when the body cannot be read.
+using DecodeMessageFn = DecodedMessage (*)(const MessageMeta &meta, BitReader &reader,
+                                           const CodecContext *context);
 
 /// @brief Dense wire identity of a message type, assigned alphabetically at
 /// registry finalize — the same scheme, and the same safety argument, as
@@ -127,6 +141,11 @@ struct MessageMeta
     /// @return false when a field is present but unreadable, having logged which
     ///         one. Absent keys are not failures — see ComponentMeta::addToScene.
     std::function<bool(const nlohmann::json &j, void *out_ptr)> deserialize;
+
+    /// @brief Reads one message of this type off the wire, for the network's
+    /// checks to judge and a world's events to receive. Generated as
+    /// DecodedMessage::Decode<T>, the one place that knows T.
+    DecodeMessageFn decode = nullptr;
 };
 
 /// @brief The same three facts as MessageMeta's grammar fields, available at
@@ -139,6 +158,11 @@ struct MessageMeta
 /// encoding nothing.
 template <typename T>
 struct MessageTraits;
+
+/// @brief A type declared `AMSG`. Only meaningful where the generated
+/// MessageTraits.hpp is included, which is what declares them.
+template <typename T>
+concept DeclaredMessage = requires { MessageTraits<T>::direction; };
 
 } // namespace Assisi::Core::Reflect
 

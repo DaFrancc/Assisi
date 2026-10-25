@@ -15,7 +15,8 @@ struct SystemContext;
 ///        for the frame.
 ///
 /// Update, so animations play only while the world simulates, and code that
-/// adjusts joints on top runs after, in PostUpdate. A player whose mesh, clip,
+/// adjusts joints on top runs after it, in Update with after = "AnimationPlayers"
+/// or in Ui. A player whose mesh, clip,
 /// space or any of the space's clips has not loaded yet waits. One whose clips
 /// name joints its mesh lacks plays the rest and warns once, until its
 /// animation or mesh changes.

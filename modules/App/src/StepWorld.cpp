@@ -23,6 +23,16 @@ void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCh
     // within a phase cannot substitute for it. Everything inside the scope is
     // one fixed step to the render blend.
     const ECS::FixedStepScope step(world.scene);
+
+    // A live tick reads what was pushed since the world's previous one ended,
+    // so no tick reads an event another already has. A replay steps ticks that
+    // ran live and read theirs then, so it moves no mark, and the messages that
+    // have arrived wait for the live tick, which reads them once.
+    if (!ctx.replaying)
+    {
+        ctx.events.BeginTick(world.eventTicks);
+        world.net.Deliver(world.events);
+    }
     world.systems.Run(SystemPhase::FixedUpdate, ctx);
 
     {
@@ -40,6 +50,10 @@ void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCh
     }
 
     world.systems.Run(SystemPhase::PostFixedUpdate, ctx);
+    if (!ctx.replaying)
+    {
+        ctx.events.EndTick(world.eventTicks);
+    }
 }
 
 } // namespace Assisi::App

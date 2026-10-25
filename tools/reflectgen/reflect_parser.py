@@ -2,7 +2,7 @@
 """reflect_parser — header scanning and the parse-time data model for reflectgen.
 
 Reads a C++ header: strips comments, tracks the namespace stack, extracts the
-ACOMP/AASSET/ASTRUCT/AENUM/AFIELD/AMSG/AMSG_HANDLER/ASYSTEM annotations, and resolves
+ACOMP/AASSET/ASTRUCT/AENUM/AFIELD/AMSG/ASYSTEM annotations, and resolves
 enum-typed fields and the AFIELD(radio ...) references (with cycle detection).
 Everything here is about *understanding* the header; nothing emits C++ (that is
 reflect_codegen). The dataclasses below are the contract between the two.
@@ -172,26 +172,6 @@ class MessageInfo:
 
 
 @dataclass
-class HandlerInfo:
-    """One AMSG_HANDLER() declaration: `void Name(NetContext &, const T &);`
-
-    The registration step other engines automate (Unity's generated RPC systems,
-    Unreal's UHT) is automated here too — a declaration in a reflected header
-    *is* the registration, and the generated table binds it by fully-qualified
-    name with an explicit signature cast, so nothing about scoping is left to
-    lookup rules.
-    """
-    name:       str    # unqualified function name
-    namespaces: list   # enclosing namespaces at the declaration
-    message:    str    # the message type as written, e.g. 'ChatSend' or 'A::B::ChatSend'
-    header:     str    # source header, for diagnostics
-
-    @property
-    def fqn(self) -> str:
-        return '::'.join(['', *self.namespaces, self.name]) if self.namespaces else f'::{self.name}'
-
-
-@dataclass
 class SystemInfo:
     """One ASYSTEM() declaration: `void Name(SystemContext &);`
 
@@ -203,9 +183,10 @@ class SystemInfo:
     function:        str    # unqualified function name
     namespaces:      list   # enclosing namespaces at the declaration
     name:            str    # the name a file uses; declared explicitly, never derived
-    phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
+    phase:           str    # one of _ASYSTEM_PHASES
     after:           list   # system names this must run after
     before:          list   # system names this must run before
+    placement:       str    # First | Middle | Last: where in its phase, before after/before apply
     active_world_only: bool
     replayed:        bool   # steps again on a replayed step; engine fixed-step systems only
     header:          str    # source header, for diagnostics
@@ -397,27 +378,10 @@ _AENUM_RE  = re.compile(r'\bAENUM\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
 _AMSG_RE   = re.compile(r'\bAMSG\s*\(([^)]*)\)')
 
-# AMSG_HANDLER() followed by exactly one shape:
-#   void Name(NetContext &ctx, const MessageType &msg);
-# Rigid on purpose. The rigidity is what keeps this a fixed-shape pattern match
-# rather than a C++ signature parser — extracting one type from one fixed
-# pattern does not reopen the function-parsing problem that AMSG-as-a-struct
-# exists to avoid, because the wire form still comes entirely from the struct.
-# Parameter names are optional (a declaration may omit them) and the reference
-# markers may sit against either token.
-_AMSG_HANDLER_RE = re.compile(
-    r'\bAMSG_HANDLER\s*\(\s*\)\s*'
-    r'(?P<ret>[\w:]+)\s+'                       # return type (must be void)
-    r'(?P<name>\w+)\s*\('
-    r'\s*(?P<ctx>[\w:]+)\s*&\s*\w*\s*,'         # NetContext &ctx
-    r'\s*const\s+(?P<msg>[\w:]+)\s*&\s*\w*\s*'  # const T &msg
-    r'\)\s*;'
-)
-
 # ASYSTEM(phase, ...) followed by one fixed shape:
 #   void Name(SystemContext &ctx);
-# Rigid for the same reason AMSG_HANDLER is: extracting a phase and a name from a
-# fixed pattern does not reopen the C++-signature-parsing problem, and every
+# Rigid on purpose: extracting a phase and a name from a fixed pattern does not
+# open the C++-signature-parsing problem, and every
 # system has the same signature by construction — the context type is decided by
 # the phase, not by the author.
 _ASYSTEM_RE = re.compile(
@@ -430,8 +394,13 @@ _ASYSTEM_RE = re.compile(
 )
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
-                   'PostUpdate', 'Render')
-_ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed'}
+                   'Ui', 'Render')
+_ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed', 'first', 'last'}
+# The flag for each placement but the ordinary one, which needs none. In run
+# order: SystemPlacement's enumerators, and the order the whole-tree check holds
+# after/before to.
+SYSTEM_PLACEMENTS = ('First', 'Middle', 'Last')
+_ASYSTEM_PLACEMENT_FLAGS = {'first': 'First', 'last': 'Last'}
 # The phases a replay runs again, and so the only ones replayed can mean anything on.
 _ASYSTEM_FIXED_STEP_PHASES = ('FixedUpdate', 'PostFixedUpdate')
 # The namespace whose systems may be replayed: the engine's own, whose every
@@ -998,9 +967,9 @@ def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[s
 def find_systems(text: str, path: Path) -> list:
     """Every ASYSTEM() declaration in an already-comment-stripped header.
 
-    A second independent walk, like find_handlers and for the same reason: one
-    rigid regex over the whole text is simpler than threading a rare declaration
-    through a scanner built around struct bodies.
+    A second independent walk: one rigid regex over the whole text is simpler
+    than threading a rare declaration through a scanner built around struct
+    bodies.
     """
     systems: list = []
     for match in _ASYSTEM_RE.finditer(text):
@@ -1080,6 +1049,13 @@ def find_systems(text: str, path: Path) -> list:
         replayed          = 'replayed' in flags
         namespaces        = _namespaces_at(text, match.start())
 
+        placed = sorted(flags & set(_ASYSTEM_PLACEMENT_FLAGS))
+        if len(placed) > 1:
+            raise ValueError(
+                f"{where} is marked both first and last. A system runs in one place in its phase: "
+                f"keep one, or neither to run with the rest.")
+        placement = _ASYSTEM_PLACEMENT_FLAGS[placed[0]] if placed else 'Middle'
+
         if active_world_only and phase == 'Render':
             raise ValueError(
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
@@ -1113,39 +1089,10 @@ def find_systems(text: str, path: Path) -> list:
         systems.append(SystemInfo(function=match.group('fn'),
                                   namespaces=namespaces,
                                   name=name, phase=phase, after=after, before=before,
+                                  placement=placement,
                                   active_world_only=active_world_only, replayed=replayed,
                                   header=str(path)))
     return systems
-
-
-def find_handlers(text: str, path: Path) -> list:
-    """Every AMSG_HANDLER() declaration in an already-comment-stripped header.
-
-    Namespace tracking is a second, independent walk rather than being folded
-    into parse_header's state machine: handlers are found by one rigid regex over
-    the whole text, and threading that through a character-by-character scanner
-    designed around struct bodies would complicate the common path for a rare
-    declaration.
-    """
-    handlers: list = []
-    for match in _AMSG_HANDLER_RE.finditer(text):
-        where = f"{path.name}: handler '{match.group('name')}'"
-        if match.group('ret') != 'void':
-            raise ValueError(
-                f"{where} returns '{match.group('ret')}'. A message handler returns void — "
-                f"there is nowhere for a return value to go, because a reply is state and "
-                f"the state channel already carries it.")
-        if not match.group('ctx').endswith('NetContext'):
-            raise ValueError(
-                f"{where} takes '{match.group('ctx')} &' as its first parameter, but every "
-                f"handler has the same signature: void Name(NetContext &, const T &).")
-
-        # Namespaces enclosing this declaration: count braces before it, tracking
-        # the namespace stack exactly as parse_header does.
-        namespaces = _namespaces_at(text, match.start())
-        handlers.append(HandlerInfo(name=match.group('name'), namespaces=namespaces,
-                                    message=match.group('msg'), header=str(path)))
-    return handlers
 
 
 def _namespaces_at(text: str, position: int) -> list:
@@ -1601,14 +1548,14 @@ class _EnumScope:
 def parse_header_systems(path: Path) -> list:
     """Every ASYSTEM() declaration in @p path.
 
-    Its own entry point rather than a fourth element of parse_header_full's
+    Its own entry point rather than a third element of parse_header_full's
     tuple, so callers that want only components are unaffected.
     """
     return find_systems(strip_comments(path.read_text(encoding='utf-8')), path)
 
 
-def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
-    """Everything a header declares: (components, messages, handlers).
+def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list]:
+    """Everything a header declares: (components, messages).
 
     parse_header is the components-only facade over this, which is all most
     callers want. Systems come from parse_header_systems.
@@ -1815,7 +1762,7 @@ def parse_header_full(path: Path, include_dirs=()) -> tuple[list, list, list]:
     for msg in messages:
         _resolve_radio(msg, path.name)
 
-    return components, messages, find_handlers(text, path)
+    return components, messages
 
 
 # ──────────────────────────────────────────────────────────────────────────────

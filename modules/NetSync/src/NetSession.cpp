@@ -74,8 +74,6 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
     }
 
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
-    // So a handler's NetContext can reach back out to send further messages.
-    _server->SetOwningSession(this);
     _server->SetDespawner(_despawner);
     // Before any connection can arrive, since it is carried in every hello.
     _server->SetLevelIdentity(std::move(level));
@@ -105,8 +103,6 @@ bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHa
     }
 
     _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection, _physics);
-    // So a handler's NetContext can reach back out to send further messages.
-    _client->SetOwningSession(this);
     // Before the first Poll: a hello that arrives and is answered immediately
     // cannot be un-answered.
     _client->SetDeferHandshake(deferHandshake);
@@ -271,6 +267,42 @@ void NetSession::AfterPhysicsStep()
         _client->EnforceSleep();
 }
 
+bool NetSession::SendIntent(const void *intent, std::type_index type)
+{
+    if (_server)
+    {
+        _server->SubmitLocalIntent(intent, type);
+        return true;
+    }
+    if (!_client)
+    {
+        return false;
+    }
+    const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
+    const Core::Reflect::MessageMeta *meta = registry.ById(registry.IdOf(type));
+    if (meta == nullptr)
+    {
+        return false;
+    }
+    // Stamped with the *clock's* command tick, not the local sim tick, for the
+    // same reason input is: the clock's whole job is to run far enough ahead
+    // that this lands just before the server simulates it.
+    return _client->SendIntentBytes(intent, type, _clock ? _clock->CommandTick() : _simTick,
+                                    meta->reliability == Core::Reflect::MessageReliability::Reliable);
+}
+
+void NetSession::Deliver(Core::EventQueue &events)
+{
+    if (_server)
+    {
+        _server->Deliver(events);
+    }
+    else if (_client)
+    {
+        _client->Deliver(events);
+    }
+}
+
 void NetSession::SmoothView(float dt)
 {
     // A host is at server time by definition — it *is* the server — so there is
@@ -405,7 +437,6 @@ SessionStats NetSession::Stats() const
                                          diagnostics->intentsMalformed;
                 stats.intentsRateLimited += diagnostics->intentsRateLimited;
                 stats.intentsStale += diagnostics->intentsStale;
-                stats.intentsUnhandled += diagnostics->intentsUnhandled;
                 stats.eventsSent += diagnostics->eventsSent;
                 stats.announcementsSent += diagnostics->announcementsSent;
                 stats.eventsEvicted += diagnostics->eventsEvicted;
@@ -434,7 +465,6 @@ SessionStats NetSession::Stats() const
         const ConnectionDiagnostics &host = _server->HostDiagnostics();
         stats.intentsAccepted += host.intentsAccepted;
         stats.intentsRejected += host.intentsWrongWay + host.intentsNotYours + host.intentsMalformed;
-        stats.intentsUnhandled += host.intentsUnhandled;
     }
     else if (_client)
     {
@@ -457,8 +487,7 @@ SessionStats NetSession::Stats() const
         stats.syncTestReplays     = _client->SyncTestResults().replays;
         stats.syncTestDifferences = _client->SyncTestResults().differences;
         stats.mirrorsResurrected = _client->MirrorsResurrected();
-        stats.eventsDispatched   = _client->EventsDispatched();
-        stats.eventsUnhandled    = _client->EventsUnhandled();
+        stats.eventsReceived     = _client->EventsReceived();
         stats.eventsHeld         = static_cast<std::uint32_t>(_client->DeferredAnnouncementCount());
         if (_clock)
         {

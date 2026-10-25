@@ -743,8 +743,7 @@ void EditorApp::DrawNetworkWindow()
         // --- messages -------------------------------------------------------
         // Split by *why*, not by count: "intents dropped" is not a diagnosis. A
         // rate-limited client is misbehaving, a stale one has a clock problem, a
-        // rejected one is lying or mismatched, an unhandled one means a handler
-        // was never written.
+        // rejected one is lying or mismatched.
         if (ImGui::TreeNodeEx("Messages", ImGuiTreeNodeFlags_DefaultOpen))
         {
             LabelledValue("Intents accepted", std::format("{}", stats.intentsAccepted));
@@ -756,8 +755,6 @@ void EditorApp::DrawNetworkWindow()
             NetCounterRow("Intents stale", stats.intentsStale,
                           "A client tick outside the accepted window - too old to act on, or too far ahead "
                           "to have happened.");
-            NetCounterRow("Intents unhandled", stats.intentsUnhandled,
-                          "A registered message type with no AMSG_HANDLER. Normal if deliberate.");
 
             LabelledValue("Events sent", std::format("{}", stats.eventsSent));
             LabelledValue("Announcements", std::format("{}", stats.announcementsSent));
@@ -775,9 +772,7 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Mirrored entities", std::format("{}", stats.replicatedEntities));
         LabelledValue("Snapshots applied", std::format("{}", stats.snapshotsApplied));
 
-        LabelledValue("Events received", std::format("{}", stats.eventsDispatched));
-        NetCounterRow("Events unhandled", stats.eventsUnhandled,
-                      "The host sent a message type nothing here handles. Normal if deliberate.");
+        LabelledValue("Events received", std::format("{}", stats.eventsReceived));
         NetCounterRow("Announcements waiting", stats.eventsHeld,
                       "Reliable events that arrived ahead of the world they describe, held until the applied "
                       "tick catches up.");

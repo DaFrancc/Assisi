@@ -5,8 +5,9 @@
 /// @brief The only source of sound: an entity with an AudioEmitter plays its
 ///        clip when an event asks it to.
 ///
-/// The fields say what the emitter plays and how; App's AudioEmitters system
-/// answers the events that make it play, stop, pause and resume. What the
+/// The fields say what the emitter plays and how; App's PlayWorldSounds, which
+/// the engine runs each frame, answers the events that make it play, stop,
+/// pause and resume. What the
 /// emitter is playing is kept on the component itself, so it goes when the
 /// entity does, and so do its sounds: nothing holds them any more, and the
 /// mixer fades out whatever nobody holds.
@@ -60,8 +61,8 @@ enum class EmitterSpace : std::uint8_t
 ACOMP()
 struct AudioEmitter
 {
-    // The unreflected members are what the emitter is doing, for the
-    // AudioEmitters system alone: none of it means anything outside this run.
+    // The unreflected members are what the emitter is doing, for
+    // PlayWorldSounds alone: none of it means anything outside this run.
 
     /// Every sound the emitter has playing, the first started at the front.
     std::vector<Assisi::Audio::SoundHandle> playing;

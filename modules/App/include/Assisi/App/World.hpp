@@ -12,6 +12,7 @@
 /// different places) needs both simulating.
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/App/Network.hpp>
 #include <Assisi/App/ResourceStore.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
@@ -130,8 +131,18 @@ struct World
 
     /// The events pushed by this world's systems and screens, and read only by
     /// them: an event naming an entity means nothing in another world. A system
-    /// reaches it through `ctx.events`; the host flushes it once a frame.
+    /// reaches it through `ctx.events`; the host ends its frame once a frame
+    /// (EndWorldFrame).
     Core::EventQueue events;
+
+    /// How far this world's ticks have read its own events and the universal
+    /// ones, which StepWorld moves at the end of each live tick.
+    Core::EventRoute::TickMarks eventTicks;
+
+    /// What this world's systems know of the network and say to it, through
+    /// `ctx.net`. Played alone until NetworkedPlay attaches a session; what
+    /// arrives reaches `events` at the start of each live tick (StepWorld).
+    Network net;
 
     /// This world's game systems, installed once from its level's list (see
     /// WorldManager::ApplySystems). Per world rather than per app because a

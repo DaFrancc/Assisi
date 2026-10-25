@@ -23,9 +23,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/World.hpp>
-#if defined(ASSISI_NETWORKING)
-#    include <Assisi/App/NetworkedPlay.hpp>
-#endif
+#include <Assisi/App/NetworkedPlay.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -69,6 +67,7 @@ public:
 
 protected:
     void OnStart() override;
+    void OnPreUpdate(float dt) override;
     void OnFixedUpdate(float dt) override;
     /// Real time, or a client's clock's rate of it, as a joined editor runs.
     [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
@@ -84,8 +83,9 @@ private:
     /// see Assisi::App::SystemPhase::Begin.
     [[nodiscard]] Assisi::App::SystemContext WorldStartContext();
 
-    /// @brief The context a fixed step of @p dt at @p tick runs under.
-    [[nodiscard]] Assisi::App::SystemContext StepContext(float dt, std::uint64_t tick);
+    /// @brief The context the world's systems run under, in a frame or a fixed
+    /// step of @p dt at @p tick.
+    [[nodiscard]] Assisi::App::SystemContext WorldContext(float dt, std::uint64_t tick);
 
     /// Installs the systems the level at @p level names, and those its
     /// blueprints need, into the world it was just loaded into. False, having
@@ -117,14 +117,14 @@ private:
     Assisi::App::World _world;
 
     /// Constructed only in a networked role, so offline mode never initializes
-    /// GameNetworkingSockets — and without networking built there is no such
-    /// role, so the member goes too. Offline headless simulation still works.
-#if defined(ASSISI_NETWORKING)
+    /// GameNetworkingSockets.
     std::unique_ptr<Assisi::App::NetworkedPlay> _play;
-#endif
 
     double _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;
+    /// The tick the last fixed step simulated: the process's own count, or the
+    /// session's in a networked role. What the per-frame phases are told.
+    std::uint64_t _stepTick = 0;
 };
 
 } // namespace Game

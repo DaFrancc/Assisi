@@ -179,28 +179,12 @@
 /// Addressing is *data*: a message about an entity carries a NetId field, rather
 /// than being "called on" anything. See Assisi/Core/Reflect/MessageMeta.hpp.
 ///
+/// A message that passes its checks reaches its world's systems as an event,
+/// Received<T>, which any system reads. See Assisi/Core/Received.hpp.
+///
 /// reflectgen hard-fails on AFIELD(norep) inside an AMSG — a message exists
 /// only to cross the wire, so a field that never crosses it does nothing.
 #define AMSG(...)
-
-/// AMSG_HANDLER() — marks a declaration as the handler for one message type.
-///
-///   AMSG_HANDLER() void HandleChatSend(NetContext &ctx, const ChatSend &msg);
-///
-/// The declaration *is* the registration: reflectgen's whole-tree pass emits one
-/// translation unit binding every handler to its type, fully qualified and
-/// behind an explicit signature cast, so nothing about which function gets
-/// called is left to name lookup or link order. Two handlers for one message
-/// type is a build error naming both sites.
-///
-/// The signature is fixed — `void(NetContext &, const T &)` — and the rigidity
-/// is the point: it keeps the scan a fixed-shape pattern match rather than a C++
-/// signature parser. Free functions only; a lambda has no declaration to scan,
-/// and `static` or anonymous-namespace functions have no linkage for the table
-/// to reference.
-///
-/// See Assisi/NetSync/MessageDispatch.hpp.
-#define AMSG_HANDLER(...)
 
 /// ASYSTEM(phase, ...) — marks a declaration as a system a file may name.
 ///
@@ -240,11 +224,10 @@
 /// skip* for code that registers by hand.
 ///
 /// Duplicate names, an `after`/`before` naming nothing, and ordering cycles are
-/// whole-tree build errors — the same shape as the handler pass.
+/// whole-tree build errors.
 ///
-/// Free functions only, like AMSG_HANDLER, and for the same reason: a lambda has
-/// no declaration to scan, and a `static` one has no linkage for the table to
-/// reference. It costs nothing, because the house rule is already that a system
+/// Free functions only: a lambda has no declaration to scan, and a `static` one
+/// has no linkage for the table to reference. It costs nothing, because the house rule is already that a system
 /// keeps its state in components and never in itself.
 ///
 /// See Assisi/App/SystemCatalog.hpp.

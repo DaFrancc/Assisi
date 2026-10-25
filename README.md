@@ -436,9 +436,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 
 [Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
 stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
-runtime glTF path today. Networking is on by default but can be turned off with
-`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets, protobuf and libsodium — a noticeable chunk of
-first-configure time if you are not building a multiplayer game. Rendering is **Vulkan**: a
+runtime glTF path today. Rendering is **Vulkan**: a
 Vulkan-capable GPU and driver are required at runtime, but no Vulkan SDK is needed to build (the engine
 loads Vulkan dynamically).
 
@@ -618,13 +616,13 @@ the cooked atlas and links no FreeType. Dear ImGui stays the editor's and debug 
 App is the framework that ties the lower modules together. `Application` is the base class you derive
 from: it runs physics on a fixed timestep (60 Hz by default, `AppConfig::physicsHz`) and paces rendering
 either to the display's refresh rate or to an optional FPS cap, switchable at runtime. You override
-`OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)` and `OnRender(RenderFrame&)`, plus `OnImGui()`,
+`OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)` and `OnRender(RenderFrame&)`, plus `OnPreUpdate(dt)`, `OnImGui()`,
 `OnShutdown()`, `OnResize()` and `OnRenderTargetsChanged()` if you need them.
 
 `SystemRegistry` is where systems are registered. Each one goes into a phase (`PreUpdate`, `FixedUpdate`,
-`Update`, `PostUpdate`) and can declare that it runs `After()` or `Before()` a named other system; the
-registry sorts them accordingly, so ordering is stated deliberately instead of being an accident of
-registration order. Render systems register separately, through `RegisterRender`.
+`PostFixedUpdate`, `Update`, `Ui`), can be placed `First()` or `Last()` in it, and can declare that it
+runs `After()` or `Before()` a named other system; the registry sorts them accordingly, so ordering is
+stated deliberately instead of being an accident of registration order. Render systems register separately, through `RegisterRender`.
 
 `World` and `WorldManager` let **several scenes be loaded at the same time** — for streaming, or for
 keeping a menu alive behind a level. Each world owns its own scene, its own physics world and its own

@@ -146,6 +146,8 @@ The `SystemContext` your system receives holds everything it can reach:
 | `ctx.actions` | Named input actions like "Jump". See [Input](input.md). |
 | `ctx.worldManager` | Manages every loaded world. Use `ctx.worldManager->RequestTravel("levels/Other.alvl")` to change level. |
 | `ctx.isActiveWorld` | Whether this is the world being shown and played. |
+| `ctx.events` | Events: push them, and read the ones other systems pushed. See [Events](events.md). |
+| `ctx.net` | The network: whether this machine is the host, and sending messages to other machines. Works when playing alone too. See [Messages](multiplayer.md#messages). |
 | `ctx.assets` | Assets by id, such as sounds. See [Your own asset kinds](asset-kinds.md). **`nullptr` in tests.** |
 | `ctx.mixer` | The mixer the engine plays emitters through. Play sounds with events instead; see [Audio](audio.md). **`nullptr` with no audio device.** |
 | `ctx.settings` | The player's options. See [Audio](audio.md). **`nullptr` in tests.** |
@@ -156,11 +158,19 @@ The `SystemContext` your system receives holds everything it can reach:
 |---|---|
 | `Begin` | Once, when the level starts. For setup, like spawning the player. |
 | `Loaded` | Once, when all of the level's assets have finished loading. |
-| `PreUpdate` | Every frame, after input is read, before game logic. |
+| `PreUpdate` | Every frame, after input is read, before `FixedUpdate`. |
 | `FixedUpdate` | At a fixed rate (60 per second by default), **before** physics. Anything that pushes physics objects goes here. |
 | `PostFixedUpdate` | At the fixed rate, right **after** physics. For reacting to what physics just did. |
-| `Update` | Every frame. **Most game logic goes here.** |
-| `PostUpdate` | Every frame, after `Update`. For cleanup. |
+| `Update` | Every frame, after `FixedUpdate`. **Most game logic goes here.** |
+| `Ui` | Every frame, after `Update`. For writing what the game's screens show. A dedicated server doesn't run it. |
+| `Render` | Every frame, while the frame is drawn, with the camera it's drawn from. A `Render` system takes an `Assisi::App::RenderContext &` instead. |
+
+Each frame runs them in that order: `PreUpdate`, then `FixedUpdate` and
+`PostFixedUpdate` as many times as the frame needs, then `Update`, then `Ui`.
+After `Ui` the engine plays the frame's sounds and draws it.
+
+There's no extra phase for running after everything else, like tidying up after
+the rest of `Update`. Mark the system `last` instead (see [Options](#options)).
 
 `FixedUpdate` can run zero, one or several times in a frame, depending on how
 fast the game is running. Use it for physics-related code so it behaves the same
@@ -199,6 +209,20 @@ void ShootSystem(Assisi::App::SystemContext &ctx);
   ```
 
   `Shoot` then runs after both `Aim` and `Reload`, and before `Recoil`.
+- **`first`** / **`last`** make this system run before (or after) every other
+  system in its phase. Use them when a system has to see the whole phase, like
+  one that tidies up after everything else in `Update` has run:
+
+  ```cpp
+  ASYSTEM(Update, name = "Tidy", last)
+  void TidySystem(Assisi::App::SystemContext &ctx);
+  ```
+
+  `after =` and `before =` still work with them. Among several `last` systems,
+  they set the order; `ASYSTEM(Update, name = "Tidy", last, after = "Sweep")`
+  runs after `Sweep` and after everything else. An order that can't happen,
+  like a `last` system `before =` one that isn't `last`, doesn't build, and the
+  error names both systems. A system can't be both `first` and `last`.
 - **`activeWorldOnly`** only runs the system in the world that's being shown and
   played. Use it for anything that reads input or controls the camera or HUD.
   When several worlds are loaded, only one should react to the player's keys.

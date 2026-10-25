@@ -1,6 +1,9 @@
 {
   "systems": [
-    "BouncerSpawn"
+    "BouncerSpawn",
+    "AskForBell",
+    "RingBells",
+    "PlayBells"
   ],
   "entities": [
     {
@@ -543,6 +546,40 @@
         }
       },
       "name": "CosmeticCrate"
+    },
+    {
+      "components": {
+        "AudioEmitter": {
+          "clip": {
+            "guid": "5e6daab0-95d3-4985-b292-d95f920c8df8",
+            "path": "sounds/tone.ogg"
+          },
+          "maxConcurrentSounds": 4,
+          "whenFull": "ReplaceOldest"
+        },
+        "Bell": {
+          "number": 1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Bell"
     }
   ],
   "version": 2

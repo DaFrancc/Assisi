@@ -5,8 +5,7 @@
 /// @brief Entity lifecycle utilities.
 ///
 /// Add DestroyTag to an entity to have it destroyed by a cleanup pass
-/// (conventionally a CleanupDestroyTag system run at the end of PostUpdate that
-/// calls DestroyMarked). The tag is a convenient batch/marker on top of
+/// (conventionally a system placed last in Update that calls DestroyMarked). The tag is a convenient batch/marker on top of
 /// Scene::Destroy — which is itself deferred — so the actual removal lands at
 /// the frame's FlushDestroyed(), never mid-Query.
 ///
@@ -20,7 +19,7 @@
 namespace Assisi::Runtime
 {
 
-/// @brief Marker component — entity is destroyed at end of PostUpdate.
+/// @brief Marker component — entity is destroyed by the frame's cleanup pass.
 ///
 /// No data.  Presence on an entity is the signal; the value is irrelevant.
 ///
@@ -34,8 +33,8 @@ struct DestroyTag
 
 /// @brief Destroy all entities that carry DestroyTag.
 ///
-/// Run this once per frame (conventionally a CleanupDestroyTag system at the end
-/// of PostUpdate); it can also be called manually in custom loops or unit tests.
+/// Run this once per frame (conventionally from a system placed last in Update);
+/// it can also be called manually in custom loops or unit tests.
 inline void DestroyMarked(ECS::Scene &scene)
 {
     // Scene::Destroy is deferred and touches no pool until FlushDestroyed(), so

@@ -7,16 +7,15 @@
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
-#if defined(ASSISI_NETWORKING)
 #    include <Assisi/App/PlayerSession.hpp>
 #    include <Assisi/NetSync/NetComponents.hpp>
 #    include <Assisi/NetSync/NetworkConfig.hpp>
-#endif
 
 #include <chrono>
 #include <cstdint>
@@ -33,10 +32,8 @@ namespace Game
 namespace
 {
 
-#if defined(ASSISI_NETWORKING)
 namespace Net     = Assisi::Net;
 namespace NetSync = Assisi::NetSync;
-#endif
 namespace ECS     = Assisi::ECS;
 namespace Log     = Assisi::Core::Log;
 
@@ -80,14 +77,12 @@ void ServerApp::OnStart()
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
               _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
-#if defined(ASSISI_NETWORKING)
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
     NetSync::LoadNetworkConfig();
     // Same reason: which bit of a player's controls is which button is in the
     // hash too, and a windowed peer has published it.
     Assisi::App::PublishPlayerActions();
-#endif
 
     if (!_options.level.empty())
     {
@@ -132,16 +127,6 @@ void ServerApp::OnStart()
         return;
     }
 
-#if !defined(ASSISI_NETWORKING)
-    // A networked role in a build configured without networking. Refused out
-    // loud rather than quietly degraded to Offline: a --host that hosts nothing
-    // is a worse outcome than one that says it cannot.
-    Log::Error("Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so --host and "
-               "--connect do nothing. Reconfigure with networking on, or use --server for headless "
-               "simulation.");
-    RefuseStart();
-    return;
-#else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
     _play             = std::make_unique<Assisi::App::NetworkedPlay>(_world, config);
@@ -179,12 +164,10 @@ void ServerApp::OnStart()
     {
         RefuseStart();
     }
-#endif // ASSISI_NETWORKING
 }
 
 void ServerApp::BuildJoinedWorld()
 {
-#if defined(ASSISI_NETWORKING)
     const NetSync::ServerHello *hello = _play->Session().Handshake();
     if (hello == nullptr)
         return;
@@ -229,7 +212,6 @@ void ServerApp::BuildJoinedWorld()
     Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
               "handshake.",
               hello->level.path, stripped.entities, stripped.orphans);
-#endif // ASSISI_NETWORKING
 }
 
 bool ServerApp::InstallLevelSystems(std::string_view level)
@@ -263,10 +245,15 @@ void ServerApp::SpawnDemoMovers()
                                                 .amplitude = 1.f,
                                                 .periodSeconds = kDemoMoverPeriodSeconds,
                                                 .phase = static_cast<float>(i) * kDemoMoverPhaseStep});
-#if defined(ASSISI_NETWORKING)
         (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
-#endif
     }
+}
+
+void ServerApp::OnPreUpdate(float dt)
+{
+    // The frame a windowed host runs, less what only a window has: input, and
+    // the Ui systems and sounds of OnUpdate.
+    Assisi::App::BeginWorldFrame(WorldContext(dt, _stepTick));
 }
 
 void ServerApp::OnFixedUpdate(float dt)
@@ -275,7 +262,6 @@ void ServerApp::OnFixedUpdate(float dt)
 
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
-#if defined(ASSISI_NETWORKING)
     if (_play)
     {
         stepTick = _play->BeginStep(stepTick, /*stepping=*/ true);
@@ -295,28 +281,22 @@ void ServerApp::OnFixedUpdate(float dt)
             return;
         }
     }
-#endif // ASSISI_NETWORKING
+    _stepTick = stepTick;
 
-#if defined(ASSISI_NETWORKING)
     if (_play)
     {
-        _play->StepWorld(StepContext(dt, stepTick));
+        _play->StepWorld(WorldContext(dt, stepTick));
     }
     else
     {
-        Assisi::App::StepWorld(StepContext(dt, stepTick));
+        Assisi::App::StepWorld(WorldContext(dt, stepTick));
     }
-#else
-    Assisi::App::StepWorld(StepContext(dt, stepTick));
-#endif
 
     // After the simulation: a snapshot describes the world at the end of the
     // tick it is stamped with. A headless client with no player sends an empty
     // command, enough to give the host something to measure its buffer by.
-#if defined(ASSISI_NETWORKING)
     if (_play)
         _play->EndStep();
-#endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
@@ -324,14 +304,12 @@ void ServerApp::OnFixedUpdate(float dt)
 
 double ServerApp::SimulationSeconds(double frameSeconds)
 {
-#if defined(ASSISI_NETWORKING)
     if (_play)
         return frameSeconds * _play->TimeScale();
-#endif
     return frameSeconds;
 }
 
-void ServerApp::OnUpdate([[maybe_unused]] float dt)
+void ServerApp::OnUpdate(float dt)
 {
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
@@ -340,11 +318,12 @@ void ServerApp::OnUpdate([[maybe_unused]] float dt)
     // Its *convergence* assertions must never read these Transforms, though:
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
-#if defined(ASSISI_NETWORKING)
     if (_play)
         _play->Session().SmoothView(dt);
-#endif
 
+    // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
+    // sounds would have nowhere to go.
+    Assisi::App::UpdateWorld(WorldContext(dt, _stepTick));
     ReportStatus();
 }
 
@@ -362,7 +341,6 @@ void ServerApp::ReportStatus()
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 
-#if defined(ASSISI_NETWORKING)
     if (!_play || !_play->Session().IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
@@ -381,18 +359,15 @@ void ServerApp::ReportStatus()
                   tickRate, _play->Session().StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
-#else
-    // Offline is the only role this build has, so there is one line to print.
-    Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
-#endif
 }
 
 void ServerApp::FlushDeferred()
 {
     // End of frame: the tick's events are over, and the entities queued by
     // Scene::Destroy() this tick are applied. The windowed path does this too —
-    // deferred destruction is a scene invariant, not a rendering one.
-    _world.events.Flush();
+    // deferred destruction is a scene invariant, not a rendering one. The world
+    // steps every tick, so it is always ticking.
+    Assisi::App::EndWorldFrame(_world, GetUniversalEvents(), /*ticking=*/ true);
     _world.scene.FlushDestroyed();
 }
 
@@ -408,10 +383,10 @@ void ServerApp::InstallQueuedSystems()
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
     // dt and the tick are zero: a one-shot runs outside any frame.
-    return StepContext(0.f, 0);
+    return WorldContext(0.f, 0);
 }
 
-Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
+Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 {
     // No window, so no input, no action map and no UI, in every phase.
     return {.world         = _world,
@@ -428,7 +403,6 @@ Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
 
 void ServerApp::OnShutdown()
 {
-#if defined(ASSISI_NETWORKING)
     if (_play && _play->Session().IsClient())
     {
         const NetSync::SessionStats stats = _play->Session().Stats();
@@ -436,15 +410,12 @@ void ServerApp::OnShutdown()
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
     else
-#endif
     {
         Log::Info("Server: stopped after {} ticks.", GetSimTick());
     }
 
-#if defined(ASSISI_NETWORKING)
     // Before the scene and physics world it holds a reference to.
     _play.reset();
-#endif
 }
 
 } // namespace Game

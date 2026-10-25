@@ -113,6 +113,7 @@ class GameApp : public Application
     [[nodiscard]] bool MountContent() override;
 
     void OnStart() override;
+    void OnPreUpdate(float dt) override;
     void OnFixedUpdate(float dt) override;
     /// During a benchmark, the benchmark's run clock: nothing is simulated
     /// through the load and the warm-up, and after that the world advances as

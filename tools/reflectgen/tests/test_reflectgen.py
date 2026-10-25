@@ -8,7 +8,7 @@ golden output for a fixture header covering the scalar, glm, enum, string and
 path field types plus the annotation edge cases, and targeted behavioural cases
 for everything the fixture does not reach (comment stripping, namespace capture,
 unannotated members, the unsupported-type hard fail, EntityRef include emission,
-AssetId, messages, handlers, systems).
+AssetId, messages, systems).
 
 Run directly (`python test_reflectgen.py`) or via ctest. To adopt a deliberate
 change to the generated output, regenerate the golden:
@@ -655,7 +655,7 @@ class InstanceViewStorageBanTest(unittest.TestCase):
     def test_a_message_may_not_hold_a_view_by_alias(self):
         # Messages run the same check, and a view on the wire is the same
         # stale-handle problem with a network in the middle.
-        _, messages, _ = _parse_full(
+        _, messages = _parse_full(
             "namespace N {\n"
             "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
             "AMSG(event, reliable)\n"
@@ -1438,7 +1438,7 @@ class UnknownArgumentTest(unittest.TestCase):
 
 
 def _parse_full(source: str):
-    """Parse an inline header string, returning (components, messages, handlers)."""
+    """Parse an inline header string, returning (components, messages)."""
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "Temp.hpp"
         path.write_text(source, encoding="utf-8")
@@ -1458,7 +1458,7 @@ class MessageGrammarTest(unittest.TestCase):
     def test_both_arguments_are_recorded(self):
         src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
                "struct Boom { AFIELD() uint32_t target = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].direction, "event")
         self.assertEqual(messages[0].reliability, "unreliable")
@@ -1517,7 +1517,7 @@ class MessageGrammarTest(unittest.TestCase):
     def test_norep_in_a_message_is_rejected(self):
         src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Boom { AFIELD(norep) uint32_t t = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("only to cross the wire", str(caught.exception))
@@ -1529,7 +1529,7 @@ class MessageGrammarTest(unittest.TestCase):
         # for two incompatible things and the fix is one word either way.
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Boom { AFIELD() int32_t t = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("not marked independent", str(caught.exception))
@@ -1537,14 +1537,14 @@ class MessageGrammarTest(unittest.TestCase):
     def test_an_independent_event_needs_no_entity(self):
         src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
                "struct Chat { AFIELD() int32_t t = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Chat.hpp", messages)
         self.assertIn("MessageDirection::Event", cpp)
 
     def test_a_message_registers_with_its_grammar(self):
         src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Go { AFIELD() uint32_t target = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
         self.assertIn("MessageRegistry::Instance().Register", cpp)
         self.assertIn("MessageDirection::Intent", cpp)
@@ -1565,7 +1565,7 @@ class ControlledFieldTest(unittest.TestCase):
     def test_controlled_reaches_the_field_metadata(self):
         src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Go { AFIELD(controlled) Assisi::ECS::Entity pawn; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
         # Named, so it is the only member the annotation adds — nothing else on
         # this field is written, and the dispatch site reads exactly this.
@@ -1576,7 +1576,7 @@ class ControlledFieldTest(unittest.TestCase):
         # definition, so the annotation could not mean anything.
         src = ("namespace N {\nAMSG(event, reliable)\n"
                "struct Boom { AFIELD(controlled) Assisi::ECS::Entity what; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("is an event", str(caught.exception))
@@ -1584,7 +1584,7 @@ class ControlledFieldTest(unittest.TestCase):
     def test_controlled_on_a_non_entity_field_is_rejected(self):
         src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Go { AFIELD(controlled) int32_t pawn = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Go.hpp", messages)
         self.assertIn("Only an EntityRef field", str(caught.exception))
@@ -1615,7 +1615,7 @@ class SubjectFieldTest(unittest.TestCase):
     def test_subject_reaches_the_field_metadata(self):
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Boom { AFIELD(subject) Assisi::ECS::Entity what; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         # `subject` alone: an event's subject is not also controlled, and naming
         # the member is what keeps the two from being read for each other.
@@ -1626,7 +1626,7 @@ class SubjectFieldTest(unittest.TestCase):
         # routing by whichever field happens to come first.
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Boom { AFIELD() Assisi::ECS::Entity what; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("marks none of its EntityRef fields", str(caught.exception))
@@ -1637,7 +1637,7 @@ class SubjectFieldTest(unittest.TestCase):
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
                "AFIELD(subject) Assisi::ECS::Entity shooter; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Hit.hpp", messages)
         self.assertIn("exactly one subject", str(caught.exception))
@@ -1648,7 +1648,7 @@ class SubjectFieldTest(unittest.TestCase):
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
                "AFIELD() Assisi::ECS::Entity shooter; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         cpp = reflectgen.generate_cpp([], "N/Hit.hpp", messages)
         self.assertIn("MessageDirection::Event", cpp)
 
@@ -1657,7 +1657,7 @@ class SubjectFieldTest(unittest.TestCase):
         # for relevancy to scope.
         src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Go { AFIELD(subject) Assisi::ECS::Entity pawn; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Go.hpp", messages)
         self.assertIn("is an intent", str(caught.exception))
@@ -1665,7 +1665,7 @@ class SubjectFieldTest(unittest.TestCase):
     def test_subject_on_an_independent_event_is_rejected(self):
         src = ("namespace N {\nAMSG(event, reliable, independent)\n"
                "struct Chat { AFIELD(subject) Assisi::ECS::Entity who; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Chat.hpp", messages)
         self.assertIn("marked independent", str(caught.exception))
@@ -1673,7 +1673,7 @@ class SubjectFieldTest(unittest.TestCase):
     def test_subject_on_a_non_entity_field_is_rejected(self):
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Boom { AFIELD(subject) int32_t what = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("Only an EntityRef field", str(caught.exception))
@@ -1694,7 +1694,7 @@ class MessageTraitsTest(unittest.TestCase):
     def test_traits_carry_the_grammar(self):
         src = ("namespace N {\nAMSG(event, reliable, independent)\n"
                "struct Boom { AFIELD() uint32_t t = 0; };\n}\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         traits = reflectgen.gen_message_traits(messages[0])
         self.assertIn("MessageTraits<::N::Boom>", traits)
         self.assertIn("MessageDirection::Event", traits)
@@ -1703,125 +1703,25 @@ class MessageTraitsTest(unittest.TestCase):
 
     def test_the_type_is_forward_declared_at_global_scope(self):
         # Forward-declared rather than included, because specializing on an
-        # incomplete type is legal and including the real header would close a
-        # cycle through the dispatch header.
+        # incomplete type is legal and Core, which includes the traits, cannot
+        # include every module's headers.
         src = ("namespace A { namespace B {\nAMSG(intent, unreliable)\n"
                "struct Go { AFIELD() uint32_t t = 0; };\n} }\n")
-        _, messages, _ = _parse_full(src)
+        _, messages = _parse_full(src)
         self.assertEqual(reflectgen.gen_message_forward(messages[0]),
                          "namespace A { namespace B { struct Go; } }")
 
 
-class MessageHandlerTest(unittest.TestCase):
-    """AMSG_HANDLER() declarations, and the binding they generate."""
+class MessageDecodeTest(unittest.TestCase):
+    """What lets the network read a message it cannot name the type of."""
 
-    _SRC = (
-        "namespace Game {\n"
-        "AMSG(intent, reliable)\n"
-        "struct Fire { AFIELD() uint32_t weapon = 0; };\n"
-        "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
-        "}\n"
-    )
-
-    def test_handler_is_found_with_its_namespace_and_message(self):
-        _, _, handlers = _parse_full(self._SRC)
-        self.assertEqual(len(handlers), 1)
-        self.assertEqual(handlers[0].name, "HandleFire")
-        self.assertEqual(handlers[0].namespaces, ["Game"])
-        self.assertEqual(handlers[0].message, "Fire")
-        self.assertEqual(handlers[0].fqn, "::Game::HandleFire")
-
-    def test_binding_is_emitted_in_the_declarations_own_namespace(self):
-        _, messages, handlers = _parse_full(self._SRC)
-        cpp = reflectgen.generate_cpp([], "Game/Fire.hpp", messages, handlers)
-        # The message type is resolved where the declaration resolved it...
-        self.assertIn("namespace Game {", cpp)
-        self.assertIn("using MsgT = Fire;", cpp)
-        # ...the handler is named from global scope, so nothing nearer can
-        # shadow it...
-        self.assertIn("&::Game::HandleFire", cpp)
-        # ...and the signature is pinned, so an overload set cannot drift.
-        self.assertIn("static_cast<void (*)(Assisi::NetSync::NetContext &, const MsgT &)>", cpp)
-
-    def test_a_non_void_handler_is_rejected(self):
-        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
-               "AMSG_HANDLER() bool HandleFire(NetContext &ctx, const Fire &msg);\n}\n")
-        with self.assertRaises(ValueError) as caught:
-            _parse_full(src)
-        self.assertIn("returns void", str(caught.exception))
-
-    def test_a_handler_without_a_context_is_not_matched(self):
-        # The signature is fixed, and a declaration that does not have it is not
-        # a handler at all — which surfaces as "no handler for this message"
-        # rather than as a silently wrong binding.
-        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
-               "AMSG_HANDLER() void HandleFire(const Fire &msg);\n}\n")
-        _, _, handlers = _parse_full(src)
-        self.assertEqual(handlers, [])
-
-    def test_two_handlers_for_one_message_is_a_build_error(self):
-        with tempfile.TemporaryDirectory() as d:
-            first = Path(d) / "A.hpp"
-            first.write_text(
-                "namespace Game {\n"
-                "AMSG(intent, reliable)\n"
-                "struct Fire { AFIELD() uint32_t w = 0; };\n"
-                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
-                "}\n", encoding="utf-8")
-            second = Path(d) / "B.hpp"
-            second.write_text(
-                "namespace Other {\n"
-                "AMSG_HANDLER() void AlsoHandleFire(NetContext &ctx, const Game::Fire &msg);\n"
-                "}\n", encoding="utf-8")
-
-            with self.assertRaises(ValueError) as caught:
-                reflectgen.check_message_handlers([first, second])
-            message = str(caught.exception)
-            self.assertIn("two handlers are declared", message)
-            # Both sites are named, because "one of these is wrong" is not
-            # actionable without knowing which two.
-            self.assertIn("HandleFire", message)
-            self.assertIn("AlsoHandleFire", message)
-
-    def test_a_handler_for_an_unknown_message_is_a_build_error(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "A.hpp"
-            path.write_text(
-                "namespace Game {\n"
-                "AMSG_HANDLER() void HandleNothing(NetContext &ctx, const Missing &msg);\n"
-                "}\n", encoding="utf-8")
-            with self.assertRaises(ValueError) as caught:
-                reflectgen.check_message_handlers([path])
-            self.assertIn("names no AMSG message type", str(caught.exception))
-
-    def test_an_ambiguous_message_name_is_a_build_error(self):
-        # The same struct name in two namespaces, and a handler declared in
-        # neither. Guessing which one it meant is exactly what the rule forbids.
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "A.hpp"
-            path.write_text(
-                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
-                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
-                "namespace C {\n"
-                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
-                "}\n", encoding="utf-8")
-            with self.assertRaises(ValueError) as caught:
-                reflectgen.check_message_handlers([path])
-            self.assertIn("ambiguous", str(caught.exception))
-
-    def test_an_enclosing_namespace_disambiguates(self):
-        # ...and when the handler *is* declared inside one of the candidates,
-        # that is not ambiguity — it is the same rule C++ itself would use.
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "A.hpp"
-            path.write_text(
-                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
-                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n}\n"
-                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n",
-                encoding="utf-8")
-            summary = reflectgen.check_message_handlers([path])
-            self.assertIn("A::Fire -> A::HandleFire", summary)
-            self.assertIn("B::Fire -> (no handler)", summary)
+    def test_a_message_registers_the_decode_for_its_own_type(self):
+        _, messages = _parse_full("namespace Game {\nAMSG(intent, reliable)\n"
+                                  "struct Fire { AFIELD() uint32_t weapon = 0; };\n}\n")
+        cpp = reflectgen.generate_cpp([], "Game/Fire.hpp", messages)
+        self.assertIn("using T = Game::Fire;", cpp)
+        self.assertIn("&Assisi::Core::Reflect::DecodedMessage::Decode<T>", cpp)
+        self.assertIn("#include <Assisi/Core/Reflect/DecodedMessage.hpp>", cpp)
 
 
 class EmptyRegistrationUnitTest(unittest.TestCase):
@@ -1854,22 +1754,56 @@ class EmptyRegistrationUnitTest(unittest.TestCase):
     def test_empty_unit_is_written_for_a_header_with_no_annotations(self):
         text = self._generate_empty_unit()
         self.assertIn("AUTO-GENERATED by reflectgen", text)
-        self.assertIn("AMSG_HANDLER", text)
+        self.assertIn("declares nothing that registers", text)
 
-    @unittest.expectedFailure
-    def test_empty_unit_names_a_flag_that_exists(self):
-        # Open. reflectgen.py:499 tells the reader that handlers are
-        # bound by `--message-handlers`. argparse defines no such option — the
-        # real one is `--check-handlers` (reflectgen.py:391) — so following the
-        # instruction produces "unrecognized arguments" and nothing else. It sits
-        # inside a Python string literal, i.e. generated output rather than a
-        # comment, which is why the comment sweep left it alone.
-        #
-        # expectedFailure until the flag name is corrected; the fix removes this
-        # decorator.
-        text = self._generate_empty_unit()
-        self.assertIn("--check-handlers", text)
-        self.assertNotIn("--message-handlers", text)
+
+class SystemsAndEventsCheckTest(unittest.TestCase):
+    """--check-systems-and-events: the whole-tree system and event checks, as the
+    build runs them."""
+
+    def _run(self, *sources):
+        with tempfile.TemporaryDirectory() as d:
+            headers = []
+            for index, source in enumerate(sources):
+                header = Path(d) / f"H{index}.hpp"
+                header.write_text(source, encoding="utf-8")
+                headers.append(str(header))
+            out = Path(d) / "out" / "SystemsAndEvents.txt"
+
+            argv = sys.argv
+            sys.argv = ["reflectgen", *headers, "--check-systems-and-events", str(out)]
+            try:
+                with self.assertRaises(SystemExit) as exited:
+                    reflectgen.main()
+            finally:
+                sys.argv = argv
+
+            text = out.read_text(encoding="utf-8") if out.exists() else ""
+            return exited.exception.code, text
+
+    def test_a_valid_tree_writes_its_systems_and_events(self):
+        code, text = self._run("namespace Game {\n"
+                               "ASYSTEM(Update, name = \"Spin\") void SpinSystem(SystemContext &ctx);\n"
+                               "AEVENT()\nstruct Hit { };\n}\n")
+        self.assertEqual(code, 0)
+        self.assertIn("1 system(s)", text)
+        self.assertIn("1 event(s)", text)
+
+    def test_two_systems_of_one_name_fail(self):
+        system = "ASYSTEM(Update, name = \"Spin\") void SpinSystem(SystemContext &ctx);\n"
+        code, _ = self._run(system, "namespace Other {\n" + system + "}\n")
+        self.assertEqual(code, 1)
+
+    def test_an_ordering_a_placement_contradicts_fails(self):
+        code, _ = self._run(
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n")
+        self.assertEqual(code, 1)
+
+    def test_two_events_of_one_name_fail(self):
+        event = "namespace Game {\nAEVENT()\nstruct Resume { };\n}\n"
+        code, _ = self._run(event, event)
+        self.assertEqual(code, 1)
 
 
 class QuotedCppValueTest(unittest.TestCase):
@@ -1971,7 +1905,7 @@ class SystemTest(unittest.TestCase):
     def test_replayed_is_refused_outside_the_fixed_step(self):
         # Only a fixed step is ever run again for a tick it already ran, so the
         # flag anywhere else says nothing and reads as though it did.
-        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "Ui"):
             with self.subTest(phase=phase):
                 with self.assertRaises(ValueError) as caught:
                     self._systems(self.ENGINE_SYSTEM % phase)
@@ -1999,8 +1933,7 @@ class SystemTest(unittest.TestCase):
         # rejected at build time with no hint that the enum has one more — so the
         # two are pinned together here rather than discovered by a level failing
         # to name a system.
-        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
-                      "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "Ui"):
             found = self._systems(
                 "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
             self.assertEqual(found[0].phase, phase)
@@ -2071,6 +2004,63 @@ class SystemTest(unittest.TestCase):
             path.write_text(self.SOURCE, encoding="utf-8")
             lines = reflectgen.check_systems([path])
             self.assertIn("2 system(s)", lines[0])
+
+    def test_first_and_last_place_a_system_in_its_phase(self):
+        for phase in ("Update", "FixedUpdate", "Render"):
+            context = "RenderContext" if phase == "Render" else "SystemContext"
+            with self.subTest(phase=phase):
+                found = {s.name: s for s in self._systems(
+                    "ASYSTEM(%s, name = \"Early\", first) void EarlySystem(%s &ctx);\n"
+                    "ASYSTEM(%s, name = \"Late\", last, after = \"Early\") void LateSystem(%s &ctx);\n"
+                    "ASYSTEM(%s, name = \"Plain\") void PlainSystem(%s &ctx);\n"
+                    % (phase, context, phase, context, phase, context))}
+                self.assertEqual(found["Early"].placement, "First")
+                self.assertEqual(found["Late"].placement, "Last")
+                self.assertEqual(found["Late"].after, ["Early"])
+                self.assertEqual(found["Plain"].placement, "Middle")
+
+    def test_a_system_cannot_be_both_first_and_last(self):
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update, name = \"Tick\", first, last) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("first", str(caught.exception))
+        self.assertIn("last", str(caught.exception))
+
+    def _check(self, source):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(source, encoding="utf-8")
+            return reflectgen.check_systems([path])
+
+    def test_an_ordering_its_placements_contradict_is_a_build_error_naming_both(self):
+        contradictions = (
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n",
+            "ASYSTEM(Update, name = \"Sweep\", first, after = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n",
+            "ASYSTEM(Update, name = \"Sweep\", last) void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\", first, after = \"Sweep\") void GatherSystem(SystemContext &ctx);\n",
+        )
+        for source in contradictions:
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError) as caught:
+                    self._check(source)
+                self.assertIn("'Sweep'", str(caught.exception))
+                self.assertIn("'Gather'", str(caught.exception))
+
+    def test_an_ordering_its_placements_agree_with_is_accepted(self):
+        lines = self._check(
+            "ASYSTEM(Update, name = \"Sweep\", last, after = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\", before = \"Tidy\") void GatherSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Tidy\", last, before = \"Sweep\") void TidySystem(SystemContext &ctx);\n")
+        self.assertIn("3 system(s)", lines[0])
+
+    def test_placements_in_different_phases_never_contradict(self):
+        # An ordering between phases is no edge at run time: each phase is
+        # sorted on its own.
+        lines = self._check(
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(FixedUpdate, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n")
+        self.assertIn("2 system(s)", lines[0])
 
 
 class ComponentRuleTest(unittest.TestCase):

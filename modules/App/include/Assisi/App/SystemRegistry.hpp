@@ -5,7 +5,7 @@
 /// @brief Ordered per-phase system registry with dependency-based scheduling.
 ///
 /// Two context types exist depending on the phase:
-///   - SystemContext  — game logic phases (PreUpdate, FixedUpdate, Update, PostUpdate)
+///   - SystemContext  — game logic phases (PreUpdate, FixedUpdate, Update, Ui)
 ///   - RenderContext  — render phase only (adds view/projection matrices)
 ///
 /// @par Example
@@ -30,8 +30,9 @@
 /// _systems.RunRender({ world.scene, 0.f, view, proj });
 /// @endcode
 ///
-/// Systems run in dependency order within each phase.
-/// Systems with no ordering relationship run in registration order.
+/// Systems run in dependency order within each phase: the ones placed First(),
+/// then the rest, then the ones placed Last(). Systems with no ordering
+/// relationship run in registration order.
 
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/EventRoute.hpp>
@@ -81,6 +82,7 @@ class AssetStore;
 namespace Assisi::App
 {
 
+class Network;
 class PlayerSettings;
 
 struct World;
@@ -101,7 +103,10 @@ struct QuitRequested
 /// SystemContext, which sees World only declared, can build its route from it.
 [[nodiscard]] Core::EventQueue &WorldEvents(World &world);
 
-/// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
+/// @brief @p world's network, for the same reason.
+[[nodiscard]] Network &WorldNetwork(World &world);
+
+/// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, Ui).
 ///
 /// Carries the **world**, not a bare scene: a system reaches its entities
 /// through `ctx.world.scene` and its bodies through `ctx.world.physics`, which
@@ -113,9 +118,9 @@ struct SystemContext
 
     /// @brief The fixed-step tick this frame belongs to — the engine's network
     /// clock. Incremented once per iteration of the fixed-update loop, so it
-    /// advances by one per FixedUpdate and repeats across the Update/PostUpdate
-    /// phases of the same frame. Snapshots are stamped with it and input
-    /// commands target it.
+    /// advances by one per FixedUpdate. A per-frame phase sees the last tick
+    /// run: PreUpdate the one before the frame's fixed steps, Update and Ui the
+    /// frame's last. Snapshots are stamped with it and input commands target it.
     std::uint64_t simTick;
 
     /// Null in headless hosts (dedicated server, tests): an InputContext needs a
@@ -182,6 +187,12 @@ struct SystemContext
     /// `universalEvents` for an event declared universal. Built from `world`
     /// rather than handed in, so a system cannot reach another world's events.
     Core::EventRoute events{WorldEvents(world), universalEvents};
+
+    /// What this machine is on the network, and how a system sends a message:
+    /// `world`'s own, never null. Played alone it is a host nobody joined, so a
+    /// system written for online play runs single-player as it is. See
+    /// App/Network.hpp.
+    Network &net{WorldNetwork(world)};
 };
 
 /// @brief Passed to render systems (Render phase only).
@@ -228,21 +239,40 @@ enum class SystemPhase : std::uint8_t
     /// as @ref Begin.
     Loaded = 1,
 
-    PreUpdate = 2,   ///< After input is polled; before physics and game logic.
+    PreUpdate = 2,   ///< Once per render frame, after input and the UI's clicks, before the frame's fixed steps.
     FixedUpdate = 3, ///< Fixed timestep, before the physics step; may run several times per frame.
 
     /// Fixed timestep, immediately **after** the physics step, once per step.
     ///
     /// Where anything that reacts to what the simulation just did belongs: a
     /// contact response, a character's post-step footing, a network snapshot of
-    /// the tick. The distinction from @ref PostUpdate is per-tick versus
-    /// per-frame — a frame that runs three fixed steps runs this three times and
-    /// PostUpdate once, so a system that must see every tick cannot use the
-    /// latter.
+    /// the tick. The distinction from @ref Update is per-tick versus per-frame —
+    /// a frame that runs three fixed steps runs this three times and Update
+    /// once, so a system that must see every tick cannot use the latter.
     PostFixedUpdate = 4,
 
-    Update = 5,     ///< Once per render frame; main game logic.
-    PostUpdate = 6, ///< After game logic; transform propagation and cleanup.
+    Update = 5, ///< Once per render frame, after the frame's fixed steps; main game logic.
+
+    /// Once per render frame, after every Update system: where systems write
+    /// what the frame's screens show. The engine then plays the frame's sounds,
+    /// so one asked for here is heard this frame, and lays the screens out. A
+    /// dedicated server, which shows nothing, does not run it.
+    Ui = 6,
+    Count_
+};
+
+/// @brief Where in its phase a system runs. After()/Before() then order the
+/// systems placed alike, and hold across placements when they point the same
+/// way as the placements do.
+///
+/// An ordering that points the other way — a Last system Before() one that is
+/// not — cannot hold. Reflectgen refuses it in an ASYSTEM; a hand registration
+/// logs it, and the placement wins.
+enum class SystemPlacement : std::uint8_t
+{
+    First,  ///< Before every system of the phase that is not placed first.
+    Middle, ///< Between the first and the last: where a system runs unless it says otherwise.
+    Last,   ///< After every system of the phase that is not placed last.
     Count_
 };
 
@@ -271,6 +301,12 @@ class SystemRegistry
 
         /// @brief This system runs before the named system within the same phase.
         SystemHandle &Before(std::string_view name);
+
+        /// @brief Run this system before the rest of its phase. See SystemPlacement.
+        SystemHandle &First();
+
+        /// @brief Run this system after the rest of its phase. See SystemPlacement.
+        SystemHandle &Last();
 
         /// @brief Skip this system in worlds that are not the active one.
         ///
@@ -317,6 +353,8 @@ class SystemRegistry
         /// Marks the entry with one flag. Null where the flag means nothing: a
         /// render-phase handle takes neither.
         using SetFlag = std::function<void()>;
+        /// Places the entry in its phase.
+        using SetPlacement = std::function<void(SystemPlacement)>;
         /// Appends one component id to the entry's activation gate.
         using AddRequirement = std::function<void(Core::Reflect::ComponentId)>;
 
@@ -324,15 +362,17 @@ class SystemRegistry
         void Require(Core::Reflect::ComponentId id);
 
         SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setReplayed,
-                     AddRequirement addRequirement)
+                     SetPlacement setPlacement, AddRequirement addRequirement)
             : _addDependency(std::move(addDependency)), _setActiveOnly(std::move(setActiveOnly)),
-            _setReplayed(std::move(setReplayed)), _addRequirement(std::move(addRequirement))
+            _setReplayed(std::move(setReplayed)), _setPlacement(std::move(setPlacement)),
+            _addRequirement(std::move(addRequirement))
         {
         }
 
         AddDependency _addDependency;
         SetFlag _setActiveOnly;
         SetFlag _setReplayed;
+        SetPlacement _setPlacement;
         AddRequirement _addRequirement;
     };
 
@@ -434,6 +474,8 @@ class SystemRegistry
             bool activeOnly = false;
             /// Set by SystemHandle::Replayed(). Always false for render entries.
             bool replayed = false;
+            /// Set by SystemHandle::First() and Last().
+            SystemPlacement placement = SystemPlacement::Middle;
             /// Cleared by SetEnabled to skip this system at dispatch while leaving
             /// everything else about it in place — the editor's per-system mute.
             bool enabled = true;
@@ -482,7 +524,8 @@ class SystemRegistry
     SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly,
                      bool supportsReplayed);
 
-    /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
+    /// @brief Topological sort (Kahn's algorithm) over any entry type with
+    /// name/after/before/placement.
     template <typename Entry>
     static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries, std::string_view phaseName);
 

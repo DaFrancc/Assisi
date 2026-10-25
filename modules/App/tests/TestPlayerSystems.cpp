@@ -27,9 +27,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-#if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
-#endif
 
 using namespace Assisi::App;
 
@@ -229,7 +227,6 @@ TEST_CASE("Offline, every player and only players are this machine's")
     CHECK(world.scene.Get<PlayerInput>(npc) == nullptr);
 }
 
-#if defined(ASSISI_NETWORKING)
 TEST_CASE("In a session, the player this machine controls is its player")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -272,7 +269,6 @@ TEST_CASE("A session that has not said who this machine is drives nothing")
     LocalPlayerSystem(ctx);
     CHECK(world.scene.Get<LocalPlayer>(player) == nullptr);
 }
-#endif
 
 TEST_CASE("Only this machine's player looks through its camera")
 {

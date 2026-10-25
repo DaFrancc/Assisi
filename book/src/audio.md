@@ -222,9 +222,6 @@ it plays and how; an event says when.
 | `ignoresWorldPause` | Whether it plays on while its world is paused. |
 | `space` | `InEar`, played as it is, or `InWorld`, placed in the world. Both sound the same for now. |
 
-A level or blueprint that places emitters names the `AudioEmitters` system,
-which is what plays them.
-
 ### When an emitter is full
 
 | `whenFull` | A request to an emitter already playing its maximum... |
@@ -257,9 +254,10 @@ ctx.events.Push(Assisi::App::PlaySound{.target = door});
 | `PauseEmitter` | Fades everything the emitter is playing to silence, where it is. Sounds it starts while paused start silent. |
 | `ResumeEmitter` | Fades them back in from where they paused. |
 
-The `AudioEmitters` system answers them in `PostUpdate`, so push them from
-`Update` or earlier. An event that names no entity, or an entity with no
-`AudioEmitter`, logs a warning and does nothing.
+The engine answers them every frame, after the `Ui` phase, so a sound asked for
+from any phase plays that frame. A level doesn't have to name a system for it.
+An event that names no entity, or an entity with no `AudioEmitter`, logs a
+warning and does nothing.
 
 ### When sounds end
 

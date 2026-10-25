@@ -777,6 +777,19 @@ void Application::Run()
         const Clock::time_point inputEnd = Clock::now();
 
         {
+            // After the UI has taken its clicks and before any tick, so what
+            // PreUpdate gets ready is in place for the first one.
+            ASSISI_PROFILE_SCOPE("pre-update");
+            OnPreUpdate(static_cast<float>(dt));
+            _universalEvents.MarkTicks();
+        }
+        const Clock::time_point preUpdateEnd = Clock::now();
+
+        // Whether this frame runs no fixed step, which is when what was pushed
+        // before the steps waits for the next one.
+        bool ranNoSteps = false;
+
+        {
             // One scope for the whole substep loop rather than one per substep:
             // what matters is the total the frame paid, and N nested identical
             // slices would bury it.
@@ -786,6 +799,7 @@ void Application::Run()
             // frame's time with its own run clock's.
             const double snapped = snapper.Snap(dt, SnapIntervalSeconds(refreshHz));
             const uint32_t steps = fixedClock.Advance(SimulationSeconds(snapped));
+            ranNoSteps = steps == 0;
             for (uint32_t step = 0; step < steps; ++step)
             {
                 // The network clock. Incremented with the step, before the hook,
@@ -885,7 +899,7 @@ void Application::Run()
             RenderFrame();
         }
         const Clock::time_point renderEnd = Clock::now();
-        // Before the flush, which is what clears the frame's events. Once per
+        // Before the flush, which is what ends the frame's events. Once per
         // frame however many systems asked, since the answer is the same.
         if (!_universalEvents.Read<QuitRequested>().empty())
         {
@@ -893,7 +907,10 @@ void Application::Run()
         }
         {
             ASSISI_PROFILE_SCOPE("flush");
-            _universalEvents.Flush();
+            // What waits for the next step is kept only on a frame that ran
+            // none. After a step, every ticking world has read it, and a world
+            // that is not ticking keeps nothing, so a long pause piles nothing up.
+            _universalEvents.EndFrame(/*keepPending=*/ ranNoSteps);
             FlushDeferred();
         }
         const Clock::time_point flushEnd = Clock::now();
@@ -916,7 +933,8 @@ void Application::Run()
         // work, it was descheduled (the streaming/physics pools oversubscribing the
         // CPU). That distinction picks the fix, so it is reported explicitly.
         const double inputMs = phaseMs(inputStart, inputEnd);
-        const double fixedMs = phaseMs(inputEnd, fixedEnd);
+        const double preUpdateMs = phaseMs(inputEnd, preUpdateEnd);
+        const double fixedMs = phaseMs(preUpdateEnd, fixedEnd);
         const double drainMs = phaseMs(fixedEnd, drainEnd);
         const double updateMs = phaseMs(drainEnd, updateEnd);
         const double uiSyncMs = phaseMs(updateEnd, uiSyncEnd);
@@ -929,7 +947,8 @@ void Application::Run()
         // Under VSync, where that wait is most of the frame, the figure would sit
         // pinned at zero and hide exactly the descheduling it exists to reveal.
         const double renderCpuMs = std::max(0.0, renderMs - gpuWaitMs);
-        const double accounted = inputMs + fixedMs + drainMs + updateMs + uiSyncMs + renderCpuMs + flushMs;
+        const double accounted =
+            inputMs + preUpdateMs + fixedMs + drainMs + updateMs + uiSyncMs + renderCpuMs + flushMs;
 
         // Deliberately not clamped. A persistently negative value means the
         // accounting itself is wrong — a phase double-counted, or a new one added
