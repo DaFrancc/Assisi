@@ -120,6 +120,14 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         {
             handle.Replayed();
         }
+        if (definition->placement == SystemPlacement::First)
+        {
+            handle.First();
+        }
+        if (definition->placement == SystemPlacement::Last)
+        {
+            handle.Last();
+        }
     }
 }
 

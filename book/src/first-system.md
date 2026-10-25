@@ -199,6 +199,20 @@ void ShootSystem(Assisi::App::SystemContext &ctx);
   ```
 
   `Shoot` then runs after both `Aim` and `Reload`, and before `Recoil`.
+- **`first`** / **`last`** make this system run before (or after) every other
+  system in its phase. Use them when a system has to see the whole phase, like
+  one that tidies up after everything else in `Update` has run:
+
+  ```cpp
+  ASYSTEM(Update, name = "Tidy", last)
+  void TidySystem(Assisi::App::SystemContext &ctx);
+  ```
+
+  `after =` and `before =` still work with them. Among several `last` systems,
+  they set the order; `ASYSTEM(Update, name = "Tidy", last, after = "Sweep")`
+  runs after `Sweep` and after everything else. An order that can't happen,
+  like a `last` system `before =` one that isn't `last`, doesn't build, and the
+  error names both systems. A system can't be both `first` and `last`.
 - **`activeWorldOnly`** only runs the system in the world that's being shown and
   played. Use it for anything that reads input or controls the camera or HUD.
   When several worlds are loaded, only one should react to the player's keys.

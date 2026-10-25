@@ -11,8 +11,10 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
+#include <array>
 #include <cstdint>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 
 namespace Assisi::App
@@ -21,6 +23,44 @@ namespace Assisi::App
 // ---------------------------------------------------------------------------
 // TopoSort — shared by game and render phases
 // ---------------------------------------------------------------------------
+
+namespace
+{
+constexpr std::size_t kPlacementCount = static_cast<std::size_t>(SystemPlacement::Count_);
+
+std::string_view PlacementName(SystemPlacement placement)
+{
+    switch (placement)
+    {
+    case SystemPlacement::First:
+        return "first";
+    case SystemPlacement::Last:
+        return "last";
+    case SystemPlacement::Middle:
+    case SystemPlacement::Count_:
+        break;
+    }
+    return "with the rest";
+}
+
+/// Whether "@p declaring runs before (or after) @p target" can hold given where
+/// the two are placed, logging both when it cannot.
+template <typename Entry>
+bool PlacementsAllow(const Entry &declaring, bool before, const Entry &target, std::string_view phaseName)
+{
+    const Entry &earlier = before ? declaring : target;
+    const Entry &later = before ? target : declaring;
+    if (earlier.placement <= later.placement)
+    {
+        return true;
+    }
+    Core::Log::Error("SystemRegistry({}): \"{}\" {} \"{}\" cannot hold, since \"{}\" runs {} and \"{}\" {}. The "
+                     "placement wins and the ordering is ignored.",
+                     phaseName, declaring.name, before ? "before" : "after", target.name, declaring.name,
+                     PlacementName(declaring.placement), target.name, PlacementName(target.placement));
+    return false;
+}
+} // namespace
 
 template <typename Entry>
 std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entries,
@@ -68,13 +108,17 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
     // The other reading — a target no system anywhere declares — cannot reach
     // here: reflectgen refuses it across the whole tree before anything is
     // compiled, which is the only scope where "anywhere" can be asked.
+    //
+    // An ordering the placements contradict is no edge either, so every edge
+    // left runs from a placement to the same one or a later one.
     for (std::size_t i = 0; i < n; ++i)
     {
         for (const std::string &dep : entries[i].after)
         {
             const std::unordered_map<std::string, std::size_t>::const_iterator it =
                 nameToIndex.find(dep);
-            if (it != nameToIndex.end())
+            if (it != nameToIndex.end() &&
+                PlacementsAllow(entries[i], /*before=*/ false, entries[it->second], phaseName))
             {
                 addEdge(it->second, i);
             }
@@ -84,43 +128,67 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
         {
             const std::unordered_map<std::string, std::size_t>::const_iterator it =
                 nameToIndex.find(dep);
-            if (it != nameToIndex.end())
+            if (it != nameToIndex.end() &&
+                PlacementsAllow(entries[i], /*before=*/ true, entries[it->second], phaseName))
             {
                 addEdge(i, it->second);
             }
         }
     }
 
-    // Kahn's algorithm.
-    // Iterating by index preserves registration order within each "layer",
-    // giving deterministic output without extra sorting.
-    std::vector<std::size_t> ready;
-    ready.reserve(n);
+    // Kahn's algorithm, with one ready list per placement, always taken from the
+    // earliest placement that has one. No edge enters a placement from a later
+    // one, so every system of a placement is ready before any of the next is
+    // taken. Iterating by index preserves registration order within each
+    // "layer", giving deterministic output without extra sorting.
+    std::array<std::vector<std::size_t>, kPlacementCount> ready;
+    std::array<std::size_t, kPlacementCount> heads{};
     for (std::size_t i = 0; i < n; ++i)
-        if (inDegree[i] == 0)
-            ready.push_back(i);
-
-    std::size_t head = 0;
-    while (head < ready.size())
     {
-        const std::size_t curr = ready[head++];
+        if (inDegree[i] == 0)
+        {
+            ready[static_cast<std::size_t>(entries[i].placement)].push_back(i);
+        }
+    }
+
+    for (std::size_t placement = 0; placement < kPlacementCount;)
+    {
+        if (heads[placement] == ready[placement].size())
+        {
+            ++placement;
+            continue;
+        }
+        const std::size_t curr = ready[placement][heads[placement]++];
         sorted.push_back(curr);
         for (std::size_t next : adj[curr])
+        {
             if (--inDegree[next] == 0)
-                ready.push_back(next);
+            {
+                ready[static_cast<std::size_t>(entries[next].placement)].push_back(next);
+            }
+        }
     }
 
     if (sorted.size() != n)
     {
         // A cycle is a programmer error, but silently running zero systems for
         // the phase is worse than running them in a defined-but-arbitrary order.
-        // Fall back to registration order so nothing is dropped, and log loudly.
+        // Fall back to registration order within each placement so nothing is
+        // dropped, and log loudly.
         Core::Log::Error("SystemRegistry({}): dependency cycle detected in After()/Before() "
                          "declarations - falling back to registration order.",
                          phaseName);
         sorted.clear();
-        for (std::size_t i = 0; i < n; ++i)
-            sorted.push_back(i);
+        for (std::size_t placement = 0; placement < kPlacementCount; ++placement)
+        {
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                if (static_cast<std::size_t>(entries[i].placement) == placement)
+                {
+                    sorted.push_back(i);
+                }
+            }
+        }
     }
 
     return sorted;
@@ -139,6 +207,18 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::After(std::string_vi
 SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_view name)
 {
     _addDependency(/*before=*/ true, name);
+    return *this;
+}
+
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::First()
+{
+    _setPlacement(SystemPlacement::First);
+    return *this;
+}
+
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Last()
+{
+    _setPlacement(SystemPlacement::Last);
     return *this;
 }
 
@@ -189,6 +269,24 @@ void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
 // Add — append to a phase and hand back a slot-bound handle
 // ---------------------------------------------------------------------------
 
+namespace
+{
+/// Places @p entry, unless it already has the other placement: a system runs in
+/// one place, so the second call is logged and changes nothing.
+template <typename Entry>
+void Place(Entry &entry, SystemPlacement placement)
+{
+    if (entry.placement != SystemPlacement::Middle && entry.placement != placement)
+    {
+        Core::Log::Error("SystemRegistry: \"{}\" already runs {} in its phase, so it cannot also run {}; it stays {}.",
+                         entry.name, PlacementName(entry.placement), PlacementName(placement),
+                         PlacementName(entry.placement));
+        return;
+    }
+    entry.placement = placement;
+}
+} // namespace
+
 template <typename Ctx>
 SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                                                  std::string_view name,
@@ -221,6 +319,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                              .before     = {},
                              .activeOnly = false,
                              .replayed   = false,
+                             .placement  = SystemPlacement::Middle,
                              .enabled    = true,
                              .ran        = false,
                              .requireAny = {},
@@ -244,6 +343,11 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
         supportsReplayed ? SystemHandle::SetFlag([phasePtr, entryIndex]
                                                  { phasePtr->entries[entryIndex].replayed = true; })
                          : SystemHandle::SetFlag{},
+        [phasePtr, entryIndex](SystemPlacement placement)
+        {
+            Place(phasePtr->entries[entryIndex], placement);
+            phasePtr->dirty = true;
+        },
         [phasePtr, entryIndex](Core::Reflect::ComponentId id)
         { phasePtr->entries[entryIndex].requireAny.push_back(id); });
 }

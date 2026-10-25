@@ -57,6 +57,7 @@ from reflect_parser import (  # noqa: F401
     find_systems,
     parse_header_systems,
     SystemInfo,
+    SYSTEM_PLACEMENTS,
     strip_comments,
     _detect_include_path,
 )
@@ -299,7 +300,8 @@ def check_message_handlers(headers) -> str:
 
 
 def check_systems(headers) -> list:
-    """Duplicate names, dangling after/before, and ordering cycles — whole-tree.
+    """Duplicate names, dangling after/before, orderings a placement contradicts,
+    and ordering cycles — whole-tree.
 
     All three are only answerable at this scope: a name is what a *file* says, so
     two modules claiming it collide no matter which one a level loads, and an
@@ -345,6 +347,24 @@ def check_systems(headers) -> list:
             edges[system.name].add(target)   # target runs first
         for target in system.before:
             edges[target].add(system.name)   # this one runs first
+
+    # A placement runs a system ahead of the rest of its phase or after it, so an
+    # ordering against a system placed otherwise in the same phase holds only if
+    # it points the same way. Between phases it is no edge at run time.
+    placed = {'First': 'first', 'Middle': 'with the rest', 'Last': 'last'}
+    for system in systems:
+        orderings = [(target, False) for target in system.after] + [(target, True) for target in system.before]
+        for target, runs_before in orderings:
+            other = by_name[target]
+            if other.phase != system.phase:
+                continue
+            earlier, later = (system, other) if runs_before else (other, system)
+            if SYSTEM_PLACEMENTS.index(earlier.placement) > SYSTEM_PLACEMENTS.index(later.placement):
+                raise ValueError(
+                    f"{Path(system.header).name}: system '{system.name}' runs "
+                    f"{'before' if runs_before else 'after'} '{other.name}', but '{system.name}' is placed "
+                    f"{placed[system.placement]} and '{other.name}' {placed[other.placement]}, so both cannot "
+                    f"hold. Drop the ordering or one of the placements.")
 
     # Depth-first with a colour mark: grey means "on the current path", which is
     # exactly a cycle when we meet it again.
