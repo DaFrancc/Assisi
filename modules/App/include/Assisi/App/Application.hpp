@@ -235,8 +235,9 @@ protected:
     virtual void OnRenderTargetsChanged(const nvrhi::FramebufferInfo & /*framebufferInfo*/) {}
 
     /// @brief Called once per frame at end of frame (after RenderFrame and the
-    /// universal event flush) to apply deferred per-frame work. Override to
-    /// flush each world's events and drain its scene — notably
+    /// end of the universal events' frame) to apply deferred per-frame work.
+    /// Override to end each world's events' frame (EndWorldFrame) and drain its
+    /// scene — notably
     /// ECS::Scene::FlushDestroyed(), where queued entity destruction is applied
     /// so it never mutates pools mid-Query. Default is a no-op: Application owns
     /// no world, so the app must opt in.
@@ -316,7 +317,7 @@ protected:
     float GetInterpolationAlpha() const { return _interpolationAlpha; }
 
     /// @brief The queue for the events declared `AEVENT(universal)`, which every
-    /// world shares, flushed once per frame in Run(). Systems reach it through
+    /// world shares, whose frame Run() ends once a frame. Systems reach it through
     /// `ctx.events`; this accessor is for app code outside a system, which
     /// pushes only universal events here — each world's own events are in its
     /// World::events.

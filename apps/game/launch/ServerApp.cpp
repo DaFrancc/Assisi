@@ -7,6 +7,7 @@
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -391,8 +392,9 @@ void ServerApp::FlushDeferred()
 {
     // End of frame: the tick's events are over, and the entities queued by
     // Scene::Destroy() this tick are applied. The windowed path does this too —
-    // deferred destruction is a scene invariant, not a rendering one.
-    _world.events.Flush();
+    // deferred destruction is a scene invariant, not a rendering one. The world
+    // steps every tick, so it is always ticking.
+    Assisi::App::EndWorldFrame(_world, GetUniversalEvents(), /*ticking=*/ true);
     _world.scene.FlushDestroyed();
 }
 

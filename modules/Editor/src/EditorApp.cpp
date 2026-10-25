@@ -1459,9 +1459,12 @@ void EditorApp::FlushDeferred()
     // it is next shown and then land all at once. A world still Loading keeps its
     // scene: it belongs to a worker until promotion.
     _worlds.ForEach(
-        [](Assisi::App::World &world)
+        [this](Assisi::App::World &world)
         {
-            world.events.Flush();
+            // Under the conditions OnFixedUpdate steps it under.
+            const bool ticking = IsSimulating() && world.state == Assisi::App::WorldState::Active &&
+                                 world.simulate && !world.paused;
+            Assisi::App::EndWorldFrame(world, GetUniversalEvents(), ticking);
             if (world.state != Assisi::App::WorldState::Loading)
             {
                 world.scene.FlushDestroyed();

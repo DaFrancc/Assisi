@@ -588,9 +588,10 @@ void GameApp::FlushDeferred()
     // mid-frame Query. A world still Loading keeps its scene: a worker owns it
     // until promotion.
     _worlds.ForEach(
-        [](World &world)
+        [this](World &world)
         {
-            world.events.Flush();
+            const bool ticking = world.state == WorldState::Active && world.simulate && !world.paused;
+            EndWorldFrame(world, GetUniversalEvents(), ticking);
             if (world.state != WorldState::Loading)
             {
                 world.scene.FlushDestroyed();
