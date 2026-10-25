@@ -16,6 +16,17 @@ target_sources(Assisi-TestAssetKinds INTERFACE
 target_link_libraries(Assisi-TestAssetKinds INTERFACE Assisi::TestSupport)
 add_library(Assisi::TestAssetKinds ALIAS Assisi-TestAssetKinds)
 
+# A message only these tests declare, reflected the way a module reflects its
+# own, so receiving one is tested in a build without networking too.
+add_library(Assisi-Core-TestMessages INTERFACE)
+target_link_libraries(Assisi-Core-TestMessages INTERFACE Assisi::TestSupport)
+assisi_reflect(
+  TARGET Assisi-Core-TestMessages
+  INCLUDE_ROOT support
+  HEADERS
+    support/Assisi/Testing/TestMessages.hpp
+)
+
 add_executable(Assisi-Core-Tests
   main.cpp
   TestAssetDatabase.cpp
@@ -51,6 +62,7 @@ add_executable(Assisi-Core-Tests
   TestJobSystem.cpp
   TestPakCodec.cpp
   TestPredictedCompare.cpp
+  TestReceived.cpp
   TestPakFormat.cpp
   TestPakProvider.cpp
   TestRandomAccessFile.cpp
@@ -71,7 +83,10 @@ target_link_libraries(Assisi-Core-Tests
     Assisi::Core
     Assisi::TestSupport
     Assisi::TestAssetKinds
+    Assisi-Core-TestMessages
 )
+
+target_sources(Assisi-Core-Tests PRIVATE $<TARGET_OBJECTS:Assisi-Core-TestMessages-Generated>)
 
 Assisi_add_doctest_tests(Assisi-Core-Tests NAME Core)
 

@@ -241,10 +241,10 @@ function(assisi_generate_message_traits)
 
     add_custom_target(Assisi-MessageTraits DEPENDS "${_out}")
 
-    # NetSync's MessageDispatch.hpp includes it, so NetSync is what must wait.
-    # The include directory is already published by Assisi-Core (same generated
-    # root as ReplicableLimits.hpp).
-    add_dependencies(Assisi-NetSync Assisi-MessageTraits)
+    # Core's Received.hpp includes it, so Core is what must wait, and with it
+    # everything that includes Core. The include directory is already published
+    # by Assisi-Core (same generated root as ReplicableLimits.hpp).
+    add_dependencies(Assisi-Core Assisi-MessageTraits)
 endfunction()
 
 # Emit the generated InstanceView<T> specializations for the blueprints a project

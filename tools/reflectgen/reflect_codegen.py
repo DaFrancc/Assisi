@@ -794,6 +794,7 @@ static const bool {var_name} = []() -> bool
         {{
 {deserialize}
         }},
+        &Assisi::Core::Reflect::DecodedMessage::Decode<T>,
     }});
     return true;
 }}();
@@ -1163,6 +1164,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         # An asset type's construct hook allocates with std::nothrow.
         includes.append('#include <new>')
     if messages:
+        includes.append('#include <Assisi/Core/Reflect/DecodedMessage.hpp>')
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')

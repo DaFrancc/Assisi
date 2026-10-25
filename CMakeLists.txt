@@ -1614,12 +1614,15 @@ assisi_check_component_rules()
 # Same contract: an after or before may name a system in any module.
 assisi_check_systems_and_events()
 
+# Same contract: a Received<T> may name a message declared in any module, in
+# every build, networking or not.
+assisi_generate_message_traits()
+
 # Same contract, same reason it is here rather than in a module: the handler
 # table binds every AMSG_HANDLER declaration in the tree, so the header list has
 # to be complete before it can be written. Gated on networking because the table
 # it produces calls into NetSync.
 if (ASSISI_ENABLE_NETWORKING)
-    assisi_generate_message_traits()
     assisi_check_message_handlers()
 endif()
 
