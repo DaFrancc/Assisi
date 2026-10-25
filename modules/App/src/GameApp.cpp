@@ -517,7 +517,9 @@ void GameApp::OnUpdate(float dt)
                 return;
             }
 
-            UpdateWorld(WorldContext(world, dt, GetSimTick()));
+            const SystemContext ctx = WorldContext(world, dt, GetSimTick());
+            UpdateWorld(ctx);
+            PresentWorld(ctx);
         });
 
     if (_benchmark)

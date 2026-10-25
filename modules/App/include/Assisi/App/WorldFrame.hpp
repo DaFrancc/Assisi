@@ -21,10 +21,14 @@ struct World;
 /// then waits for its next tick if the frame runs none.
 void BeginWorldFrame(const SystemContext &ctx);
 
-/// @brief `ctx.world`'s frame after its fixed steps: its Update systems, its Ui
-/// systems, then its sounds (PlayWorldSounds), so a sound asked for in any
-/// phase is heard this frame.
+/// @brief `ctx.world`'s frame after its fixed steps: its Update systems.
 void UpdateWorld(const SystemContext &ctx);
+
+/// @brief What this machine shows and plays of `ctx.world`, after UpdateWorld:
+/// its Ui systems, then its sounds (PlayWorldSounds), so a sound asked for in
+/// any phase is heard this frame. A dedicated server, which shows and plays
+/// nothing, does not run it.
+void PresentWorld(const SystemContext &ctx);
 
 /// @brief The end of @p world's frame, once the frame is drawn: its events end
 /// with it (Core::EventQueue::EndFrame), keeping only what waits for its next

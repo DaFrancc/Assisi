@@ -160,7 +160,7 @@ The `SystemContext` your system receives holds everything it can reach:
 | `FixedUpdate` | At a fixed rate (60 per second by default), **before** physics. Anything that pushes physics objects goes here. |
 | `PostFixedUpdate` | At the fixed rate, right **after** physics. For reacting to what physics just did. |
 | `Update` | Every frame, after `FixedUpdate`. **Most game logic goes here.** |
-| `Ui` | Every frame, after `Update`. For writing what the game's screens show. |
+| `Ui` | Every frame, after `Update`. For writing what the game's screens show. A dedicated server doesn't run it. |
 | `Render` | Every frame, while the frame is drawn, with the camera it's drawn from. A `Render` system takes an `Assisi::App::RenderContext &` instead. |
 
 Each frame runs them in that order: `PreUpdate`, then `FixedUpdate` and

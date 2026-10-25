@@ -19,6 +19,10 @@ void BeginWorldFrame(const SystemContext &ctx)
 void UpdateWorld(const SystemContext &ctx)
 {
     ctx.world.systems.Run(SystemPhase::Update, ctx);
+}
+
+void PresentWorld(const SystemContext &ctx)
+{
     ctx.world.systems.Run(SystemPhase::Ui, ctx);
     PlayWorldSounds(ctx);
 }

@@ -418,7 +418,7 @@ TEST_CASE("A sound a Ui system asks for plays the same frame")
     stage.world.systems.Register(App::SystemPhase::Ui, "Click", [speaker](App::SystemContext &ctx)
                                  { ctx.events.Push(App::PlaySound{.target = speaker}); });
 
-    App::UpdateWorld(stage.Context(stage.world));
+    App::PresentWorld(stage.Context(stage.world));
 
     CHECK(stage.output.played.size() == 1);
 }

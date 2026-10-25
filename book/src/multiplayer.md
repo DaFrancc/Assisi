@@ -273,9 +273,10 @@ The editor binary can also run as a server with no window:
 `--connect` takes an IP address, not a host name. `--server` runs the same
 headless simulation with no networking at all.
 
-A headless process runs the level's `Begin`, `Loaded`, `FixedUpdate` and
-`PostFixedUpdate` systems. It has no frames to draw, so `Update` systems don't
-run. A dedicated server hands out characters the same way the editor's host
+A headless process runs the level's systems in every phase but `Ui`, which is
+for screens it doesn't have, and it plays no sounds. It draws nothing, so it
+runs one frame for each step, 60 a second by default: `Update` runs as often as
+`FixedUpdate` there. A dedicated server hands out characters the same way the editor's host
 does, except that the server has none of its own: only the players who join
 get one.
 

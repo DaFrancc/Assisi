@@ -6,8 +6,9 @@
 ///        the frames before it.
 ///
 /// Each frame is run as the game runs one, through the functions it calls:
-/// BeginWorldFrame, StepWorld once a tick, UpdateWorld and EndWorldFrame, with
-/// the universal queue marked and ended where Application does it.
+/// BeginWorldFrame, StepWorld once a tick, UpdateWorld, PresentWorld and
+/// EndWorldFrame, with the universal queue marked and ended where Application
+/// does it.
 
 #include <doctest/doctest.h>
 
@@ -109,6 +110,7 @@ struct Frames
         for (World *const in : running)
         {
             UpdateWorld(Context(*in));
+            PresentWorld(Context(*in));
         }
         universal.EndFrame(/*keepPending=*/ ticks == 0);
         for (World *const in : running)

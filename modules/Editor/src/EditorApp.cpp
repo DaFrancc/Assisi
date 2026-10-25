@@ -1409,7 +1409,9 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                Assisi::App::UpdateWorld(WorldContext(world, dt, _stepTick));
+                const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
+                Assisi::App::UpdateWorld(ctx);
+                Assisi::App::PresentWorld(ctx);
             });
     }
 }

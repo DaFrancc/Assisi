@@ -245,7 +245,8 @@ enum class SystemPhase : std::uint8_t
 
     /// Once per render frame, after every Update system: where systems write
     /// what the frame's screens show. The engine then plays the frame's sounds,
-    /// so one asked for here is heard this frame, and lays the screens out.
+    /// so one asked for here is heard this frame, and lays the screens out. A
+    /// dedicated server, which shows nothing, does not run it.
     Ui = 6,
     Count_
 };

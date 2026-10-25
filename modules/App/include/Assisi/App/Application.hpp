@@ -186,7 +186,7 @@ protected:
 
     virtual void OnStart() = 0;
     /// @brief Called once a frame before any of its fixed steps, which a frame
-    /// may run none of. Not pure: a dedicated server has nothing to run here.
+    /// may run none of. Not pure: an app with no worlds has nothing to run here.
     virtual void OnPreUpdate(float /*dt*/) {}
     virtual void OnFixedUpdate(float dt) = 0;
     /// @brief How far the fixed-step simulation advances for a frame that took

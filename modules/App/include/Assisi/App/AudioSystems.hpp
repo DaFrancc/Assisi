@@ -71,7 +71,7 @@ struct ResumeEmitter
 /// loaded waits as a queued one does. Does nothing in a host with no audio.
 ///
 /// Not a system: the engine runs it once a frame for every world whose Update
-/// runs, after its Ui phase (App::UpdateWorld), so nothing has to name it.
+/// runs, after its Ui phase (App::PresentWorld), so nothing has to name it.
 void PlayWorldSounds(const SystemContext &ctx);
 
 /// @brief Whether @p emitter has any sound playing, paused ones included.

@@ -102,6 +102,7 @@ struct TwoWorlds
         for (World *const world : {&first, &second})
         {
             UpdateWorld(Context(*world));
+            PresentWorld(Context(*world));
         }
         first.events.Flush();
         second.events.Flush();
