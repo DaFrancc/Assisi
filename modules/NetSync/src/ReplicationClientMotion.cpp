@@ -122,8 +122,8 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     const glm::quat targetRotation = character && ControlsEntity(entity) ? simulatedRotation : state.rotation;
 
     // Only what this client predicts is its own to move. A character it does
-    // not, shoved here by the one it does, would be put back by the host's next
-    // word, into the way of the character it was shoved by.
+    // not, pushed here by a body the client simulates, would be put back by the
+    // host's next word, into the way of that body.
     const bool predicted = character ? PredictsCharacter(state.netId, entity) : PredictsBody(state.netId, entity);
     if (character)
     {

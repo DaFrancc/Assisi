@@ -272,6 +272,20 @@ values, converted at 1.905 cm to one of its units.
 | `coyoteTime` | 0.1 | How long after walking off a ledge a jump still works. |
 | `jumpBufferTime` | 0.15 | How long before landing a jump request is remembered. |
 
+## When two characters meet
+
+Two characters block each other: one walking into another stops against it,
+and the other doesn't move. It's the same in a networked game, where every
+machine agrees on it, so bumping into another player never causes a
+correction. Bodies are different: a crate or a ball moving into a character
+still pushes it, unless you turn its `Pushable` option off.
+
+To let characters walk through each other instead, for example your players,
+give them a collision channel of your own and leave it out of their
+`collidesWith`. A character meets another only when each one's channel is in
+the other's `collidesWith`, so players on that channel pass through each other
+but still meet everything else, other characters included.
+
 ## Shape settings
 
 | Field | Default | Meaning |
@@ -284,7 +298,7 @@ values, converted at 1.905 cm to one of its units.
 | `maxSlopeDegrees` | 50 | Steeper ground cannot be stood on; the character slides. |
 | `maxStepHeight` | 0.4 | The tallest step climbed without jumping. |
 | `mass`, `pushStrength` | 70, 100 | How the character pushes bodies and is pushed. |
-| `options` | all | What the character does: `PushesBodies` and `Pushable` turn either direction of pushing off; `RidesBases` and `TurnsWithBase` are described under riding a moving body. |
+| `options` | all | What the character does: `PushesBodies` and `Pushable` turn either direction of pushing bodies off; `RidesBases` and `TurnsWithBase` are described under riding a moving body. |
 | `collidesWith` | all | Which collision channels the character hits. |
 
 Changing a setting in the editor rebuilds the character in place.

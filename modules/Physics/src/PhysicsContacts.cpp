@@ -469,17 +469,17 @@ void PhysicsWorld::Impl::CharacterContacts::OnCharacterContactAdded(
 {
     (void)subShapeId;
 
-    const CharacterRecord *found = _owner.FindCharacter(EntityOfUserData(character->GetUserData()));
-    if (found == nullptr)
+    if (_owner.FindCharacter(EntityOfUserData(character->GetUserData())) == nullptr)
     {
         return;
     }
-    const CharacterRecord &record = *found;
 
-    settings.mCanPushCharacter = record.pushable && record.options.Has(CharacterOption::Pushable);
-
-    // Neither character can be given an impulse: a character is moved by its own
-    // step and nothing else, so one shoving the other is gameplay's to express.
+    // Characters block each other: neither moves the other. Jolt's shove is
+    // taken in the shoved one's own sweep from the other's velocity, so it
+    // happens only when the shoved one steps first, before the other has stopped
+    // against it. Which steps first is the order key, a NetId in a session, so a
+    // shove would be one-sided by luck. Pushable is about bodies alone.
+    settings.mCanPushCharacter = false;
     settings.mCanReceiveImpulses = false;
 
     _owner.RecordCharacterTouch(*character, other->GetInnerBodyID(), EntityOfUserData(other->GetUserData()),

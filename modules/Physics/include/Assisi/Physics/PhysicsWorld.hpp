@@ -680,9 +680,10 @@ public:
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
-    /// @brief Whether anything but @p entity's own step may push its character,
-    /// whatever its Character says. On by default; off, other characters and
-    /// bodies walking into it are blocked by it and do not move it.
+    /// @brief Whether bodies may push @p entity's character, whatever its
+    /// Character says. On by default; off, bodies moving into it are blocked by
+    /// it and do not move it. Another character never pushes one either way:
+    /// characters block each other.
     ///
     /// For a character whose motion another machine decides: shoved here, it
     /// would only be put back where it was by the next word from there.
