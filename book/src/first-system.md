@@ -146,6 +146,8 @@ The `SystemContext` your system receives holds everything it can reach:
 | `ctx.actions` | Named input actions like "Jump". See [Input](input.md). |
 | `ctx.worldManager` | Manages every loaded world. Use `ctx.worldManager->RequestTravel("levels/Other.alvl")` to change level. |
 | `ctx.isActiveWorld` | Whether this is the world being shown and played. |
+| `ctx.events` | Events: push them, and read the ones other systems pushed. See [Events](events.md). |
+| `ctx.net` | The network: whether this machine is the host, and sending messages to other machines. Works when playing alone too. See [Messages](multiplayer.md#messages). |
 | `ctx.assets` | Assets by id, such as sounds. See [Your own asset kinds](asset-kinds.md). **`nullptr` in tests.** |
 | `ctx.mixer` | The mixer the engine plays emitters through. Play sounds with events instead; see [Audio](audio.md). **`nullptr` with no audio device.** |
 | `ctx.settings` | The player's options. See [Audio](audio.md). **`nullptr` in tests.** |
