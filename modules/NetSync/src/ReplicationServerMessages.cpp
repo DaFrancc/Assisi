@@ -671,7 +671,7 @@ void ReplicationServer::ReceiveHostEvents()
     _hostEvents.clear();
 }
 
-void ReplicationServer::ReceiveLocalIntent(const void *intent, std::type_index type)
+void ReplicationServer::SubmitLocalIntent(const void *intent, std::type_index type)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
     const Core::Reflect::MessageMeta *meta     = registry.ById(registry.IdOf(type));

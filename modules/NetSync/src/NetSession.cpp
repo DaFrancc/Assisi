@@ -267,6 +267,30 @@ void NetSession::AfterPhysicsStep()
         _client->EnforceSleep();
 }
 
+bool NetSession::SendIntent(const void *intent, std::type_index type)
+{
+    if (_server)
+    {
+        _server->SubmitLocalIntent(intent, type);
+        return true;
+    }
+    if (!_client)
+    {
+        return false;
+    }
+    const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
+    const Core::Reflect::MessageMeta *meta = registry.ById(registry.IdOf(type));
+    if (meta == nullptr)
+    {
+        return false;
+    }
+    // Stamped with the *clock's* command tick, not the local sim tick, for the
+    // same reason input is: the clock's whole job is to run far enough ahead
+    // that this lands just before the server simulates it.
+    return _client->SendIntentBytes(intent, type, _clock ? _clock->CommandTick() : _simTick,
+                                    meta->reliability == Core::Reflect::MessageReliability::Reliable);
+}
+
 void NetSession::Deliver(Core::EventQueue &events)
 {
     if (_server)

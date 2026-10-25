@@ -16,10 +16,12 @@ namespace Assisi::App
 NetworkedPlay::NetworkedPlay(World &world, NetSync::ReplicationConfig config)
     : _world(world), _session(world.scene, &world.physics, std::move(config))
 {
+    world.net.Attach(_session);
 }
 
 NetworkedPlay::~NetworkedPlay()
 {
+    _world.net.Detach();
     // A client's mirrors belong to the session, not the scene; flushed so they
     // are gone before anything walks the scene again.
     _session.Disconnect();

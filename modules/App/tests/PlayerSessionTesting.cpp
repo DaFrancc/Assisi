@@ -158,11 +158,11 @@ void Session::Run(std::int32_t frames)
     Run(frames, [] {});
 }
 
-std::uint16_t HostOnFreePort(App::NetworkedPlay &play)
+std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role)
 {
     for (std::uint16_t port = kFirstPort; port < kPastLastPort; ++port)
     {
-        if (play.Host(port, NetSync::LevelIdentity{}, App::HostRole::Player))
+        if (play.Host(port, NetSync::LevelIdentity{}, role))
         {
             return port;
         }

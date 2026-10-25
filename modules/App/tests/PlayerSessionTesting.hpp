@@ -146,7 +146,7 @@ struct Session
 };
 
 /// Hosts @p play on the first free port of a small range; 0 when none was.
-std::uint16_t HostOnFreePort(App::NetworkedPlay &play);
+std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role = App::HostRole::Player);
 
 /// A host and @p client on a floor, a start each for the host to make their
 /// characters at, @p client joined and settled.

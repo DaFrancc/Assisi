@@ -16,6 +16,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageInbox.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
 #include <Assisi/Core/Reflect/MessageTraits.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -23,7 +24,6 @@
 #include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/MessageInbox.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -255,8 +255,32 @@ public:
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SubmitLocalIntent takes an AMSG(intent, ...). An event is the authority speaking, "
                       "and the host is the authority - send it, do not submit it.");
-        ReceiveLocalIntent(&intent, typeid(T));
+        SubmitLocalIntent(&intent, typeid(T));
     }
+
+    /// @brief The type-erased half of SubmitLocalIntent, for a caller that
+    /// holds the intent by its type, such as App::Network.
+    ///
+    /// Encodes and re-decodes it so it travels the identical path a remote one
+    /// does. The round trip is deliberate waste: the alternative is a second
+    /// receive path that skips decoding, and the host's intents would be the
+    /// ones no fuzz test ever covers.
+    void SubmitLocalIntent(const void *intent, std::type_index type);
+
+    /// @brief Who an event goes to. Three classes, computed rather than
+    /// enumerated.
+    enum class Recipients : std::uint8_t
+    {
+        AllRelevant,      ///< Everyone whose set contains the subject.
+        Directed,         ///< One named client.
+        ExceptInstigator, ///< All-relevant, minus one.
+    };
+
+    /// @brief The type-erased half of Send/SendTo/SendToController/SendExcept,
+    /// for a caller that holds the event by its type, such as App::Network.
+    /// @p who is the client a Directed event goes to, or the instigator an
+    /// ExceptInstigator one skips.
+    void SendEvent(const void *event, std::type_index type, Recipients recipients, ClientId who);
 
     // ── Sending events ───────────────────────────────────────────────────────
     // Three recipient classes, and no fourth. Membership is *computed* from
@@ -638,17 +662,6 @@ private:
     /// number.
     [[nodiscard]] Core::Reflect::CodecContext DecodeContext();
 
-    /// Who an event goes to. Three classes, computed rather than enumerated.
-    enum class Recipients : std::uint8_t
-    {
-        AllRelevant,      ///< Everyone whose set contains the subject.
-        Directed,         ///< One named client.
-        ExceptInstigator, ///< All-relevant, minus one.
-    };
-
-    /// The type-erased half of Send/SendTo/SendToController/SendExcept.
-    void SendEvent(const void *event, std::type_index type, Recipients recipients, ClientId who);
-
     /// Bytes the message section may run past the snapshot's soft cap by: zero
     /// when nothing is waiting, the configured floor otherwise.
     [[nodiscard]] std::size_t EventFloorBytes(const Connection &connection) const;
@@ -671,14 +684,6 @@ private:
     /// Write the snapshot's message section: every pending event whose subject
     /// this connection already holds, or which this same packet just delivered.
     void WriteEventSection(Connection &connection, Core::BitWriter &writer, const SentSnapshot &record);
-
-    /// Encode and re-decode the host's own intent so it travels the identical
-    /// path a remote one does.
-    ///
-    /// The round trip is deliberate waste. The alternative is a second receive
-    /// path that skips decoding — and the host's intents would be the ones no
-    /// fuzz test ever covers.
-    void ReceiveLocalIntent(const void *intent, std::type_index type);
 
     /// Assign NetIds to newly-replicated entities and drop mappings for entities
     /// that are gone. Run once per tick, before any snapshot is built, so every
@@ -897,7 +902,7 @@ private:
     void ReceiveHostEvents();
 
     /// What passed its checks, waiting for Deliver.
-    MessageInbox _inbox;
+    Core::Reflect::MessageInbox _inbox;
 
     /// The escape classes, resolved once per tick in ReconcileNetIds rather than
     /// per connection: both lists are tiny, and evaluating them per connection

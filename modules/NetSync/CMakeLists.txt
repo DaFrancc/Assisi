@@ -8,7 +8,6 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/BodyState.hpp"
     "include/Assisi/NetSync/DistanceRelevancy.hpp"
     "include/Assisi/NetSync/InputCommand.hpp"
-    "include/Assisi/NetSync/MessageInbox.hpp"
     "include/Assisi/NetSync/NetClock.hpp"
     "include/Assisi/NetSync/NetComponents.hpp"
     "include/Assisi/NetSync/NetProtocol.hpp"

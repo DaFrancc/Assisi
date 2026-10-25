@@ -574,7 +574,7 @@ void ReplicationClient::Reset()
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;
     _eventsReceived    = 0;
-    _inbox             = MessageInbox{};
+    _inbox             = Core::Reflect::MessageInbox{};
     _synchronized      = false;
     _worldComplete     = false;
     _awaitingLevel     = false;

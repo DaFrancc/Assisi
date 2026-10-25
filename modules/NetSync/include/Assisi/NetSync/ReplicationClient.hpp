@@ -15,13 +15,13 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageInbox.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
 #include <Assisi/Core/Reflect/MessageTraits.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/MessageInbox.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -154,6 +154,10 @@ public:
                                Core::Reflect::MessageTraits<T>::reliability ==
                                Core::Reflect::MessageReliability::Reliable);
     }
+
+    /// @brief The type-erased half of SendIntent, for a caller that holds the
+    /// intent by its type, such as App::Network.
+    bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
 
     /// @brief Whether the handshake succeeded and snapshots are being applied.
     [[nodiscard]] bool IsSynchronized() const { return _synchronized; }
@@ -783,10 +787,6 @@ private:
     /// patching, and keeps the instance hook this installs.
     [[nodiscard]] Core::Reflect::CodecContext DecodeContext() const;
 
-    /// The type-erased half of SendIntent, so the template stays a static_assert
-    /// and everything needing a .cpp lives in one.
-    bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
-
     /// Read and receive the snapshot's message section.
     ///
     /// Must be called *after* the packet's entity blocks and body states are
@@ -821,7 +821,7 @@ private:
     std::uint64_t _eventsReceived = 0;
 
     /// Received events, waiting for Deliver.
-    MessageInbox _inbox;
+    Core::Reflect::MessageInbox _inbox;
 
     /// One entity's pose at one server tick. Only the transform is buffered: a
     /// health value or a state enum has no halfway point worth showing.

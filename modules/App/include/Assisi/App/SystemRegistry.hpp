@@ -82,6 +82,7 @@ class AssetStore;
 namespace Assisi::App
 {
 
+class Network;
 class PlayerSettings;
 
 struct World;
@@ -101,6 +102,9 @@ struct QuitRequested
 /// @brief @p world's own event queue. A function rather than the member so that
 /// SystemContext, which sees World only declared, can build its route from it.
 [[nodiscard]] Core::EventQueue &WorldEvents(World &world);
+
+/// @brief @p world's network, for the same reason.
+[[nodiscard]] Network &WorldNetwork(World &world);
 
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, Ui).
 ///
@@ -183,6 +187,12 @@ struct SystemContext
     /// `universalEvents` for an event declared universal. Built from `world`
     /// rather than handed in, so a system cannot reach another world's events.
     Core::EventRoute events{WorldEvents(world), universalEvents};
+
+    /// What this machine is on the network, and how a system sends a message:
+    /// `world`'s own, never null. Played alone it is a host nobody joined, so a
+    /// system written for online play runs single-player as it is. See
+    /// App/Network.hpp.
+    Network &net{WorldNetwork(world)};
 };
 
 /// @brief Passed to render systems (Render phase only).

@@ -61,6 +61,11 @@ Core::EventQueue &WorldEvents(World &world)
     return world.events;
 }
 
+Network &WorldNetwork(World &world)
+{
+    return world.net;
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {

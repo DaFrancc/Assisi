@@ -10,6 +10,7 @@ target_link_libraries(Assisi-App-TestSystems INTERFACE Assisi::App)
 assisi_reflect(
   TARGET Assisi-App-TestSystems
   HEADERS
+    support/include/Assisi/App/TestMessages.hpp
     support/include/Assisi/App/TestSystems.hpp
 )
 
@@ -31,6 +32,7 @@ add_executable(Assisi-App-Tests
   TestAppConfig.cpp
   TestAudioEmitter.cpp
   TestLevelSystemsPrecheck.cpp
+  TestNetwork.cpp
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
   TestPlayerSystems.cpp
@@ -62,6 +64,7 @@ if (ASSISI_ENABLE_NETWORKING)
     TestPlayerSessionContact.cpp
     TestPlayerSessionGaps.cpp
     TestPlayerSessionGapWalks.cpp
+    TestPlayerSessionMessages.cpp
     TestPlayerSessionOthers.cpp
     TestPlayerSessionOwnCharacter.cpp
     TestPlayerSessionPlayers.cpp
@@ -144,6 +147,7 @@ if (ASSISI_ENABLE_NETWORKING)
     App.TestPlayerSessionContact
     App.TestPlayerSessionGaps
     App.TestPlayerSessionGapWalks
+    App.TestPlayerSessionMessages
     App.TestPlayerSessionOthers
     App.TestPlayerSessionOwnCharacter
     App.TestPlayerSessionPlayers

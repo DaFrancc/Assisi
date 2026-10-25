@@ -92,6 +92,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/Reflect/EnumLabels.hpp"
     "include/Assisi/Core/Reflect/FieldMeta.hpp"
     "include/Assisi/Core/Reflect/ComponentMeta.hpp"
+    "include/Assisi/Core/Reflect/MessageInbox.hpp"
     "include/Assisi/Core/Reflect/MessageMeta.hpp"
     "include/Assisi/Core/Reflect/MessageRegistry.hpp"
     "include/Assisi/Core/Reflect/ComponentRegistry.hpp"
