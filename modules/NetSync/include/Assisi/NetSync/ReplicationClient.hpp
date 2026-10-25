@@ -15,11 +15,13 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageTraits.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
+#include <Assisi/NetSync/MessageInbox.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -229,15 +231,12 @@ public:
         return found == confirmed->components.end() ? nullptr : reinterpret_cast<const T *>(found->second.data());
     }
 
-    /// @brief The session this client belongs to, for handler contexts.
-    void SetOwningSession(NetSession *session) { _session = session; }
+    /// @brief Pushes every event received since the last call into @p events,
+    /// as Received<T> from the host. Called at the start of a live tick.
+    void Deliver(Core::EventQueue &events) { _inbox.Deliver(events); }
 
-    /// @brief Events delivered to a handler so far.
-    [[nodiscard]] std::uint64_t EventsDispatched() const { return _eventsDispatched; }
-
-    /// @brief Events dropped because nothing handles their type. Normal — the
-    /// server's build may care about something this one does not — but visible.
-    [[nodiscard]] std::uint64_t EventsUnhandled() const { return _eventsUnhandled; }
+    /// @brief Events received so far.
+    [[nodiscard]] std::uint64_t EventsReceived() const { return _eventsReceived; }
 
     /// @brief Announcements waiting for the world to catch up to them.
     [[nodiscard]] std::size_t DeferredAnnouncementCount() const { return _deferredAnnouncements.size(); }
@@ -788,12 +787,11 @@ private:
     /// and everything needing a .cpp lives in one.
     bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
 
-    /// Read and dispatch the snapshot's message section.
+    /// Read and receive the snapshot's message section.
     ///
     /// Must be called *after* the packet's entity blocks and body states are
-    /// applied: that is the whole ordering guarantee, and it is what lets a
-    /// handler for an event about an entity spawned in this same packet find
-    /// that entity already there.
+    /// applied: that is the whole ordering guarantee, and it is what lets an
+    /// event about an entity spawned in this same packet name that entity.
     bool ApplyEventSection(Core::BitReader &reader);
 
     /// One reliable announcement, held until the world is new enough for it.
@@ -807,7 +805,7 @@ private:
 
     void HandleAnnouncement(Core::BitReader &reader);
 
-    /// Dispatch every announcement whose moment has arrived.
+    /// Receive every announcement whose moment has arrived.
     ///
     /// The control lane is not the snapshot lane, so an announcement can and does
     /// overtake the state it is about. Holding it until the applied tick reaches
@@ -815,14 +813,15 @@ private:
     /// gets for free from framing.
     void DrainAnnouncements();
 
-    /// Decode one message body and hand it to its handler. Shared by the snapshot
-    /// section and the announcement path so both translate NetIds the same way
-    /// and count the same drops.
-    void DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
+    /// Decode one message body and hold it for Deliver. Shared by the snapshot
+    /// section and the announcement path so both translate NetIds the same way.
+    void ReceiveEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
 
     std::vector<DeferredAnnouncement> _deferredAnnouncements;
-    std::uint64_t _eventsDispatched = 0;
-    std::uint64_t _eventsUnhandled  = 0;
+    std::uint64_t _eventsReceived = 0;
+
+    /// Received events, waiting for Deliver.
+    MessageInbox _inbox;
 
     /// One entity's pose at one server tick. Only the transform is buffered: a
     /// health value or a state enum has no halfway point worth showing.
@@ -893,7 +892,6 @@ private:
     Net::NetTransport &_transport;
     ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    NetSession *_session = nullptr;            ///< For handler contexts; null in direct-drive tests.
     Net::ConnectionId _connection;
 
     /// Resolved once, because the removal path sees only ids, never types.

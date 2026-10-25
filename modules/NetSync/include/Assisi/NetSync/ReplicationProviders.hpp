@@ -215,10 +215,10 @@ struct ConnectionDiagnostics
     // ── Intents ──────────────────────────────────────────────────────────────
     // One counter per way an intent can be refused: "intents dropped" is not a
     // diagnosis. Rate-limited means a misbehaving client, stale means a clock
-    // problem, not-yours means a control transfer in flight, unhandled means a
-    // missing handler — four different conversations.
+    // problem, not-yours means a control transfer in flight — different
+    // conversations.
 
-    /// Intents that made it to a handler.
+    /// Intents that passed every check, for the world's systems to read.
     std::uint64_t intentsAccepted    = 0;
     /// Rejected because the type is an event, which a client may not speak.
     std::uint64_t intentsWrongWay    = 0;
@@ -230,9 +230,6 @@ struct ConnectionDiagnostics
     /// honest client hits this during a control transfer, so it is counted
     /// rather than treated as an attack.
     std::uint64_t intentsNotYours    = 0;
-    /// Dropped because nothing handles the type. Normal — the sender's build
-    /// may care about something this one does not.
-    std::uint64_t intentsUnhandled   = 0;
     /// Dropped because the bytes did not decode: truncated, malformed, or an id
     /// this build has never heard of.
     std::uint64_t intentsMalformed   = 0;

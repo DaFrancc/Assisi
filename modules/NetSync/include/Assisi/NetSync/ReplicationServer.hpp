@@ -16,12 +16,14 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageTraits.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyOwnership.hpp>
 #include <Assisi/NetSync/BodyReport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
+#include <Assisi/NetSync/MessageInbox.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -244,16 +246,16 @@ public:
     ///
     /// A listen server's player is not a connection — there is no loopback
     /// client by design (NetSession.hpp) — so without this the host would be the
-    /// one participant that cannot speak. Enters the same dispatch site as a
-    /// remote intent with sender = HostClientId, and passes the same checks
-    /// minus the transport framing there is none of.
+    /// one participant that cannot speak. Passes the same checks as a remote
+    /// intent with sender = HostClientId, minus the transport framing there is
+    /// none of, and waits for Deliver like one.
     template <typename T>
     void SubmitLocalIntent(const T &intent)
     {
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SubmitLocalIntent takes an AMSG(intent, ...). An event is the authority speaking, "
                       "and the host is the authority - send it, do not submit it.");
-        DispatchLocalIntent(&intent, typeid(T));
+        ReceiveLocalIntent(&intent, typeid(T));
     }
 
     // ── Sending events ───────────────────────────────────────────────────────
@@ -270,8 +272,8 @@ public:
     /// @brief To everyone who can see the entity this event is about.
     ///
     /// The default. An `independent` event, naming no entity, goes to every
-    /// ready connection instead. The host is included, through a local queue
-    /// dispatched at the end of its own tick.
+    /// ready connection instead. The host is included: its own copy is decoded
+    /// at the end of its tick and waits for Deliver like any message.
     template <typename T>
     void Send(const T &event)
     {
@@ -315,14 +317,14 @@ public:
         SendEvent(&event, typeid(T), Recipients::ExceptInstigator, instigator);
     }
 
-    /// @brief The scene the session is bound to. Handlers reach the world
-    /// through the context rather than through a global.
+    /// @brief The scene the session is bound to.
     [[nodiscard]] ECS::Scene &Scene() { return _scene; }
 
-    /// @brief The session this server belongs to, for handler contexts. Set by
-    /// NetSession at construction; null in the tests that drive the server
-    /// directly, which is why every consumer treats it as optional.
-    void SetOwningSession(NetSession *session) { _session = session; }
+    /// @brief Pushes every message that has passed its checks since the last
+    /// call into @p events, as Received<T>: the clients' intents, the host's
+    /// own, and the host's copy of its events. Called at the start of a live
+    /// tick.
+    void Deliver(Core::EventQueue &events) { _inbox.Deliver(events); }
 
     /// @brief The NetId assigned to @p entity, or InvalidNetId. Assigned lazily
     /// on the first Tick() that sees the entity, so an entity created this tick
@@ -603,10 +605,10 @@ private:
     /// value.
     void HandleIntent(Connection &connection, Core::BitReader &reader);
 
-    /// The tail shared by a remote and a host-local intent: decode, validate,
-    /// dispatch. Everything before it is transport.
-    void DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
-                        const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
+    /// The tail shared by a remote and a host-local intent: decode, check,
+    /// hold for Deliver. Everything before it is transport.
+    void ReceiveIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
+                       const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
 
     /// Whether an entity with no NetId yet gets one while it is being encoded.
     enum class IdAssignment : std::uint8_t
@@ -673,10 +675,10 @@ private:
     /// Encode and re-decode the host's own intent so it travels the identical
     /// path a remote one does.
     ///
-    /// The round trip is deliberate waste. The alternative is a second dispatch
+    /// The round trip is deliberate waste. The alternative is a second receive
     /// path that skips decoding — and the host's intents would be the ones no
     /// fuzz test ever covers.
-    void DispatchLocalIntent(const void *intent, std::type_index type);
+    void ReceiveLocalIntent(const void *intent, std::type_index type);
 
     /// Assign NetIds to newly-replicated entities and drop mappings for entities
     /// that are gone. Run once per tick, before any snapshot is built, so every
@@ -801,7 +803,6 @@ private:
     Net::NetTransport &_transport;
     ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    NetSession *_session = nullptr;            ///< For handler contexts; null in direct-drive tests.
     ReplicationConfig _config;
     LevelIdentity _level;
 
@@ -887,13 +888,16 @@ private:
     /// tick.
     ///
     /// The host has no connection, so nothing would otherwise deliver to it.
-    /// Dispatched **after** every state mutation for the tick, so a handler sees
-    /// a world at least as new as the message — the property a remote client
-    /// gets free from packet ordering.
+    /// Decoded **after** every state mutation for the tick, so what the host
+    /// reads describes a world at least as new as the message — the property a
+    /// remote client gets free from packet ordering.
     std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> _hostEvents;
 
-    /// Drain _hostEvents through the same handler path a client uses.
-    void DispatchHostEvents();
+    /// Decode _hostEvents the way a client decodes its events, into _inbox.
+    void ReceiveHostEvents();
+
+    /// What passed its checks, waiting for Deliver.
+    MessageInbox _inbox;
 
     /// The escape classes, resolved once per tick in ReconcileNetIds rather than
     /// per connection: both lists are tiny, and evaluating them per connection

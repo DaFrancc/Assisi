@@ -1618,14 +1618,6 @@ assisi_check_systems_and_events()
 # every build, networking or not.
 assisi_generate_message_traits()
 
-# Same contract, same reason it is here rather than in a module: the handler
-# table binds every AMSG_HANDLER declaration in the tree, so the header list has
-# to be complete before it can be written. Gated on networking because the table
-# it produces calls into NetSync.
-if (ASSISI_ENABLE_NETWORKING)
-    assisi_check_message_handlers()
-endif()
-
 # Typed views for the blueprints this project opts in. Here rather than in a
 # module for a different reason than the passes above: it attaches to Assisi-App,
 # so App must already exist — and the list is a *project* statement about which

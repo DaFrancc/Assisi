@@ -98,20 +98,17 @@ struct SessionStats
     std::uint64_t relevancyExits   = 0;
 
     // Messages. Split by *why* rather than lumped into one number, because a
-    // rate-limited client is misbehaving, a stale one has a clock problem, an
-    // out-of-range one is lying, and an unhandled one means somebody forgot to
-    // write a handler — four different conversations.
+    // rate-limited client is misbehaving, a stale one has a clock problem, and
+    // an out-of-range one is lying — different conversations.
     std::uint64_t intentsAccepted   = 0;
     std::uint64_t intentsRejected   = 0; ///< Wrong direction, out of range, or not theirs.
     std::uint64_t intentsRateLimited = 0;
     std::uint64_t intentsStale      = 0;
-    std::uint64_t intentsUnhandled  = 0;
     std::uint64_t eventsSent        = 0; ///< Host: written into snapshot sections.
     std::uint64_t announcementsSent = 0;
     std::uint32_t eventsHeld        = 0; ///< Waiting for the entity they are about.
     std::uint64_t eventsEvicted     = 0;
-    std::uint64_t eventsDispatched  = 0; ///< Client: handed to a handler.
-    std::uint64_t eventsUnhandled   = 0;
+    std::uint64_t eventsReceived    = 0; ///< Client: for the world's systems to read.
 };
 
 class NetSession
@@ -227,6 +224,14 @@ public:
     /// per fixed step, immediately after the local physics step and before
     /// Tick(). A no-op for a host and for a session with no physics world.
     void AfterPhysicsStep();
+
+    /// @brief Push every message that has passed its checks since the last
+    /// call into @p events, as Received<T>: on a host the clients' intents, its
+    /// own, and its copy of its events; on a client the host's events. Call at
+    /// the start of each live tick, so that tick and the frame's later phases
+    /// read them and a client's rerun of an old tick never does. Offline,
+    /// nothing.
+    void Deliver(Core::EventQueue &events);
 
     /// @brief Take the input command a connected client sent for @p tick, or
     /// null. Host only; call once per client per tick from the simulation.

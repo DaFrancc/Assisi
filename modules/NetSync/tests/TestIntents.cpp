@@ -17,20 +17,21 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Received.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
-#include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 #include <Assisi/NetSync/TestTransport.hpp>
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 using namespace Assisi;
@@ -53,6 +54,9 @@ struct Harness
 
     std::uint64_t tick = 0;
 
+    /// The host world's events, never ended, so they hold everything delivered.
+    Core::EventQueue hostEvents;
+
     explicit Harness(ReplicationConfig config = {})
         : pair(transport->CreateLoopbackPair()), server(*transport, serverScene, /*physics=*/ nullptr, config),
         client(*transport, clientScene, pair.second)
@@ -60,7 +64,14 @@ struct Harness
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
         server.AddConnection(pair.first);
-        HandlerLog::Instance().Clear();
+    }
+
+    /// Every @p T the host's systems have been handed so far.
+    template <typename T>
+    std::span<const Received<T>> HostReceived()
+    {
+        server.Deliver(hostEvents);
+        return hostEvents.Read<Received<T>>();
     }
 
     [[nodiscard]] Net::ConnectionId serverSide() const { return pair.first; }
@@ -110,7 +121,7 @@ ECS::Entity SpawnReplicated(ECS::Scene &scene)
 
 } // namespace
 
-TEST_CASE("an intent reaches its handler with the sender the wire says it came from")
+TEST_CASE("an intent reaches the host's events with the sender the wire says it came from")
 {
     Harness harness;
     harness.Step(4);
@@ -118,14 +129,28 @@ TEST_CASE("an intent reaches its handler with the sender the wire says it came f
 
     harness.Send(TestPlaceMarker{ /*target=*/ 17, /*slot=*/ 3});
 
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
-    CHECK(HandlerLog::Instance().lastPlaceMarker.target == 17);
-    CHECK(HandlerLog::Instance().lastPlaceMarker.slot == 3);
+    const std::span<const Received<TestPlaceMarker>> received = harness.HostReceived<TestPlaceMarker>();
+    REQUIRE(received.size() == 1);
+    const auto &[sender, marker] = received.front();
+    CHECK(marker.target == 17);
+    CHECK(marker.slot == 3);
 
     // Never taken from the payload — a client that could name its own sender
     // could name anyone's. It is the connection the bytes arrived on.
-    CHECK(HandlerLog::Instance().lastSender == harness.server.ClientIdOf(harness.serverSide()));
+    CHECK(sender == harness.server.ClientIdOf(harness.serverSide()));
     CHECK(harness.Diagnostics().intentsAccepted == 1);
+}
+
+TEST_CASE("an intent waits for Deliver, and is delivered once")
+{
+    Harness harness;
+    harness.Step(4);
+
+    harness.Send(TestPlaceMarker{ /*target=*/ 1, /*slot=*/ 1});
+    CHECK(harness.hostEvents.Read<Received<TestPlaceMarker>>().empty());
+
+    CHECK(harness.HostReceived<TestPlaceMarker>().size() == 1);
+    CHECK(harness.HostReceived<TestPlaceMarker>().size() == 1);
 }
 
 TEST_CASE("an unreliable intent takes the same door as a reliable one")
@@ -137,28 +162,30 @@ TEST_CASE("an unreliable intent takes the same door as a reliable one")
 
     harness.Send(TestPing{ /*x=*/ 1.f, /*y=*/ 2.f});
 
-    CHECK(HandlerLog::Instance().pingCalls == 1);
-    CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(1.f));
+    const std::span<const Received<TestPing>> received = harness.HostReceived<TestPing>();
+    REQUIRE(received.size() == 1);
+    CHECK(received.front().message.x == doctest::Approx(1.f));
     CHECK(harness.Diagnostics().intentsAccepted == 1);
 }
 
-TEST_CASE("a field outside its editor bound still reaches the handler")
+TEST_CASE("a field outside its editor bound still reaches the host's systems")
 {
     // AFIELD(min/max) is an authoring clamp and nothing more: it constrains what
     // can be typed into an inspector. The server does not police it. What an
-    // implausible value means, and what to do about it, is the handler's
-    // decision, taken where the value is visible — an engine that dropped the
-    // message first would take that decision away and leave a counter in its
-    // place.
+    // implausible value means, and what to do about it, is the reading
+    // system's decision, taken where the value is visible — an engine that
+    // dropped the message first would take that decision away and leave a
+    // counter in its place.
     Harness harness;
     harness.Step(4);
 
     harness.Send(TestPing{ /*x=*/ 5000.f, /*y=*/ 0.f});
 
-    CHECK(HandlerLog::Instance().pingCalls == 1);
+    const std::span<const Received<TestPing>> received = harness.HostReceived<TestPing>();
+    REQUIRE(received.size() == 1);
     CHECK(harness.Diagnostics().intentsAccepted == 1);
     // Delivered as sent: neither dropped nor clamped to the bound.
-    CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(5000.f));
+    CHECK(received.front().message.x == doctest::Approx(5000.f));
 }
 
 TEST_CASE("an intent about an entity the sender does not control is dropped and counted")
@@ -175,14 +202,14 @@ TEST_CASE("an intent about an entity the sender does not control is dropped and 
 
     // Nobody controls it yet, so the claim is false.
     harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/ 1});
-    CHECK(HandlerLog::Instance().movePawnCalls == 0);
+    CHECK(harness.HostReceived<TestMovePawn>().empty());
     CHECK(harness.Diagnostics().intentsNotYours == 1);
 
     // Now it is theirs, and the same message goes through.
     harness.server.SetControl(pawn, harness.server.ClientIdOf(harness.serverSide()));
     harness.Step(4);
     harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/ 1});
-    CHECK(HandlerLog::Instance().movePawnCalls == 1);
+    CHECK(harness.HostReceived<TestMovePawn>().size() == 1);
     CHECK(harness.Diagnostics().intentsNotYours == 1); // unchanged
 }
 
@@ -190,8 +217,8 @@ TEST_CASE("only the field marked as the intent's subject is control-checked")
 {
     // A client naming something it does not own is ordinary — "shoot at that" —
     // while a client acting *through* something it does not own is not. If the
-    // dispatch site checked every entity reference, the first would be
-    // impossible to express.
+    // server checked every entity reference, the first would be impossible to
+    // express.
     Harness harness;
     harness.Step(4);
 
@@ -210,11 +237,12 @@ TEST_CASE("only the field marked as the intent's subject is control-checked")
 
     harness.Send(TestMovePawn{myMirror, theirMirror, /*mode=*/ 2});
 
-    CHECK(HandlerLog::Instance().movePawnCalls == 1);
+    const std::span<const Received<TestMovePawn>> received = harness.HostReceived<TestMovePawn>();
+    REQUIRE(received.size() == 1);
     CHECK(harness.Diagnostics().intentsNotYours == 0);
     // ...and the reference survived the trip as a local handle on the server.
-    CHECK(HandlerLog::Instance().lastMovePawn.pawn == pawn);
-    CHECK(HandlerLog::Instance().lastMovePawn.target == somebodys);
+    CHECK(received.front().message.pawn == pawn);
+    CHECK(received.front().message.target == somebodys);
 }
 
 TEST_CASE("an event sent as an intent is turned away at the direction check")
@@ -238,7 +266,7 @@ TEST_CASE("an event sent as an intent is turned away at the direction check")
 
     harness.server.HandleMessage(harness.serverSide(), writer.Data());
 
-    CHECK(HandlerLog::Instance().announceCalls == 0);
+    CHECK(harness.HostReceived<TestAnnounce>().empty());
     CHECK(harness.Diagnostics().intentsWrongWay == 1);
 }
 
@@ -255,14 +283,14 @@ TEST_CASE("a flood is limited per message type, before the payload is decoded")
         REQUIRE(harness.client.SendIntent(TestPing{}, harness.tick));
     harness.Step(2);
 
-    CHECK(HandlerLog::Instance().pingCalls == 4);
+    CHECK(harness.HostReceived<TestPing>().size() == 4);
     CHECK(harness.Diagnostics().intentsRateLimited == 16);
 
     // ...and a *different* type still has its own budget, so a client spamming
     // one message cannot squeeze out its own use of another.
     REQUIRE(harness.client.SendIntent(TestPlaceMarker{1, 1}, harness.tick));
     harness.Step(2);
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
+    CHECK(harness.HostReceived<TestPlaceMarker>().size() == 1);
 }
 
 TEST_CASE("a stale or future-dated intent is dropped by the tick window")
@@ -278,21 +306,21 @@ TEST_CASE("a stale or future-dated intent is dropped by the tick window")
     // world that has moved on.
     REQUIRE(harness.client.SendIntent(TestPing{}, /*clientTick=*/ 1));
     harness.Step(2);
-    CHECK(HandlerLog::Instance().pingCalls == 0);
+    CHECK(harness.HostReceived<TestPing>().empty());
     CHECK(harness.Diagnostics().intentsStale == 1);
 
     // Far in the future: a tick the server has not reached and will not for
     // seconds is a claim it cannot act on.
     REQUIRE(harness.client.SendIntent(TestPing{}, harness.tick + 5000));
     harness.Step(2);
-    CHECK(HandlerLog::Instance().pingCalls == 0);
+    CHECK(harness.HostReceived<TestPing>().empty());
     CHECK(harness.Diagnostics().intentsStale == 2);
 
     // ...and a current one goes through, so the window is a window rather than
     // a wall.
     REQUIRE(harness.client.SendIntent(TestPing{}, harness.tick));
     harness.Step(2);
-    CHECK(HandlerLog::Instance().pingCalls == 1);
+    CHECK(harness.HostReceived<TestPing>().size() == 1);
 }
 
 TEST_CASE("malformed and unknown intents are counted, and the connection lives")
@@ -319,9 +347,24 @@ TEST_CASE("malformed and unknown intents are counted, and the connection lives")
     }
     CHECK(harness.Diagnostics().intentsMalformed == 2);
 
+    // A body that ends before its fields do: it has an id and a length, and the
+    // fields are not there.
+    {
+        const Core::Reflect::MessageMeta *marker = Core::Reflect::MessageRegistry::Instance().Find("TestPlaceMarker");
+        REQUIRE(marker != nullptr);
+        Core::BitWriter writer;
+        WriteMessageType(MessageType::Intent, writer);
+        writer.WriteVarUInt64(harness.tick);
+        writer.WriteVarUInt32(marker->id.value);
+        writer.WriteVarUInt32(0);
+        harness.server.HandleMessage(harness.serverSide(), writer.Data());
+    }
+    CHECK(harness.Diagnostics().intentsMalformed == 3);
+    CHECK(harness.HostReceived<TestPlaceMarker>().empty());
+
     // ...and the connection is still perfectly usable afterwards.
     harness.Send(TestPlaceMarker{1, 1});
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
+    CHECK(harness.HostReceived<TestPlaceMarker>().size() == 1);
 }
 
 TEST_CASE("the host's own intent goes through the same door")
@@ -333,11 +376,13 @@ TEST_CASE("the host's own intent goes through the same door")
 
     harness.server.SubmitLocalIntent(TestPlaceMarker{ /*target=*/ 5, /*slot=*/ 9});
 
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
-    CHECK(HandlerLog::Instance().lastPlaceMarker.target == 5);
-    // Named as the host rather than as nobody, so a handler's authority checks
+    const std::span<const Received<TestPlaceMarker>> received = harness.HostReceived<TestPlaceMarker>();
+    REQUIRE(received.size() == 1);
+    const auto &[sender, marker] = received.front();
+    CHECK(marker.target == 5);
+    // Named as the host rather than as nobody, so a system's authority checks
     // read the same way for the host as for anyone else.
-    CHECK(HandlerLog::Instance().lastSender == HostClientId);
+    CHECK(sender == HostClientId);
     CHECK(harness.server.HostDiagnostics().intentsAccepted == 1);
 }
 
@@ -353,31 +398,29 @@ TEST_CASE("the host's control checks are its own, not everyone's")
     harness.server.SetControl(pawn, harness.server.ClientIdOf(harness.serverSide()));
     harness.Step(2);
     harness.server.SubmitLocalIntent(TestMovePawn{pawn, ECS::NullEntity, 0});
-    CHECK(HandlerLog::Instance().movePawnCalls == 0);
+    CHECK(harness.HostReceived<TestMovePawn>().empty());
     CHECK(harness.server.HostDiagnostics().intentsNotYours == 1);
 
     // ...and once the host controls it, the same submission goes through.
     harness.server.SetControl(pawn, HostClientId);
     harness.Step(2);
     harness.server.SubmitLocalIntent(TestMovePawn{pawn, ECS::NullEntity, 0});
-    CHECK(HandlerLog::Instance().movePawnCalls == 1);
+    CHECK(harness.HostReceived<TestMovePawn>().size() == 1);
 }
 
-TEST_CASE("an intent nobody handles is dropped and counted")
+TEST_CASE("intents reach the host's events in the order they passed their checks")
 {
-    // Normal rather than exceptional: the sender's build may care about
-    // something this one does not. What matters is that it is visible, so a
-    // handler somebody meant to write is a number rather than a mystery.
     Harness harness;
     harness.Step(4);
 
-    harness.Send(TestUnhandled{ /*value=*/ 1});
+    harness.Send(TestPlaceMarker{ /*target=*/ 1, /*slot=*/ 0});
+    harness.server.SubmitLocalIntent(TestPlaceMarker{ /*target=*/ 2, /*slot=*/ 0});
+    harness.Send(TestPlaceMarker{ /*target=*/ 3, /*slot=*/ 0});
 
-    CHECK(harness.Diagnostics().intentsUnhandled == 1);
-    CHECK(harness.Diagnostics().intentsAccepted == 0);
-
-    // ...and the connection carries on, because nobody being home is not a
-    // fault.
-    harness.Send(TestPlaceMarker{1, 1});
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
+    const std::span<const Received<TestPlaceMarker>> received = harness.HostReceived<TestPlaceMarker>();
+    REQUIRE(received.size() == 3);
+    CHECK(received[0].message.target == 1);
+    CHECK(received[1].message.target == 2);
+    CHECK(received[1].sender == HostClientId);
+    CHECK(received[2].message.target == 3);
 }

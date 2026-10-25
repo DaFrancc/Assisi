@@ -26,6 +26,8 @@
 #include <vector>
 
 #include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Received.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -37,7 +39,6 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
-#include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 #include <Assisi/NetSync/TestTransport.hpp>
 
@@ -668,6 +669,8 @@ struct InstanceSession
     ReplicationServer server;
     ReplicationClient client;
     std::uint64_t tick = 1;
+    Core::EventQueue serverEvents;
+    Core::EventQueue clientEvents;
 
     InstanceSession()
         : pair(transport->CreateLoopbackPair()), server(*transport, serverScene),
@@ -693,7 +696,6 @@ struct InstanceSession
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
         server.AddConnection(pair.first);
-        NetSync::Test::HandlerLog::Instance().Clear();
         Step(12);
     }
 
@@ -745,14 +747,16 @@ TEST_CASE("Blueprint replication: an intent naming an instance arrives as the se
     REQUIRE(session.client.SendIntent(NetSync::Test::TestTagInstance{.instance = local, .note = 3}, session.tick));
     session.Step(2);
 
-    const NetSync::Test::HandlerLog &log = NetSync::Test::HandlerLog::Instance();
-    REQUIRE(log.tagInstanceCalls == 1);
-    CHECK(log.lastTagInstance.note == 3); // the ordinary field, to place the failure
+    session.server.Deliver(session.serverEvents);
+    const Core::EventSpan<Received<NetSync::Test::TestTagInstance>> received =
+        session.serverEvents.Read<Received<NetSync::Test::TestTagInstance>>();
+    REQUIRE(received.size() == 1);
+    CHECK(received[0].message.note == 3); // the ordinary field, to place the failure
 
-    // With no hooks on the intent path the server's handler is handed the
+    // With no hooks on the intent path the server's systems are handed the
     // client's own per-world counter, which names an unrelated instance here —
     // or nothing — and does it silently.
-    CHECK(log.lastTagInstance.instance == InstanceSession::kServerInstance);
+    CHECK(received[0].message.instance == InstanceSession::kServerInstance);
 }
 
 TEST_CASE("Blueprint replication: an event naming an instance arrives as the client's instance id")
@@ -767,16 +771,21 @@ TEST_CASE("Blueprint replication: an event naming an instance arrives as the cli
     session.server.Send(NetSync::Test::TestInstanceNamed{.instance = InstanceSession::kServerInstance});
     session.Step(3);
 
-    const NetSync::Test::HandlerLog &log = NetSync::Test::HandlerLog::Instance();
-    REQUIRE(log.instanceNamedCalls >= 1);
+    session.client.Deliver(session.clientEvents);
+    session.server.Deliver(session.serverEvents);
+    using Named = Received<NetSync::Test::TestInstanceNamed>;
+    const Core::EventSpan<Named> onClient = session.clientEvents.Read<Named>();
+    const Core::EventSpan<Named> onHost   = session.serverEvents.Read<Named>();
+    REQUIRE(onClient.size() == 1);
+    REQUIRE(onHost.size() == 1);
 
-    // The mirror of the intent case: the client's handler must be told which
+    // The mirror of the intent case: the client's systems must be told which
     // instance *here* the event is about, not which one there.
-    CHECK(log.lastInstanceNamedOnClient.instance == local);
+    CHECK(onClient[0].message.instance == local);
 
     // The host's own copy of the same event travels the same codec pair in
     // process, so it comes back naming the instance it started as.
-    CHECK(log.lastInstanceNamedOnHost.instance == InstanceSession::kServerInstance);
+    CHECK(onHost[0].message.instance == InstanceSession::kServerInstance);
 }
 
 namespace

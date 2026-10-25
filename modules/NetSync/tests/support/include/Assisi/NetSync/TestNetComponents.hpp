@@ -188,18 +188,6 @@ struct TestInstanceNamed
     AFIELD() Assisi::ECS::InstanceId instance;
 };
 
-/// @brief A registered intent that nothing handles.
-///
-/// Not an oversight — the negative control. A message nobody handles is a
-/// normal state, because the sender's build may care about something this one
-/// does not, and the point is that it is *counted* rather than silently
-/// swallowed.
-AMSG(intent, unreliable)
-struct TestUnhandled
-{
-    AFIELD() int32_t value = 0;
-};
-
 /// @brief Server → client, must arrive, and names no entity — so there is
 /// nothing for relevancy to scope it by and nothing to hold it for.
 AMSG(event, reliable, independent)

@@ -573,8 +573,8 @@ void ReplicationClient::Reset()
     _lastAppliedTick   = 0;
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;
-    _eventsDispatched  = 0;
-    _eventsUnhandled   = 0;
+    _eventsReceived    = 0;
+    _inbox             = MessageInbox{};
     _synchronized      = false;
     _worldComplete     = false;
     _awaitingLevel     = false;
