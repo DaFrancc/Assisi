@@ -294,9 +294,13 @@ def check_message_handlers(headers) -> str:
     for fqn in sorted(set(messages_by_fqn) - {f.lstrip(':') for f in bound}):
         lines.append(f'  {fqn} -> (no handler)')
 
-    lines.extend(check_systems(headers))
-    lines.extend(reflect_events.check_events(headers))
     return '\n'.join(lines) + '\n'
+
+
+def check_systems_and_events(headers) -> list:
+    """The system and event checks, which every build runs: neither names
+    anything networking provides, so neither waits on it."""
+    return check_systems(headers) + reflect_events.check_events(headers)
 
 
 def check_systems(headers) -> list:
@@ -500,6 +504,9 @@ def main():
                         help='Instead of generating registrations, check that no message type '
                              'has two AMSG_HANDLER declarations across every header given, and '
                              'write the handler map to this path.')
+    parser.add_argument('--check-systems-and-events', dest='systems_out', type=Path, default=None,
+                        help='Instead of generating registrations, check every ASYSTEM and AEVENT '
+                             'across the headers given, and write what was found to this path.')
     parser.add_argument('--check-component-rules', dest='rules_out', type=Path, default=None,
                         help='Instead of generating registrations, check every ACOMP requires/excludes '
                              'rule across the headers given, and write the resolved rules to this path.')
@@ -576,6 +583,17 @@ def main():
             sys.exit(1)
         args.check_out.write_text(text, encoding='utf-8')
         print(f'reflectgen: {text.splitlines()[0]}')
+        sys.exit(0)
+
+    if args.systems_out is not None:
+        args.systems_out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            lines = check_systems_and_events(args.headers)
+        except Exception as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+        args.systems_out.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        print(f'reflectgen: {lines[0]}')
         sys.exit(0)
 
     if args.rules_out is not None:

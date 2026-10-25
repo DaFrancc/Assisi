@@ -1611,6 +1611,9 @@ assisi_generate_replicable_limits()
 # Same contract: a requires or excludes may name a component in any module.
 assisi_check_component_rules()
 
+# Same contract: an after or before may name a system in any module.
+assisi_check_systems_and_events()
+
 # Same contract, same reason it is here rather than in a module: the handler
 # table binds every AMSG_HANDLER declaration in the tree, so the header list has
 # to be complete before it can be written. Gated on networking because the table
