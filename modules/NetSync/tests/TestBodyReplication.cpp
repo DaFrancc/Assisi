@@ -1347,6 +1347,14 @@ constexpr std::uint32_t kPushTicks = 90;
 /// Further than the other player is pushed when it is pushed at all (m).
 constexpr float kPushedFar = 0.5f;
 
+/// How far another player may move and still count as not pushed: settling, not
+/// a shove (m).
+constexpr float kNotPushed = 0.05f;
+
+/// How far short of touching another character a walker may stop: the padding
+/// characters keep between them, and rounding (m).
+constexpr float kTouchSlack = 0.1f;
+
 /// How far ahead of the host's a client's mirror of another player may be: a
 /// quantized position, not a shove (m).
 constexpr float kMirrorNearHost = 0.01f;
@@ -2166,11 +2174,12 @@ TEST_CASE("a correction at a tick the host stepped without the client's command 
     CHECK(std::ranges::find(predicted, rig.harness.server.NetIdOf(rig.character)) != predicted.end());
 }
 
-TEST_CASE("a client walking its character into another player does not shove that player's mirror")
+TEST_CASE("a client walking its character into another player is stopped by it, on both machines, without jitter")
 {
-    // Shoved here, the mirror would be put back by the host's next word, into
-    // the way of the character that shoved it, which would be pushed back in
-    // turn: a jitter every snapshot for as long as the two touch.
+    // Characters block each other, so neither machine moves the other player.
+    // Were the mirror shoved on the client alone, the host's next word would put
+    // it back into the way of the client's character, which would be pushed
+    // back in turn: a jitter every snapshot for as long as the two touch.
     PredictionRig rig(RigLevel{.other = kOtherPlayerAhead, .secondAt = std::nullopt, .deck = false});
     const ECS::Entity otherMirror = MirrorOf(rig.harness, rig.otherPlayer);
     REQUIRE(otherMirror != ECS::NullEntity);
@@ -2190,8 +2199,11 @@ TEST_CASE("a client walking its character into another player does not shove tha
         last = now;
     }
 
-    // It walked into the other player and pushed it, on the host.
-    REQUIRE(rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x > kOtherPlayerAhead.x + kPushedFar);
+    // It walked up to the other player and was stopped there, on the host too.
+    const float otherOnHost = rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x;
+    CHECK(std::abs(otherOnHost - kOtherPlayerAhead.x) < kNotPushed);
+    const float touching = kOtherPlayerAhead.x - 2.f * Physics::Character{}.radius;
+    REQUIRE(rig.ClientPosition().x > touching - kTouchSlack);
     CHECK(mostAheadOfHost < kMirrorNearHost);
     CHECK(mostBack < kMostBackPerTick);
 }

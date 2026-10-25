@@ -658,7 +658,7 @@ AENUM()
 enum class CharacterOption : std::uint8_t
 {
     PushesBodies,  ///< Shoves the bodies it walks into.
-    Pushable,      ///< Is shoved by bodies that walk or fall into it.
+    Pushable,      ///< Is shoved by bodies that move or fall into it. Never by another character: characters block each other.
     RidesBases,    ///< Rides a Carrier it is in touch with.
     TurnsWithBase, ///< While riding, its facing turns with the carrier's yaw.
     Count_,

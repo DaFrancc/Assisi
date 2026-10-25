@@ -265,18 +265,34 @@ float WalkInto(const Physics::Character &walker, const Physics::Character &stand
 /// How far counts as shoved rather than nudged by rounding (m).
 constexpr float kShoved = 0.1f;
 
-/// How far a default character standing in the way, set @p pushable, is moved
-/// by one walking into it.
-float ShovedBy(bool pushable)
+/// Which of two characters steps first in a tick.
+enum class FirstToStep : std::uint8_t
+{
+    Standing,
+    Walking,
+    Count_
+};
+
+/// Where two default characters end when one walks into the other standing in
+/// the way, with @p first stepping first in every tick.
+struct Meeting
+{
+    float shoved = 0.f;  ///< How far the standing one was moved (m).
+    float reached = 0.f; ///< Where the walking one stopped, along x (m).
+};
+
+Meeting WalkIntoStanding(FirstToStep first)
 {
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
     const ECS::Entity standing = SpawnCharacter(scene, world, kInTheWay);
-    world.SetCharacterPushable(standing, pushable);
     const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
+    world.SetCharacterOrderKey(standing, first == FirstToStep::Standing ? 0u : 1u);
+    world.SetCharacterOrderKey(walking, first == FirstToStep::Walking ? 0u : 1u);
     Walk(scene, world, walking, kWalkForward, kSettleSteps);
-    return scene.Get<ECS::Transform>(standing)->position.x - kInTheWay.x;
+    return Meeting{.shoved = scene.Get<ECS::Transform>(standing)->position.x - kInTheWay.x,
+                   .reached = scene.Get<ECS::Transform>(walking)->position.x};
 }
 
 } // namespace
@@ -310,10 +326,32 @@ TEST_CASE("Two characters meet only when each one's channel is in the other's ma
     }
 }
 
-TEST_CASE("A character set not pushable is not shoved by one walking into it, whatever its options say")
+TEST_CASE("Two characters block each other, whichever steps first")
 {
-    CHECK(ShovedBy(/*pushable=*/ true) > kShoved);
-    CHECK(ShovedBy(/*pushable=*/ false) < kShoved);
+    const float radius = Physics::Character{}.radius;
+    for (const FirstToStep first : {FirstToStep::Standing, FirstToStep::Walking})
+    {
+        CAPTURE(static_cast<int>(first));
+        const Meeting meeting = WalkIntoStanding(first);
+        CHECK(std::abs(meeting.shoved) < kShoved);
+        CHECK(meeting.reached < kInTheWay.x - 2.f * radius + kShoved);
+    }
+}
+
+TEST_CASE("A character meeting another off-centre slides around it, and the other does not move")
+{
+    // Blocked only along the line between them: the rest of its walk carries it
+    // round the other's capsule, as round any rounded wall.
+    constexpr float kOffCentre = 0.2f;
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    (void)SpawnFloor(scene, world);
+    const ECS::Entity standing = SpawnCharacter(scene, world, kInTheWay);
+    const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, kOffCentre});
+    Walk(scene, world, walking, kWalkForward, kSettleSteps);
+
+    CHECK(scene.Get<ECS::Transform>(walking)->position.x > kInTheWay.x + kWalkedThrough);
+    CHECK(glm::length(scene.Get<ECS::Transform>(standing)->position - kInTheWay) < kShoved);
 }
 
 TEST_CASE("A character asked onto one of the engine's other channels is on Character")

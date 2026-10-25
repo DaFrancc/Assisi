@@ -2,8 +2,8 @@
 
 /// @file TestPlayerSessionContact.cpp
 /// @brief A client's own character in contact with another player: stepped again
-///        where it was stepped live, kept while it presses, and drawn sliding
-///        rather than stuttering while it is shoved.
+///        where it was stepped live, kept while it presses, and left where it is
+///        when the other walks into it.
 
 #include <doctest/doctest.h>
 
@@ -40,7 +40,7 @@ constexpr float kPressing = 0.7f;
 /// the gap between the starts and press for a few seconds.
 constexpr std::int32_t kSyncTestFrames = 240;
 
-/// Snapshots the drift and the shove are watched over.
+/// Snapshots the pressing is watched over.
 constexpr std::int32_t kWatchedSnapshots = 200;
 
 /// Frames those snapshots take at the default rates.
@@ -48,14 +48,9 @@ constexpr std::int32_t kWatchedFrames =
     kWatchedSnapshots * static_cast<std::int32_t>(NetSync::ReplicationConfig{}.tickRateHz /
                                                   NetSync::ReplicationConfig{}.snapshotHz);
 
-/// How far a shove has to move the client's character over the window (m), so
-/// the shove test is about a shove.
-constexpr float kLeastShove = 1.f;
-
-/// How much faster than the shoving player walks a shoved character may be
-/// drawn moving in one frame: a steady slide moves it at most as fast, and a
-/// stutter is a jump several times that.
-constexpr float kSlideHeadroom = 2.f;
+/// How far a character pressed against may move and still count as not moved
+/// (m): settling onto the floor, not a shove.
+constexpr float kNotMoved = 0.05f;
 
 /// The host's and the client's players, and the host's as the client has it.
 struct Players
@@ -183,11 +178,10 @@ TEST_CASE("A client pressing against another player keeps its own prediction")
     CHECK(largestOffset == 0.f);
 }
 
-TEST_CASE("A client's character shoved by another player is drawn sliding, not stuttering")
+TEST_CASE("The host's player walking into a client's character does not move it, on either machine")
 {
-    // The shove happens on the host, and the client hears of it a round trip
-    // late, so its own character is corrected about once a snapshot. Eased, the
-    // corrections have to read as a slide.
+    // Characters block each other, so both machines agree where the client's
+    // character is, and nothing about it is corrected.
     const std::filesystem::path root = FreshRoot("assisi_players_contact");
     WritePlayerBlueprint(root);
 
@@ -196,25 +190,27 @@ TEST_CASE("A client's character shoved by another player is drawn sliding, not s
     Machine &client = session.Add();
     const Players players = JoinedPlayers(session, host, client);
     NetSync::ReplicationClient &replication = *client.play.Session().Client();
-    const Physics::Character *tuning = client.world.scene.Get<Physics::Character>(players.clientOwn);
-    REQUIRE(tuning != nullptr);
-    const float steadySlidePerFrame = tuning->walkSpeed * kStep;
+    const NetSync::NetId own = replication.NetIdOf(players.clientOwn);
+    const ECS::Entity clientOnHost = PlayerOf(host, client.play.Session().LocalClientId());
+    REQUIRE(clientOnHost != ECS::NullEntity);
 
+    const glm::vec3 startOnClient = Drawn(client.world.scene, players.clientOwn);
+    const glm::vec3 startOnHost = host.world.scene.Get<ECS::Transform>(clientOnHost)->position;
     bool turned = false;
-    const glm::vec3 start = Drawn(client.world.scene, players.clientOwn);
-    glm::vec3 last = start;
-    float largestFrameStep = 0.f;
+    std::int32_t framesPressing = 0;
     session.Run(kWatchedFrames,
                 [&]
     {
         WalkAt(host.world.scene, players.hostOwn, kQuarterTurn, turned);
-        const glm::vec3 drawn = Drawn(client.world.scene, players.clientOwn);
-        largestFrameStep = std::max(largestFrameStep, glm::length(drawn - last));
-        last = drawn;
+        framesPressing += Pressing(client.world.scene, players) ? 1 : 0;
     });
 
-    MESSAGE("largest step drawn in one frame " << largestFrameStep << " m, a steady slide " << steadySlidePerFrame
-                                                << " m; rollbacks " << replication.Corrections().predictionsReplayed);
-    REQUIRE(glm::length(last - start) > kLeastShove);
-    CHECK(largestFrameStep <= steadySlidePerFrame * kSlideHeadroom);
+    const NetSync::ReplicationClient::EntityPredictionCounts *counts = replication.PredictionCountsOf(own);
+    REQUIRE(counts != nullptr);
+    REQUIRE(framesPressing > kWatchedFrames / 2);
+    MESSAGE("corrections " << counts->physics.corrections << ", rollbacks "
+                           << replication.Corrections().predictionsReplayed);
+    CHECK(glm::length(Drawn(client.world.scene, players.clientOwn) - startOnClient) < kNotMoved);
+    CHECK(glm::length(host.world.scene.Get<ECS::Transform>(clientOnHost)->position - startOnHost) < kNotMoved);
+    CHECK(counts->physics.corrections == 0u);
 }
