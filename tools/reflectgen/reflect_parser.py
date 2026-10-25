@@ -203,9 +203,10 @@ class SystemInfo:
     function:        str    # unqualified function name
     namespaces:      list   # enclosing namespaces at the declaration
     name:            str    # the name a file uses; declared explicitly, never derived
-    phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
+    phase:           str    # one of _ASYSTEM_PHASES
     after:           list   # system names this must run after
     before:          list   # system names this must run before
+    placement:       str    # First | Middle | Last: where in its phase, before after/before apply
     active_world_only: bool
     replayed:        bool   # steps again on a replayed step; engine fixed-step systems only
     header:          str    # source header, for diagnostics
@@ -430,8 +431,13 @@ _ASYSTEM_RE = re.compile(
 )
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
-                   'PostUpdate', 'Render')
-_ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed'}
+                   'Ui', 'Render')
+_ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed', 'first', 'last'}
+# The flag for each placement but the ordinary one, which needs none. In run
+# order: SystemPlacement's enumerators, and the order the whole-tree check holds
+# after/before to.
+SYSTEM_PLACEMENTS = ('First', 'Middle', 'Last')
+_ASYSTEM_PLACEMENT_FLAGS = {'first': 'First', 'last': 'Last'}
 # The phases a replay runs again, and so the only ones replayed can mean anything on.
 _ASYSTEM_FIXED_STEP_PHASES = ('FixedUpdate', 'PostFixedUpdate')
 # The namespace whose systems may be replayed: the engine's own, whose every
@@ -1080,6 +1086,13 @@ def find_systems(text: str, path: Path) -> list:
         replayed          = 'replayed' in flags
         namespaces        = _namespaces_at(text, match.start())
 
+        placed = sorted(flags & set(_ASYSTEM_PLACEMENT_FLAGS))
+        if len(placed) > 1:
+            raise ValueError(
+                f"{where} is marked both first and last. A system runs in one place in its phase: "
+                f"keep one, or neither to run with the rest.")
+        placement = _ASYSTEM_PLACEMENT_FLAGS[placed[0]] if placed else 'Middle'
+
         if active_world_only and phase == 'Render':
             raise ValueError(
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
@@ -1113,6 +1126,7 @@ def find_systems(text: str, path: Path) -> list:
         systems.append(SystemInfo(function=match.group('fn'),
                                   namespaces=namespaces,
                                   name=name, phase=phase, after=after, before=before,
+                                  placement=placement,
                                   active_world_only=active_world_only, replayed=replayed,
                                   header=str(path)))
     return systems

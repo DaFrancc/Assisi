@@ -53,6 +53,28 @@ private:
     /// belongs in. See EventQueue::Read for how long the view lasts.
     template <typename E> [[nodiscard]] EventSpan<E> Read() const { return QueueFor<E>().template Read<E>(); }
 
+    /// @brief Where one world's ticks have read both its queues up to.
+    struct TickMarks
+    {
+        EventQueue::TickMark world;
+        EventQueue::TickMark universal;
+    };
+
+    /// @brief One tick of the world this route serves, in both queues: see
+    /// EventQueue::BeginTick.
+    void BeginTick(const TickMarks &marks) const
+    {
+        _world.BeginTick(marks.world);
+        _universal.BeginTick(marks.universal);
+    }
+
+    /// @brief See EventQueue::EndTick.
+    void EndTick(TickMarks &marks) const
+    {
+        _world.EndTick(marks.world);
+        _universal.EndTick(marks.universal);
+    }
+
 private:
     template <typename E> [[nodiscard]] EventQueue &QueueFor() const
     {

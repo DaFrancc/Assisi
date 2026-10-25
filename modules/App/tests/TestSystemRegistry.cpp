@@ -369,6 +369,83 @@ TEST_CASE("SystemRegistry: a dependency cycle falls back to running all systems"
     CHECK(order.size() == 2); // fallback to registration order — nothing dropped
 }
 
+namespace
+{
+/// Update systems that note their name in @p order when they run.
+struct OrderedUpdate
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Order");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    std::vector<std::string> order;
+
+    SystemRegistry::SystemHandle Add(const char *name)
+    {
+        return world.systems.Register(SystemPhase::Update, name,
+                                      [this, name](SystemContext &) { order.emplace_back(name); });
+    }
+
+    void Run() { world.systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, /*isActiveWorld=*/ true)); }
+};
+} // namespace
+
+TEST_CASE("A first system runs before the rest of its phase and a last one after, in any registration order")
+{
+    OrderedUpdate phase;
+    phase.Add("Sweep").Last();
+    phase.Add("Move");
+    phase.Add("Gather").First();
+    phase.Add("Animate");
+
+    phase.Run();
+
+    CHECK(phase.order == std::vector<std::string>{"Gather", "Move", "Animate", "Sweep"});
+}
+
+TEST_CASE("After and before order systems among the first, among the last, and across them")
+{
+    OrderedUpdate phase;
+    phase.Add("LateTwo").Last().After("LateOne");
+    phase.Add("Move").After("EarlyTwo");
+    phase.Add("LateOne").Last().After("Move");
+    phase.Add("EarlyTwo").First();
+    phase.Add("Animate").After("Move").Before("LateOne");
+    phase.Add("EarlyOne").First().Before("EarlyTwo");
+
+    phase.Run();
+
+    CHECK(phase.order == std::vector<std::string>{"EarlyOne", "EarlyTwo", "Move", "Animate", "LateOne", "LateTwo"});
+}
+
+TEST_CASE("An ordering a placement contradicts is logged naming both systems, and the placement wins")
+{
+    OrderedUpdate phase;
+    phase.Add("Gather");
+    phase.Add("Sweep").Last().Before("Gather");
+    phase.Add("Prepare").First().After("Move");
+    phase.Add("Move");
+
+    const Assisi::Tests::LogCapture log;
+    phase.Run();
+
+    CHECK(phase.order == std::vector<std::string>{"Prepare", "Gather", "Move", "Sweep"});
+    CHECK(log.Mentions("\"Sweep\" before \"Gather\""));
+    CHECK(log.Mentions("\"Prepare\" after \"Move\""));
+}
+
+TEST_CASE("A system asked to run both first and last is logged and keeps the placement it was given first")
+{
+    OrderedUpdate phase;
+    phase.Add("Move");
+    const Assisi::Tests::LogCapture log;
+    phase.Add("Gather").Last().First();
+
+    phase.Run();
+
+    CHECK(phase.order == std::vector<std::string>{"Move", "Gather"});
+    CHECK(log.Mentions("Gather"));
+}
+
 #if defined(ASSISI_CHIARA_ENABLED)
 
 // RunPhase is the chokepoint the whole "instrumentation feels automatic" claim

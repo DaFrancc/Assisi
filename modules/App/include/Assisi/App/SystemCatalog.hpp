@@ -71,6 +71,9 @@ struct SystemDefinition
     /// Steps again when a client steps a tick again. Only on the engine's own
     /// FixedUpdate and PostFixedUpdate systems, which reflectgen enforces.
     bool replayed = false;
+
+    /// Where in its phase the system runs: `first`, `last`, or neither.
+    SystemPlacement placement = SystemPlacement::Middle;
 };
 
 /// @brief The process-wide table of declared systems.

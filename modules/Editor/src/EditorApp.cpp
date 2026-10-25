@@ -12,6 +12,7 @@
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -450,14 +451,16 @@ void EditorApp::OnStart()
               [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
     .After("EntityPicking");
 
-    _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
-                      [this](Assisi::App::SystemContext &ctx)
+    _systems
+    .Register(Assisi::App::SystemPhase::Update, "ProcessEntitySelection",
+              [this](Assisi::App::SystemContext &ctx)
         {
             for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
             {
                 SelectEntity(e.entity, e.additive ? SelectMode::Toggle : SelectMode::Replace);
             }
-        });
+        })
+    .Last();
 }
 
 void EditorApp::ReimportAssets()
@@ -1061,6 +1064,24 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
 }
 
+void EditorApp::OnPreUpdate(float dt)
+{
+    // Under the conditions the game's Update runs under below.
+    if (!_scene || !IsSimulating())
+    {
+        return;
+    }
+    _worlds.ForEach(
+        [this, dt](Assisi::App::World &world)
+        {
+            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+            {
+                return;
+            }
+            Assisi::App::BeginWorldFrame(WorldContext(world, dt, _stepTick));
+        });
+}
+
 void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
@@ -1373,7 +1394,6 @@ void EditorApp::OnUpdate(float dt)
     Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, _stepTick);
     editorCtx.isActiveWorld = true;
     _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
     // Game logic ticks only while Playing, after the editor's own systems, in every
     // simulated world and out of each world's own registry — never against the
@@ -1390,9 +1410,8 @@ void EditorApp::OnUpdate(float dt)
                     return;
 
                 const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
-                world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
-                world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
-                world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
+                Assisi::App::UpdateWorld(ctx);
+                Assisi::App::PresentWorld(ctx);
             });
     }
 }
@@ -1442,9 +1461,12 @@ void EditorApp::FlushDeferred()
     // it is next shown and then land all at once. A world still Loading keeps its
     // scene: it belongs to a worker until promotion.
     _worlds.ForEach(
-        [](Assisi::App::World &world)
+        [this](Assisi::App::World &world)
         {
-            world.events.Flush();
+            // Under the conditions OnFixedUpdate steps it under.
+            const bool ticking = IsSimulating() && world.state == Assisi::App::WorldState::Active &&
+                                 world.simulate && !world.paused;
+            Assisi::App::EndWorldFrame(world, GetUniversalEvents(), ticking);
             if (world.state != Assisi::App::WorldState::Loading)
             {
                 world.scene.FlushDestroyed();

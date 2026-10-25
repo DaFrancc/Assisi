@@ -52,6 +52,8 @@ namespace Assisi::App
 ///     into the swapchain afterwards, transparently to this override.
 ///
 /// Optional overrides (no-ops by default):
+///   - OnPreUpdate(float dt)     — called every render frame, after input and
+///     the UI's clicks and before the frame's fixed steps
 ///   - OnRenderUi(Render::RenderFrame&) — called after OnRender(), last in the
 ///     frame; draw whatever UI layer you own here, opening and closing it
 ///     yourself
@@ -183,6 +185,9 @@ protected:
     void LoadAssetsFrom(const Core::AssetProvider &provider) { _assets.Initialize(_jobs, provider); }
 
     virtual void OnStart() = 0;
+    /// @brief Called once a frame before any of its fixed steps, which a frame
+    /// may run none of. Not pure: an app with no worlds has nothing to run here.
+    virtual void OnPreUpdate(float /*dt*/) {}
     virtual void OnFixedUpdate(float dt) = 0;
     /// @brief How far the fixed-step simulation advances for a frame that took
     /// @p frameSeconds of real time. Real time, unless an app runs the
@@ -230,8 +235,9 @@ protected:
     virtual void OnRenderTargetsChanged(const nvrhi::FramebufferInfo & /*framebufferInfo*/) {}
 
     /// @brief Called once per frame at end of frame (after RenderFrame and the
-    /// universal event flush) to apply deferred per-frame work. Override to
-    /// flush each world's events and drain its scene — notably
+    /// end of the universal events' frame) to apply deferred per-frame work.
+    /// Override to end each world's events' frame (EndWorldFrame) and drain its
+    /// scene — notably
     /// ECS::Scene::FlushDestroyed(), where queued entity destruction is applied
     /// so it never mutates pools mid-Query. Default is a no-op: Application owns
     /// no world, so the app must opt in.
@@ -311,7 +317,7 @@ protected:
     float GetInterpolationAlpha() const { return _interpolationAlpha; }
 
     /// @brief The queue for the events declared `AEVENT(universal)`, which every
-    /// world shares, flushed once per frame in Run(). Systems reach it through
+    /// world shares, whose frame Run() ends once a frame. Systems reach it through
     /// `ctx.events`; this accessor is for app code outside a system, which
     /// pushes only universal events here — each world's own events are in its
     /// World::events.

@@ -24,7 +24,9 @@ struct SystemContext;
 /// a command after. Nothing here asks which host it is in, which is what makes
 /// a step the same on every machine.
 ///
-/// Live (`ctx.replaying` false), the physics step is the whole PhysicsWorld
+/// Live (`ctx.replaying` false), the step is one tick to the world's events: its
+/// systems read what was pushed since its previous live step ended, in its own
+/// queue and the universal one. The physics step is the whole PhysicsWorld
 /// update and @p replayedCharacters, @p followers and @p replayedBodies must be
 /// empty. Replaying, it steps only the characters of @p replayedCharacters and
 /// solves only the bodies of @p replayedBodies, as a live step would, with each

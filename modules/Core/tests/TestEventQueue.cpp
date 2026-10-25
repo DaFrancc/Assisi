@@ -110,6 +110,95 @@ TEST_CASE("EventQueue: a push inside a DropScope is discarded, and one after it 
     CHECK(queue.Read<Healed>().empty());
 }
 
+// A frame as a host runs it: pushes before its ticks, MarkTicks, each tick
+// between BeginTick and EndTick, more pushes after, and EndFrame.
+TEST_CASE("EventQueue: a tick reads what was pushed since the last tick ended, and the frame what it pushed")
+{
+    EventQueue queue;
+    EventQueue::TickMark ticks;
+
+    queue.Push(Damage{1});
+    queue.MarkTicks();
+    queue.BeginTick(ticks);
+    CHECK(queue.Read<Damage>().size() == 1);
+    queue.Push(Damage{2});
+    CHECK(queue.Read<Damage>().size() == 2);
+    queue.EndTick(ticks);
+
+    queue.BeginTick(ticks);
+    CHECK(queue.Read<Damage>().empty());
+    queue.EndTick(ticks);
+
+    queue.Push(Damage{3});
+    CHECK(queue.Read<Damage>().size() == 3);
+    queue.EndFrame(/*keepPending=*/ true);
+
+    queue.MarkTicks();
+    queue.BeginTick(ticks);
+    CHECK(queue.Read<Damage>().empty());
+    queue.EndTick(ticks);
+}
+
+TEST_CASE("EventQueue: a frame that runs no tick keeps what was pushed before its ticks, for the next tick alone")
+{
+    EventQueue queue;
+    EventQueue::TickMark ticks;
+
+    queue.Push(Damage{1});
+    queue.MarkTicks();
+    queue.Push(Damage{2});
+    queue.EndFrame(/*keepPending=*/ true);
+
+    // The next frame's own phases never see it again.
+    CHECK(queue.Read<Damage>().empty());
+    queue.MarkTicks();
+    queue.BeginTick(ticks);
+    const EventSpan<Damage> damage = queue.Read<Damage>();
+    REQUIRE(damage.size() == 1);
+    CHECK(damage[0].amount == 1);
+    queue.EndTick(ticks);
+    queue.EndFrame(/*keepPending=*/ true);
+
+    queue.BeginTick(ticks);
+    CHECK(queue.Read<Damage>().empty());
+    queue.EndTick(ticks);
+}
+
+TEST_CASE("EventQueue: a frame whose reader is not ticking keeps nothing")
+{
+    EventQueue queue;
+    EventQueue::TickMark ticks;
+
+    queue.Push(Damage{1});
+    queue.MarkTicks();
+    queue.EndFrame(/*keepPending=*/ false);
+
+    queue.BeginTick(ticks);
+    CHECK(queue.Read<Damage>().empty());
+    queue.EndTick(ticks);
+}
+
+TEST_CASE("EventQueue: a mark skipped past what is pending reads none of it")
+{
+    // A second reader of one queue, as a second world is of the universal one:
+    // it can let what is pending go by while the first reads it.
+    EventQueue queue;
+    EventQueue::TickMark reading;
+    EventQueue::TickMark skipping;
+
+    queue.Push(Damage{1});
+    queue.MarkTicks();
+    queue.EndFrame(/*keepPending=*/ true);
+    queue.SkipPending(skipping);
+
+    queue.BeginTick(skipping);
+    CHECK(queue.Read<Damage>().empty());
+    queue.EndTick(skipping);
+    queue.BeginTick(reading);
+    CHECK(queue.Read<Damage>().size() == 1);
+    queue.EndTick(reading);
+}
+
 // The read-view invalidation guard. With a throwing contract handler installed,
 // a fired ASSISI_ASSERT surfaces as a catchable ContractViolation. Debug-only —
 // the check compiles out in release.

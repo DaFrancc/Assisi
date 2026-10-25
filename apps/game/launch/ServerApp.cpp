@@ -7,6 +7,7 @@
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -269,6 +270,13 @@ void ServerApp::SpawnDemoMovers()
     }
 }
 
+void ServerApp::OnPreUpdate(float dt)
+{
+    // The frame a windowed host runs, less what only a window has: input, and
+    // the Ui systems and sounds of OnUpdate.
+    Assisi::App::BeginWorldFrame(WorldContext(dt, _stepTick));
+}
+
 void ServerApp::OnFixedUpdate(float dt)
 {
     std::uint64_t stepTick = GetSimTick();
@@ -296,18 +304,19 @@ void ServerApp::OnFixedUpdate(float dt)
         }
     }
 #endif // ASSISI_NETWORKING
+    _stepTick = stepTick;
 
 #if defined(ASSISI_NETWORKING)
     if (_play)
     {
-        _play->StepWorld(StepContext(dt, stepTick));
+        _play->StepWorld(WorldContext(dt, stepTick));
     }
     else
     {
-        Assisi::App::StepWorld(StepContext(dt, stepTick));
+        Assisi::App::StepWorld(WorldContext(dt, stepTick));
     }
 #else
-    Assisi::App::StepWorld(StepContext(dt, stepTick));
+    Assisi::App::StepWorld(WorldContext(dt, stepTick));
 #endif
 
     // After the simulation: a snapshot describes the world at the end of the
@@ -331,7 +340,7 @@ double ServerApp::SimulationSeconds(double frameSeconds)
     return frameSeconds;
 }
 
-void ServerApp::OnUpdate([[maybe_unused]] float dt)
+void ServerApp::OnUpdate(float dt)
 {
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
@@ -345,6 +354,9 @@ void ServerApp::OnUpdate([[maybe_unused]] float dt)
         _play->Session().SmoothView(dt);
 #endif
 
+    // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
+    // sounds would have nowhere to go.
+    Assisi::App::UpdateWorld(WorldContext(dt, _stepTick));
     ReportStatus();
 }
 
@@ -391,8 +403,9 @@ void ServerApp::FlushDeferred()
 {
     // End of frame: the tick's events are over, and the entities queued by
     // Scene::Destroy() this tick are applied. The windowed path does this too —
-    // deferred destruction is a scene invariant, not a rendering one.
-    _world.events.Flush();
+    // deferred destruction is a scene invariant, not a rendering one. The world
+    // steps every tick, so it is always ticking.
+    Assisi::App::EndWorldFrame(_world, GetUniversalEvents(), /*ticking=*/ true);
     _world.scene.FlushDestroyed();
 }
 
@@ -408,10 +421,10 @@ void ServerApp::InstallQueuedSystems()
 Assisi::App::SystemContext ServerApp::WorldStartContext()
 {
     // dt and the tick are zero: a one-shot runs outside any frame.
-    return StepContext(0.f, 0);
+    return WorldContext(0.f, 0);
 }
 
-Assisi::App::SystemContext ServerApp::StepContext(float dt, std::uint64_t tick)
+Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 {
     // No window, so no input, no action map and no UI, in every phase.
     return {.world         = _world,

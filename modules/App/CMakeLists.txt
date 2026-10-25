@@ -29,6 +29,7 @@ target_sources(Assisi-App
     "include/Assisi/App/SystemRegistry.hpp"
     "include/Assisi/App/UiInputBridge.hpp"
     "include/Assisi/App/World.hpp"
+    "include/Assisi/App/WorldFrame.hpp"
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
@@ -61,6 +62,7 @@ target_sources(Assisi-App
     "src/SystemRegistry.cpp"
     "src/UiInputBridge.cpp"
     "src/World.cpp"
+    "src/WorldFrame.cpp"
 )
 
 target_include_directories(Assisi-App

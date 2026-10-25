@@ -1971,7 +1971,7 @@ class SystemTest(unittest.TestCase):
     def test_replayed_is_refused_outside_the_fixed_step(self):
         # Only a fixed step is ever run again for a tick it already ran, so the
         # flag anywhere else says nothing and reads as though it did.
-        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "Ui"):
             with self.subTest(phase=phase):
                 with self.assertRaises(ValueError) as caught:
                     self._systems(self.ENGINE_SYSTEM % phase)
@@ -1999,8 +1999,7 @@ class SystemTest(unittest.TestCase):
         # rejected at build time with no hint that the enum has one more — so the
         # two are pinned together here rather than discovered by a level failing
         # to name a system.
-        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
-                      "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "Ui"):
             found = self._systems(
                 "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
             self.assertEqual(found[0].phase, phase)
@@ -2071,6 +2070,63 @@ class SystemTest(unittest.TestCase):
             path.write_text(self.SOURCE, encoding="utf-8")
             lines = reflectgen.check_systems([path])
             self.assertIn("2 system(s)", lines[0])
+
+    def test_first_and_last_place_a_system_in_its_phase(self):
+        for phase in ("Update", "FixedUpdate", "Render"):
+            context = "RenderContext" if phase == "Render" else "SystemContext"
+            with self.subTest(phase=phase):
+                found = {s.name: s for s in self._systems(
+                    "ASYSTEM(%s, name = \"Early\", first) void EarlySystem(%s &ctx);\n"
+                    "ASYSTEM(%s, name = \"Late\", last, after = \"Early\") void LateSystem(%s &ctx);\n"
+                    "ASYSTEM(%s, name = \"Plain\") void PlainSystem(%s &ctx);\n"
+                    % (phase, context, phase, context, phase, context))}
+                self.assertEqual(found["Early"].placement, "First")
+                self.assertEqual(found["Late"].placement, "Last")
+                self.assertEqual(found["Late"].after, ["Early"])
+                self.assertEqual(found["Plain"].placement, "Middle")
+
+    def test_a_system_cannot_be_both_first_and_last(self):
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update, name = \"Tick\", first, last) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("first", str(caught.exception))
+        self.assertIn("last", str(caught.exception))
+
+    def _check(self, source):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(source, encoding="utf-8")
+            return reflectgen.check_systems([path])
+
+    def test_an_ordering_its_placements_contradict_is_a_build_error_naming_both(self):
+        contradictions = (
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n",
+            "ASYSTEM(Update, name = \"Sweep\", first, after = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n",
+            "ASYSTEM(Update, name = \"Sweep\", last) void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\", first, after = \"Sweep\") void GatherSystem(SystemContext &ctx);\n",
+        )
+        for source in contradictions:
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError) as caught:
+                    self._check(source)
+                self.assertIn("'Sweep'", str(caught.exception))
+                self.assertIn("'Gather'", str(caught.exception))
+
+    def test_an_ordering_its_placements_agree_with_is_accepted(self):
+        lines = self._check(
+            "ASYSTEM(Update, name = \"Sweep\", last, after = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\", before = \"Tidy\") void GatherSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Tidy\", last, before = \"Sweep\") void TidySystem(SystemContext &ctx);\n")
+        self.assertIn("3 system(s)", lines[0])
+
+    def test_placements_in_different_phases_never_contradict(self):
+        # An ordering between phases is no edge at run time: each phase is
+        # sorted on its own.
+        lines = self._check(
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(FixedUpdate, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n")
+        self.assertIn("2 system(s)", lines[0])
 
 
 class ComponentRuleTest(unittest.TestCase):

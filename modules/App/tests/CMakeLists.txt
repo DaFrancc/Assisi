@@ -26,6 +26,7 @@ add_executable(Assisi-App-Tests
   TestConfigReader.cpp
   TestCookedAssets.cpp
   TestFixedStepClock.cpp
+  TestFrameEvents.cpp
   TestInstanceViews.cpp
   TestAppConfig.cpp
   TestAudioEmitter.cpp

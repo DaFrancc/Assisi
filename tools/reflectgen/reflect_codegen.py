@@ -958,6 +958,7 @@ static const bool _reflectgen_system_{system.function} = []() -> bool
         {names(system.before)},
         {str(system.active_world_only).lower()},
         {str(system.replayed).lower()},
+        Assisi::App::SystemPlacement::{system.placement},
     }});
     return true;
 }}();

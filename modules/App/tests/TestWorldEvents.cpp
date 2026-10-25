@@ -13,6 +13,7 @@
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/EventScope.hpp>
 #include <Assisi/Mondrian/DrawList.hpp>
@@ -62,7 +63,7 @@ void Record(SystemContext &ctx, Heard &heard)
 /// system that could have pushed it.
 void Listen(World &world, Heard &heard)
 {
-    world.systems.Register(SystemPhase::PostUpdate, "Listen", [&heard](SystemContext &ctx) { Record(ctx, heard); });
+    world.systems.Register(SystemPhase::Ui, "Listen", [&heard](SystemContext &ctx) { Record(ctx, heard); });
 }
 
 /// Two worlds and the UI they are shown in, sharing the program's universal
@@ -100,9 +101,8 @@ struct TwoWorlds
     {
         for (World *const world : {&first, &second})
         {
-            const SystemContext ctx = Context(*world);
-            world->systems.Run(SystemPhase::Update, ctx);
-            world->systems.Run(SystemPhase::PostUpdate, ctx);
+            UpdateWorld(Context(*world));
+            PresentWorld(Context(*world));
         }
         first.events.Flush();
         second.events.Flush();
