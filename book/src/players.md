@@ -38,7 +38,7 @@ them:
 | System | What it does |
 |---|---|
 | `LocalPlayer` | Decides which player is this machine's: every `Player` in a game played alone, the one this machine controls in a networked game. |
-| `PlayerGather` | Fills in this machine's player's controls from the keyboard and mouse. |
+| `PlayerGather` | Fills in this machine's player's controls from the keyboard and mouse, in `PreUpdate`, so the frame's fixed steps use what this frame read. |
 | `CharacterCommand` | Turns each player's controls into where its character faces and what it is asked to do. |
 | `PlayerCamera` | Makes this machine's player's camera the active one. |
 | `CharacterEye` | Keeps the camera at the character's eye height. |
@@ -73,6 +73,12 @@ same code reads every player's controls on the host.
 
 The `LocalPlayer` component marks this machine's player, for a system of your
 own that should only act on it, such as a heads-up display.
+
+Turning is applied by the fixed step, 60 times a second, but your player's
+camera doesn't wait for it: each frame it is drawn turned as far as the mouse
+has moved so far, so aiming keeps up with the frame rate however fast that is.
+Only the camera is drawn ahead. Where the character faces, what the host is
+sent, and what everyone else sees all come from the step.
 
 ## Your own actions
 
