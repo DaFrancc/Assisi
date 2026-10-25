@@ -2,29 +2,24 @@
 
 /// @file TestMessages.cpp
 /// @brief Messages as reflected structs: the registry, the wire form, the hash,
-/// and the generated handler binding.
+/// and the decode that turns one into an event.
 ///
 /// The load-bearing claim of the whole design is that declaring a message is a
 /// *versioning event* — add one, reorder its fields, or flip it from unreliable
 /// to reliable, and two builds that disagree refuse to pair instead of
 /// misparsing each other. That falls out of messages being reflected structs, so
 /// it is checked here rather than assumed.
-///
-/// The other claim worth pinning is that nothing about which handler gets called
-/// depends on name lookup. The test support declares two handlers with the same
-/// name in different namespaces, taking different message types; if the bindings
-/// resolved names anywhere but the declaration's own scope, one would silently
-/// answer for the other.
 
 #include <doctest/doctest.h>
 
 #include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Received.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Core/Reflect/DecodedMessage.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
-#include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <algorithm>
@@ -44,6 +39,30 @@ struct NotAMessage
 {
     int32_t value = 0;
 };
+
+/// @p message as the wire carries it, id and length included.
+template <typename T>
+bool WriteMessageValue(const T &message, Core::BitWriter &writer)
+{
+    const MessageRegistry &registry = MessageRegistry::Instance();
+    const MessageMeta *meta = registry.ById(registry.IdOf(typeid(T)));
+    return meta != nullptr && WriteMessage(*meta, &message, writer);
+}
+
+/// @p message written, decoded the way the network decodes it, and delivered
+/// into @p events from @p sender.
+template <typename T>
+void Receive(const T &message, ClientId sender, Core::EventQueue &events)
+{
+    Core::BitWriter writer;
+    REQUIRE(WriteMessageValue(message, writer));
+    Core::BitReader reader(writer.Data());
+    const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
+    REQUIRE(meta != nullptr);
+    const DecodedMessage decoded = meta->decode(*meta, reader, nullptr);
+    REQUIRE(decoded);
+    decoded.Deliver(events, sender);
+}
 
 /// The layout text with one message's entry removed, standing in for a build
 /// that never declared it. Comparing hashes over doctored descriptions is how
@@ -264,103 +283,43 @@ TEST_CASE("direction and reliability are in the hash, not only the field layout"
     CHECK(MessageLayoutDescription(flipped) != original);
 }
 
-TEST_CASE("the generated table binds every handler, and binds each to its own type")
+TEST_CASE("every message decodes to its own type, with the sender it was given")
 {
-    // The zero-ambiguity check. Two handlers named HandlePlaceMarker exist in
-    // two namespaces, taking two different message types; if either binding had
-    // been resolved by a lookup outside the declaration's own scope, one message
-    // would arrive at the other's handler.
-    const MessageDispatch &dispatch = MessageDispatch::Instance();
-    HandlerLog::Instance().Clear();
+    // The decode is generated per type and found by the wire id, so a message
+    // must arrive as the type it was sent as and as no other.
+    Core::EventQueue events;
+    Receive(TestPlaceMarker{ /*target=*/ 11, /*slot=*/ 2}, ClientId{7}, events);
+    Receive(TestPing{ /*x=*/ 3.5f, /*y=*/ -1.25f}, ClientId{8}, events);
+    Receive(TestAnnounce{ /*round=*/ 3}, HostClientId, events);
 
-    ECS::Scene scene;
-    NetContext context{ClientId{7}, nullptr, &scene};
+    const Core::EventSpan<Received<TestPlaceMarker>> markers = events.Read<Received<TestPlaceMarker>>();
+    REQUIRE(markers.size() == 1);
+    CHECK(markers[0].sender == ClientId{7});
+    CHECK(markers[0].message.target == 11);
+    CHECK(markers[0].message.slot == 2);
 
-    const auto deliver = [&](const auto &message)
-                         {
-                             Core::BitWriter writer;
-                             REQUIRE(WriteMessageValue(message, writer));
-                             Core::BitReader reader(writer.Data());
-                             const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
-                             REQUIRE(meta != nullptr);
-                             return dispatch.Dispatch(*meta, context, reader);
-                         };
+    const Core::EventSpan<Received<TestPing>> pings = events.Read<Received<TestPing>>();
+    REQUIRE(pings.size() == 1);
+    CHECK(pings[0].sender == ClientId{8});
+    CHECK(pings[0].message.x == doctest::Approx(3.5f));
+    CHECK(pings[0].message.y == doctest::Approx(-1.25f));
 
-    CHECK(deliver(TestPlaceMarker{ /*target=*/ 11, /*slot=*/ 2}));
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
-    CHECK(HandlerLog::Instance().pingCalls == 0);
-    CHECK(HandlerLog::Instance().lastPlaceMarker.target == 11);
-    CHECK(HandlerLog::Instance().lastPlaceMarker.slot == 2);
-    // The sender travels with the dispatch rather than with the payload — it is
-    // the connection the bytes arrived on, which is the only version a handler
-    // may trust.
-    CHECK(HandlerLog::Instance().lastSender == ClientId{7});
-
-    CHECK(deliver(TestPing{ /*x=*/ 3.5f, /*y=*/ -1.25f}));
-    CHECK(HandlerLog::Instance().pingCalls == 1);
-    CHECK(HandlerLog::Instance().placeMarkerCalls == 1); // the same-named handler did not fire
-    CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(3.5f));
-    CHECK(HandlerLog::Instance().lastPing.y == doctest::Approx(-1.25f));
-
-    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/ 9}));
-    CHECK(HandlerLog::Instance().burstCalls == 1);
-
-    CHECK(deliver(TestAnnounce{ /*round=*/ 3}));
-    CHECK(HandlerLog::Instance().announceCalls == 1);
-    CHECK(HandlerLog::Instance().lastAnnounce.round == 3);
+    const Core::EventSpan<Received<TestAnnounce>> announcements = events.Read<Received<TestAnnounce>>();
+    REQUIRE(announcements.size() == 1);
+    CHECK(announcements[0].message.round == 3);
 }
 
 TEST_CASE("a message value fills in from nothing, not from the last one")
 {
     // A message has no baseline to patch against — it is not a value with a
-    // previous version — so every dispatch starts from a default-constructed
-    // instance. Two deliveries in a row must not leak into each other.
-    HandlerLog::Instance().Clear();
+    // previous version — so every decode starts from a default-constructed
+    // instance. Two in a row must not leak into each other.
+    Core::EventQueue events;
+    Receive(TestBurst{ECS::NullEntity, /*intensity=*/ 42}, HostClientId, events);
+    Receive(TestBurst{}, HostClientId, events);
 
-    ECS::Scene scene;
-    NetContext context{ClientId{2}, nullptr, &scene};
-
-    const auto deliver = [&](const auto &message)
-                         {
-                             Core::BitWriter writer;
-                             REQUIRE(WriteMessageValue(message, writer));
-                             Core::BitReader reader(writer.Data());
-                             const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
-                             REQUIRE(meta != nullptr);
-                             return MessageDispatch::Instance().Dispatch(*meta, context, reader);
-                         };
-
-    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/ 42}));
-    CHECK(HandlerLog::Instance().lastBurst.intensity == 42);
-
-    CHECK(deliver(TestBurst{}));
-    CHECK(HandlerLog::Instance().lastBurst.intensity == 1); // the field's own default
-}
-
-TEST_CASE("an unhandled message is reported rather than silently swallowed")
-{
-    // Nothing in this build handles the message we are about to invent, and that
-    // is a normal state: one side of the wire may simply not care. What must not
-    // happen is a silent success.
-    MessageMeta orphan{.name        = "Orphan",
-                       .typeIndex   = typeid(NotAMessage),
-                       .fields      = {},
-                       .direction   = MessageDirection::Event,
-                       .reliability = MessageReliability::Unreliable,
-                       .independent = true,
-                       .id          = MessageId{999},
-                       .serialize   = nullptr,
-                       .deserialize = nullptr};
-
-    ECS::Scene scene;
-    NetContext context{ClientId{1}, nullptr, &scene};
-
-    Core::BitWriter writer;
-    writer.WriteVarUInt32(0); // an empty body
-
-    Core::BitReader reader(writer.Data());
-    CHECK_FALSE(MessageDispatch::Instance().HasHandler(orphan));
-    CHECK_FALSE(MessageDispatch::Instance().Dispatch(orphan, context, reader));
-    // The body is left unread, so the caller can step over it and count the drop.
-    CHECK(reader.BitsRead() == 0);
+    const Core::EventSpan<Received<TestBurst>> bursts = events.Read<Received<TestBurst>>();
+    REQUIRE(bursts.size() == 2);
+    CHECK(bursts[0].message.intensity == 42);
+    CHECK(bursts[1].message.intensity == 1); // the field's own default
 }

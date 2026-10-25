@@ -497,21 +497,18 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
     return true;
 }
 
-void ReplicationClient::DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
+void ReplicationClient::ReceiveEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
 {
     const Core::Reflect::CodecContext codec = DecodeContext();
 
-    NetContext context{InvalidClientId, _session, &_scene};
-    if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec))
+    Core::Reflect::DecodedMessage message = meta.decode(meta, reader, &codec);
+    if (!message)
     {
-        // Normal — the server's build may care about something this one does not
-        // — but counted, so a handler somebody meant to write shows up as a
-        // number rather than a silence.
-        ++_eventsUnhandled;
-        (void)Core::Reflect::SkipMessageBody(reader);
         return;
     }
-    ++_eventsDispatched;
+    // Only the host sends events.
+    _inbox.Hold(HostClientId, std::move(message));
+    ++_eventsReceived;
 }
 
 bool ReplicationClient::ApplyEventSection(Core::BitReader &reader)
@@ -531,11 +528,10 @@ bool ReplicationClient::ApplyEventSection(Core::BitReader &reader)
             // the packet.
             if (!Core::Reflect::SkipMessageBody(reader))
                 return false;
-            ++_eventsUnhandled;
             continue;
         }
 
-        DispatchEvent(*meta, reader);
+        ReceiveEvent(*meta, reader);
     }
     return reader.Ok();
 }
@@ -550,7 +546,7 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
         return;
 
     // The body is stored with its id and length prefix back in front of it, so
-    // the deferred path decodes through the exact shape DispatchEvent sees in the
+    // the deferred path decodes through the exact shape ReceiveEvent sees in the
     // snapshot section rather than a second one that can disagree with it.
     Core::BitWriter body;
     body.WriteVarUInt32(pending.messageId.value); // wire write
@@ -604,7 +600,7 @@ void ReplicationClient::DrainAnnouncements()
         {
             Core::BitReader reader(it->bytes);
             (void)Core::Reflect::ReadMessageId(reader);
-            DispatchEvent(*meta, reader);
+            ReceiveEvent(*meta, reader);
         }
         it = _deferredAnnouncements.erase(it);
     }
@@ -1233,9 +1229,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
 
-    // After the state, never before: a handler for an event about an entity
-    // spawned in this same packet must find that entity already there, and the
-    // wire order plus this call site are the entire mechanism.
+    // After the state, never before: an event about an entity spawned in this
+    // same packet must find that entity already there to name it, and the wire
+    // order plus this call site are the entire mechanism.
     if (!ApplyEventSection(reader))
         return false;
 

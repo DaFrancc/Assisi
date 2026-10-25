@@ -16,6 +16,7 @@ target_sources(Assisi-App
     "include/Assisi/App/GameApp.hpp"
     "include/Assisi/App/InputSetup.hpp"
     "include/Assisi/App/LevelRuntime.hpp"
+    "include/Assisi/App/Network.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
     "include/Assisi/App/PlayerComponents.hpp"
     "include/Assisi/App/PlayerSettings.hpp"
@@ -36,9 +37,9 @@ target_sources(Assisi-App
     "src/AnimationSystems.cpp"
     "src/AudioSystems.cpp"
     "src/BlueprintVerbs.cpp"
-    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
-    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/PlayerSession.cpp>
-    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/NetworkedPlay.cpp>
+    "src/BlueprintReplication.cpp"
+    "src/PlayerSession.cpp"
+    "src/NetworkedPlay.cpp"
     "src/CameraBenchmark.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraCapture.cpp"
@@ -49,6 +50,7 @@ target_sources(Assisi-App
     "src/GameApp.cpp"
     "src/InputSetup.cpp"
     "src/LevelRuntime.cpp"
+    "src/Network.cpp"
     "src/OptionsConfig.cpp"
     "src/PlayerSettings.cpp"
     "src/PlayerSystems.cpp"
@@ -97,9 +99,7 @@ target_link_libraries(Assisi-App
 # adapters that let NetSync replicate blueprints without knowing what one is.
 # Acyclic: NetSync links Core/ECS/Math/Net/Physics and neither App nor Runtime,
 # which is exactly why the provider/expander seams exist.
-if (ASSISI_ENABLE_NETWORKING)
-  target_link_libraries(Assisi-App PUBLIC Assisi::NetSync)
-endif()
+target_link_libraries(Assisi-App PUBLIC Assisi::NetSync)
 
 # The engine's own systems and events. A declaration in a scanned header *is* the
 # registration — the generated OBJECT library is pulled fully into every final

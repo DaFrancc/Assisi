@@ -35,10 +35,8 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
-#if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
-#endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/InputBindings.hpp>
@@ -299,9 +297,7 @@ void EditorApp::OnStart()
 {
     // Before any session can exist: quantization is inside the handshake hash, so
     // it has to be settled before the first hello is written.
-#if defined(ASSISI_NETWORKING)
     Assisi::NetSync::LoadNetworkConfig();
-#endif
 
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
@@ -418,7 +414,6 @@ void EditorApp::OnStart()
     // path would stop testing the path it exists to test. The world it ends up
     // showing is the host's, built from the handshake in BuildJoinedWorld; whatever
     // level was loaded above is discarded on the way, and Stop brings it back.
-#if defined(ASSISI_NETWORKING)
     if (!_editorConfig.autoJoinEndpoint.empty())
     {
         std::string address = "127.0.0.1";
@@ -440,7 +435,6 @@ void EditorApp::OnStart()
         _netPort = static_cast<int32_t>(port);
         StartPlay(NetIntent::Join);
     }
-#endif // ASSISI_NETWORKING
 
     // --- Systems ---
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
@@ -958,12 +952,10 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // Must stay between the writeback above and Render()'s propagation: a bodied
     // mirror's visual offset is added *on top of* the pose the writeback just
     // wrote. A no-op unless this editor is a connected client.
-#if defined(ASSISI_NETWORKING)
     {
         ASSISI_PROFILE_SCOPE("net-smooth-view");
         SmoothNetView();
     }
-#endif
 
     // The editor camera is not part of the drawn scene, so nothing else propagates
     // it: refresh its world matrix before the view matrix is derived from it.
@@ -1098,9 +1090,7 @@ void EditorApp::OnFixedUpdate(float dt)
     // First in the tick, so a command that arrived for this tick is applied on this
     // tick rather than the next. It also advances the join state machine, which is
     // why it takes dt.
-#if defined(ASSISI_NETWORKING)
     PollNetSession(dt);
-#endif
 
     // **The play state is a flat switch: while it is not Playing, nothing steps
     // anywhere.** Pause freezes the whole session — logic and physics, in every
@@ -1134,25 +1124,21 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
-#if defined(ASSISI_NETWORKING)
                 if (_networkedPlay)
                 {
                     _networkedPlay->StepWorld(WorldContext(world, dt, _stepTick));
                     return;
                 }
-#endif
                 Assisi::App::StepWorld(WorldContext(world, dt, _stepTick));
             });
     }
 
     // Last: a snapshot describes the world at the *end* of the tick it is stamped
     // with, so it has to be built after everything that moves it.
-#if defined(ASSISI_NETWORKING)
     if (_networkedPlay)
     {
         _networkedPlay->EndStep();
     }
-#endif
 }
 
 std::optional<std::int64_t> EditorApp::SourceStamp(std::string_view vpath)
@@ -1237,20 +1223,16 @@ void EditorApp::OnUpdate(float dt)
     // A joining client builds the host's level; the fixed step that noticed the
     // handshake runs mid-frame. A failure inside raises _pendingStopPlay, which the
     // next block picks up on this same frame.
-#if defined(ASSISI_NETWORKING)
     if (_pendingJoinBuild)
     {
         _pendingJoinBuild = false;
         BuildJoinedWorld();
     }
-#endif
-#if defined(ASSISI_NETWORKING)
     if (_pendingStopPlay)
     {
         _pendingStopPlay = false;
         StopPlay();
     }
-#endif
 
     // Worlds requested from the Game panel.
     if (_pendingWorldLoad)
@@ -1366,7 +1348,6 @@ void EditorApp::OnUpdate(float dt)
     // Ordinary mirrored entities only. A blueprint instance's members resolve as
     // the expander places them — they have to, because that path has to work in a
     // build with no editor in it, and this loop is one.
-#if defined(ASSISI_NETWORKING)
     if (_networkedPlay != nullptr && _networkedPlay->Session().Client() != nullptr)
     {
         if (const std::uint64_t revision = _networkedPlay->Session().Client()->StructureRevision();
@@ -1376,7 +1357,6 @@ void EditorApp::OnUpdate(float dt)
             Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache);
         }
     }
-#endif
 
     // How far between its last two fixed steps each world is drawn. Editing,
     // paused or frozen, a world is drawn exactly: the accumulator goes on
@@ -1490,12 +1470,8 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
            { ApplyEditRebind(entity, id, present); };
 }
 
-// **Keep this definition here, not in EditorNet.cpp.** Everything it does is
-// networking, but it is a lifecycle override, and defining it in a file that
-// leaves the build leaves a hole in the vtable.
 void EditorApp::OnShutdown()
 {
-#if defined(ASSISI_NETWORKING)
     // Closing the window ends a play session. The two things that outlive this
     // process if nobody says otherwise are a socket and a fleet of viewer windows.
     // Deliberately *not* a full StopPlay: its scene restore re-resolves assets
@@ -1503,7 +1479,6 @@ void EditorApp::OnShutdown()
     // result.
     ShutdownNetSession();
     ShutdownPieClients();
-#endif
 
     // Before ~Application, which releases the device: the UI backend holds Vulkan
     // objects of its own, and freeing them through a destroyed device is a crash.
@@ -1518,14 +1493,7 @@ void EditorApp::OnShutdown()
 
 bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
 {
-#if defined(ASSISI_NETWORKING)
     return _scene != nullptr && _scene->IsAlive(entity) && _scene->Has<Assisi::NetSync::Mirrored>(entity);
-#else
-    // No replication, so nothing in this scene came from anyone else: every entity
-    // is authored here and therefore editable.
-    (void)entity;
-    return false;
-#endif
 }
 
 bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const
@@ -1895,12 +1863,10 @@ void EditorApp::DrawPanels()
             ASSISI_PROFILE_SCOPE("panel/game-control");
             DrawGameControlWindow();
         }
-#if defined(ASSISI_NETWORKING)
         {
             ASSISI_PROFILE_SCOPE("panel/network");
             DrawNetworkWindow();
         }
-#endif
     }
     {
         ASSISI_PROFILE_SCOPE("panel/entity-list");
@@ -1962,7 +1928,6 @@ void EditorApp::DrawPanels()
         ASSISI_PROFILE_SCOPE("panel/save-confirm-modal");
         DrawSaveConfirmModal();
     }
-#if defined(ASSISI_NETWORKING)
     if (!blueprintMode)
     {
         {
@@ -1970,7 +1935,6 @@ void EditorApp::DrawPanels()
             DrawHostUnsavedModal();
         }
     }
-#endif
 
     // One gesture up from the capture sweep below. The gizmo and the Inspector both move an
     // instance's placement and neither can see whether the other still holds it;

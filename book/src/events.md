@@ -120,7 +120,9 @@ that names an entity is never universal, because the entity is in one world.
   to push, and push it after the loop.
 - **Events aren't saved**, and in multiplayer they aren't sent over the
   network. They only exist on one machine, until the end of the frame or, for
-  those waiting for a step, until that step.
+  those waiting for a step, until that step. To tell another machine something,
+  send a message: it arrives there as an event, `Received<YourMessage>`, which
+  its systems read the same way. See [Messages](multiplayer.md#messages).
 
 > **Not yet available:** the engine doesn't raise input events (like "Jump was
 > pressed") yet, so input is still read by checking every frame. See

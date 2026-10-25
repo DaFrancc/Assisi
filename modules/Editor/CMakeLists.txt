@@ -104,20 +104,13 @@ target_link_libraries(Assisi-Editor
     imguizmo::imguizmo
 )
 
-# EditorNet.cpp is the multiplayer panel and the session plumbing — networking
-# from the first line, so it leaves the build entirely rather than being wrapped
-# in one enormous #if. Added with if()/target_sources rather than a $<BOOL:...>
-# genex so the SOURCES property stays a list of real filenames (see the same note
-# in modules/App/tests/CMakeLists.txt).
+# EditorNet.cpp is the multiplayer panel and the session plumbing.
 #
 # The link is PUBLIC because EditorApp.hpp names NetSync types in its own
 # interface — the session pointer and the level-identity accessors — so a
-# consumer of the editor compiles against them too. Guarded by ASSISI_NETWORKING
-# on both sides.
-if (ASSISI_ENABLE_NETWORKING)
-  target_sources(Assisi-Editor PRIVATE "src/EditorNet.cpp")
-  target_link_libraries(Assisi-Editor PUBLIC Assisi::NetSync)
-endif()
+# consumer of the editor compiles against them too.
+target_sources(Assisi-Editor PRIVATE "src/EditorNet.cpp")
+target_link_libraries(Assisi-Editor PUBLIC Assisi::NetSync)
 
 add_library(Assisi::Editor ALIAS Assisi-Editor)
 

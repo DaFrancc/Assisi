@@ -12,9 +12,7 @@
 #include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
-#if defined(ASSISI_NETWORKING)
-#    include <Assisi/NetSync/NetComponents.hpp>
-#endif
+#include <Assisi/NetSync/NetComponents.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -44,14 +42,8 @@ bool IsLocalPlayer(const ECS::Scene &scene, ECS::Entity entity, const LocalClien
     {
         return true;
     }
-#if defined(ASSISI_NETWORKING)
     const NetSync::ControlledBy *claim = scene.Get<NetSync::ControlledBy>(entity);
     return local.id != 0 && claim != nullptr && claim->client == local.id;
-#else
-    (void)scene;
-    (void)entity;
-    return false;
-#endif
 }
 
 /// The movement keys as a direction in the character's frame: x to the right,

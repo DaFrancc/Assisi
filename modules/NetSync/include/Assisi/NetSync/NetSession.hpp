@@ -33,6 +33,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <typeindex>
 #include <vector>
 
 namespace Assisi::NetSync
@@ -98,20 +99,17 @@ struct SessionStats
     std::uint64_t relevancyExits   = 0;
 
     // Messages. Split by *why* rather than lumped into one number, because a
-    // rate-limited client is misbehaving, a stale one has a clock problem, an
-    // out-of-range one is lying, and an unhandled one means somebody forgot to
-    // write a handler — four different conversations.
+    // rate-limited client is misbehaving, a stale one has a clock problem, and
+    // an out-of-range one is lying — different conversations.
     std::uint64_t intentsAccepted   = 0;
     std::uint64_t intentsRejected   = 0; ///< Wrong direction, out of range, or not theirs.
     std::uint64_t intentsRateLimited = 0;
     std::uint64_t intentsStale      = 0;
-    std::uint64_t intentsUnhandled  = 0;
     std::uint64_t eventsSent        = 0; ///< Host: written into snapshot sections.
     std::uint64_t announcementsSent = 0;
     std::uint32_t eventsHeld        = 0; ///< Waiting for the entity they are about.
     std::uint64_t eventsEvicted     = 0;
-    std::uint64_t eventsDispatched  = 0; ///< Client: handed to a handler.
-    std::uint64_t eventsUnhandled   = 0;
+    std::uint64_t eventsReceived    = 0; ///< Client: for the world's systems to read.
 };
 
 class NetSession
@@ -228,6 +226,14 @@ public:
     /// Tick(). A no-op for a host and for a session with no physics world.
     void AfterPhysicsStep();
 
+    /// @brief Push every message that has passed its checks since the last
+    /// call into @p events, as Received<T>: on a host the clients' intents, its
+    /// own, and its copy of its events; on a client the host's events. Call at
+    /// the start of each live tick, so that tick and the frame's later phases
+    /// read them and a client's rerun of an old tick never does. Offline,
+    /// nothing.
+    void Deliver(Core::EventQueue &events);
+
     /// @brief Take the input command a connected client sent for @p tick, or
     /// null. Host only; call once per client per tick from the simulation.
     const InputCommand *ConsumeInput(Net::ConnectionId client, std::uint64_t tick);
@@ -278,9 +284,9 @@ public:
     ///
     /// The same call in both roles, which is the point: a client sends it over
     /// the wire, and a host — whose player is not a connection and never will be
-    /// — submits it locally, where it enters the identical dispatch site with
-    /// sender = HostClientId and passes the identical checks. One door means
-    /// one, including for the person hosting.
+    /// — submits it locally, where it passes the identical checks with
+    /// sender = HostClientId. One door means one, including for the person
+    /// hosting.
     ///
     /// Sending an event fails to compile; direction is part of the type.
     ///
@@ -291,20 +297,12 @@ public:
         static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
                       "SendIntent takes an AMSG(intent, ...). An event is the authority's word about what "
                       "happened - send those from the server.");
-        if (_server)
-        {
-            _server->SubmitLocalIntent(intent);
-            return true;
-        }
-        if (_client)
-        {
-            // Stamped with the *clock's* command tick, not the local sim tick,
-            // for the same reason input is: the clock's whole job is to run far
-            // enough ahead that this lands just before the server simulates it.
-            return _client->SendIntent(intent, _clock ? _clock->CommandTick() : _simTick);
-        }
-        return false;
+        return SendIntent(&intent, typeid(T));
     }
+
+    /// @brief The type-erased half of SendIntent, for a caller that holds the
+    /// intent by its type, such as App::Network.
+    bool SendIntent(const void *intent, std::type_index type);
 
     [[nodiscard]] SessionRole Role() const { return _role; }
     [[nodiscard]] bool        IsActive() const { return _role != SessionRole::Offline; }

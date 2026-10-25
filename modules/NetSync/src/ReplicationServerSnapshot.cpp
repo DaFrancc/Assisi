@@ -627,10 +627,10 @@ void ReplicationServer::Tick(std::uint64_t simTick)
             SendSnapshot(connection);
     }
 
-    // End of tick, after every state mutation this tick produced, so a host-side
-    // handler sees a world at least as new as the message it is handling — what
-    // a remote client gets free from packet ordering.
-    DispatchHostEvents();
+    // End of tick, after every state mutation this tick produced, so what the
+    // host reads describes a world at least as new as the message — what a
+    // remote client gets free from packet ordering.
+    ReceiveHostEvents();
 }
 
 } // namespace Assisi::NetSync

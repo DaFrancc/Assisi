@@ -258,6 +258,219 @@ the host's, but a system that works from the tick alone, like `Oscillate`, puts
 things in the same place on both. A client's tick jumps once, when it first
 hears from the host.
 
+## Messages
+
+Replication sends what the world *is*: where things are, what's in each
+component. A **message** sends something that *happens* once, like a player
+asking to open a door, or the host announcing that a round has started. There
+are two kinds, and which way a message goes is part of its declaration:
+
+- An **intent** goes from a player to the host: "I'd like this to happen." The
+  host checks it and decides; it may do nothing at all.
+- An **event** goes from the host to the players: "this happened." Only the
+  host sends events, because the host decides what happens.
+
+### Declaring a message
+
+A message is a struct in a header in `apps/game/src/`, marked `AMSG`, with
+`AFIELD` on each member that travels:
+
+```cpp
+AMSG(intent, reliable)
+struct OpenDoor
+{
+    AFIELD(controlled) Assisi::ECS::Entity opener; // the character asking
+    AFIELD() Assisi::ECS::Entity door;
+};
+
+AMSG(event, unreliable)
+struct DoorCreaked
+{
+    AFIELD(subject) Assisi::ECS::Entity door;
+};
+
+AMSG(event, reliable, independent)
+struct RoundStarted
+{
+    AFIELD() int32_t round = 0;
+};
+```
+
+The first word is `intent` or `event`, the second `reliable` or `unreliable`:
+
+- **Reliable** messages always arrive, in the order they were sent. Use it for
+  anything a player must not miss.
+- **Unreliable** messages are sent once and can be lost. Use it for frequent,
+  cosmetic things, where a lost one doesn't matter because another comes soon.
+
+An entity field crosses the network as the same entity on the other machine,
+or as `NullEntity` if that machine doesn't have it.
+
+**An event names the entity it's about with `AFIELD(subject)`**, and only the
+players who can see that entity are told; one who can't see it yet is told
+once it can. An event about no entity in particular is `independent` instead,
+and goes to everyone. Each event is one or the other, and the build says so if
+it's neither or both.
+
+**An intent marks the entity it acts through with `AFIELD(controlled)`**: the
+host refuses the intent unless the sender controls that entity, usually their
+own character. Other entity fields are just data: a player can name any door.
+
+### Sending
+
+Every system reaches the network through `ctx.net`:
+
+| Call | Who receives it |
+|---|---|
+| `ctx.net.SendIntent(intent)` | The host. |
+| `ctx.net.Send(event)` | Everyone who can see the event's subject, or everyone for an `independent` event. The host too. |
+| `ctx.net.SendToController(entity, event)` | Only the player who controls `entity`, and nobody if no one does. |
+| `ctx.net.SendTo(player, event)` | Only that player. |
+| `ctx.net.SendExcept(player, event)` | Everyone `Send` would reach, except that player, for example one who already showed the result on their own screen. |
+
+The compiler stops you sending an event with `SendIntent` or an intent with
+`Send`. On a player's machine, which isn't the host, the four event calls send
+nothing, return `false` and log a warning the first time.
+
+`ctx.net` also tells a system what its machine is:
+
+| Call | Answer |
+|---|---|
+| `ctx.net.IsAuthority()` | `true` on the host and when playing alone: this machine decides what happens. |
+| `ctx.net.IsHost()`, `ctx.net.IsClient()` | Whether this machine is the host, or a player who joined one. |
+| `ctx.net.LocalClient()` | Which player this machine is. Compare it with a `ControlledBy` to ask "is this mine?" |
+
+### Reading
+
+A message arrives as an event of type `Received<YourMessage>`, which any system
+reads like any other event. Each one holds who sent it and the message:
+
+```cpp
+for (const auto &[sender, open] : ctx.events.Read<Received<OpenDoor>>())
+{
+    // sender is the player who asked; open.door is the door they named.
+}
+```
+
+`sender` is the player whose connection the message came over, never something
+the message claims, so the host can trust it. An event's sender is the host.
+
+A message is read at the start of the step after it arrives: that step reads
+it, and so do `Update` and `Ui` that frame, each once. A rollback never reads a
+message again. Several systems can react to the same message.
+
+### The checks an intent passes
+
+The host trusts nothing a player sends, so every intent passes these checks
+before any system sees it, in this order:
+
+1. **It is an intent.** An event sent by a player is refused.
+2. **It isn't part of a flood.** Each player can send each intent type at most 60
+   times a second; the rest are dropped.
+3. **It is about now.** An intent more than two seconds old, or a second ahead
+   of the host, is dropped.
+4. **It reads correctly.** A message whose bytes don't decode is dropped.
+5. **The sender controls its `controlled` entity.** An honest player can fail
+   this for a moment while control of an entity is being handed over.
+
+The network panel counts what each check refused. `AFIELD(min, max)` is not a
+check: it limits what can be typed into the inspector. Check that a value makes
+sense, such as how far a door is from the player opening it, in the system that
+reads it.
+
+The host's own player sends intents too, from the host's machine to itself.
+Those can't be flooded or late, so only the last two checks apply, and the
+control check is the same for the host as for everyone: a system answering
+intents works the same whoever asked.
+
+### Playing alone
+
+A game played alone, with no host and no players, is a host nobody joined:
+`ctx.net.IsAuthority()` is `true`, the one player is the host, and what a system
+sends reaches its own machine at the next step. An intent arrives from the host,
+and an event too, unless it was sent only to some other player, who isn't
+there. So the same systems work single-player and online, and you don't write
+the game twice.
+
+## Try it: ring a bell for everyone
+
+`levels/NetPile.alvl` has a bell: an entity with an `AudioEmitter` and the
+game's own `Bell` component. Open the level, pick **Host + 2 clients** and press
+**Run**. Press **B** in any of the three windows: the bell rings in all three.
+
+It takes three systems, in `apps/game/src/Bell.hpp` and `Bell.cpp`. First the
+two messages, an intent asking for the bell and an event saying it rang:
+
+```cpp
+AMSG(intent, reliable)
+struct RingBell
+{
+    AFIELD() int32_t bell = 0;
+};
+
+AMSG(event, reliable, independent)
+struct BellRang
+{
+    AFIELD() int32_t bell = 0;
+};
+```
+
+They name the bell by number, not as an entity, because the bell isn't
+`Replicated`: every machine has its own copy from the level file.
+
+A player asks:
+
+```cpp
+void AskForBellSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no keyboard
+    {
+        return;
+    }
+    if (ctx.input->IsKeyPressed(Assisi::Window::Key::B))
+    {
+        ctx.net.SendIntent(RingBell{.bell = kBellOnB}); // 1, the level's bell
+    }
+}
+```
+
+The host answers by telling everyone:
+
+```cpp
+void RingBellsSystem(Assisi::App::SystemContext &ctx)
+{
+    if (!ctx.net.IsAuthority())
+    {
+        return;
+    }
+    for (const auto &[sender, ring] : ctx.events.Read<Received<RingBell>>())
+    {
+        ctx.net.Send(BellRang{.bell = ring.bell});
+    }
+}
+```
+
+And every machine, the host included, plays its bell:
+
+```cpp
+void PlayBellsSystem(Assisi::App::SystemContext &ctx)
+{
+    for (const auto &[sender, rang] : ctx.events.Read<Received<BellRang>>())
+    {
+        for (auto [entity, bell] : ctx.world.scene.Query<Bell>())
+        {
+            if (bell.number == rang.bell)
+            {
+                ctx.events.Push(Assisi::App::PlaySound{.target = entity});
+            }
+        }
+    }
+}
+```
+
+Run the level with **Standalone** and press **B**: the bell still rings,
+because playing alone is a host nobody joined.
+
 ## Running a dedicated server
 
 The editor binary can also run as a server with no window:
@@ -282,34 +495,3 @@ get one.
 
 Remember the first rule from [Input](input.md): on a server there's no keyboard
 or mouse, so `ctx.input` is `nullptr`.
-
-<details>
-<summary>Building without networking</summary>
-
-If you're making a single-player game, you can leave the networking libraries out
-of the build entirely. It makes the first configure noticeably faster.
-
-Use a separate build folder so your normal one isn't affected:
-
-```bash
-cmake --preset gcc-debug -DASSISI_ENABLE_NETWORKING=OFF -B out/build/gcc-nonet
-cmake --build out/build/gcc-nonet
-```
-
-The engine, editor and game all still work. What's missing: the multiplayer
-modes in the Game panel, the `Replicated` component and the inspector's
-replication controls, and `--host` / `--connect`. Asking for them prints an
-error rather than silently doing nothing. `--server` still works, since it isn't
-networking.
-
-**A build folder remembers the setting.** Running the preset again without `-D`
-doesn't turn networking back on. To check what a folder is set to:
-
-```bash
-grep ASSISI_ENABLE_NETWORKING out/build/gcc-nonet/CMakeCache.txt
-```
-
-In your code, `#if defined(ASSISI_NETWORKING)` tells you whether networking is
-built in, for the rare code that has to know.
-
-</details>

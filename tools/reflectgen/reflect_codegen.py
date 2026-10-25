@@ -794,6 +794,7 @@ static const bool {var_name} = []() -> bool
         {{
 {deserialize}
         }},
+        &Assisi::Core::Reflect::DecodedMessage::Decode<T>,
     }});
     return true;
 }}();
@@ -805,9 +806,8 @@ def gen_message_forward(msg: MessageInfo) -> str:
     """A global-scope forward declaration of one message type.
 
     Forward-declared rather than included because specializing on an incomplete
-    type is legal, and including the real headers would close a cycle: a header
-    that declares handlers already includes the dispatch header the traits are
-    part of.
+    type is legal, and Core includes the traits, so including the real headers
+    would have Core include every module's.
     """
     return (''.join(f'namespace {ns} {{ ' for ns in msg.namespaces)
             + f'struct {msg.name}; '
@@ -886,45 +886,6 @@ static const bool {var_name} = []() -> bool
 """
 
 
-def _gen_handler_block(handler) -> str:
-    """Bind one AMSG_HANDLER declaration to its message type.
-
-    Emitted **inside the handler's own namespace**, and that is the whole answer
-    to "which function does this call". The message type is spelled exactly as
-    the declaration spelled it and is resolved in exactly the scope the
-    declaration was resolved in, so the binding names the same type the author
-    named — there is no second lookup that could find something else. The
-    handler itself is then written fully qualified and anchored at global scope,
-    so nothing nearer can shadow it, and the address is taken through an
-    explicit signature cast, so an overload set collapses to precisely the
-    declared shape at compile time.
-
-    Two handlers for one message type is caught by the whole-tree check, which is
-    the only scope where that question can be asked — see reflectgen.py's
-    --check-handlers.
-    """
-    open_ns  = ''.join(f'namespace {ns} {{ ' for ns in handler.namespaces)
-    close_ns = ''.join('} ' for _ in handler.namespaces)
-    scope    = '::'.join(['', *handler.namespaces, handler.name]) if handler.namespaces else f'::{handler.name}'
-    var      = f'_reflectgen_bind_{handler.name}_{handler.message.replace("::", "_")}'
-
-    return f"""\
-// ── handler: {handler.name} → {handler.message} {'─' * max(0, 40 - len(handler.name) - len(handler.message))}
-{open_ns}namespace {{
-const bool {var} = []() -> bool
-{{
-    // Resolved in the declaration's own scope, so it names the same type the
-    // declaration named — never whatever a second lookup elsewhere might find.
-    using MsgT = {handler.message};
-    Assisi::NetSync::MessageDispatch::Instance().Bind<MsgT>(
-        static_cast<void (*)(Assisi::NetSync::NetContext &, const MsgT &)>(&{scope}));
-    return true;
-}}();
-}} {close_ns}
-
-"""
-
-
 def gen_system_registration(system) -> str:
     """One ASYSTEM declaration's catalog entry.
 
@@ -934,8 +895,8 @@ def gen_system_registration(system) -> str:
     static initializer nobody references still runs.
 
     The function is wrapped in a lambda with an explicit fully-qualified call
-    rather than taken by address, for the same reason handler binding is: nothing
-    about which function runs should depend on name lookup.
+    rather than taken by address: nothing about which function runs should
+    depend on name lookup.
     """
     names   = lambda values: '{' + ', '.join(f'"{v}"' for v in values) + '}'
     context = 'RenderContext' if system.is_render else 'SystemContext'
@@ -1039,10 +1000,9 @@ bool StructTraits<::{comp.fqn}>::FromJson(const nlohmann::json &j, void *out_ptr
 
 
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
-                 handlers: Optional[list] = None, systems: Optional[list] = None,
-                 events: Optional[list] = None, allow_c_arrays: bool = False) -> str:
+                 systems: Optional[list] = None, events: Optional[list] = None,
+                 allow_c_arrays: bool = False) -> str:
     messages = messages or []
-    handlers = handlers or []
     systems  = systems or []
     events   = events or []
 
@@ -1163,9 +1123,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         # An asset type's construct hook allocates with std::nothrow.
         includes.append('#include <new>')
     if messages:
+        includes.append('#include <Assisi/Core/Reflect/DecodedMessage.hpp>')
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
-    if handlers:
-        includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
     if systems:
         includes.append('#include <Assisi/App/SystemCatalog.hpp>')
     # The default-constructibility guard each event registration carries, and
@@ -1353,13 +1312,6 @@ static const bool {var_name} = []() -> bool
         blocks.append(_gen_message_block(msg))
 
     blocks.append('} // namespace\n')
-
-    # Handler bindings sit *outside* the file's anonymous namespace because each
-    # one opens the handler's own namespace to resolve the message type there.
-    # They keep their own inner anonymous namespace, so the registrar objects are
-    # still internal to this translation unit.
-    for handler in handlers:
-        blocks.append('\n' + _gen_handler_block(handler))
 
     for system in systems:
         blocks.append('\n' + gen_system_registration(system))

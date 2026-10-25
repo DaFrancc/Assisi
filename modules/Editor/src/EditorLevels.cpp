@@ -1101,9 +1101,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // client and respawn a different one; loading locally as a client means fighting
     // the host over the same scene. End the session and let the player start a new
     // one.
-#if defined(ASSISI_NETWORKING)
     ShutdownNetSession();
-#endif
 
     // The engine does the whole load: deserialize, drop the old asset set, evict the
     // renderer's cached bindings, re-resolve assets and rebuild physics. Everything

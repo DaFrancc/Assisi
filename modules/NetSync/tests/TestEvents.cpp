@@ -16,22 +16,23 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Received.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
-#include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 #include <Assisi/NetSync/TestTransport.hpp>
 
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 using namespace Assisi;
@@ -71,19 +72,37 @@ struct Harness
     ReplicationServer server;
     std::uint64_t tick = 0;
 
+    /// The host world's events, never ended, so they hold everything delivered.
+    Core::EventQueue hostEvents;
+
     struct Peer
     {
         std::unique_ptr<ECS::Scene>        scene;
         std::unique_ptr<ReplicationClient> client;
+        /// This client's world's events, never ended either.
+        Core::EventQueue events;
         Net::ConnectionId serverSide = Net::InvalidConnection;
         Net::ConnectionId clientSide = Net::InvalidConnection;
     };
 
     std::vector<Peer> peers;
 
-    explicit Harness(ReplicationConfig config = {}) : server(*transport, serverScene, nullptr, config)
+    explicit Harness(ReplicationConfig config = {}) : server(*transport, serverScene, nullptr, config) {}
+
+    /// Every @p T the host's systems have been handed so far.
+    template <typename T>
+    std::span<const Received<T>> HostReceived()
     {
-        HandlerLog::Instance().Clear();
+        server.Deliver(hostEvents);
+        return hostEvents.Read<Received<T>>();
+    }
+
+    /// Every @p T client @p peer's systems have been handed so far.
+    template <typename T>
+    std::span<const Received<T>> PeerReceived(std::size_t peer)
+    {
+        peers[peer].client->Deliver(peers[peer].events);
+        return peers[peer].events.Read<Received<T>>();
     }
 
     std::size_t AddPeer()
@@ -156,10 +175,10 @@ TEST_CASE("an all-relevant event reaches every client that can see its subject")
     harness.server.Send(TestBurst{subject, /*intensity=*/ 12});
     harness.Step(6);
 
-    // Both clients hold the entity, so both are told.
-    CHECK(harness.peers[watcher].client->EventsDispatched() == 1);
-    CHECK(harness.peers[bystander].client->EventsDispatched() == 1);
-    CHECK(HandlerLog::Instance().burstCalls == 3); // two clients, plus the host
+    // Both clients hold the entity, so both are told, and so is the host.
+    CHECK(harness.PeerReceived<TestBurst>(watcher).size() == 1);
+    CHECK(harness.PeerReceived<TestBurst>(bystander).size() == 1);
+    CHECK(harness.HostReceived<TestBurst>().size() == 1);
     CHECK(harness.Diagnostics(watcher).eventsSent == 1);
 }
 
@@ -178,8 +197,34 @@ TEST_CASE("the host is told about its own world's events")
     harness.server.Send(TestBurst{subject, /*intensity=*/ 3});
     harness.Step(2);
 
-    CHECK(HandlerLog::Instance().burstCalls >= 1);
-    CHECK(HandlerLog::Instance().lastBurst.intensity == 3);
+    const std::span<const Received<TestBurst>> received = harness.HostReceived<TestBurst>();
+    REQUIRE(received.size() == 1);
+    const auto &[sender, burst] = received.front();
+    CHECK(sender == HostClientId);
+    CHECK(burst.intensity == 3);
+}
+
+TEST_CASE("a client reads an event from the host, once")
+{
+    Harness harness;
+    const std::size_t peer = harness.AddPeer();
+    harness.Step(4);
+
+    const ECS::Entity subject = SpawnReplicated(harness.serverScene);
+    harness.Step(8);
+
+    harness.server.Send(TestBurst{subject, /*intensity=*/ 6});
+    harness.Step(6);
+
+    const std::span<const Received<TestBurst>> received = harness.PeerReceived<TestBurst>(peer);
+    REQUIRE(received.size() == 1);
+    const auto &[sender, burst] = received.front();
+    CHECK(sender == HostClientId);
+    CHECK(burst.intensity == 6);
+    CHECK(burst.source == harness.peers[peer].client->EntityOf(harness.server.NetIdOf(subject)));
+
+    harness.Step(6);
+    CHECK(harness.PeerReceived<TestBurst>(peer).size() == 1);
 }
 
 TEST_CASE("an event about an entity a connection cannot see never reaches it")
@@ -210,12 +255,12 @@ TEST_CASE("an event about an entity a connection cannot see never reaches it")
     REQUIRE(harness.peers[seeing].client->EntityOf(harness.server.NetIdOf(subject)) != ECS::NullEntity);
     REQUIRE(harness.peers[blind].client->EntityOf(harness.server.NetIdOf(subject)) == ECS::NullEntity);
 
-    const std::uint64_t before = harness.peers[blind].client->EventsDispatched();
+    const std::uint64_t before = harness.peers[blind].client->EventsReceived();
     harness.server.Send(TestBurst{subject, /*intensity=*/ 1});
     harness.Step(8);
 
-    CHECK(harness.peers[seeing].client->EventsDispatched() == 1);
-    CHECK(harness.peers[blind].client->EventsDispatched() == before);
+    CHECK(harness.peers[seeing].client->EventsReceived() == 1);
+    CHECK(harness.peers[blind].client->EventsReceived() == before);
     CHECK(harness.Diagnostics(blind).eventsSent == 0);
 }
 
@@ -250,8 +295,8 @@ TEST_CASE("an event is scoped by the field marked subject, not by the one declar
     harness.server.Send(TestKnockback{instigator, victim, /*force=*/ 9});
     harness.Step(8);
 
-    CHECK(harness.peers[nearVictim].client->EventsDispatched() == 1);
-    CHECK(harness.peers[nearInstigator].client->EventsDispatched() == 0);
+    CHECK(harness.peers[nearVictim].client->EventsReceived() == 1);
+    CHECK(harness.peers[nearInstigator].client->EventsReceived() == 0);
 }
 
 TEST_CASE("a non-subject reference the recipient has not been told about arrives null")
@@ -277,15 +322,15 @@ TEST_CASE("a non-subject reference the recipient has not been told about arrives
 
     REQUIRE(harness.peers[peer].client->EntityOf(harness.server.NetIdOf(instigator)) == ECS::NullEntity);
 
-    HandlerLog::Instance().Clear();
     harness.server.Send(TestKnockback{instigator, victim, /*force=*/ 4});
     harness.Step(8);
 
     // It arrived — the subject is visible — and carried its payload intact.
-    REQUIRE(harness.peers[peer].client->EventsDispatched() == 1);
-    CHECK(HandlerLog::Instance().lastKnockback.force == 4);
+    const std::span<const Received<TestKnockback>> received = harness.PeerReceived<TestKnockback>(peer);
+    REQUIRE(received.size() == 1);
+    CHECK(received.front().message.force == 4);
     // ...but the entity the recipient was never told about is not invented for it.
-    CHECK(HandlerLog::Instance().lastKnockback.instigator == ECS::NullEntity);
+    CHECK(received.front().message.instigator == ECS::NullEntity);
 }
 
 TEST_CASE("an event whose subject is null reaches no client, and is counted")
@@ -308,12 +353,11 @@ TEST_CASE("an event whose subject is null reaches no client, and is counted")
     harness.Step(8);
     (void)subject;
 
-    HandlerLog::Instance().Clear();
     harness.server.Send(TestBurst{ECS::NullEntity, /*intensity=*/ 5});
     harness.Step(8);
 
-    CHECK(harness.peers[first].client->EventsDispatched() == 0);
-    CHECK(harness.peers[second].client->EventsDispatched() == 0);
+    CHECK(harness.peers[first].client->EventsReceived() == 0);
+    CHECK(harness.peers[second].client->EventsReceived() == 0);
     CHECK(harness.Diagnostics(first).eventsSent == 0);
     CHECK(harness.Diagnostics(second).eventsSent == 0);
 
@@ -322,8 +366,9 @@ TEST_CASE("an event whose subject is null reaches no client, and is counted")
     CHECK(harness.server.HostDiagnostics().eventsUnscoped == 1);
 
     // The authority still saw it.
-    CHECK(HandlerLog::Instance().burstCalls == 1);
-    CHECK(HandlerLog::Instance().lastBurst.intensity == 5);
+    const std::span<const Received<TestBurst>> received = harness.HostReceived<TestBurst>();
+    REQUIRE(received.size() == 1);
+    CHECK(received.front().message.intensity == 5);
 }
 
 TEST_CASE("a null subject withholds a reliable announcement too")
@@ -360,9 +405,10 @@ TEST_CASE("an independent event goes to everyone, because there is nothing to sc
     harness.server.Send(TestAnnounce{ /*round=*/ 4});
     harness.Step(6);
 
-    CHECK(harness.peers[first].client->EventsDispatched() == 1);
-    CHECK(harness.peers[second].client->EventsDispatched() == 1);
-    CHECK(HandlerLog::Instance().lastAnnounce.round == 4);
+    CHECK(harness.peers[first].client->EventsReceived() == 1);
+    CHECK(harness.peers[second].client->EventsReceived() == 1);
+    REQUIRE(harness.PeerReceived<TestAnnounce>(first).size() == 1);
+    CHECK(harness.PeerReceived<TestAnnounce>(first).front().message.round == 4);
 }
 
 TEST_CASE("a directed event reaches exactly its recipient")
@@ -379,8 +425,8 @@ TEST_CASE("a directed event reaches exactly its recipient")
     harness.server.SendToController(pawn, TestBurst{pawn, /*intensity=*/ 7});
     harness.Step(6);
 
-    CHECK(harness.peers[owner].client->EventsDispatched() == 1);
-    CHECK(harness.peers[someone].client->EventsDispatched() == 0);
+    CHECK(harness.peers[owner].client->EventsReceived() == 1);
+    CHECK(harness.peers[someone].client->EventsReceived() == 0);
 }
 
 TEST_CASE("a directed event with nobody to direct it at is dropped and counted")
@@ -398,7 +444,7 @@ TEST_CASE("a directed event with nobody to direct it at is dropped and counted")
     harness.Step(4);
 
     CHECK(harness.server.HostDiagnostics().eventsUndeliverable == 1);
-    CHECK(harness.peers[0].client->EventsDispatched() == 0);
+    CHECK(harness.peers[0].client->EventsReceived() == 0);
 }
 
 TEST_CASE("except-instigator excludes exactly the instigator")
@@ -417,8 +463,8 @@ TEST_CASE("except-instigator excludes exactly the instigator")
     harness.server.SendExcept(instigator, TestBurst{subject, /*intensity=*/ 2});
     harness.Step(6);
 
-    CHECK(harness.peers[actor].client->EventsDispatched() == 0);
-    CHECK(harness.peers[observer].client->EventsDispatched() == 1);
+    CHECK(harness.peers[actor].client->EventsReceived() == 0);
+    CHECK(harness.peers[observer].client->EventsReceived() == 1);
 }
 
 TEST_CASE("the host can be the excluded instigator like anyone else")
@@ -430,14 +476,12 @@ TEST_CASE("the host can be the excluded instigator like anyone else")
     const ECS::Entity subject = SpawnReplicated(harness.serverScene);
     harness.Step(8);
 
-    const std::uint32_t before = HandlerLog::Instance().burstCalls;
     harness.server.SendExcept(HostClientId, TestBurst{subject, /*intensity=*/ 5});
     harness.Step(6);
 
-    // The remote observer heard it; the host — which is the only other listener
-    // — did not, so the total moved by exactly one.
-    CHECK(harness.peers[observer].client->EventsDispatched() == 1);
-    CHECK(HandlerLog::Instance().burstCalls == before + 1);
+    // The remote observer heard it; the host did not.
+    CHECK(harness.PeerReceived<TestBurst>(observer).size() == 1);
+    CHECK(harness.HostReceived<TestBurst>().empty());
 }
 
 TEST_CASE("an event about an entity spawned in the same packet arrives after the spawn")
@@ -456,10 +500,11 @@ TEST_CASE("an event about an entity spawned in the same packet arrives after the
 
     const NetId netId = harness.server.NetIdOf(subject);
     REQUIRE(harness.peers[peer].client->EntityOf(netId) != ECS::NullEntity);
-    CHECK(harness.peers[peer].client->EventsDispatched() == 1);
-    // The handler saw a resolved local mirror, not a null handle — which is what
+    // The client read a resolved local mirror, not a null handle — which is what
     // "after the spawn" actually means.
-    CHECK(HandlerLog::Instance().lastBurst.source != ECS::NullEntity);
+    const std::span<const Received<TestBurst>> received = harness.PeerReceived<TestBurst>(peer);
+    REQUIRE(received.size() == 1);
+    CHECK(received.front().message.source == harness.peers[peer].client->EntityOf(netId));
 }
 
 TEST_CASE("an event about an entity the connection cannot hold yet is held, then delivered once")
@@ -483,13 +528,13 @@ TEST_CASE("an event about an entity the connection cannot hold yet is held, then
     harness.Step(2);
 
     // Not yet: the client has not been told the entity exists.
-    CHECK(harness.peers[peer].client->EventsDispatched() == 0);
+    CHECK(harness.peers[peer].client->EventsReceived() == 0);
     CHECK(harness.Diagnostics(peer).eventsHeld == 1);
 
     harness.Step(200);
 
     // Exactly once, when the entity finally lands.
-    CHECK(harness.peers[peer].client->EventsDispatched() == 1);
+    CHECK(harness.peers[peer].client->EventsReceived() == 1);
     CHECK(harness.Diagnostics(peer).eventsHeld == 0);
     CHECK(harness.Diagnostics(peer).eventsSent == 1);
 }
@@ -519,7 +564,7 @@ TEST_CASE("a held event whose subject despawns is evicted and counted")
 
     CHECK(harness.Diagnostics(peer).eventsEvicted == 1);
     CHECK(harness.Diagnostics(peer).eventsHeld == 0);
-    CHECK(harness.peers[peer].client->EventsDispatched() == 0);
+    CHECK(harness.peers[peer].client->EventsReceived() == 0);
 }
 
 TEST_CASE("a held queue at its cap drops the oldest and counts it")
@@ -548,7 +593,7 @@ TEST_CASE("a held queue at its cap drops the oldest and counts it")
 TEST_CASE("a reliable announcement waits for the world it describes")
 {
     // The control lane is not the snapshot lane, so an announcement can and does
-    // overtake the state it is about. The tick stamp is what stops a handler
+    // overtake the state it is about. The tick stamp is what stops a system
     // from acting on a world that has not happened yet.
     Harness harness;
     const std::size_t peer = harness.AddPeer();
@@ -557,9 +602,10 @@ TEST_CASE("a reliable announcement waits for the world it describes")
     harness.server.Send(TestAnnounce{ /*round=*/ 9});
     harness.Step(6);
 
-    CHECK(harness.peers[peer].client->EventsDispatched() == 1);
+    CHECK(harness.peers[peer].client->EventsReceived() == 1);
     CHECK(harness.peers[peer].client->DeferredAnnouncementCount() == 0);
-    CHECK(HandlerLog::Instance().lastAnnounce.round == 9);
+    REQUIRE(harness.PeerReceived<TestAnnounce>(peer).size() == 1);
+    CHECK(harness.PeerReceived<TestAnnounce>(peer).front().message.round == 9);
     CHECK(harness.Diagnostics(peer).announcementsSent == 1);
     // ...and it went out reliably rather than riding a snapshot.
     CHECK(harness.Diagnostics(peer).eventsSent == 0);

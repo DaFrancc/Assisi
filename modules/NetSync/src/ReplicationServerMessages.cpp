@@ -254,17 +254,16 @@ struct IntentGate
     ConnectionDiagnostics *diagnostics = nullptr;
 };
 
-/// Step 6 of the dispatch order, on the decoded value.
+/// Step 6 of the receive order, on the decoded value.
 ///
 /// Only ownership is checked here. What a field's value *means* — whether a
-/// number is plausible, whether a combination makes sense — is the handler's
-/// question, answered where the value is visible and where the response can be
-/// something other than silence. The gate answers the one question a handler
-/// cannot: whether this sender is entitled to act through this entity at all.
-bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message, void *userData)
+/// number is plausible, whether a combination makes sense — is the question of
+/// the system that reads it, answered where the value is visible and where the
+/// response can be something other than silence. The gate answers the one
+/// question a system cannot: whether this sender is entitled to act through
+/// this entity at all.
+bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message, const IntentGate &gate)
 {
-    IntentGate &gate = *static_cast<IntentGate *>(userData);
-
     // Step 6 — control. Only fields the author marked as the intent's *subject*:
     // checking every entity reference would forbid a client from ever naming an
     // entity it does not own, which is most of them.
@@ -350,32 +349,36 @@ void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &re
     }
 
     // Steps 5 through 7.
-    DispatchIntent(connection.clientId, connection.diagnostics, *meta, reader);
+    ReceiveIntent(connection.clientId, connection.diagnostics, *meta, reader);
 }
 
-void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
-                                       const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
+void ReplicationServer::ReceiveIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
+                                      const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
 {
-    IntentGate gate{this, &_scene, sender, &diagnostics};
-    NetContext context{sender, _session, &_scene};
-
     // References arrive naming the sender's world — entity handles as NetIds,
     // instance ids as their block's base — and have to become local before a
-    // handler, or the control check, can do anything with them.
+    // system, or the control check, can do anything with them.
     const Core::Reflect::CodecContext codec = DecodeContext();
 
-    const std::uint64_t before = diagnostics.intentsNotYours;
-
-    // Step 5 (decode), 6 (the gate), 7 (the handler) all happen inside, because
-    // the gate needs the decoded value and the handler needs it after.
-    if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec, &ValidateIntent, &gate))
+    // Step 5 — decode.
+    Core::Reflect::DecodedMessage message = meta.decode(meta, reader, &codec);
+    if (!message)
     {
-        ++diagnostics.intentsUnhandled;
+        ++diagnostics.intentsMalformed;
         return;
     }
 
-    if (diagnostics.intentsNotYours == before)
-        ++diagnostics.intentsAccepted;
+    // Step 6 — the gate, on the decoded value.
+    const IntentGate gate{this, &_scene, sender, &diagnostics};
+    if (!ValidateIntent(meta, message.Value(), gate))
+    {
+        return;
+    }
+
+    // Step 7 — held for the start of the next tick, when the world's systems
+    // read it.
+    _inbox.Hold(sender, std::move(message));
+    ++diagnostics.intentsAccepted;
 }
 
 std::size_t ReplicationServer::EventFloorBytes(const Connection &connection) const
@@ -508,8 +511,8 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
 
     const auto deliverToHost = [&]()
                                {
-                                   // No transport, so no reliability distinction: the host's delivery is a
-                                   // queue drained at the end of its tick, which gives it the same "the
+                                   // No transport, so no reliability distinction: the host's copy is a
+                                   // queue decoded at the end of its tick, which gives it the same "the
                                    // world is at least as new as the message" property that packet
                                    // ordering gives a remote client.
                                    _hostEvents.emplace_back(id, bytes);
@@ -641,25 +644,17 @@ void ReplicationServer::WriteEventSection(Connection &connection, Core::BitWrite
     connection.diagnostics.eventsHeld = static_cast<std::uint32_t>(connection.pendingEvents.size());
 }
 
-void ReplicationServer::DispatchHostEvents()
+void ReplicationServer::ReceiveHostEvents()
 {
     if (_hostEvents.empty())
         return;
 
-    // Swapped out first: a handler may send further events, and appending to
-    // the vector being iterated would reallocate under it, or run this tick's
-    // consequences inside this tick's drain.
-    std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> events;
-    events.swap(_hostEvents);
-
     // The same decode a remote event gets: the host reads its own copy back
-    // through the wire's translation rather than around it, so a handler cannot
+    // through the wire's translation rather than around it, so a system cannot
     // come to depend on ids only the host would ever see.
     const Core::Reflect::CodecContext codec = DecodeContext();
 
-    NetContext context{HostClientId, _session, &_scene};
-
-    for (const auto &[id, bytes] : events)
+    for (const auto &[id, bytes] : _hostEvents)
     {
         const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(id);
         if (meta == nullptr)
@@ -667,12 +662,16 @@ void ReplicationServer::DispatchHostEvents()
 
         Core::BitReader reader(bytes);
         (void)Core::Reflect::ReadMessageId(reader);
-        if (!MessageDispatch::Instance().Dispatch(*meta, context, reader, &codec))
-            ++_hostDiagnostics.intentsUnhandled;
+        Core::Reflect::DecodedMessage message = meta->decode(*meta, reader, &codec);
+        if (message)
+        {
+            _inbox.Hold(HostClientId, std::move(message));
+        }
     }
+    _hostEvents.clear();
 }
 
-void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index type)
+void ReplicationServer::SubmitLocalIntent(const void *intent, std::type_index type)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
     const Core::Reflect::MessageMeta *meta     = registry.ById(registry.IdOf(type));
@@ -693,7 +692,7 @@ void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index 
     // rate-limit, and no clock skew to be stale against — the host *is* the
     // clock. Decoding onwards is identical, range and control checks included:
     // the host being trusted is not the same as the host being correct.
-    DispatchIntent(HostClientId, _hostDiagnostics, *meta, reader);
+    ReceiveIntent(HostClientId, _hostDiagnostics, *meta, reader);
 }
 
 } // namespace Assisi::NetSync
