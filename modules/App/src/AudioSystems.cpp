@@ -222,7 +222,7 @@ void AdvanceEmitter(Runtime::AudioEmitter &emitter, std::shared_ptr<const Audio:
     }
 }
 
-void AudioEmitterSystem(SystemContext &ctx)
+void PlayWorldSounds(const SystemContext &ctx)
 {
     if (ctx.mixer == nullptr)
     {

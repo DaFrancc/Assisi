@@ -2,7 +2,7 @@
 
 /// @file TestAudioEmitter.cpp
 /// @brief What an emitter does with requests when it is full, how it pauses and
-/// stops, and what the AudioEmitters system does with events, a paused world, a
+/// stops, and what playing a world's sounds does with events, a paused world, a
 /// destroyed emitter and the default emitter.
 ///
 /// The mixer is a recording stand-in, so each test reads what the emitter asked
@@ -11,6 +11,7 @@
 #include <Assisi/App/AudioSystems.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Audio/BusLayout.hpp>
 #include <Assisi/Audio/Clip.hpp>
 #include <Assisi/Audio/SoundAsset.hpp>
@@ -175,7 +176,7 @@ std::vector<std::byte> ReadFixture(std::string_view name)
 }
 
 /// A world, a recording mixer and a sound already loaded in the asset store:
-/// what the AudioEmitters system needs to run a frame.
+/// what playing a world's sounds needs to run a frame.
 struct Stage
 {
     Core::JobSystem jobs{kWorkers};
@@ -212,7 +213,7 @@ struct Stage
         return entity;
     }
 
-    /// What the AudioEmitters system runs under in @p in.
+    /// What @p in's sounds are played under.
     App::SystemContext Context(App::World &in)
     {
         return {.world = in,
@@ -227,12 +228,12 @@ struct Stage
                 .assets = &store};
     }
 
-    /// One frame: the mixer's update first, as the application runs it, then the system.
+    /// One frame: the mixer's update first, as the application runs it, then the sounds.
     void RunFrame()
     {
         output.held.clear();
         App::SystemContext ctx = Context(world);
-        App::AudioEmitterSystem(ctx);
+        App::PlayWorldSounds(ctx);
         world.events.Flush();
     }
 };
@@ -408,6 +409,20 @@ TEST_CASE("PlaySound plays its target's emitter, and one naming no entity plays 
     CHECK(stage.output.played.size() == 1);
 }
 
+TEST_CASE("A sound a Ui system asks for plays the same frame")
+{
+    // A button's click sound is asked for by whatever answers the click, which
+    // is last in the frame's logic; it is heard with the frame that shows it.
+    Stage stage;
+    const ECS::Entity speaker = stage.Emitter();
+    stage.world.systems.Register(App::SystemPhase::Ui, "Click", [speaker](App::SystemContext &ctx)
+                                 { ctx.events.Push(App::PlaySound{.target = speaker}); });
+
+    App::UpdateWorld(stage.Context(stage.world));
+
+    CHECK(stage.output.played.size() == 1);
+}
+
 TEST_CASE("A PlaySound in one world plays that world's emitter, not one with the same id in another")
 {
     // Two worlds' first entities share an id, so the event alone cannot say
@@ -423,8 +438,8 @@ TEST_CASE("A PlaySound in one world plays that world's emitter, not one with the
     App::SystemContext inHere = stage.Context(stage.world);
     App::SystemContext inThere = stage.Context(other);
     inHere.events.Push(App::PlaySound{.target = here});
-    App::AudioEmitterSystem(inHere);
-    App::AudioEmitterSystem(inThere);
+    App::PlayWorldSounds(inHere);
+    App::PlayWorldSounds(inThere);
 
     CHECK(stage.world.scene.Get<AudioEmitter>(here)->playing.size() == 1);
     CHECK(other.scene.Get<AudioEmitter>(there)->playing.empty());

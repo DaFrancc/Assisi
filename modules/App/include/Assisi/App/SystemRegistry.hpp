@@ -5,7 +5,7 @@
 /// @brief Ordered per-phase system registry with dependency-based scheduling.
 ///
 /// Two context types exist depending on the phase:
-///   - SystemContext  — game logic phases (PreUpdate, FixedUpdate, Update, PostUpdate)
+///   - SystemContext  — game logic phases (PreUpdate, FixedUpdate, Update, Ui)
 ///   - RenderContext  — render phase only (adds view/projection matrices)
 ///
 /// @par Example
@@ -102,7 +102,7 @@ struct QuitRequested
 /// SystemContext, which sees World only declared, can build its route from it.
 [[nodiscard]] Core::EventQueue &WorldEvents(World &world);
 
-/// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
+/// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, Ui).
 ///
 /// Carries the **world**, not a bare scene: a system reaches its entities
 /// through `ctx.world.scene` and its bodies through `ctx.world.physics`, which
@@ -114,9 +114,9 @@ struct SystemContext
 
     /// @brief The fixed-step tick this frame belongs to — the engine's network
     /// clock. Incremented once per iteration of the fixed-update loop, so it
-    /// advances by one per FixedUpdate and repeats across the Update/PostUpdate
-    /// phases of the same frame. Snapshots are stamped with it and input
-    /// commands target it.
+    /// advances by one per FixedUpdate. A per-frame phase sees the last tick
+    /// run: PreUpdate the one before the frame's fixed steps, Update and Ui the
+    /// frame's last. Snapshots are stamped with it and input commands target it.
     std::uint64_t simTick;
 
     /// Null in headless hosts (dedicated server, tests): an InputContext needs a
@@ -236,14 +236,17 @@ enum class SystemPhase : std::uint8_t
     ///
     /// Where anything that reacts to what the simulation just did belongs: a
     /// contact response, a character's post-step footing, a network snapshot of
-    /// the tick. The distinction from @ref PostUpdate is per-tick versus
-    /// per-frame — a frame that runs three fixed steps runs this three times and
-    /// PostUpdate once, so a system that must see every tick cannot use the
-    /// latter.
+    /// the tick. The distinction from @ref Update is per-tick versus per-frame —
+    /// a frame that runs three fixed steps runs this three times and Update
+    /// once, so a system that must see every tick cannot use the latter.
     PostFixedUpdate = 4,
 
-    Update = 5,     ///< Once per render frame; main game logic.
-    PostUpdate = 6, ///< After game logic; transform propagation and cleanup.
+    Update = 5, ///< Once per render frame, after the frame's fixed steps; main game logic.
+
+    /// Once per render frame, after every Update system: where systems write
+    /// what the frame's screens show. The engine then plays the frame's sounds,
+    /// so one asked for here is heard this frame, and lays the screens out.
+    Ui = 6,
     Count_
 };
 

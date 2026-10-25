@@ -104,8 +104,8 @@ enum class NestVerdict : std::uint8_t
 ///  - Game systems tick ONLY while the editor is Playing (F5) — never while
 ///    Editing or Paused. The editor runs their PreUpdate phase from
 ///    OnPreUpdate, before the frame's fixed steps; their FixedUpdate phase from
-///    OnFixedUpdate just before the physics step; and their Update/PostUpdate
-///    phases (in that order, after its own systems) from OnUpdate.
+///    OnFixedUpdate just before the physics step; and their Update/Ui phases
+///    (in that order, after its own systems) from OnUpdate.
 ///  - Render systems do not run in-editor — the editor owns rendering. OnStart
 ///    warns once if any are declared.
 ///  - After()/Before() ordering resolves within one registry only: game systems

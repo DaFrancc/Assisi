@@ -217,7 +217,8 @@ Things to know about layers:
 - **A mask joint the model lacks is logged once.** A `maskRoot` it lacks makes
   the layer move nothing; an exclusion it lacks is skipped.
 - **Joints a layer's mask takes are written every Update.** Code that adjusts
-  one of them runs after, in PostUpdate, as for joints the base clip moves.
+  one of them runs after the `AnimationPlayers` system, as for joints the base
+  clip moves.
 
 ## Choosing animations with a state machine
 
@@ -234,15 +235,16 @@ The pose is a list with one entry per joint. Each entry is the joint's position,
 rotation and scale relative to its parent joint, so turning a shoulder turns the
 whole arm.
 
-A playing clip writes the joints it moves every Update, so code that adjusts one
-of them runs afterwards, in PostUpdate. Joints the clip doesn't move are yours in
-any stage.
+A playing clip writes the joints it moves every Update, in the `AnimationPlayers`
+system, so code that adjusts one of them runs after that system. Joints the clip
+doesn't move are yours in any stage.
 
 ```cpp
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-ASYSTEM(PostUpdate, name = "LookLeft") void LookLeftSystem(Assisi::App::SystemContext &ctx)
+ASYSTEM(Update, name = "LookLeft", after = "AnimationPlayers")
+void LookLeftSystem(Assisi::App::SystemContext &ctx)
 {
     using namespace Assisi;
 

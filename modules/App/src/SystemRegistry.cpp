@@ -452,7 +452,7 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
 namespace
 {
 constexpr const char *kPhaseNames[] = {"Begin",       "Loaded",     "PreUpdate", "FixedUpdate",
-                                       "PostFixedUpdate", "Update", "PostUpdate"};
+                                       "PostFixedUpdate", "Update", "Ui"};
 static_assert(std::size(kPhaseNames) == static_cast<std::size_t>(SystemPhase::Count_),
               "Every SystemPhase needs a name, in the enum's order.");
 } // namespace

@@ -203,7 +203,7 @@ class SystemInfo:
     function:        str    # unqualified function name
     namespaces:      list   # enclosing namespaces at the declaration
     name:            str    # the name a file uses; declared explicitly, never derived
-    phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
+    phase:           str    # one of _ASYSTEM_PHASES
     after:           list   # system names this must run after
     before:          list   # system names this must run before
     placement:       str    # First | Middle | Last: where in its phase, before after/before apply
@@ -431,7 +431,7 @@ _ASYSTEM_RE = re.compile(
 )
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
-                   'PostUpdate', 'Render')
+                   'Ui', 'Render')
 _ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed', 'first', 'last'}
 # The flag for each placement but the ordinary one, which needs none. In run
 # order: SystemPlacement's enumerators, and the order the whole-tree check holds

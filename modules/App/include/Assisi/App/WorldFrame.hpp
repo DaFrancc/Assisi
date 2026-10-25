@@ -14,4 +14,9 @@ struct SystemContext;
 /// steps: its PreUpdate systems.
 void BeginWorldFrame(const SystemContext &ctx);
 
+/// @brief `ctx.world`'s frame after its fixed steps: its Update systems, its Ui
+/// systems, then its sounds (PlayWorldSounds), so a sound asked for in any
+/// phase is heard this frame.
+void UpdateWorld(const SystemContext &ctx);
+
 } // namespace Assisi::App

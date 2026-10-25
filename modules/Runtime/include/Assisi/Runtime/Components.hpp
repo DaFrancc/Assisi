@@ -237,7 +237,7 @@ struct LayerState
 /// The pose goes back to rest only when the animation or the mesh changes, so a
 /// joint the animation does not move keeps whatever code writes to it. One it
 /// moves, or a layer's mask takes, is written every Update, so code that
-/// adjusts it on top runs after, in PostUpdate.
+/// adjusts it on top runs after the AnimationPlayers system.
 ///
 /// Replicable: a remote copy plays the same animations at the same speeds and
 /// parameters. Its timelines are its own, so two machines can be a moment apart.

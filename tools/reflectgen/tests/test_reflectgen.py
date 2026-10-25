@@ -1971,7 +1971,7 @@ class SystemTest(unittest.TestCase):
     def test_replayed_is_refused_outside_the_fixed_step(self):
         # Only a fixed step is ever run again for a tick it already ran, so the
         # flag anywhere else says nothing and reads as though it did.
-        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "Update", "Ui"):
             with self.subTest(phase=phase):
                 with self.assertRaises(ValueError) as caught:
                     self._systems(self.ENGINE_SYSTEM % phase)
@@ -1999,8 +1999,7 @@ class SystemTest(unittest.TestCase):
         # rejected at build time with no hint that the enum has one more — so the
         # two are pinned together here rather than discovered by a level failing
         # to name a system.
-        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update",
-                      "PostUpdate"):
+        for phase in ("Begin", "Loaded", "PreUpdate", "FixedUpdate", "PostFixedUpdate", "Update", "Ui"):
             found = self._systems(
                 "ASYSTEM(%s, name = \"Tick\") void TickSystem(SystemContext &ctx);\n" % phase)
             self.assertEqual(found[0].phase, phase)

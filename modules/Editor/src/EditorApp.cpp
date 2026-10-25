@@ -451,14 +451,16 @@ void EditorApp::OnStart()
               [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
     .After("EntityPicking");
 
-    _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
-                      [this](Assisi::App::SystemContext &ctx)
+    _systems
+    .Register(Assisi::App::SystemPhase::Update, "ProcessEntitySelection",
+              [this](Assisi::App::SystemContext &ctx)
         {
             for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
             {
                 SelectEntity(e.entity, e.additive ? SelectMode::Toggle : SelectMode::Replace);
             }
-        });
+        })
+    .Last();
 }
 
 void EditorApp::ReimportAssets()
@@ -1392,7 +1394,6 @@ void EditorApp::OnUpdate(float dt)
     Assisi::App::SystemContext editorCtx = WorldContext(*_world, dt, _stepTick);
     editorCtx.isActiveWorld = true;
     _systems.Run(Assisi::App::SystemPhase::Update, editorCtx);
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
     // Game logic ticks only while Playing, after the editor's own systems, in every
     // simulated world and out of each world's own registry — never against the
@@ -1408,9 +1409,7 @@ void EditorApp::OnUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                     return;
 
-                const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
-                world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
-                world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
+                Assisi::App::UpdateWorld(WorldContext(world, dt, _stepTick));
             });
     }
 }

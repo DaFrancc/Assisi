@@ -3,15 +3,16 @@
 
 /// @file AudioSystems.hpp
 /// @brief The events that make an AudioEmitter play, stop, pause and resume, and
-///        the system that answers them.
+///        the engine step that answers them.
 ///
 /// Every sound is asked for through these events, so gameplay and UI use one
 /// path. Each names the entity whose emitter it is for; one that names none, or
 /// an entity with no AudioEmitter, is logged and does nothing.
 ///
-/// The system runs in PostUpdate, so an event pushed from Update or earlier is
-/// answered the same frame. Within a frame, stops, pauses and resumes are
-/// answered before plays: a stop and a play for one emitter restart it.
+/// The engine answers them each frame after the Ui phase, so an event pushed
+/// from any phase is answered the same frame. Within a frame, stops, pauses and
+/// resumes are answered before plays: a stop and a play for one emitter restart
+/// it.
 ///
 /// They are world events, so the entity one names is looked for only in the
 /// world it was pushed in.
@@ -69,9 +70,9 @@ struct ResumeEmitter
 /// moment its emitter is placed. A request that arrives before the clip has
 /// loaded waits as a queued one does. Does nothing in a host with no audio.
 ///
-/// A level or blueprint that places emitters names this system; without it
-/// nothing holds their sounds, and every sound fades out as it starts.
-ASYSTEM(PostUpdate, name = "AudioEmitters") void AudioEmitterSystem(SystemContext &ctx);
+/// Not a system: the engine runs it once a frame for every world whose Update
+/// runs, after its Ui phase (App::UpdateWorld), so nothing has to name it.
+void PlayWorldSounds(const SystemContext &ctx);
 
 /// @brief Whether @p emitter has any sound playing, paused ones included.
 [[nodiscard]] bool IsPlaying(const Runtime::AudioEmitter &emitter);

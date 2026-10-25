@@ -159,8 +159,16 @@ The `SystemContext` your system receives holds everything it can reach:
 | `PreUpdate` | Every frame, after input is read, before `FixedUpdate`. |
 | `FixedUpdate` | At a fixed rate (60 per second by default), **before** physics. Anything that pushes physics objects goes here. |
 | `PostFixedUpdate` | At the fixed rate, right **after** physics. For reacting to what physics just did. |
-| `Update` | Every frame. **Most game logic goes here.** |
-| `PostUpdate` | Every frame, after `Update`. For cleanup. |
+| `Update` | Every frame, after `FixedUpdate`. **Most game logic goes here.** |
+| `Ui` | Every frame, after `Update`. For writing what the game's screens show. |
+| `Render` | Every frame, while the frame is drawn, with the camera it's drawn from. A `Render` system takes an `Assisi::App::RenderContext &` instead. |
+
+Each frame runs them in that order: `PreUpdate`, then `FixedUpdate` and
+`PostFixedUpdate` as many times as the frame needs, then `Update`, then `Ui`.
+After `Ui` the engine plays the frame's sounds and draws it.
+
+There's no extra phase for running after everything else, like tidying up after
+the rest of `Update`. Mark the system `last` instead (see [Options](#options)).
 
 `FixedUpdate` can run zero, one or several times in a frame, depending on how
 fast the game is running. Use it for physics-related code so it behaves the same
