@@ -52,6 +52,8 @@ namespace Assisi::App
 ///     into the swapchain afterwards, transparently to this override.
 ///
 /// Optional overrides (no-ops by default):
+///   - OnPreUpdate(float dt)     — called every render frame, after input and
+///     the UI's clicks and before the frame's fixed steps
 ///   - OnRenderUi(Render::RenderFrame&) — called after OnRender(), last in the
 ///     frame; draw whatever UI layer you own here, opening and closing it
 ///     yourself
@@ -183,6 +185,9 @@ protected:
     void LoadAssetsFrom(const Core::AssetProvider &provider) { _assets.Initialize(_jobs, provider); }
 
     virtual void OnStart() = 0;
+    /// @brief Called once a frame before any of its fixed steps, which a frame
+    /// may run none of. Not pure: a dedicated server has nothing to run here.
+    virtual void OnPreUpdate(float /*dt*/) {}
     virtual void OnFixedUpdate(float dt) = 0;
     /// @brief How far the fixed-step simulation advances for a frame that took
     /// @p frameSeconds of real time. Real time, unless an app runs the

@@ -8,6 +8,7 @@
 #include <Assisi/App/StartupScene.hpp>
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ConfigReader.hpp>
@@ -395,6 +396,25 @@ double GameApp::SimulationSeconds(double frameSeconds)
     return advance;
 }
 
+void GameApp::OnPreUpdate(float dt)
+{
+    if (_world == nullptr)
+    {
+        return;
+    }
+
+    // In every world whose Update runs this frame.
+    _worlds.ForEach(
+        [this, dt](World &world)
+        {
+            if (world.state != WorldState::Active || !world.simulate)
+            {
+                return;
+            }
+            BeginWorldFrame(WorldContext(world, dt, GetSimTick()));
+        });
+}
+
 void GameApp::OnFixedUpdate(float dt)
 {
     if (_world == nullptr)
@@ -498,7 +518,6 @@ void GameApp::OnUpdate(float dt)
             }
 
             const SystemContext ctx = WorldContext(world, dt, GetSimTick());
-            world.systems.Run(SystemPhase::PreUpdate, ctx);
             world.systems.Run(SystemPhase::Update, ctx);
             world.systems.Run(SystemPhase::PostUpdate, ctx);
         });

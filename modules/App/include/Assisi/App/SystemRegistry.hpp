@@ -228,7 +228,7 @@ enum class SystemPhase : std::uint8_t
     /// as @ref Begin.
     Loaded = 1,
 
-    PreUpdate = 2,   ///< After input is polled; before physics and game logic.
+    PreUpdate = 2,   ///< Once per render frame, after input and the UI's clicks, before the frame's fixed steps.
     FixedUpdate = 3, ///< Fixed timestep, before the physics step; may run several times per frame.
 
     /// Fixed timestep, immediately **after** the physics step, once per step.

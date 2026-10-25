@@ -12,6 +12,7 @@
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -1061,6 +1062,24 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
 }
 
+void EditorApp::OnPreUpdate(float dt)
+{
+    // Under the conditions the game's Update runs under below.
+    if (!_scene || !IsSimulating())
+    {
+        return;
+    }
+    _worlds.ForEach(
+        [this, dt](Assisi::App::World &world)
+        {
+            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+            {
+                return;
+            }
+            Assisi::App::BeginWorldFrame(WorldContext(world, dt, _stepTick));
+        });
+}
+
 void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
@@ -1390,7 +1409,6 @@ void EditorApp::OnUpdate(float dt)
                     return;
 
                 const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
-                world.systems.Run(Assisi::App::SystemPhase::PreUpdate, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update, ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
             });

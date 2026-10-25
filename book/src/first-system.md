@@ -156,7 +156,7 @@ The `SystemContext` your system receives holds everything it can reach:
 |---|---|
 | `Begin` | Once, when the level starts. For setup, like spawning the player. |
 | `Loaded` | Once, when all of the level's assets have finished loading. |
-| `PreUpdate` | Every frame, after input is read, before game logic. |
+| `PreUpdate` | Every frame, after input is read, before `FixedUpdate`. |
 | `FixedUpdate` | At a fixed rate (60 per second by default), **before** physics. Anything that pushes physics objects goes here. |
 | `PostFixedUpdate` | At the fixed rate, right **after** physics. For reacting to what physics just did. |
 | `Update` | Every frame. **Most game logic goes here.** |
