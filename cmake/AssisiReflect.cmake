@@ -346,6 +346,34 @@ function(assisi_check_message_handlers)
     add_custom_target(Assisi-MessageHandlerCheck ALL DEPENDS "${_out}")
 endfunction()
 
+function(assisi_check_systems_and_events)
+    get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
+    if (NOT _headers)
+        message(FATAL_ERROR
+            "assisi_check_systems_and_events: no reflected headers registered. "
+            "Call this after the add_subdirectory() calls that invoke assisi_reflect().")
+    endif()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/systems")
+    set(_out "${_dir}/SystemsAndEvents.txt")
+    set(_tmp "${_out}.tmp")
+
+    # Whole-tree, because an after or before names a system in any module and two
+    # modules may claim one name. The list is written out so "which systems and
+    # events did this build link" can be answered without re-running the build.
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" ${_headers} --check-systems-and-events "${_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS ${_headers} "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: checking systems and events"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-SystemEventCheck ALL DEPENDS "${_out}")
+endfunction()
+
 function(assisi_check_component_rules)
     get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
     if (NOT _headers)

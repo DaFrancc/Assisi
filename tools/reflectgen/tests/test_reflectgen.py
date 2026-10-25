@@ -1872,6 +1872,55 @@ class EmptyRegistrationUnitTest(unittest.TestCase):
         self.assertNotIn("--message-handlers", text)
 
 
+class SystemsAndEventsCheckTest(unittest.TestCase):
+    """--check-systems-and-events: the whole-tree system and event checks, as the
+    build runs them in every configuration, networking or not."""
+
+    def _run(self, *sources):
+        with tempfile.TemporaryDirectory() as d:
+            headers = []
+            for index, source in enumerate(sources):
+                header = Path(d) / f"H{index}.hpp"
+                header.write_text(source, encoding="utf-8")
+                headers.append(str(header))
+            out = Path(d) / "out" / "SystemsAndEvents.txt"
+
+            argv = sys.argv
+            sys.argv = ["reflectgen", *headers, "--check-systems-and-events", str(out)]
+            try:
+                with self.assertRaises(SystemExit) as exited:
+                    reflectgen.main()
+            finally:
+                sys.argv = argv
+
+            text = out.read_text(encoding="utf-8") if out.exists() else ""
+            return exited.exception.code, text
+
+    def test_a_valid_tree_writes_its_systems_and_events(self):
+        code, text = self._run("namespace Game {\n"
+                               "ASYSTEM(Update, name = \"Spin\") void SpinSystem(SystemContext &ctx);\n"
+                               "AEVENT()\nstruct Hit { };\n}\n")
+        self.assertEqual(code, 0)
+        self.assertIn("1 system(s)", text)
+        self.assertIn("1 event(s)", text)
+
+    def test_two_systems_of_one_name_fail(self):
+        system = "ASYSTEM(Update, name = \"Spin\") void SpinSystem(SystemContext &ctx);\n"
+        code, _ = self._run(system, "namespace Other {\n" + system + "}\n")
+        self.assertEqual(code, 1)
+
+    def test_an_ordering_a_placement_contradicts_fails(self):
+        code, _ = self._run(
+            "ASYSTEM(Update, name = \"Sweep\", last, before = \"Gather\") void SweepSystem(SystemContext &ctx);\n"
+            "ASYSTEM(Update, name = \"Gather\") void GatherSystem(SystemContext &ctx);\n")
+        self.assertEqual(code, 1)
+
+    def test_two_events_of_one_name_fail(self):
+        event = "namespace Game {\nAEVENT()\nstruct Resume { };\n}\n"
+        code, _ = self._run(event, event)
+        self.assertEqual(code, 1)
+
+
 class QuotedCppValueTest(unittest.TestCase):
     """A value naming something in C++ is bare; quoting one is refused.
 
