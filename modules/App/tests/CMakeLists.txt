@@ -32,6 +32,7 @@ add_executable(Assisi-App-Tests
   TestAppConfig.cpp
   TestAudioEmitter.cpp
   TestLevelSystemsPrecheck.cpp
+  TestLookLatency.cpp
   TestNetwork.cpp
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp

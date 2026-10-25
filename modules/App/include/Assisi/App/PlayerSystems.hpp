@@ -12,6 +12,7 @@
 /// player, and PlayerCamera looks through its camera.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::App
 {
@@ -34,6 +35,18 @@ inline constexpr float kLookDegreesPerPixel = 0.1f;
 /// rolls or vanishes at the moment the player is least able to explain why.
 inline constexpr float kMaxPitchDegrees = 89.f;
 
+/// @brief @p facing, a character's rotation, turned left by @p radians about
+/// world up.
+///
+/// About world up rather than the character's own axis: composing onto its own
+/// would let pitch and roll leak in, and it would end up tipped over after
+/// enough looking around.
+[[nodiscard]] glm::quat Turned(const glm::quat &facing, float radians);
+
+/// @brief @p eye, a camera's rotation on its character, tilted up by
+/// @p radians and kept within kMaxPitchDegrees of level.
+[[nodiscard]] glm::quat Tilted(const glm::quat &eye, float radians);
+
 /// @brief Marks this machine's player: with no network session every Player,
 /// and in one the Player this machine controls. Gives each a PlayerInput, and
 /// takes both away from a character that stops being this machine's, so its
@@ -52,14 +65,18 @@ void LocalPlayerSystem(SystemContext &ctx);
 /// captured, and never captures it: whoever owns the session owns the cursor,
 /// because only it knows when the player has asked for the mouse back.
 ///
-/// **Update, not FixedUpdate.** A key press is an edge that exists for exactly
-/// one frame, and the mouse moves a whole frame's worth between polls. Read from
-/// a fixed step, a frame that runs no step loses them and one that runs three
-/// counts them three times.
+/// **PreUpdate, not FixedUpdate.** A key press is an edge that exists for
+/// exactly one frame, and the mouse moves a whole frame's worth between polls.
+/// Read from a fixed step, a frame that runs no step loses them and one that
+/// runs three counts them three times. PreUpdate runs once a frame, before the
+/// frame's steps, so those steps act on what this frame gathered.
+///
+/// The camera of this machine's player is drawn turned as far as what is
+/// gathered here, every frame, before any step has used it (ActiveSceneCamera).
 ///
 /// `activeWorldOnly`, and it does nothing without devices: a headless host has
 /// none.
-ASYSTEM(Update, name = "PlayerGather", activeWorldOnly)
+ASYSTEM(PreUpdate, name = "PlayerGather", activeWorldOnly)
 void PlayerGatherSystem(SystemContext &ctx);
 
 /// @brief Turns each player's controls into its character's facing and
@@ -84,7 +101,7 @@ void CharacterCommandSystem(SystemContext &ctx);
 ///
 /// Every player's blueprint carries a camera, and a networked game holds every
 /// player's; each machine looks through its own.
-ASYSTEM(Update, name = "PlayerCamera", before = "PlayerGather", activeWorldOnly)
+ASYSTEM(Update, name = "PlayerCamera", activeWorldOnly)
 void PlayerCameraSystem(SystemContext &ctx);
 
 } // namespace Assisi::App

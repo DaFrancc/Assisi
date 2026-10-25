@@ -94,21 +94,11 @@ void PitchCameras(ECS::Scene &scene, ECS::Entity character, float radians)
         {
             continue;
         }
-
-        // Rebuilt from an accumulated angle rather than multiplied in, so the
-        // clamp is a clamp: composing a delta each step and then limiting the
-        // result lets it creep past the limit and stick there.
-        const glm::vec3 forward = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
-        const float current = std::asin(glm::clamp(forward.y, -1.f, 1.f));
-        const float limit = glm::radians(kMaxPitchDegrees);
-        const float pitch = glm::clamp(current + radians, -limit, limit);
-        transform->rotation = glm::normalize(glm::angleAxis(pitch, glm::vec3(1.f, 0.f, 0.f)));
+        transform->rotation = Tilted(transform->rotation, radians);
     }
 }
 
-/// Turns @p character left by @p radians, about world up rather than its own
-/// axis: composing onto its own would let pitch and roll leak in, and it would
-/// end up tipped over after enough looking around.
+/// Turns @p character left by @p radians.
 void TurnCharacter(ECS::Scene &scene, ECS::Entity character, float radians)
 {
     ECS::Transform *transform = scene.GetMut<ECS::Transform>(character);
@@ -116,8 +106,7 @@ void TurnCharacter(ECS::Scene &scene, ECS::Entity character, float radians)
     {
         return;
     }
-    transform->rotation =
-        glm::normalize(glm::angleAxis(radians, glm::vec3(0.f, 1.f, 0.f)) * transform->rotation);
+    transform->rotation = Turned(transform->rotation, radians);
 }
 
 /// @p move, in the character's frame, as a world direction along the ground of
@@ -143,6 +132,23 @@ glm::vec3 WorldMove(const ECS::Scene &scene, ECS::Entity character, glm::vec2 mo
 }
 
 } // namespace
+
+glm::quat Turned(const glm::quat &facing, float radians)
+{
+    return glm::normalize(glm::angleAxis(radians, glm::vec3(0.f, 1.f, 0.f)) * facing);
+}
+
+glm::quat Tilted(const glm::quat &eye, float radians)
+{
+    // Rebuilt from an accumulated angle rather than multiplied in, so the clamp
+    // is a clamp: composing a delta each step and then limiting the result lets
+    // it creep past the limit and stick there.
+    const glm::vec3 forward = eye * glm::vec3(0.f, 0.f, -1.f);
+    const float current = std::asin(glm::clamp(forward.y, -1.f, 1.f));
+    const float limit = glm::radians(kMaxPitchDegrees);
+    const float pitch = glm::clamp(current + radians, -limit, limit);
+    return glm::normalize(glm::angleAxis(pitch, glm::vec3(1.f, 0.f, 0.f)));
+}
 
 std::vector<std::string> PlayerActionNames()
 {

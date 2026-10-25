@@ -43,6 +43,12 @@ struct SceneView
 /// rather than an error: a game falls back to a default view, an editor to the
 /// camera the author is flying.
 ///
+/// A camera on this machine's player looks where the player has turned so far,
+/// every frame, including turning no fixed step has used yet, and is not blended
+/// between steps; it still stands where the blend puts it. Aim then follows the
+/// mouse at the frame rate rather than at the step's, while the step keeps the
+/// real aim. Every other camera is drawn as propagated.
+///
 /// Two active cameras warn and the first found wins. Which one that is depends
 /// on entity order, so it is arbitrary — said out loud rather than picked in
 /// silence, because the symptom otherwise is a view through a camera nobody
