@@ -23,9 +23,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/World.hpp>
-#if defined(ASSISI_NETWORKING)
-#    include <Assisi/App/NetworkedPlay.hpp>
-#endif
+#include <Assisi/App/NetworkedPlay.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -119,11 +117,8 @@ private:
     Assisi::App::World _world;
 
     /// Constructed only in a networked role, so offline mode never initializes
-    /// GameNetworkingSockets — and without networking built there is no such
-    /// role, so the member goes too. Offline headless simulation still works.
-#if defined(ASSISI_NETWORKING)
+    /// GameNetworkingSockets.
     std::unique_ptr<Assisi::App::NetworkedPlay> _play;
-#endif
 
     double _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;

@@ -282,34 +282,3 @@ get one.
 
 Remember the first rule from [Input](input.md): on a server there's no keyboard
 or mouse, so `ctx.input` is `nullptr`.
-
-<details>
-<summary>Building without networking</summary>
-
-If you're making a single-player game, you can leave the networking libraries out
-of the build entirely. It makes the first configure noticeably faster.
-
-Use a separate build folder so your normal one isn't affected:
-
-```bash
-cmake --preset gcc-debug -DASSISI_ENABLE_NETWORKING=OFF -B out/build/gcc-nonet
-cmake --build out/build/gcc-nonet
-```
-
-The engine, editor and game all still work. What's missing: the multiplayer
-modes in the Game panel, the `Replicated` component and the inspector's
-replication controls, and `--host` / `--connect`. Asking for them prints an
-error rather than silently doing nothing. `--server` still works, since it isn't
-networking.
-
-**A build folder remembers the setting.** Running the preset again without `-D`
-doesn't turn networking back on. To check what a folder is set to:
-
-```bash
-grep ASSISI_ENABLE_NETWORKING out/build/gcc-nonet/CMakeCache.txt
-```
-
-In your code, `#if defined(ASSISI_NETWORKING)` tells you whether networking is
-built in, for the rare code that has to know.
-
-</details>

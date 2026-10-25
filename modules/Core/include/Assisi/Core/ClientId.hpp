@@ -22,9 +22,8 @@ namespace Assisi::Core
 /// — and the two id spaces are one honest mistake apart. Replicating a
 /// ConnectionId would be replicating a pointer.
 ///
-/// In Core rather than NetSync because a game names it in every build: a
-/// message read offline is from the host, and a build without networking still
-/// reads messages.
+/// In Core rather than NetSync because Received<T>, which carries it, is Core's:
+/// a message read offline is from the host too.
 ///
 /// Conventions, matching the uniform zero-means-invalid rule the networking
 /// ids follow (`InvalidNetId`, `Net::InvalidConnection`):

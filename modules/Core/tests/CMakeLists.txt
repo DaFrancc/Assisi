@@ -17,7 +17,7 @@ target_link_libraries(Assisi-TestAssetKinds INTERFACE Assisi::TestSupport)
 add_library(Assisi::TestAssetKinds ALIAS Assisi-TestAssetKinds)
 
 # A message only these tests declare, reflected the way a module reflects its
-# own, so receiving one is tested in a build without networking too.
+# own, so receiving one is tested without the network.
 add_library(Assisi-Core-TestMessages INTERFACE)
 target_link_libraries(Assisi-Core-TestMessages INTERFACE Assisi::TestSupport)
 assisi_reflect(

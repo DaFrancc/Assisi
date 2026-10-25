@@ -9,10 +9,8 @@
 #include <Assisi/Core/Reflect/DecodedMessage.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
 
-#if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
-#endif
 
 #include <utility>
 
@@ -32,7 +30,6 @@ const Core::Reflect::MessageMeta *MetaOf(std::type_index type)
 
 NetRole Network::Role() const
 {
-#if defined(ASSISI_NETWORKING)
     if (_session != nullptr && _session->IsHost())
     {
         return NetRole::Host;
@@ -41,30 +38,25 @@ NetRole Network::Role() const
     {
         return NetRole::Client;
     }
-#endif
     return NetRole::Offline;
 }
 
 Core::ClientId Network::LocalClient() const
 {
-#if defined(ASSISI_NETWORKING)
     if (_session != nullptr && _session->IsActive())
     {
         return _session->LocalClientId();
     }
-#endif
     return Core::HostClientId;
 }
 
 void Network::Deliver(Core::EventQueue &events)
 {
     _toSelf.Deliver(events);
-#if defined(ASSISI_NETWORKING)
     if (_session != nullptr)
     {
         _session->Deliver(events);
     }
-#endif
 }
 
 void Network::Attach(NetSync::NetSession &session) { _session = &session; }
@@ -73,18 +65,15 @@ void Network::Detach() { _session = nullptr; }
 
 bool Network::SendIntent(const void *intent, std::type_index type)
 {
-#if defined(ASSISI_NETWORKING)
     if (_session != nullptr && _session->IsActive())
     {
         return _session->SendIntent(intent, type);
     }
-#endif
     return SendToSelf(intent, type);
 }
 
 bool Network::SendEvent(const void *event, std::type_index type, Audience audience)
 {
-#if defined(ASSISI_NETWORKING)
     if (_session != nullptr && _session->IsClient())
     {
         RefuseEvent(type);
@@ -112,7 +101,6 @@ bool Network::SendEvent(const void *event, std::type_index type, Audience audien
         }
         return true;
     }
-#endif
     // Addressed to a player who is not here: sent, and nobody hears it, as on a
     // host nobody joined.
     return !ReachesAlone(audience) || SendToSelf(event, type);

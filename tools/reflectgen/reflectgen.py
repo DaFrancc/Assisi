@@ -216,8 +216,8 @@ namespace Assisi::Core::Reflect
 
 
 def check_systems_and_events(headers) -> list:
-    """The system and event checks, which every build runs: neither names
-    anything networking provides, so neither waits on it."""
+    """The whole-tree system and event checks, run together as one pass of the
+    build."""
     return check_systems(headers) + reflect_events.check_events(headers)
 
 

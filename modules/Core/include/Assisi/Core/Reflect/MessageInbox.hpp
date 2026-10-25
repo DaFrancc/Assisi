@@ -9,8 +9,8 @@
 /// poll or a tick, and pushed into the world's events only when the host asks:
 /// at the start of a live tick, so the tick that follows and the frame's Update
 /// and Ui read it, and a client's rerun of an old tick never does. In Core
-/// because a world played alone, in a build without networking too, holds its
-/// own messages the same way.
+/// because a world played alone, with no session at all, holds its own
+/// messages the same way.
 
 #include <Assisi/Core/ClientId.hpp>
 #include <Assisi/Core/EventQueue.hpp>

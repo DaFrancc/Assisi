@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file TestMessages.hpp
-/// @brief A message only Core's tests declare, so receiving one is tested in
-/// every build, networking or not.
+/// @brief A message only Core's tests declare, so receiving one is tested
+/// where it is defined, without the network.
 
 #include <Assisi/Prelude.hpp>
 

@@ -436,9 +436,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 
 [Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
 stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
-runtime glTF path today. Networking is on by default but can be turned off with
-`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets, protobuf and libsodium — a noticeable chunk of
-first-configure time if you are not building a multiplayer game. Rendering is **Vulkan**: a
+runtime glTF path today. Rendering is **Vulkan**: a
 Vulkan-capable GPU and driver are required at runtime, but no Vulkan SDK is needed to build (the engine
 loads Vulkan dynamically).
 

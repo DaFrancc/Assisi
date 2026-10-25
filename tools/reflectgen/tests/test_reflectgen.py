@@ -1759,7 +1759,7 @@ class EmptyRegistrationUnitTest(unittest.TestCase):
 
 class SystemsAndEventsCheckTest(unittest.TestCase):
     """--check-systems-and-events: the whole-tree system and event checks, as the
-    build runs them in every configuration, networking or not."""
+    build runs them."""
 
     def _run(self, *sources):
         with tempfile.TemporaryDirectory() as d:

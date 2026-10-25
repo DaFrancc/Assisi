@@ -114,13 +114,6 @@ option(ASSISI_ENABLE_CHIARA "Compile the Chiara capture system in" OFF)
 # Release build handed to RenderDoc still wants labels.
 option(ASSISI_ENABLE_GPU_MARKERS "Emit GPU debug-utils markers for RenderDoc/Nsight" ${ASSISI_ENABLE_CHIARA})
 
-# Networking (Assisi::Net / Assisi::NetSync) pulls in GameNetworkingSockets and,
-# through it, protobuf + abseil — by far the heaviest configure in the tree. It is
-# ON by default because networking is a first-class engine subsystem, not an
-# optional backend; the switch exists so a contributor who is only touching, say,
-# ECS can configure a build that neither fetches nor compiles any of it.
-option(ASSISI_ENABLE_NETWORKING "Build the networking modules (fetches GameNetworkingSockets + protobuf)" ON)
-
 # Assimp is the deferred multi-format catch-all mesh-import backend (FBX/OBJ/DAE/…).
 # The runtime glTF path uses fastgltf; Assimp stays OFF so its heavy build doesn't
 # tax every configure until a second format backend is actually wired. Flip this ON
@@ -399,22 +392,6 @@ else()
       -mbmi   # provides TZCNT
     )
   endif()
-endif()
-
-# ---- Feature macros visible to source
-#
-# ASSISI_NETWORKING mirrors the CMake option into the preprocessor. Most of the
-# tree needs no guard — networking code lives in its own translation units, which
-# the option simply leaves out of the build (see App's BlueprintReplication.cpp).
-# The macro is for the two places that cannot do that: EditorApp holds a
-# NetSession by value-owning pointer in a *public header*, and GameLib's
-# ServerApp has a headless mode that exists with or without sockets.
-#
-# On Assisi-Options rather than a single target, because it has to agree
-# everywhere — a header compiled with the macro in one target and without it in
-# another is an ODR violation with a different class layout on each side.
-if (ASSISI_ENABLE_NETWORKING)
-  target_compile_definitions(Assisi-Options INTERFACE ASSISI_NETWORKING)
 endif()
 
 # ---- Warnings (always ON; warnings-as-errors is a separate switch)
@@ -1221,261 +1198,255 @@ endforeach()
 # This is the one dependency in the tree with a dependency of its own that we
 # also have to configure, so it is the longest block here. Read top to bottom:
 # protobuf first (GNS find_package()s it), then the generator shim, then GNS.
-#
-# Everything is gated on ASSISI_ENABLE_NETWORKING so a build that does not need
-# the network modules never pays the (large) protobuf+abseil compile.
-if (ASSISI_ENABLE_NETWORKING)
 
-    # ---- protobuf (GNS's wire format for its own handshake/control messages)
+# ---- protobuf (GNS's wire format for its own handshake/control messages)
+#
+# Pinned to the current release line rather than the last pre-abseil release
+# (21.12, Dec 2022). 21.x is years out of support — no security backports for
+# a parser that eats network bytes — and old protobuf fights modern GCC/MSVC.
+# The cost is abseil: protobuf's own cmake/abseil-cpp.cmake FetchContent's it
+# (pinned by protobuf's cmake/dependencies.cmake) when no system absl is
+# found, which is what we want — one fewer version pair for us to keep in
+# lockstep.
+#
+# OVERRIDE_FIND_PACKAGE is the load-bearing keyword: GNS's src/CMakeLists.txt
+# calls find_package(Protobuf CONFIG), which would otherwise resolve to the
+# *system* protobuf (or fail on a clean machine) instead of the tree we just
+# built. With the override, that find_package() is redirected here.
+set(protobuf_BUILD_TESTS          OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_EXAMPLES       OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_CONFORMANCE    OFF CACHE BOOL "" FORCE)
+set(protobuf_WITH_ZLIB            OFF CACHE BOOL "" FORCE)
+# Keep protobuf on the *dynamic* CRT, like the rest of this tree.
+#
+# protobuf defaults this to ON whenever it is built static (which it is here),
+# and a static-CRT protobuf is not a private detail: protobuf's CMakeLists
+# pushes CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreaded[Debug] for its own
+# targets, forwards the same choice to abseil, and GNS then matches whatever
+# it sees. Everything else we build uses the default /MD, and MSVC will not
+# link the two together:
+#
+#   libcpmt.lib(...) : error LNK2038: mismatch detected for 'RuntimeLibrary':
+#   value 'MT_StaticRelease' doesn't match value 'MD_DynamicRelease'
+#   ... : fatal error LNK1319: 150 mismatches detected
+#
+# Mixing CRTs is not something to paper over with /NODEFAULTLIB either — two
+# heaps and two copies of the locale/iostream state in one image is a genuine
+# crash, not a linker technicality. OFF is the setting that matches the tree.
+set(protobuf_MSVC_STATIC_RUNTIME  OFF CACHE BOOL "" FORCE)
+# protoc is a build-time tool: GNS runs it to generate its .pb.cc sources.
+# libupb has to stay ON with it: protoc links the libupb target, and with the
+# target absent CMake does not error — it degrades the dependency to a plain
+# library name and the link fails late with "cannot find -llibupb".
+set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
+set(protobuf_BUILD_LIBUPB          ON CACHE BOOL "" FORCE)
+# Fetch abseil rather than link the distro's. protobuf will happily
+# find_package(absl CONFIG) and pick up e.g. Arch's shared abseil, which
+# silently couples our build to whatever version that machine ships and
+# gives the final binary a runtime dependency on it. This tree is
+# self-contained by design; make protobuf's dependency resolution match.
+set(protobuf_FORCE_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
+# protobuf_INSTALL / ABSL_ENABLE_INSTALL are ON *against* our instincts: we
+# never run `cmake --install`, and this tree installs nothing. But GNS's own
+# CMakeLists unconditionally does install(TARGETS ... EXPORT ...) on its
+# static lib, and CMake refuses to generate an export set whose members link
+# a target ("libprotobuf") that is in no export set. There is no GNS option
+# to suppress its install rules, so the fix is to let protobuf (and, through
+# it, abseil) be exportable too. The cost is install rules nobody invokes.
+# ...and the same for the two dependencies protobuf itself exports through.
+# utf8_range in particular derives its own install flag from protobuf_INSTALL
+# with a non-FORCE cache set, so a build directory configured once with
+# installs off keeps the stale OFF forever — force all three here.
+set(protobuf_INSTALL          ON  CACHE BOOL "" FORCE)
+set(ABSL_ENABLE_INSTALL       ON  CACHE BOOL "" FORCE)
+set(utf8_range_ENABLE_INSTALL ON  CACHE BOOL "" FORCE)
+set(utf8_range_ENABLE_TESTS   OFF CACHE BOOL "" FORCE)
+# abseil: no tests, and it must inherit our C++ standard rather than pinning
+# its own (a mismatch is an ODR/ABI trap, not a warning).
+set(ABSL_PROPAGATE_CXX_STD ON  CACHE BOOL "" FORCE)
+set(ABSL_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(protobuf
+    GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
+    GIT_TAG        v35.1
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    OVERRIDE_FIND_PACKAGE
+)
+FetchContent_MakeAvailable(protobuf)
+
+# protobuf v35 deprecates its own FieldOptions::weak() and ParseInfoTree
+# accessors and then keeps calling them from ~30 places in its own sources,
+# so building it emits ~30 -Wdeprecated-declarations. SYSTEM only demotes
+# diagnostics attributed to protobuf's *headers* when we include them; these
+# come from compiling protobuf's own .cc files, which SYSTEM does not touch.
+# Nothing here is actionable short of patching a vendored tree — the same
+# situation as assimp's -Werror above — and the noise buries first-party
+# warnings, which is the whole point of the warning flags.
+foreach(_pb_target IN ITEMS libprotobuf libprotobuf-lite libprotoc protoc)
+    if (TARGET "${_pb_target}")
+        if (MSVC)
+            target_compile_options("${_pb_target}" PRIVATE /wd4996)
+        else()
+            target_compile_options("${_pb_target}" PRIVATE
+                -Wno-deprecated-declarations
+                -Wno-deprecated
+            )
+        endif()
+    endif()
+endforeach()
+
+# protobuf_generate_cpp() lives in protobuf's *installed* config package
+# (cmake/protobuf-module.cmake.in), which a FetchContent/add_subdirectory
+# consumer never gets — the source tree only defines the modern
+# protobuf_generate(). GNS calls the legacy spelling, so provide it: include
+# the generator that does exist, then a thin forwarding shim. This is exactly
+# what protobuf's own module-compat shim does, minus the imported-target
+# plumbing that is meaningless for an in-tree build.
+if (NOT COMMAND protobuf_generate)
+    include("${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake")
+endif()
+if (NOT COMMAND protobuf_generate_cpp)
+    # protobuf's shim defaults this to TRUE: pass -I for each .proto's own
+    # directory, which is what GNS's relative proto paths assume.
+    if (NOT DEFINED PROTOBUF_GENERATE_CPP_APPEND_PATH)
+        set(PROTOBUF_GENERATE_CPP_APPEND_PATH TRUE)
+    endif()
+    function(protobuf_generate_cpp SRCS HDRS)
+        cmake_parse_arguments(_pgc "" "EXPORT_MACRO" "" ${ARGN})
+        if (NOT _pgc_UNPARSED_ARGUMENTS)
+            message(SEND_ERROR "protobuf_generate_cpp() called without any .proto files")
+            return()
+        endif()
+        if (PROTOBUF_GENERATE_CPP_APPEND_PATH)
+            set(_append_arg APPEND_PATH)
+        endif()
+        set(_outvar)
+        protobuf_generate(${_append_arg} LANGUAGE cpp
+            EXPORT_MACRO ${_pgc_EXPORT_MACRO} OUT_VAR _outvar
+            PROTOS ${_pgc_UNPARSED_ARGUMENTS})
+        set(${SRCS})
+        set(${HDRS})
+        foreach(_file ${_outvar})
+            if (_file MATCHES "cc$")
+                list(APPEND ${SRCS} ${_file})
+            else()
+                list(APPEND ${HDRS} ${_file})
+            endif()
+        endforeach()
+        set(${SRCS} ${${SRCS}} PARENT_SCOPE)
+        set(${HDRS} ${${HDRS}} PARENT_SCOPE)
+    endfunction()
+endif()
+
+# ---- GameNetworkingSockets itself
+#
+# Pinned to a `master` commit, NOT the newest tag: v1.6.0 is 2021-06-03 and
+# five years stale, while master is actively maintained by Valve (this pin is
+# 2026-06-06) and carries the modern-protobuf compatibility and native-ICE
+# work the tag predates. Record the SHA + date on any bump.
+#
+# Crypto backend is per-platform:
+#   Windows — AES via the OS (BCrypt), 25519 via GNS's bundled reference impl.
+#   Linux   — libsodium, built statically below. The system OpenSSL it
+#             replaces made every shipped game need libcrypto (and zlib
+#             through it) installed, in a version that differs by distro.
+# ENABLE_ICE stays at its default ON: the native ICE client is in-tree and
+# pulls in nothing extra (USE_STEAMWEBRTC, which *would* drag in Google's
+# WebRTC, stays off), so the Stage-7 NAT-traversal path costs a rebuild of
+# nothing when we get to it.
+set(BUILD_STATIC_LIB         ON  CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIB         OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES           OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS              OFF CACHE BOOL "" FORCE)
+set(BUILD_TOOLS              OFF CACHE BOOL "" FORCE)
+set(USE_STEAMWEBRTC          OFF CACHE BOOL "" FORCE)
+set(Protobuf_USE_STATIC_LIBS ON  CACHE BOOL "" FORCE)
+if (WIN32)
+    set(USE_CRYPTO      "BCrypt"    CACHE STRING "" FORCE)
+    set(USE_CRYPTO25519 "Reference" CACHE STRING "" FORCE)
+else()
+    # ---- libsodium
     #
-    # Pinned to the current release line rather than the last pre-abseil release
-    # (21.12, Dec 2022). 21.x is years out of support — no security backports for
-    # a parser that eats network bytes — and old protobuf fights modern GCC/MSVC.
-    # The cost is abseil: protobuf's own cmake/abseil-cpp.cmake FetchContent's it
-    # (pinned by protobuf's cmake/dependencies.cmake) when no system absl is
-    # found, which is what we want — one fewer version pair for us to keep in
-    # lockstep.
+    # Built here from its own sources rather than through its autotools build
+    # or a third-party CMake wrapper. The wrappers define none of libsodium's
+    # HAVE_* feature macros on GCC, which compiles its AES-GCM out entirely and
+    # makes crypto_aead_aes256gcm_is_available() return 0 — and GNS refuses to
+    # open a connection without it. The macros below are the ones libsodium's
+    # own build.zig sets for x86-64 Linux, and the assembly is built with the C
+    # as it does there. It cannot be left out: on GCC, the AVX check that
+    # AES-GCM depends on is inline assembly enabled by the same HAVE_AVX_ASM
+    # that the assembly Curve25519 needs.
     #
-    # OVERRIDE_FIND_PACKAGE is the load-bearing keyword: GNS's src/CMakeLists.txt
-    # calls find_package(Protobuf CONFIG), which would otherwise resolve to the
-    # *system* protobuf (or fail on a clean machine) instead of the tree we just
-    # built. With the override, that find_package() is redirected here.
-    set(protobuf_BUILD_TESTS          OFF CACHE BOOL "" FORCE)
-    set(protobuf_BUILD_EXAMPLES       OFF CACHE BOOL "" FORCE)
-    set(protobuf_BUILD_CONFORMANCE    OFF CACHE BOOL "" FORCE)
-    set(protobuf_WITH_ZLIB            OFF CACHE BOOL "" FORCE)
-    # Keep protobuf on the *dynamic* CRT, like the rest of this tree.
-    #
-    # protobuf defaults this to ON whenever it is built static (which it is here),
-    # and a static-CRT protobuf is not a private detail: protobuf's CMakeLists
-    # pushes CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreaded[Debug] for its own
-    # targets, forwards the same choice to abseil, and GNS then matches whatever
-    # it sees. Everything else we build uses the default /MD, and MSVC will not
-    # link the two together:
-    #
-    #   libcpmt.lib(...) : error LNK2038: mismatch detected for 'RuntimeLibrary':
-    #   value 'MT_StaticRelease' doesn't match value 'MD_DynamicRelease'
-    #   ... : fatal error LNK1319: 150 mismatches detected
-    #
-    # Mixing CRTs is not something to paper over with /NODEFAULTLIB either — two
-    # heaps and two copies of the locale/iostream state in one image is a genuine
-    # crash, not a linker technicality. OFF is the setting that matches the tree.
-    set(protobuf_MSVC_STATIC_RUNTIME  OFF CACHE BOOL "" FORCE)
-    # protoc is a build-time tool: GNS runs it to generate its .pb.cc sources.
-    # libupb has to stay ON with it: protoc links the libupb target, and with the
-    # target absent CMake does not error — it degrades the dependency to a plain
-    # library name and the link fails late with "cannot find -llibupb".
-    set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
-    set(protobuf_BUILD_LIBUPB          ON CACHE BOOL "" FORCE)
-    # Fetch abseil rather than link the distro's. protobuf will happily
-    # find_package(absl CONFIG) and pick up e.g. Arch's shared abseil, which
-    # silently couples our build to whatever version that machine ships and
-    # gives the final binary a runtime dependency on it. This tree is
-    # self-contained by design; make protobuf's dependency resolution match.
-    set(protobuf_FORCE_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
-    # protobuf_INSTALL / ABSL_ENABLE_INSTALL are ON *against* our instincts: we
-    # never run `cmake --install`, and this tree installs nothing. But GNS's own
-    # CMakeLists unconditionally does install(TARGETS ... EXPORT ...) on its
-    # static lib, and CMake refuses to generate an export set whose members link
-    # a target ("libprotobuf") that is in no export set. There is no GNS option
-    # to suppress its install rules, so the fix is to let protobuf (and, through
-    # it, abseil) be exportable too. The cost is install rules nobody invokes.
-    # ...and the same for the two dependencies protobuf itself exports through.
-    # utf8_range in particular derives its own install flag from protobuf_INSTALL
-    # with a non-FORCE cache set, so a build directory configured once with
-    # installs off keeps the stale OFF forever — force all three here.
-    set(protobuf_INSTALL          ON  CACHE BOOL "" FORCE)
-    set(ABSL_ENABLE_INSTALL       ON  CACHE BOOL "" FORCE)
-    set(utf8_range_ENABLE_INSTALL ON  CACHE BOOL "" FORCE)
-    set(utf8_range_ENABLE_TESTS   OFF CACHE BOOL "" FORCE)
-    # abseil: no tests, and it must inherit our C++ standard rather than pinning
-    # its own (a mismatch is an ODR/ABI trap, not a warning).
-    set(ABSL_PROPAGATE_CXX_STD ON  CACHE BOOL "" FORCE)
-    set(ABSL_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(protobuf
-        GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-        GIT_TAG        v35.1
+    # OVERRIDE_FIND_PACKAGE is what GNS's find_package(sodium) resolves to, so
+    # its own Find module, which looks for a system libsodium, never runs.
+    FetchContent_Declare(sodium
+        GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
+        GIT_TAG        1.0.22-RELEASE
         GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
         SYSTEM
         OVERRIDE_FIND_PACKAGE
     )
-    FetchContent_MakeAvailable(protobuf)
+    FetchContent_MakeAvailable(sodium)
 
-    # protobuf v35 deprecates its own FieldOptions::weak() and ParseInfoTree
-    # accessors and then keeps calling them from ~30 places in its own sources,
-    # so building it emits ~30 -Wdeprecated-declarations. SYSTEM only demotes
-    # diagnostics attributed to protobuf's *headers* when we include them; these
-    # come from compiling protobuf's own .cc files, which SYSTEM does not touch.
-    # Nothing here is actionable short of patching a vendored tree — the same
-    # situation as assimp's -Werror above — and the noise buries first-party
-    # warnings, which is the whole point of the warning flags.
-    foreach(_pb_target IN ITEMS libprotobuf libprotobuf-lite libprotoc protoc)
-        if (TARGET "${_pb_target}")
-            if (MSVC)
-                target_compile_options("${_pb_target}" PRIVATE /wd4996)
-            else()
-                target_compile_options("${_pb_target}" PRIVATE
-                    -Wno-deprecated-declarations
-                    -Wno-deprecated
-                )
-            endif()
-        endif()
-    endforeach()
+    enable_language(ASM)
+    file(GLOB_RECURSE _sodium_sources CONFIGURE_DEPENDS
+         "${sodium_SOURCE_DIR}/src/libsodium/*.c"
+         "${sodium_SOURCE_DIR}/src/libsodium/*.S")
+    add_library(sodium STATIC ${_sodium_sources})
 
-    # protobuf_generate_cpp() lives in protobuf's *installed* config package
-    # (cmake/protobuf-module.cmake.in), which a FetchContent/add_subdirectory
-    # consumer never gets — the source tree only defines the modern
-    # protobuf_generate(). GNS calls the legacy spelling, so provide it: include
-    # the generator that does exist, then a thin forwarding shim. This is exactly
-    # what protobuf's own module-compat shim does, minus the imported-target
-    # plumbing that is meaningless for an in-tree build.
-    if (NOT COMMAND protobuf_generate)
-        include("${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake")
-    endif()
-    if (NOT COMMAND protobuf_generate_cpp)
-        # protobuf's shim defaults this to TRUE: pass -I for each .proto's own
-        # directory, which is what GNS's relative proto paths assume.
-        if (NOT DEFINED PROTOBUF_GENERATE_CPP_APPEND_PATH)
-            set(PROTOBUF_GENERATE_CPP_APPEND_PATH TRUE)
-        endif()
-        function(protobuf_generate_cpp SRCS HDRS)
-            cmake_parse_arguments(_pgc "" "EXPORT_MACRO" "" ${ARGN})
-            if (NOT _pgc_UNPARSED_ARGUMENTS)
-                message(SEND_ERROR "protobuf_generate_cpp() called without any .proto files")
-                return()
-            endif()
-            if (PROTOBUF_GENERATE_CPP_APPEND_PATH)
-                set(_append_arg APPEND_PATH)
-            endif()
-            set(_outvar)
-            protobuf_generate(${_append_arg} LANGUAGE cpp
-                EXPORT_MACRO ${_pgc_EXPORT_MACRO} OUT_VAR _outvar
-                PROTOS ${_pgc_UNPARSED_ARGUMENTS})
-            set(${SRCS})
-            set(${HDRS})
-            foreach(_file ${_outvar})
-                if (_file MATCHES "cc$")
-                    list(APPEND ${SRCS} ${_file})
-                else()
-                    list(APPEND ${HDRS} ${_file})
-                endif()
-            endforeach()
-            set(${SRCS} ${${SRCS}} PARENT_SCOPE)
-            set(${HDRS} ${${HDRS}} PARENT_SCOPE)
-        endfunction()
-    endif()
+    # version.h is generated by the autotools build. The prebuilt copy the
+    # MSVC and Zig builds use goes beside the headers that include it, as the
+    # Zig build does: it includes export.h by a path relative to itself.
+    configure_file("${sodium_SOURCE_DIR}/builds/msvc/version.h"
+                   "${sodium_SOURCE_DIR}/src/libsodium/include/sodium/version.h" COPYONLY)
 
-    # ---- GameNetworkingSockets itself
-    #
-    # Pinned to a `master` commit, NOT the newest tag: v1.6.0 is 2021-06-03 and
-    # five years stale, while master is actively maintained by Valve (this pin is
-    # 2026-06-06) and carries the modern-protobuf compatibility and native-ICE
-    # work the tag predates. Record the SHA + date on any bump.
-    #
-    # Crypto backend is per-platform:
-    #   Windows — AES via the OS (BCrypt), 25519 via GNS's bundled reference impl.
-    #   Linux   — libsodium, built statically below. The system OpenSSL it
-    #             replaces made every shipped game need libcrypto (and zlib
-    #             through it) installed, in a version that differs by distro.
-    # ENABLE_ICE stays at its default ON: the native ICE client is in-tree and
-    # pulls in nothing extra (USE_STEAMWEBRTC, which *would* drag in Google's
-    # WebRTC, stays off), so the Stage-7 NAT-traversal path costs a rebuild of
-    # nothing when we get to it.
-    set(BUILD_STATIC_LIB         ON  CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIB         OFF CACHE BOOL "" FORCE)
-    set(BUILD_EXAMPLES           OFF CACHE BOOL "" FORCE)
-    set(BUILD_TESTS              OFF CACHE BOOL "" FORCE)
-    set(BUILD_TOOLS              OFF CACHE BOOL "" FORCE)
-    set(USE_STEAMWEBRTC          OFF CACHE BOOL "" FORCE)
-    set(Protobuf_USE_STATIC_LIBS ON  CACHE BOOL "" FORCE)
-    if (WIN32)
-        set(USE_CRYPTO      "BCrypt"    CACHE STRING "" FORCE)
-        set(USE_CRYPTO25519 "Reference" CACHE STRING "" FORCE)
-    else()
-        # ---- libsodium
-        #
-        # Built here from its own sources rather than through its autotools build
-        # or a third-party CMake wrapper. The wrappers define none of libsodium's
-        # HAVE_* feature macros on GCC, which compiles its AES-GCM out entirely and
-        # makes crypto_aead_aes256gcm_is_available() return 0 — and GNS refuses to
-        # open a connection without it. The macros below are the ones libsodium's
-        # own build.zig sets for x86-64 Linux, and the assembly is built with the C
-        # as it does there. It cannot be left out: on GCC, the AVX check that
-        # AES-GCM depends on is inline assembly enabled by the same HAVE_AVX_ASM
-        # that the assembly Curve25519 needs.
-        #
-        # OVERRIDE_FIND_PACKAGE is what GNS's find_package(sodium) resolves to, so
-        # its own Find module, which looks for a system libsodium, never runs.
-        FetchContent_Declare(sodium
-            GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
-            GIT_TAG        1.0.22-RELEASE
-            GIT_SHALLOW    TRUE
-            SOURCE_SUBDIR  cmake-entry-point-that-does-not-exist
-            SYSTEM
-            OVERRIDE_FIND_PACKAGE
-        )
-        FetchContent_MakeAvailable(sodium)
-
-        enable_language(ASM)
-        file(GLOB_RECURSE _sodium_sources CONFIGURE_DEPENDS
-             "${sodium_SOURCE_DIR}/src/libsodium/*.c"
-             "${sodium_SOURCE_DIR}/src/libsodium/*.S")
-        add_library(sodium STATIC ${_sodium_sources})
-
-        # version.h is generated by the autotools build. The prebuilt copy the
-        # MSVC and Zig builds use goes beside the headers that include it, as the
-        # Zig build does: it includes export.h by a path relative to itself.
-        configure_file("${sodium_SOURCE_DIR}/builds/msvc/version.h"
-                       "${sodium_SOURCE_DIR}/src/libsodium/include/sodium/version.h" COPYONLY)
-
-        target_include_directories(sodium SYSTEM
-            PUBLIC
-                # Build-tree only, for the export set GNS declares (see below).
-                "$<BUILD_INTERFACE:${sodium_SOURCE_DIR}/src/libsodium/include>"
-            PRIVATE
-                "${sodium_SOURCE_DIR}/src/libsodium/include/sodium"
-        )
-        target_compile_definitions(sodium
-            PUBLIC
-                SODIUM_STATIC
-            PRIVATE
-                _GNU_SOURCE CONFIGURED
-                HAVE_ATOMIC_OPS HAVE_C11_MEMORY_FENCES HAVE_GCC_MEMORY_FENCES HAVE_INLINE_ASM
-                HAVE_INTTYPES_H HAVE_STDINT_H HAVE_TI_MODE NATIVE_LITTLE_ENDIAN
-                TLS=_Thread_local HAVE_CATCHABLE_ABRT HAVE_WEAK_SYMBOLS
-                HAVE_CATCHABLE_SEGV HAVE_CLOCK_GETTIME HAVE_GETPID HAVE_MADVISE HAVE_MLOCK
-                HAVE_MMAP HAVE_MPROTECT HAVE_NANOSLEEP HAVE_POSIX_MEMALIGN HAVE_PTHREAD
-                HAVE_PTHREAD_PRIO_INHERIT HAVE_RAISE HAVE_SYSCONF HAVE_SYS_AUXV_H
-                HAVE_SYS_MMAN_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_GETAUXVAL
-                ASM_HIDE_SYMBOL=.hidden HAVE_AMD64_ASM HAVE_AVX_ASM
-                HAVE_CPUID HAVE_MMINTRIN_H HAVE_EMMINTRIN_H HAVE_PMMINTRIN_H HAVE_TMMINTRIN_H
-                HAVE_SMMINTRIN_H HAVE_AVXINTRIN_H HAVE_AVX2INTRIN_H HAVE_AVX512FINTRIN_H
-                HAVE_WMMINTRIN_H HAVE_RDRAND
-        )
-        target_compile_options(sodium PRIVATE
-            "$<$<COMPILE_LANGUAGE:C>:-fvisibility=hidden;-fno-strict-aliasing;-fno-strict-overflow;-fwrapv;-flax-vector-conversions>"
-            -w)
-        find_package(Threads REQUIRED)
-        target_link_libraries(sodium PUBLIC Threads::Threads)
-        set_target_properties(sodium PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-        set(USE_CRYPTO      "libsodium" CACHE STRING "" FORCE)
-        set(USE_CRYPTO25519 "libsodium" CACHE STRING "" FORCE)
-    endif()
-    FetchContent_Declare(GameNetworkingSockets
-        GIT_REPOSITORY https://github.com/ValveSoftware/GameNetworkingSockets.git
-        GIT_TAG        f4525e39ee10f6b45181fd92d01fee75f7d71756 # master @ 2026-06-06; newest tag (v1.6.0) is 2021 and too old for current protobuf
-        SYSTEM
+    target_include_directories(sodium SYSTEM
+        PUBLIC
+            # Build-tree only, for the export set GNS declares (see below).
+            "$<BUILD_INTERFACE:${sodium_SOURCE_DIR}/src/libsodium/include>"
+        PRIVATE
+            "${sodium_SOURCE_DIR}/src/libsodium/include/sodium"
     )
-    FetchContent_MakeAvailable(GameNetworkingSockets)
+    target_compile_definitions(sodium
+        PUBLIC
+            SODIUM_STATIC
+        PRIVATE
+            _GNU_SOURCE CONFIGURED
+            HAVE_ATOMIC_OPS HAVE_C11_MEMORY_FENCES HAVE_GCC_MEMORY_FENCES HAVE_INLINE_ASM
+            HAVE_INTTYPES_H HAVE_STDINT_H HAVE_TI_MODE NATIVE_LITTLE_ENDIAN
+            TLS=_Thread_local HAVE_CATCHABLE_ABRT HAVE_WEAK_SYMBOLS
+            HAVE_CATCHABLE_SEGV HAVE_CLOCK_GETTIME HAVE_GETPID HAVE_MADVISE HAVE_MLOCK
+            HAVE_MMAP HAVE_MPROTECT HAVE_NANOSLEEP HAVE_POSIX_MEMALIGN HAVE_PTHREAD
+            HAVE_PTHREAD_PRIO_INHERIT HAVE_RAISE HAVE_SYSCONF HAVE_SYS_AUXV_H
+            HAVE_SYS_MMAN_H HAVE_SYS_PARAM_H HAVE_SYS_RANDOM_H HAVE_GETAUXVAL
+            ASM_HIDE_SYMBOL=.hidden HAVE_AMD64_ASM HAVE_AVX_ASM
+            HAVE_CPUID HAVE_MMINTRIN_H HAVE_EMMINTRIN_H HAVE_PMMINTRIN_H HAVE_TMMINTRIN_H
+            HAVE_SMMINTRIN_H HAVE_AVXINTRIN_H HAVE_AVX2INTRIN_H HAVE_AVX512FINTRIN_H
+            HAVE_WMMINTRIN_H HAVE_RDRAND
+    )
+    target_compile_options(sodium PRIVATE
+        "$<$<COMPILE_LANGUAGE:C>:-fvisibility=hidden;-fno-strict-aliasing;-fno-strict-overflow;-fwrapv;-flax-vector-conversions>"
+        -w)
+    find_package(Threads REQUIRED)
+    target_link_libraries(sodium PUBLIC Threads::Threads)
+    set_target_properties(sodium PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-    # GNS declares an install export set, and CMake refuses to generate one that
-    # links a target no export set contains. Nothing here is ever installed; this
-    # only satisfies that check for the libsodium built above.
-    if (TARGET sodium)
-        install(TARGETS sodium EXPORT GameNetworkingSockets ARCHIVE DESTINATION lib)
-    endif()
+    set(USE_CRYPTO      "libsodium" CACHE STRING "" FORCE)
+    set(USE_CRYPTO25519 "libsodium" CACHE STRING "" FORCE)
+endif()
+FetchContent_Declare(GameNetworkingSockets
+    GIT_REPOSITORY https://github.com/ValveSoftware/GameNetworkingSockets.git
+    GIT_TAG        f4525e39ee10f6b45181fd92d01fee75f7d71756 # master @ 2026-06-06; newest tag (v1.6.0) is 2021 and too old for current protobuf
+    SYSTEM
+)
+FetchContent_MakeAvailable(GameNetworkingSockets)
 
+# GNS declares an install export set, and CMake refuses to generate one that
+# links a target no export set contains. Nothing here is ever installed; this
+# only satisfies that check for the libsodium built above.
+if (TARGET sodium)
+    install(TARGETS sodium EXPORT GameNetworkingSockets ARCHIVE DESTINATION lib)
 endif()
 
 # End of third-party dependencies — restore normal message verbosity and the
@@ -1553,15 +1524,11 @@ add_subdirectory(modules/Render)
 # anything (asset streaming, telemetry, editor collaboration) may link it later
 # without dragging the world in. The replication layer that *does* know about
 # entities is a separate module above ECS.
-if (ASSISI_ENABLE_NETWORKING)
-  add_subdirectory(modules/Net)
-endif()
+add_subdirectory(modules/Net)
 add_subdirectory(modules/ECS)
 # NetSync sits above ECS (it replicates entities) and above Net (it sends over
 # it), and — like Physics — links neither Render nor Runtime.
-if (ASSISI_ENABLE_NETWORKING)
-  add_subdirectory(modules/NetSync)
-endif()
+add_subdirectory(modules/NetSync)
 add_subdirectory(modules/Runtime)
 # Cook sits above Runtime because cooking a level means loading it through the
 # same SceneSerializer the engine does — a second reader for the format would be
@@ -1614,8 +1581,7 @@ assisi_check_component_rules()
 # Same contract: an after or before may name a system in any module.
 assisi_check_systems_and_events()
 
-# Same contract: a Received<T> may name a message declared in any module, in
-# every build, networking or not.
+# Same contract: a Received<T> may name a message declared in any module.
 assisi_generate_message_traits()
 
 # Typed views for the blueprints this project opts in. Here rather than in a

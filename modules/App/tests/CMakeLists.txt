@@ -46,32 +46,21 @@ add_executable(Assisi-App-Tests
   TestWorldContacts.cpp
   TestWorldEvents.cpp
   TestWorldStart.cpp
-)
-
-# Added with if() rather than a $<BOOL:...> generator expression on purpose.
-# Assisi_apply_test_defaults reads the target's SOURCES property to attach
-# per-source warning opt-outs, and an unevaluated genex comes back as its own
-# literal text — it matches no file, so the opt-outs silently skip that source. A
-# plain conditional keeps SOURCES a list of real filenames, which is what that
-# property is being read as.
-if (ASSISI_ENABLE_NETWORKING)
   # The session cases run in real time, a few seconds each, so they are spread
   # over files that ctest runs side by side.
-  target_sources(Assisi-App-Tests PRIVATE
-    TestBlueprintReplication.cpp
-    PlayerSessionTesting.cpp
-    TestPlayerSessionBodies.cpp
-    TestPlayerSessionContact.cpp
-    TestPlayerSessionGaps.cpp
-    TestPlayerSessionGapWalks.cpp
-    TestPlayerSessionMessages.cpp
-    TestPlayerSessionOthers.cpp
-    TestPlayerSessionOwnCharacter.cpp
-    TestPlayerSessionPlayers.cpp
-    TestPlayerSessionTicks.cpp
-    TestPlayerSessionWalls.cpp
-  )
-endif()
+  TestBlueprintReplication.cpp
+  PlayerSessionTesting.cpp
+  TestPlayerSessionBodies.cpp
+  TestPlayerSessionContact.cpp
+  TestPlayerSessionGaps.cpp
+  TestPlayerSessionGapWalks.cpp
+  TestPlayerSessionMessages.cpp
+  TestPlayerSessionOthers.cpp
+  TestPlayerSessionOwnCharacter.cpp
+  TestPlayerSessionPlayers.cpp
+  TestPlayerSessionTicks.cpp
+  TestPlayerSessionWalls.cpp
+)
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
 
@@ -133,7 +122,7 @@ target_sources(Assisi-App-Tests PRIVATE
   # Replicated is an ACOMP in NetSync; without its registrations the loader has
   # no ComponentId for it and a blueprint declaring one silently gets an entity
   # that never replicates.
-  $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:$<TARGET_OBJECTS:Assisi-NetSync-Generated>>
+  $<TARGET_OBJECTS:Assisi-NetSync-Generated>
 )
 
 Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
@@ -142,18 +131,16 @@ Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
 # every other CPU, a client's clock reads the time it waited for one as a slow
 # link and corrects itself, which a case that checks it settled fails on. A
 # second CPU held for each keeps ctest from running them on a full machine.
-if (ASSISI_ENABLE_NETWORKING)
-  set_tests_properties(
-    App.TestPlayerSessionContact
-    App.TestPlayerSessionGaps
-    App.TestPlayerSessionGapWalks
-    App.TestPlayerSessionMessages
-    App.TestPlayerSessionOthers
-    App.TestPlayerSessionOwnCharacter
-    App.TestPlayerSessionPlayers
-    App.TestPlayerSessionTicks
-    App.TestPlayerSessionWalls
-    PROPERTIES PROCESSORS 2)
-endif()
+set_tests_properties(
+  App.TestPlayerSessionContact
+  App.TestPlayerSessionGaps
+  App.TestPlayerSessionGapWalks
+  App.TestPlayerSessionMessages
+  App.TestPlayerSessionOthers
+  App.TestPlayerSessionOwnCharacter
+  App.TestPlayerSessionPlayers
+  App.TestPlayerSessionTicks
+  App.TestPlayerSessionWalls
+  PROPERTIES PROCESSORS 2)
 
 set_target_properties(Assisi-App-Tests PROPERTIES FOLDER "tests")

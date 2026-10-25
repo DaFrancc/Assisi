@@ -30,9 +30,7 @@
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
-#if defined(ASSISI_NETWORKING)
 #include <Assisi/NetSync/NetComponents.hpp>
-#endif
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Physics/ColliderRole.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -1511,7 +1509,6 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
 }
 
 // The inspector's whole replication surface. Declarations in EditorApp.hpp.
-#if defined(ASSISI_NETWORKING)
 void EditorApp::DrawReplicationSection(bool mirrored)
 {
     using namespace Assisi::Core::Reflect;
@@ -1806,7 +1803,6 @@ void EditorApp::DrawReplicationPolicy()
 
     ImGui::TreePop();
 }
-#endif // ASSISI_NETWORKING
 
 void EditorApp::DrawInstanceInspector()
 {
@@ -2417,11 +2413,7 @@ void EditorApp::DrawInspector()
         }
     }
 
-#if defined(ASSISI_NETWORKING)
     DrawReplicationSection(mirrored);
-#else
-    (void)mirrored; // no replication block to draw; `mirrored` is always false
-#endif
 
     // The rename box, shown for every entity. It reads the optional Name component
     // and creates one on the first edit, so naming is click-and-type with no "add
@@ -2559,7 +2551,6 @@ void EditorApp::DrawInspector()
         // in DrawReplicationPolicy. Neither holds state: both read
         // SelectedEntitySends and write SetSelectedEntitySends, so they are two
         // renderings of one mask, not two copies to keep in step.
-#if defined(ASSISI_NETWORKING)
         if (meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
         {
             const bool gameVeto = IsComponentGameVetoed(*meta);
@@ -2593,7 +2584,6 @@ void EditorApp::DrawInspector()
                     ImGui::SetTooltip("Withheld: stays on this machine. Click to send it.");
             }
         }
-#endif // ASSISI_NETWORKING
 
         // Whether this instance overrides the component. A member's inspector
         // otherwise looks like any other entity's, right up until a save turns the
@@ -2638,7 +2628,6 @@ void EditorApp::DrawInspector()
             // Only worth saying on an entity that is *trying* to replicate: on a
             // local one every component is unreplicated, so this would be noise on
             // every row.
-#if defined(ASSISI_NETWORKING)
             if (!meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
             {
                 ImGui::TextDisabled("not replicated — type lacks ACOMP(replicable)");
@@ -2648,7 +2637,6 @@ void EditorApp::DrawInspector()
                                       "per type, in the component's header, not per entity.");
                 }
             }
-#endif // ASSISI_NETWORKING
 
             // What the shadow system actually did with this light, under its own
             // fields. The panel's table says it for every light at once; this

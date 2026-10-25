@@ -44,12 +44,7 @@ target_link_libraries(Assisi-GameLib
     Assisi::Physics
 )
 
-# ServerApp keeps its Offline role without networking — headless simulation is a
-# separate thing from replication — so the file stays in the build and guards the
-# Host/Client halves internally.
-if (ASSISI_ENABLE_NETWORKING)
-  target_link_libraries(Assisi-GameLib PUBLIC Assisi::NetSync)
-endif()
+target_link_libraries(Assisi-GameLib PUBLIC Assisi::NetSync)
 
 # The game's own ASYSTEM and ACOMP declarations. Scanning them is what puts them
 # in the catalog: a level names a system, and the declaration in a reflected
@@ -207,7 +202,7 @@ endif()
 # this fails inside NetSession::Join, synchronously, during OnStart — no peer to
 # stand up, no port to bind, no timeout to wait out, and nothing about it varies
 # with the machine. WILL_FAIL asserts the non-zero exit.
-if (ASSISI_BUILD_TESTS AND ASSISI_ENABLE_NETWORKING)
+if (ASSISI_BUILD_TESTS)
   add_test(NAME GameEditorRefusedStart
     COMMAND Assisi-GameEditor --connect not-an-ip:27015 --ticks 1
     WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-GameEditor>"
