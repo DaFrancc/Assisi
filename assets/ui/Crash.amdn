@@ -1,0 +1,38 @@
+<!-- The window a crash opens: why the game stopped, where, and where the files
+     that describe it are. The reporter (App/CrashReporter.cpp) finds the nodes
+     it fills by name: title, reason, stack and files.
+
+     Sizes are larger than a menu's: the UI scales with the window, and this
+     window is smaller than the game's. -->
+<screen input="consume" sort="overlay" align="start start" background="#14161c">
+
+  <column name="panel" width="grow" height="grow" padding="40" gap="20" align="start start">
+
+    <text name="title" width="grow" text_size="48">The game stopped</text>
+    <text name="reason" width="grow" text_size="32" text_color="#f2b8a9" selectable="true"></text>
+
+    <text width="grow" text_size="26" text_color="#9aa3bd">Where it happened</text>
+    <!-- Both ways: a C++ function's full name is often wider than the window. -->
+    <scroll name="stack_area" axes="xy" width="grow" height="grow" padding="18"
+            background="#0d0f13" corner_radius="10" corner_style="rounded"
+            scroll_bar_visibility="when-needed">
+      <text name="stack" width="grow" text_size="24" selectable="true"></text>
+    </scroll>
+
+    <text width="grow" text_size="26" text_color="#9aa3bd">The files describing it, beside the game: send them to whoever made it</text>
+    <text name="files" width="grow" text_size="22" selectable="true"></text>
+
+    <row name="buttons" width="grow" gap="20" align="end center">
+      <action_button name="open_folder" on_click="Assisi::App::OpenCrashFolder"
+                     border_width="2" border_color="#575f7a">Open folder</action_button>
+      <action_button name="close" on_click="Assisi::App::QuitRequested" focus="true"
+                     background="#e63319">Close</action_button>
+    </row>
+  </column>
+
+  <!-- The look both buttons share. Each instance adds its own colour. -->
+  <template name="action_button">
+    <button padding="30 12 30 12" text_size="30"
+            corner_radius="10" corner_style="rounded" />
+  </template>
+</screen>

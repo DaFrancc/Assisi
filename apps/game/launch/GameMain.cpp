@@ -13,12 +13,16 @@
 
 #include "LaunchArgs.hpp"
 
+#include <Assisi/App/CrashReporter.hpp>
 #include <Assisi/App/GameApp.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string_view>
 
@@ -276,6 +280,23 @@ int main(int argc, char **argv)
 
     // No readers are installed here: everything a game reads comes from its
     // content package, and GameApp installs the readers over it once it is open.
+    if (std::optional<Assisi::App::CrashReportLaunch> report =
+            Assisi::App::CrashReportLaunchFrom({argv, static_cast<std::size_t>(argc)}))
+    {
+        // Started by a crash, as the crashed run's reporter: its window comes
+        // from the package the game reads.
+        const std::optional<std::filesystem::path> executable = Assisi::Core::AssetSystem::ExecutablePath();
+        report->pak = executable ? executable->parent_path() / Assisi::App::kDefaultPakName
+                                 : std::filesystem::path{Assisi::App::kDefaultPakName};
+#ifdef ASSISI_PAK_OVERRIDES
+        if (const char *pak = std::getenv(kPakEnvironment); pak != nullptr && *pak != '\0')
+        {
+            report->pak = pak;
+        }
+#endif
+        return Assisi::App::RunCrashReporter(*report);
+    }
+
     GameArgs args;
     if (!ParseArgs(static_cast<int32_t>(argc), argv, args))
     {

@@ -11,17 +11,11 @@
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
-#include <Assisi/Mondrian/FontReader.hpp>
-#include <Assisi/Mondrian/ScreenReader.hpp>
-#include <Assisi/Mondrian/StringTableReader.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
-#include <Assisi/Runtime/CookedScene.hpp>
-#include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -35,7 +29,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -84,11 +77,7 @@ GameApp::~GameApp()
     }
     if (_pak)
     {
-        (void)Runtime::SceneSerializer::SetDocumentReader({});
-        (void)Core::SetConfigReader({});
-        (void)Mondrian::SetFontReader({});
-        (void)Mondrian::SetScreenReader({});
-        (void)Mondrian::SetStringTableReader({});
+        RemoveCookedReaders();
     }
 }
 
@@ -114,21 +103,9 @@ bool GameApp::MountContent()
     _assetSource.emplace(*_pak);
     _collisionSource.Read(*_pak);
 
-    const Core::PakProvider &provider = *_pak;
     (void)Render::SetAssetSource(&*_assetSource);
-    LoadAssetsFrom(provider);
-    (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
-                                                      { return Runtime::ReadCookedDocument(provider, vpath); });
-    (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
-                                { return Core::ReadCookedConfig(provider, vpath, type, instance); });
-    (void)Mondrian::SetFontReader([&provider](std::string_view vpath)
-                                  { return Mondrian::ReadCookedFont(provider, vpath); });
-    // The cooked blob and nothing else. A game has no parser to fall back to,
-    // which is the point: the markup never reaches the shipped binary.
-    (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
-                                    { return Mondrian::ReadCookedScreen(provider, vpath); });
-    (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
-                                         { return Mondrian::ReadCookedStringTable(provider, vpath); });
+    LoadAssetsFrom(*_pak);
+    InstallCookedReaders(*_pak);
     return true;
 }
 

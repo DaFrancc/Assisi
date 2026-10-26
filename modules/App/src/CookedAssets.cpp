@@ -3,9 +3,18 @@
 #include <Assisi/App/CookedAssets.hpp>
 
 #include <Assisi/Core/AssetProvider.hpp>
+#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/CookedPayload.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Image/CookedTexture.hpp>
+#include <Assisi/Mondrian/FontReader.hpp>
+#include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Runtime/CookedScene.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
+
+#include <string_view>
+#include <typeindex>
 
 namespace Assisi::App
 {
@@ -20,6 +29,29 @@ Render::AssetLoadError FromAssetError(Core::AssetError error) noexcept
 }
 
 } // namespace
+
+void InstallCookedReaders(const Core::AssetProvider &provider)
+{
+    (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
+                                                      { return Runtime::ReadCookedDocument(provider, vpath); });
+    (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
+                                { return Core::ReadCookedConfig(provider, vpath, type, instance); });
+    (void)Mondrian::SetFontReader([&provider](std::string_view vpath)
+                                  { return Mondrian::ReadCookedFont(provider, vpath); });
+    (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
+                                    { return Mondrian::ReadCookedScreen(provider, vpath); });
+    (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
+                                         { return Mondrian::ReadCookedStringTable(provider, vpath); });
+}
+
+void RemoveCookedReaders()
+{
+    (void)Runtime::SceneSerializer::SetDocumentReader({});
+    (void)Core::SetConfigReader({});
+    (void)Mondrian::SetFontReader({});
+    (void)Mondrian::SetScreenReader({});
+    (void)Mondrian::SetStringTableReader({});
+}
 
 CookedAssetSource::CookedAssetSource(const Core::AssetProvider &provider) noexcept : _provider(&provider)
 {

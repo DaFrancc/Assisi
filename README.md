@@ -430,6 +430,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [Steamworks SDK](https://partner.steamgames.com/) | **Optional, never in this repository.** Steam for a game: the player, overlay, achievements, stats, rich presence. Valve's agreement allows only a local copy, so each developer downloads their own and installs it with `./assisi steam-sdk <download>`; without it Steam reports itself unavailable. See the book's Steam page |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [libsodium](https://github.com/jedisct1/libsodium) | GameNetworkingSockets' encryption on Linux (Windows uses the OS's own) |
+| [Crashpad](https://github.com/getsentry/crashpad) | Writes a crash's minidump on Linux, from a helper program that reads the crashed game from outside. Sentry's fork, for its CMake build of Google's Crashpad; it brings mini_chromium, zlib, MPack and linux-syscall-support with it |
 | [LZ4](https://github.com/lz4/lz4) | Fast pak compression |
 | [Zstandard](https://github.com/facebook/zstd) | Smaller pak compression |
 | [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |

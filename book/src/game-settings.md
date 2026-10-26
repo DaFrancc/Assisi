@@ -34,7 +34,7 @@ The main settings file:
 | `physicsHz` | How many physics steps run per second. This is also how often `FixedUpdate` systems run. |
 | `clearColor` | The background color where nothing is drawn: red, green, blue, alpha, from 0 to 1. |
 | `keepLogs` | How many old log files to keep. `0` keeps only the current one. |
-| `keepDumps` | How many old crash reports to keep. |
+| `keepDumps` | How many old crashes' files to keep: each crash's crash log and minidump. |
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
 | `frameSnap` | `"Snapped"` (default): a frame that took almost exactly one, two or more display refreshes counts as exactly that, so at a steady frame rate the same number of `FixedUpdate` steps runs every frame. `"Unsnapped"`: the frame's measured time is used as it is. The player can override this. |
 | `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [Lengths](ui-layout.md#lengths). |
@@ -87,8 +87,11 @@ find an `options.json.tmp` beside it afterwards; the next save replaces it.
 <summary>Logs and crash reports</summary>
 
 The game writes a log file for each run, named like
-`assisi-20260918-132711-44514.log`, next to its executable. Crash reports go in
-the same place. `keepLogs` and `keepDumps` control how many old ones are kept.
+`assisi-20260918-132711-44514.log`, next to its executable. A crash's files go
+in the same place (see
+[When the game crashes](troubleshooting.md#when-the-game-crashes)), and on Linux
+a `crashpad` folder holds a minidump while it is being written. `keepLogs` and
+`keepDumps` control how many old ones are kept.
 
 To store these somewhere else, set the `ASSISI_USER_ROOT` environment variable
 to a folder. `options.json` goes there too.

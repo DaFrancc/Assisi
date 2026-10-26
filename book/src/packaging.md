@@ -22,15 +22,18 @@ assisi package ship
 ```
 
 When it finishes, `out/build/gcc-ship/apps/game/` (or `msvc-ship` on Windows)
-contains the two files a player needs:
+contains the files a player needs:
 
 ```text
 Assisi-Game          (Assisi-Game.exe on Windows)
 assets.pak
+crashpad_handler     (Linux only: writes a crash's minidump)
 ```
 
-**Copy those two files into a folder, and that folder is your game.** Zip it up
-and send it to someone.
+**Copy those files into a folder, and that folder is your game.** Zip it up
+and send it to someone. Without `crashpad_handler` the game still runs, but a
+crash leaves no minidump (see
+[When the game crashes](troubleshooting.md#when-the-game-crashes)).
 
 ## What those steps do
 

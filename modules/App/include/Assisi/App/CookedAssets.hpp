@@ -19,6 +19,18 @@ class AssetProvider;
 namespace Assisi::App
 {
 
+/// @brief Installs every reader content other than the renderer's goes through
+/// — levels, configs, fonts, screens and string tables — over @p provider.
+///
+/// The cooked blob and nothing else. A game has no parser to fall back to,
+/// which is the point: the markup never reaches the shipped binary. @p provider
+/// must outlive the readers.
+void InstallCookedReaders(const Core::AssetProvider &provider);
+
+/// @brief Removes the readers InstallCookedReaders installed, before the
+/// provider they read through goes.
+void RemoveCookedReaders();
+
 class CookedAssetSource final : public Render::AssetSource
 {
 public:

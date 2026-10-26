@@ -233,6 +233,12 @@ class ReleaseTest(ToolTest):
         self.assertTrue((kept / "libsteam_api.so").exists())
         self.assertFalse((kept / "steam_appid.txt").exists())
 
+    def test_a_linux_game_is_kept_with_the_handler_that_writes_its_crash_dumps(self):
+        game_dir = self.sandbox.build_dir("gcc-ship") / "apps" / "game"
+        (game_dir / "crashpad_handler").write_text("handler\n")
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.assertTrue((self.release_dir("1.0") / "crashpad_handler").exists())
+
     def test_later_packages_lay_out_against_the_newest_release_of_their_level(self):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.1")[0], 0)

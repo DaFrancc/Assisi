@@ -193,6 +193,24 @@ if (ASSISI_STEAMWORKS_ENABLED)
   endforeach()
 endif()
 
+# --- Crash dumps (Linux).
+#
+# crashpad_handler writes a crashed game's minidump. The game and the editor
+# start it from beside themselves, where a player's copy has it too, so it is
+# built there, with whichever of them is built, and with the C++ runtime inside
+# it as the game has.
+if (TARGET crashpad_handler)
+  set_target_properties(crashpad_handler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+  if (ASSISI_HAVE_STATIC_LIBSTDCXX)
+    target_link_options(crashpad_handler PRIVATE -static-libstdc++ -static-libgcc)
+  endif()
+  # Stripped as the game is: the vendored code carries its own debug info.
+  target_link_options(crashpad_handler PRIVATE $<$<CONFIG:Release>:-s>)
+  foreach(_exe Assisi-Game Assisi-GameEditor)
+    add_dependencies("${_exe}" crashpad_handler)
+  endforeach()
+endif()
+
 # A refused start has to reach the exit code. Driven as a real process because
 # that is the whole claim — `StartupFailed()` returning true is not the property
 # anyone depends on, `$?` being non-zero is, and only main() joins the two.
@@ -307,21 +325,27 @@ if (ASSISI_BUILD_TESTS)
   set(_staged "${CMAKE_CURRENT_BINARY_DIR}/staged")
   set(_unstaged "${CMAKE_CURRENT_BINARY_DIR}/unstaged")
   set(_stage_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageGame.cmake")
-  # A game built with the SDK needs the Steam library beside it to start at all.
-  set(_stage_steam "")
+  # What goes beside the game. A game built with the SDK needs the Steam library
+  # there to start at all.
+  set(_stage_beside "")
   if (ASSISI_STEAMWORKS_ENABLED)
-    set(_stage_steam "-DSTEAM_LIB=$<TARGET_FILE:Steamworks::steam_api>")
+    set(_stage_beside "-DSTEAM_LIB=$<TARGET_FILE:Steamworks::steam_api>")
+  endif()
+  # A player's copy carries the program that writes its crash dumps, so the
+  # staged one does too.
+  if (TARGET crashpad_handler)
+    list(APPEND _stage_beside "-DCRASH_HANDLER=$<TARGET_FILE:crashpad_handler>")
   endif()
   add_test(NAME Game-Staged
     COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_staged}"
-            "-DPAK=${CMAKE_CURRENT_BINARY_DIR}/thin.pak" ${_stage_steam} -P "${_stage_script}"
+            "-DPAK=${CMAKE_CURRENT_BINARY_DIR}/thin.pak" ${_stage_beside} -P "${_stage_script}"
   )
   set_tests_properties(Game-Staged PROPERTIES
     FIXTURES_REQUIRED "GameBinary;thinPak"
     FIXTURES_SETUP StagedGame
     LABELS game)
   add_test(NAME Game-Unstaged
-    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_unstaged}" ${_stage_steam}
+    COMMAND "${CMAKE_COMMAND}" "-DGAME=$<TARGET_FILE:Assisi-Game>" "-DDIR=${_unstaged}" ${_stage_beside}
             -P "${_stage_script}"
   )
 
@@ -591,6 +615,22 @@ if (ASSISI_BUILD_TESTS)
       FIXTURES_REQUIRED GameBinary
       LABELS game
       SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+
+    # The program that writes the game's crash dumps ships beside it, so it is
+    # held to the same list. It has no Steam to load.
+    if (TARGET crashpad_handler)
+      add_test(NAME CrashHandlerNeedsOnlySystemLibraries
+        COMMAND Python3::Interpreter "${_dependency_checker}"
+                --binary "$<TARGET_FILE:crashpad_handler>"
+                --readelf "${_dependency_readelf}"
+                ${_system_libraries}
+                ${_glibc_ceiling}
+      )
+      set_tests_properties(CrashHandlerNeedsOnlySystemLibraries PROPERTIES
+        FIXTURES_REQUIRED GameBinary
+        LABELS game
+        SKIP_RETURN_CODE ${_symbol_scan_skip_code})
+    endif()
 
     # The positive control: the same game against a list that leaves out libc,
     # which every dynamically linked Linux program needs, so the check must

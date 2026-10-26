@@ -128,11 +128,82 @@ The CPU doesn't support AVX2. The engine requires it.
 Check `startupScene` in `assets/config/game.json`, and that the level is in the
 package: cook and pack again.
 
+## When the game crashes
+
+When the game or the editor crashes on Linux, a window opens saying it stopped,
+why, and where. The same information is saved in files next to the executable,
+named for the run, like its log:
+
+| File | What it holds |
+|---|---|
+| `crash-20260918-132711-44514.txt` | The **crash log**: why the game stopped, then **Stack**, the functions that were running when it did, the one that stopped first. |
+| `crash-20260918-132711-44514.dmp` | The **minidump**: every thread's stack, and the memory around each one, for a debugger. |
+| `assisi-20260918-132711-44514.log` | The run's log, which ends where the game stopped. |
+
+If a player sends you a crash, these three files are what to ask for. The
+window's **Open folder** button opens the folder they are in. Nothing is sent
+anywhere by itself.
+
+On Windows, a crash saves only the minidump and opens no window. Open the
+minidump in Visual Studio.
+
+### Reading the stack
+
+Each line of **Stack** is a function, with the file and line it was at, in a
+dev or debug build:
+
+```text
+Stack:
+  #0  Game::SpawnWave(int)  at /home/you/MyGame/apps/game/src/Waves.cpp:88  (Assisi-Game + 0x8c1f20)
+  #1  Game::WaveSystem(Assisi::App::SystemContext&)  at /home/you/MyGame/apps/game/src/Waves.cpp:41  (Assisi-Game + 0x8c2a14)
+```
+
+`#0` is where the game stopped, and each line below it is what called the line
+above. A ship build carries no function names, so its lines show only the file
+the code is in and where in it, like `Assisi-Game + 0x8c1f20`.
+
+### Opening the minidump
+
+The minidump shows every thread, and lets you look at variables, which helps
+when the crash is in one thread but the cause is in another. Open it in
+`lldb`, with the exact executable that crashed:
+
+```bash
+lldb Assisi-Game -c crash-20260918-132711-44514.dmp
+```
+
+Then `bt` shows the crashing thread's stack, and `bt all` shows every thread.
+
+### Stopping the game on purpose
+
+Sometimes your code finds a problem the game cannot carry on past, such as
+content that needs something this build doesn't have. `Core::Abort` stops the
+game there, in every build, the same way a crash does: the window opens and the
+crash log gives your message as the reason.
+
+```cpp
+#include <Assisi/Core/Abort.hpp>
+
+if (wave == nullptr)
+{
+    Assisi::Core::Abort("Wave {} is in the level but not in the wave table.", index);
+}
+```
+
+Use it rarely. Choose by what kind of problem it is:
+
+| The problem | Write |
+|---|---|
+| Something can fail and the game can cope, such as a missing optional file | Log it with `Log::Warn` or `Log::Error` and carry on. |
+| A bug in your own code if it ever happens | `ASSISI_ASSERT(condition, "why")`. It stops a debug build, and costs nothing in a ship build, where it is left out. |
+| The game cannot carry on, in any build | `Core::Abort("why")`. |
+
 ## Where to look
 
 - **Logs** are written next to the executable, named like
   `assisi-20260918-132711-44514.log`. The latest one usually explains a failure.
-- **Crashes** that make no sense are often memory bugs. Try an `asan` build; see
-  [Build types](build-types.md).
+- **Crashes** leave a crash log and a minidump next to the log; see
+  [When the game crashes](#when-the-game-crashes). A crash that makes no sense
+  is often a memory bug. Try an `asan` build; see [Build types](build-types.md).
 - **Still stuck?** Open an issue on the
   [issue tracker](https://github.com/DaFrancc/Assisi/issues).
