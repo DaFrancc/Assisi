@@ -28,6 +28,7 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -148,8 +149,16 @@ class SystemCatalog
 /// it. See that member for why it is not a process-global list keyed by `World*`.
 void QueueSystemInstall(World &world, std::span<const std::string> names, std::string_view context);
 
+/// @brief Systems some content asked for that this build does not declare.
+struct UndeclaredSystems
+{
+    /// The file that asked: a blueprint, or the screen's name.
+    std::string context;
+    std::vector<std::string> names;
+};
+
 /// @brief Applies @p world's queued installs. Driven once per frame by
-/// Application::InstallQueuedSystems; no-op when nothing is queued.
+/// Application::InstallQueuedSystems; succeeds at once when nothing is queued.
 ///
 /// **Nothing is ever uninstalled.** SystemRegistry::RequireAny already makes an
 /// idle system cost a couple of array loads per phase, so there is almost nothing
@@ -159,7 +168,24 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
 /// Per world rather than "drain everything": the queue lives on the world, so
 /// there is no global list to walk, and a caller holding a `World` is exactly who
 /// knows the world is still alive.
-void DrainSystemInstalls(SystemContext ctx);
+///
+/// @return the names this build does not declare, each already logged. Nothing
+///         of the batch is installed then. The content that asked has already
+///         loaded, so refusing it is not possible here: a game ends, which is
+///         DrainSystemInstallsOrAbort, and the editor shows the names and
+///         refuses to save or play.
+[[nodiscard]] std::expected<void, UndeclaredSystems> DrainSystemInstalls(SystemContext ctx);
+
+/// @brief DrainSystemInstalls for a game or a server: content needing a system
+/// this build does not declare ends the process, naming the system and what
+/// asked for it.
+///
+/// A game running that content looks as if it works and has none of the
+/// behaviour, and is found by a player. Ending is found by whoever built it.
+void DrainSystemInstallsOrAbort(SystemContext ctx);
+
+/// @brief @p names quoted and separated by commas, for a message.
+[[nodiscard]] std::string QuotedNames(std::span<const std::string> names);
 
 /// @brief Every system the blueprints placed in @p instances require, and how
 /// many distinct sources ask for each.
@@ -191,15 +217,32 @@ void DrainSystemInstalls(SystemContext ctx);
 /// really are two claims on the system that opens them.
 [[nodiscard]] std::map<std::string, int32_t, std::less<>> RequiredSystemCounts(const World &world);
 
+/// @brief The systems @p world's file needs, by its own list or through the
+/// blueprints placed in it, that this build does not declare, each named once.
+///
+/// What the file must not be saved or played with: saved, it looks valid and no
+/// build of this code can load it; played, it runs with behaviour missing,
+/// where a game would end. A screen's systems are left out, since a screen is
+/// shown at run time and is no part of the file.
+[[nodiscard]] std::vector<std::string> UndeclaredRequiredSystems(const World &world);
+
+/// @brief What in @p world needs the system @p name: each blueprint file placed
+/// there whose systems name it, and each screen shown there that does.
+///
+/// For a message about a system that cannot be installed, so it names the file
+/// to go and fix. A blueprint placed inside another is named by the outer one,
+/// whose systems include everything it holds.
+[[nodiscard]] std::vector<std::string> SourcesRequiring(const World &world, std::string_view name);
+
 /// @brief True when every system the level at @p virtualPath names is declared
 /// by this build. Logs each offender.
 ///
 /// Reads the file's system list *without* loading it, so a caller can refuse
-/// before replacing a scene it cannot put back. Every load path wants this,
+/// before replacing a scene it cannot put back. Every game load path wants this,
 /// including the headless server: a dedicated server that installs no systems
-/// still must not accept a file naming behaviour this build cannot supply —
-/// silently serving a level it cannot run is the same failure as the editor
-/// silently opening one.
+/// still must not accept a file naming behaviour this build cannot supply.
+/// The editor does not: it opens such a level to show what is missing, and
+/// refuses to save or play it instead.
 ///
 /// A file that cannot be read or parsed is *not* declared valid: the caller
 /// gets false and the read logs why.

@@ -245,12 +245,12 @@ TEST_CASE("A blueprint's systems begin at the drain that installs them")
     REQUIRE(Runs(*world, "Started") == 1u);
 
     QueueSystemInstall(*world, std::vector<std::string>{"StartedLate"}, "car.abp");
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
 
     CHECK(Runs(*world, "StartedLate") == 1u); // the newcomer began
     CHECK(Runs(*world, "Started") == 1u);     // and the incumbent did not begin twice
 
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
     CHECK(Runs(*world, "StartedLate") == 1u);
 
     std::filesystem::remove_all(root);
@@ -284,7 +284,7 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     // Queued, not installed on the spot: registering mid-walk would mutate what
     // is being iterated, so it lands at the frame's safe point.
     CHECK_FALSE(world->systems.Has("StartedLate"));
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
     CHECK(world->systems.Has("StartedLate"));
 
     // It is counted as required, so a re-apply that names nothing keeps it.

@@ -833,7 +833,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
 
     // The survivor is still owed exactly its own install, and draining it is not
     // a walk over anything the dead world could still be in.
-    DrainSystemInstalls(StartContext(survivor));
+    REQUIRE(DrainSystemInstalls(StartContext(survivor)).has_value());
     CHECK(survivor.systems.Has("Follower"));
     CHECK_FALSE(survivor.systems.Has("Counter"));
     CHECK(survivor.pendingSystems.names.empty());
@@ -858,7 +858,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
     CHECK(world.pendingSystems.names.empty());
 
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
     TickUpdate(world, universal);
@@ -880,7 +880,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
 
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
 
     CHECK(world.systems.Has("Counter"));
     CHECK(world.systems.Has("Follower"));
@@ -905,9 +905,9 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // The first spawn to open the queue owns the diagnostic.
     CHECK(world.pendingSystems.context == "car.abp");
 
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
     CHECK(world.pendingSystems.names.empty());
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     TickUpdate(world, universal);

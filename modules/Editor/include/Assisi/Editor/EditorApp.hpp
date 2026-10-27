@@ -423,6 +423,9 @@ class EditorApp : public Assisi::App::Application
     /// whose `systemNames` a save writes back — `_world` is whichever of the two
     /// is being edited, so this needs no mode of its own.
     void DrawRequiredSystemsWindow();
+    /// @brief The modal raised instead of playing or saving a file that needs
+    /// systems this build does not declare: which ones, and what asks for each.
+    void DrawUndeclaredSystemsModal();
 
     /// @brief Adds @p name to the edited world's required list and installs it.
     /// No-op for a name already there, which is what keeps the list a set.
@@ -1546,6 +1549,19 @@ class EditorApp : public Assisi::App::Application
     /// consequence surfaces minutes later on someone else's screen.
     bool _hostPromptOpen = false;
     bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
+
+    /// What a file needing undeclared systems was refused.
+    enum class UndeclaredRefusal : std::uint8_t
+    {
+        Play,
+        Save,
+        Count_
+    };
+    /// The undeclared systems the last refused Play or save named. Not empty
+    /// while its modal is up: a modal rather than a log line, because Play and
+    /// Save are pressed looking at the scene, not at the log.
+    std::vector<std::string> _refusedForSystems;
+    UndeclaredRefusal _undeclaredRefusal = UndeclaredRefusal::Play;
     // Correction-rate sampling for the Network panel. Rates rather than totals:
     // a total that keeps climbing only says the session is still running, which
     // is already visible. Sampled over a second so a frame-rate stutter does not

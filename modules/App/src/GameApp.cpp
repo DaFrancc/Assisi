@@ -169,7 +169,9 @@ void GameApp::OnStart()
     // game that started and plays like one that did not.
     if (!LevelSystemsAreDeclared(*scene))
     {
-        Core::Log::Error("Game: cannot start - '{}' names a system this build does not declare.", *scene);
+        // Why is logged above: a name this build does not declare, or a file
+        // that could not be read at all.
+        Core::Log::Error("Game: cannot start - '{}' was refused.", *scene);
         RefuseStart();
         return;
     }
@@ -583,7 +585,7 @@ void GameApp::InstallQueuedSystems()
     // Every resident world: a blueprint can be spawned into a background one, and
     // a queue nobody drains leaves an entity holding its components and running
     // none of the code.
-    _worlds.ForEach([this](World &world) { DrainSystemInstalls(WorldStartContext(world)); });
+    _worlds.ForEach([this](World &world) { DrainSystemInstallsOrAbort(WorldStartContext(world)); });
 }
 
 } // namespace Assisi::App

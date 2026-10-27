@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <map>
 #include <span>
 #include <string>
@@ -47,9 +48,17 @@ namespace
 /// places, and a different length would say they were not.
 constexpr std::size_t kMaxSuggestions = 8;
 
-/// A required name this build does not declare. Amber rather than red: the file
-/// is not corrupt, it was authored against a build that had the system.
-constexpr ImVec4 kUndeclaredColor{0.9f, 0.8f, 0.3f, 1.f};
+/// A required name this build does not declare. Red: the file cannot be saved or
+/// played while it needs the system, and a game running it would end. The red
+/// the network panel gives an error.
+constexpr ImVec4 kUndeclaredColor{0.9f, 0.4f, 0.4f, 1.f};
+constexpr const char *kUndeclaredGlyph = "\xef\x80\x8d"; // U+F00D, a cross
+
+/// The Play and save refusal's width when it opens, in multiples of the text
+/// size so it scales with the font: about a sentence a line. Its wrapped text
+/// would otherwise wrap at whatever width the window started with, which is
+/// narrow.
+constexpr float kUndeclaredRefusalWidthInText = 36.f;
 
 /// Inherited from something placed or shown here, and not asked for by this file.
 constexpr ImVec4 kInheritedColor{0.4f, 0.85f, 0.45f, 1.f};
@@ -149,10 +158,11 @@ SystemRow MakeSystemRow(const std::string &name, const std::vector<std::string> 
 /// @brief The list as it should be drawn: every system the edited file asks for
 /// or inherits, each row carrying where it came from.
 ///
-/// Declaration order, not the file's and not alphabetical: it is the one order
-/// that reads the same in every level, and it does not rearrange itself when a
-/// name is added. Names this build does not declare come last — they have no
-/// place in that order, and the panel is the only place they can be found.
+/// Names this build does not declare come first: they are what stops the file
+/// being saved or played, and the panel is the only place they can be found.
+/// The rest follow in declaration order, not the file's and not alphabetical:
+/// it is the one order that reads the same in every level, and it does not
+/// rearrange itself when a name is added.
 ///
 /// Every row borrows its name from @p catalog, @p required or @p inherited, so
 /// none of the three may be touched while the result is alive.
@@ -163,24 +173,47 @@ std::vector<SystemRow> BuildSystemRows(std::span<const Assisi::App::SystemDefini
     std::vector<SystemRow> rows;
     rows.reserve(required.size() + inherited.size());
 
-    for (const Assisi::App::SystemDefinition &definition : catalog)
-    {
-        if (Requires(required, definition.name) || InheritedCount(inherited, definition.name) > 0)
-            rows.push_back(MakeSystemRow(definition.name, required, inherited, listEditable));
-    }
-
     const Assisi::App::SystemCatalog &declarations = Assisi::App::SystemCatalog::Instance();
     for (const std::string &name : required)
     {
         if (declarations.Find(name) == nullptr)
+        {
             rows.push_back(MakeSystemRow(name, required, inherited, listEditable));
+        }
     }
     for (const auto &[name, count] : inherited)
     {
         if (declarations.Find(name) == nullptr && !Requires(required, name))
+        {
             rows.push_back(MakeSystemRow(name, required, inherited, listEditable));
+        }
+    }
+
+    for (const Assisi::App::SystemDefinition &definition : catalog)
+    {
+        if (Requires(required, definition.name) || InheritedCount(inherited, definition.name) > 0)
+        {
+            rows.push_back(MakeSystemRow(definition.name, required, inherited, listEditable));
+        }
     }
     return rows;
+}
+
+/// @brief What asks for the undeclared system @p name, a line each: the edited
+/// file itself, which @p selfNoun names, and whatever placed or shown in it.
+std::string WhereNeeded(const Assisi::App::World &world, const std::string &name, std::string_view selfNoun)
+{
+    std::string where;
+    if (Requires(world.systemNames, name))
+    {
+        where = std::format("Named by {}.", selfNoun);
+    }
+    const std::vector<std::string> sources = Assisi::App::SourcesRequiring(world, name);
+    if (!sources.empty())
+    {
+        where += std::format("{}Included by {}.", where.empty() ? "" : "\n", Assisi::App::QuotedNames(sources));
+    }
+    return where;
 }
 
 /// @brief One row: the session tick, the remove button, the name, and the icon
@@ -192,9 +225,9 @@ std::vector<SystemRow> BuildSystemRows(std::span<const Assisi::App::SystemDefini
 ///
 /// Writes @p pendingRemove rather than removing: the caller is walking the very
 /// list a removal would shift, so it applies this after the walk.
-void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, const char *selfNoun,
-                   std::string &pendingRemove)
+void DrawSystemRow(Assisi::App::World &world, const SystemRow &row, const char *selfNoun, std::string &pendingRemove)
 {
+    Assisi::App::SystemRegistry &systems = world.systems;
     const std::string &name = *row.name;
     ImGui::PushID(name.c_str());
     ImGui::TableNextRow();
@@ -235,9 +268,29 @@ void DrawSystemRow(Assisi::App::SystemRegistry &systems, const SystemRow &row, c
 
     ImGui::TableSetColumnIndex(2);
     if (row.declared)
+    {
         ImGui::TextUnformatted(name.c_str());
+    }
     else
-        ImGui::TextColored(kUndeclaredColor, "%s (not declared by this build)", name.c_str());
+    {
+        ImGui::TextColored(kUndeclaredColor, "%s", name.c_str());
+    }
+
+    // An undeclared name's icon is the cross whatever asks for it, since that is
+    // what has to be fixed; the tooltip says what asks.
+    if (!row.declared)
+    {
+        ImGui::TableSetColumnIndex(3);
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * kIconScale);
+        ImGui::TextColored(kUndeclaredColor, "%s", kUndeclaredGlyph);
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Not declared by this build.\n%s", WhereNeeded(world, name, selfNoun).c_str());
+        }
+        ImGui::PopID();
+        return;
+    }
 
     // Nothing inherited it: the ordinary case, and the one that should stay quiet.
     if (row.inheritedCount == 0)
@@ -443,7 +496,9 @@ void EditorApp::DrawRequiredSystemsWindow()
 
         const char *const selfNoun = InBlueprintMode() ? "this blueprint" : "this level";
         for (const SystemRow &row : rows)
-            DrawSystemRow(_world->systems, row, selfNoun, pendingRemove);
+        {
+            DrawSystemRow(*_world, row, selfNoun, pendingRemove);
+        }
 
         ImGui::EndTable();
     }
@@ -453,6 +508,64 @@ void EditorApp::DrawRequiredSystemsWindow()
 
     ImGui::EndDisabled();
     ImGui::End();
+}
+
+void EditorApp::DrawUndeclaredSystemsModal()
+{
+    // One popup whatever was refused: the title changes, and the part after
+    // `###` is the id, so it stays the same popup.
+    static constexpr const char *kPopupId = "###UndeclaredSystems";
+
+    if (!_refusedForSystems.empty() && !ImGui::IsPopupOpen(kPopupId))
+    {
+        ImGui::OpenPopup(kPopupId);
+    }
+    const bool save = _undeclaredRefusal == UndeclaredRefusal::Save;
+    const char *const title = save ? "Can't save: systems missing###UndeclaredSystems"
+                                   : "Can't play: systems missing###UndeclaredSystems";
+
+    // A zero height fits the contents once as it opens; after that it resizes
+    // like any window.
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * kUndeclaredRefusalWidthInText, 0.f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_None))
+    {
+        return;
+    }
+
+    const char *const selfNoun = InBlueprintMode() ? "this blueprint" : "this level";
+    if (save)
+    {
+        ImGui::TextWrapped("This %s needs systems this build does not declare. Saved, it would look like a valid "
+                           "file that no build of this code can load.",
+                           InBlueprintMode() ? "blueprint" : "level");
+    }
+    else
+    {
+        ImGui::TextWrapped("This level needs systems this build does not declare. A game would end the moment it "
+                           "reached them, so it can't be played here either.");
+    }
+    ImGui::Separator();
+    for (const std::string &name : _refusedForSystems)
+    {
+        ImGui::TextColored(kUndeclaredColor, "%s %s", kUndeclaredGlyph, name.c_str());
+        if (_world != nullptr)
+        {
+            ImGui::Indent();
+            ImGui::TextUnformatted(WhereNeeded(*_world, name, selfNoun).c_str());
+            ImGui::Unindent();
+        }
+    }
+    ImGui::Separator();
+    ImGui::TextWrapped("Remove them in the Systems panel, remove what includes them, or add the systems back "
+                       "in code.");
+
+    if (ImGui::Button("OK"))
+    {
+        _refusedForSystems.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::EndPopup();
 }
 
 } // namespace Assisi::Editor

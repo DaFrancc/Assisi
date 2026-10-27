@@ -84,6 +84,21 @@ enum class StartProgress : std::uint8_t
     Count_
 };
 
+/// @brief What WorldManager::ApplySystems does with a system this build does not
+/// declare, whether the level names it or something in the world needs it.
+enum class IfUndeclared : std::uint8_t
+{
+    /// The whole list is refused and the world keeps what it had: a game, which
+    /// must not run content with its behaviour missing.
+    Refuse,
+
+    /// Left out, with the rest installed: the editor, which opens the file so the
+    /// author can see what is missing and refuses to save or play it.
+    Skip,
+
+    Count_
+};
+
 /// @brief One resident level: its entities, its physics, and the bookkeeping
 /// that is per-level rather than per-app.
 ///
@@ -371,8 +386,13 @@ public:
     ///
     /// Static: it needs nothing of a manager, and a host that keeps a lone
     /// world, such as a dedicated server, installs through it too.
+    ///
+    /// @param undeclared What becomes of a name this build does not declare. Under
+    ///        Skip, `world.systemNames` still records every name the level gave,
+    ///        so the editor can show the missing ones and refuse to save.
     [[nodiscard]] static bool ApplySystems(World &world, std::span<const std::string> names,
-                                           std::string_view context);
+                                           std::string_view context,
+                                           IfUndeclared undeclared = IfUndeclared::Refuse);
 
     /// @brief Destroys the named world.
     ///
