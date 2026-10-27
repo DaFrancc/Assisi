@@ -139,7 +139,8 @@ World &WorldManager::Create(std::string_view label)
     return ref;
 }
 
-bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context)
+bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context,
+                                PlacedUndeclared placed)
 {
     // The level's request is recorded whether or not it could be honoured — it is
     // what a save round-trips, and a failed install must not rewrite the file.
@@ -162,10 +163,17 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     for (const auto &[name, count] : RequiredSystemCounts(world))
     {
         (void)count;
-        if (std::find(required.begin(), required.end(), name) == required.end())
+        if (std::find(required.begin(), required.end(), name) != required.end())
         {
-            required.push_back(name);
+            continue;
         }
+        if (placed == PlacedUndeclared::Skip && SystemCatalog::Instance().Find(name) == nullptr)
+        {
+            Core::Log::Error("'{}': system '{}', needed by {}, is not declared by this build. It is left out.",
+                             context, name, QuotedNames(SourcesRequiring(world, name)));
+            continue;
+        }
+        required.push_back(name);
     }
 
     // Resolve before destroying anything: a refused list leaves the world running

@@ -842,6 +842,16 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
         return false;
     }
 
+    // Saved, the file would look valid and no build of this code could load it.
+    const std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
+    if (!undeclared.empty())
+    {
+        Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' - it needs systems this build does not declare: "
+                                 "{}. Remove them in the Systems panel, or the blueprints that need them.",
+                                 virtualPath, Assisi::App::QuotedNames(undeclared));
+        return false;
+    }
+
     const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
     if (!resolved)
     {
@@ -1151,7 +1161,11 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // the same `ParseSystemNames` for the list they run it over, so neither can see
     // a name the other does not. This return stays survivable regardless, because
     // that argument is exactly the kind that stops being true quietly.
-    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
+    //
+    // A system only a placed blueprint needs is left out instead, rather than
+    // refusing the level: the author has to be able to open it to see what is
+    // missing. The Systems panel shows it in red, and save and Play refuse.
+    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath, Assisi::App::PlacedUndeclared::Skip))
     {
         Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
         AbandonReplacedScene(virtualPath);

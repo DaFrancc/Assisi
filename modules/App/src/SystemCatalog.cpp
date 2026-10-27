@@ -2,11 +2,13 @@
 #include <Assisi/App/SystemCatalog.hpp>
 
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/Abort.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
 #include <expected>
+#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -153,16 +155,29 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
     }
 }
 
-void DrainSystemInstalls(SystemContext ctx)
+std::expected<void, UndeclaredSystems> DrainSystemInstalls(SystemContext ctx)
 {
     World &world = ctx.world;
     if (world.pendingSystems.names.empty())
-        return;
+    {
+        return {};
+    }
 
     // Moved out first: an installer could in principle queue more, and appending
     // to the vector being walked is how that becomes an infinite frame.
     const World::PendingSystems batch = std::exchange(world.pendingSystems, World::PendingSystems{});
-    (void)SystemCatalog::Instance().Install(world, batch.names, batch.context);
+    if (!SystemCatalog::Instance().Install(world, batch.names, batch.context))
+    {
+        UndeclaredSystems undeclared{.context = batch.context, .names = {}};
+        for (const std::string &name : batch.names)
+        {
+            if (SystemCatalog::Instance().Find(name) == nullptr)
+            {
+                undeclared.names.push_back(name);
+            }
+        }
+        return std::unexpected(std::move(undeclared));
+    }
 
     // The one-shot phases this world has already passed, replayed for whatever
     // just arrived. Every entry that was here before is marked, so these run the
@@ -173,7 +188,7 @@ void DrainSystemInstalls(SystemContext ctx)
     // run all of them at once.
     if (world.start == StartProgress::NotBegun)
     {
-        return;
+        return {};
     }
     world.systems.RunOnce(SystemPhase::Begin, ctx);
     if (world.start == StartProgress::Loaded)
@@ -183,6 +198,27 @@ void DrainSystemInstalls(SystemContext ctx)
         // is a different feature, and this phase does not pretend to be it.
         world.systems.RunOnce(SystemPhase::Loaded, ctx);
     }
+    return {};
+}
+
+void DrainSystemInstallsOrAbort(SystemContext ctx)
+{
+    const std::expected<void, UndeclaredSystems> installed = DrainSystemInstalls(ctx);
+    if (!installed)
+    {
+        Core::Abort("'{}' needs systems this build does not declare: {}.", installed.error().context,
+                    QuotedNames(installed.error().names));
+    }
+}
+
+std::string QuotedNames(std::span<const std::string> names)
+{
+    std::string quoted;
+    for (const std::string &name : names)
+    {
+        quoted += std::format("{}'{}'", quoted.empty() ? "" : ", ", name);
+    }
+    return quoted;
 }
 
 namespace
@@ -207,6 +243,16 @@ bool NamesAreDeclared(const std::expected<std::vector<std::string>, Runtime::Lev
         ok = false;
     }
     return ok;
+}
+
+/// Adds @p name to @p undeclared unless this build declares it or it is there already.
+void AddIfUndeclared(std::vector<std::string> &undeclared, const std::string &name)
+{
+    if (SystemCatalog::Instance().Find(name) != nullptr || std::ranges::find(undeclared, name) != undeclared.end())
+    {
+        return;
+    }
+    undeclared.push_back(name);
 }
 
 } // namespace
@@ -268,6 +314,46 @@ std::map<std::string, int32_t, std::less<>> RequiredSystemCounts(const World &wo
         }
     }
     return counts;
+}
+
+std::vector<std::string> UndeclaredRequiredSystems(const World &world)
+{
+    std::vector<std::string> undeclared;
+    for (const std::string &name : world.systemNames)
+    {
+        AddIfUndeclared(undeclared, name);
+    }
+    for (const std::pair<const std::string, int32_t> &required : BlueprintSystemCounts(world.instances))
+    {
+        AddIfUndeclared(undeclared, required.first);
+    }
+    return undeclared;
+}
+
+std::vector<std::string> SourcesRequiring(const World &world, std::string_view name)
+{
+    std::vector<std::string> sources;
+    for (const auto &[id, row] : world.instances.All())
+    {
+        (void)id;
+        if (!row->authored || std::ranges::find(sources, row->source) != sources.end())
+        {
+            continue;
+        }
+        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
+        if (definition && std::ranges::find((*definition)->systems, name) != (*definition)->systems.end())
+        {
+            sources.push_back(row->source);
+        }
+    }
+    for (const World::Screen &held : world.screenStack)
+    {
+        if (held.screen != nullptr && std::ranges::find(held.systems, name) != held.systems.end())
+        {
+            sources.emplace_back(held.screen->Name());
+        }
+    }
+    return sources;
 }
 
 } // namespace Assisi::App

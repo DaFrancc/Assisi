@@ -158,7 +158,7 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     // A blueprint world never simulates, so a missing system changes nothing you
     // could see here — but it means the file names something this build cannot
     // provide, which the author should hear about before saving over it.
-    if (!_worlds.ApplySystems(world, header.systems, source))
+    if (!_worlds.ApplySystems(world, header.systems, source, Assisi::App::PlacedUndeclared::Skip))
         Assisi::Core::Log::Error("Blueprint mode: '{}' names a system this build does not declare.", source);
     world.state = Assisi::App::WorldState::Active;
     // Never simulate: a running world settles its bodies into a pose the file would

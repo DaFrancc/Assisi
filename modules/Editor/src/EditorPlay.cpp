@@ -4,6 +4,7 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -58,6 +59,19 @@ void EditorApp::StartPlay(NetIntent intent)
         Assisi::Core::Log::Warn("Play: close the blueprint editor first - a blueprint world is content, "
                                 "not a level to run.");
         return;
+    }
+
+    // A game running this content would end. Played here, it runs with the
+    // behaviour missing, which tests a game that can never happen.
+    if (_world != nullptr)
+    {
+        const std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
+        if (!undeclared.empty())
+        {
+            Assisi::Core::Log::Error("Play: refusing to start - '{}' needs systems this build does not declare: {}.",
+                                     _world->levelPath, Assisi::App::QuotedNames(undeclared));
+            return;
+        }
     }
 
     // Play-in-editor hosting sidesteps both gates below structurally, not by

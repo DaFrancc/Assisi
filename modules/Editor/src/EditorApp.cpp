@@ -1428,7 +1428,13 @@ void EditorApp::InstallQueuedSystems()
     // Loading worlds included, harmlessly: their scene belongs to a worker until
     // promotion, but the system registry is main-thread only, and promotion runs
     // ApplySystems, which clears the queue anyway.
-    _worlds.ForEach([this](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
+    //
+    // A name this build does not declare is not fatal here, as it is in a game:
+    // the author has to be able to look at what asked for it. It is logged, the
+    // Systems panel shows it in red, and save and Play refuse while the file
+    // needs it.
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    { (void)Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 void EditorApp::FlushDeferred()

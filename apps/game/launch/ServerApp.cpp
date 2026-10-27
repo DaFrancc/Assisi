@@ -377,7 +377,7 @@ void ServerApp::InstallQueuedSystems()
     // from the wire asks for the systems its file names, and they have to be
     // registered at the safe point rather than mid-walk. A headless process runs
     // that behaviour — it just does not draw it.
-    Assisi::App::DrainSystemInstalls(WorldStartContext());
+    Assisi::App::DrainSystemInstallsOrAbort(WorldStartContext());
 }
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()

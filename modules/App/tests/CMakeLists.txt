@@ -44,6 +44,7 @@ add_executable(Assisi-App-Tests
   TestStepWorld.cpp
   TestSystemRegistry.cpp
   TestUiInputBridge.cpp
+  TestUndeclaredSystems.cpp
   TestWorld.cpp
   TestWorldContacts.cpp
   TestWorldEvents.cpp

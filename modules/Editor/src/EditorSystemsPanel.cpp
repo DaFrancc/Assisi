@@ -47,9 +47,10 @@ namespace
 /// places, and a different length would say they were not.
 constexpr std::size_t kMaxSuggestions = 8;
 
-/// A required name this build does not declare. Amber rather than red: the file
-/// is not corrupt, it was authored against a build that had the system.
-constexpr ImVec4 kUndeclaredColor{0.9f, 0.8f, 0.3f, 1.f};
+/// A required name this build does not declare. Red: the file cannot be saved or
+/// played while it needs the system, and a game running it would end. The red
+/// the network panel gives an error.
+constexpr ImVec4 kUndeclaredColor{0.9f, 0.4f, 0.4f, 1.f};
 
 /// Inherited from something placed or shown here, and not asked for by this file.
 constexpr ImVec4 kInheritedColor{0.4f, 0.85f, 0.45f, 1.f};
