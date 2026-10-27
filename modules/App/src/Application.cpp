@@ -249,6 +249,13 @@ bool Application::InitializeCore()
         _options.fpsLimit = -1;
     }
 
+    // A crash reporter's window changes no faster than the display shows it,
+    // whatever the player chose for the game: unpaced, it spins a core.
+    if (!_reportsOwnCrashes)
+    {
+        _options.frameSync = FrameSyncMode::VSync;
+    }
+
     // Retention runs here rather than in the constructor because it is the game
     // config that says how many to keep. The counts are totals including this run.
     //
