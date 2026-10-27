@@ -12,15 +12,20 @@
     <text name="reason" width="grow" text_size="32" text_color="#f2b8a9" selectable="true"></text>
 
     <text width="grow" text_size="26" text_color="#9aa3bd">Where it happened</text>
-    <!-- Both ways: a C++ function's full name is often wider than the window. -->
-    <scroll name="stack_area" axes="xy" width="grow" height="grow" padding="18"
-            background="#0d0f13" corner_radius="10" corner_style="rounded"
+    <!-- Both ways: a C++ function's full name is often wider than the window.
+         Twelve lines tall however long the stack is, padding included: a line
+         of the font is 1.21em, and the padding is 0.75em top and bottom. -->
+    <scroll name="stack_area" axes="xy" width="grow" height="16em" padding="18"
+            text_size="24" background="#0d0f13" corner_radius="10" corner_style="rounded"
             scroll_bar_visibility="when-needed">
-      <text name="stack" width="grow" text_size="24" selectable="true"></text>
+      <text name="stack" width="grow" selectable="true"></text>
     </scroll>
 
     <text width="grow" text_size="26" text_color="#9aa3bd">The files describing it, beside the game: send them to whoever made it</text>
     <text name="files" width="grow" text_size="22" selectable="true"></text>
+
+    <!-- Takes what is left, so the buttons sit at the bottom of the window. -->
+    <column width="grow" height="grow"></column>
 
     <row name="buttons" width="grow" gap="20" align="end center">
       <action_button name="open_folder" on_click="Assisi::App::OpenCrashFolder"
