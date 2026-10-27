@@ -487,6 +487,32 @@ TEST_CASE("Layout: a scroll offset moves children, clips them, and stops at the 
     CHECK(scene.RectOf(second).y == 20.f);
 }
 
+TEST_CASE("Layout: a container shrinks below its content on the axis it scrolls, so what follows it stays in view")
+{
+    Scene scene;
+    const NodeId panel = scene.Add(scene.tree.Root(), Box(Fixed(100.f), Fixed(300.f), Direction::Column));
+    Style listStyle = Box(Sizing::Grow(), Sizing::Grow(), Direction::Column);
+    listStyle.enabledScrollBars = {false, true};
+    const NodeId list = scene.Add(panel, listStyle);
+    scene.Add(list, Box(Fixed(80.f), Fixed(1000.f)));
+    const NodeId below = scene.Add(panel, Box(Fixed(100.f), Fixed(50.f)));
+    scene.Run();
+
+    CHECK(scene.RectOf(list).height == 250.f);
+    CHECK(scene.NodeOf(list).contentSize.y == 1000.f);
+    CHECK(scene.RectOf(below).y == 250.f);
+
+    // With room to spare it is as tall as what it holds, as any Fit or Grow is.
+    Style roomy = Box(Fixed(100.f), Sizing::Fit(), Direction::Column);
+    const NodeId fitted = scene.Add(scene.tree.Root(), roomy);
+    Style fittedList = Box(Sizing::Grow(), Sizing::Fit(), Direction::Column);
+    fittedList.enabledScrollBars = {false, true};
+    const NodeId inner = scene.Add(fitted, fittedList);
+    scene.Add(inner, Box(Fixed(80.f), Fixed(120.f)));
+    scene.Run();
+    CHECK(scene.RectOf(inner).height == 120.f);
+}
+
 TEST_CASE("Layout: a hidden node takes no space and is not placed")
 {
     Scene scene;
