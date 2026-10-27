@@ -12,6 +12,8 @@ target_sources(Assisi-App
     "include/Assisi/App/ChildProcess.hpp"
     "include/Assisi/App/ContentSet.hpp"
     "include/Assisi/App/CookedAssets.hpp"
+    "include/Assisi/App/CrashReport.hpp"
+    "include/Assisi/App/CrashReporter.hpp"
     "include/Assisi/App/FixedStepClock.hpp"
     "include/Assisi/App/GameApp.hpp"
     "include/Assisi/App/InputSetup.hpp"
@@ -46,6 +48,7 @@ target_sources(Assisi-App
     "src/ContentSet.cpp"
     "src/CookedAssets.cpp"
     "src/CrashReport.cpp"
+    "src/CrashReporter.cpp"
     "src/FixedStepClock.cpp"
     "src/GameApp.cpp"
     "src/InputSetup.cpp"
@@ -101,6 +104,12 @@ target_link_libraries(Assisi-App
 # which is exactly why the provider/expander seams exist.
 target_link_libraries(Assisi-App PUBLIC Assisi::NetSync)
 
+# Linux minidumps: CrashReport.cpp has a crash start crashpad_handler.
+if (TARGET crashpad_client)
+  target_link_libraries(Assisi-App PRIVATE crashpad_client)
+  target_compile_definitions(Assisi-App PRIVATE ASSISI_CRASHPAD)
+endif()
+
 # The engine's own systems and events. A declaration in a scanned header *is* the
 # registration — the generated OBJECT library is pulled fully into every final
 # link, so a level naming "Oscillate" finds it without anyone calling a registrar.
@@ -114,6 +123,7 @@ assisi_reflect(
     include/Assisi/App/AnimationSystems.hpp
     include/Assisi/App/AppConfig.hpp
     include/Assisi/App/AudioSystems.hpp
+    include/Assisi/App/CrashReporter.hpp
     include/Assisi/App/PhysicsSystems.hpp
     include/Assisi/App/PlayerComponents.hpp
     include/Assisi/App/PlayerSystems.hpp

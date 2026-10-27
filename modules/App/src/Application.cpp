@@ -11,6 +11,7 @@
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
+#include <Assisi/App/CrashReporter.hpp>
 #include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
@@ -130,7 +131,8 @@ Application::Application()
     // every launch and prune none, growing without bound.
     const std::filesystem::path userRoot = logPath.parent_path();
     Core::PruneOldFiles(userRoot, "assisi-", ".log", kRetentionBackstop);
-    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashLogExtension, kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashDumpExtension, kRetentionBackstop);
 
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
@@ -138,8 +140,15 @@ Application::Application()
     // led up to it pair by name. Resolved now, before anything can crash: doing
     // filesystem resolution inside a handler, on a possibly-corrupt heap, is
     // exactly what the handler cannot afford.
-    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
-    InstallCrashHandlers(Core::AssetSystem::ResolveUser(crashName).value_or(crashName));
+    InstallCrashHandlers(userRoot / CrashFileStem(Core::LaunchStamp()), userRoot / kCrashDumpFolderName);
+}
+
+Application::Application(CrashReporterRole /*role*/) : _reportsOwnCrashes(false)
+{
+    if (Core::HasConsoleOutput())
+    {
+        Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
+    }
 }
 
 bool Application::Initialize()
@@ -240,6 +249,13 @@ bool Application::InitializeCore()
         _options.fpsLimit = -1;
     }
 
+    // A crash reporter's window changes no faster than the display shows it,
+    // whatever the player chose for the game: unpaced, it spins a core.
+    if (!_reportsOwnCrashes)
+    {
+        _options.frameSync = FrameSyncMode::VSync;
+    }
+
     // Retention runs here rather than in the constructor because it is the game
     // config that says how many to keep. The counts are totals including this run.
     //
@@ -253,19 +269,32 @@ bool Application::InitializeCore()
     // yet, so a run that does crash ends with keepDumps + 1 on disk until the
     // next launch trims it. Overshooting by one beats doing directory work with
     // a corrupt heap.
+    //
+    // A crash reporter keeps nothing of its own, and prunes nothing: the files it
+    // reports are the newest there are.
+    if (!_reportsOwnCrashes)
+    {
+        return true;
+    }
     const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
     const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
-    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    const std::string crashStem = CrashFileStem(Core::LaunchStamp());
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
-    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashLogExtension, _config.keepDumps,
+                        crashStem + std::string(kCrashLogExtension));
+    Core::PruneOldFiles(userRoot, "crash-", kCrashDumpExtension, _config.keepDumps,
+                        crashStem + std::string(kCrashDumpExtension));
 
+    // After the configs, so a reporter for a headless run is started headless.
+    SetCrashReporter(CrashReporterCommand(_headless));
     return true;
 }
 
 bool Application::InitializePresentation()
 {
-    // The player's chosen size over the shipped default, and the capture's over
-    // both. Order matters in one direction only: a capture must render exactly
+    // The player's chosen size over the shipped default, the app's own
+    // SetWindowSize over both, and the capture's over everything. Order matters
+    // in one direction only: a capture must render exactly
     // what it was asked for, so whatever the options say, it is overwritten
     // below rather than consulted.
     if (_options.width)
@@ -275,6 +304,11 @@ bool Application::InitializePresentation()
     if (_options.height)
     {
         _config.height = *_options.height;
+    }
+    if (_windowWidth > 0 && _windowHeight > 0)
+    {
+        _config.width = _windowWidth;
+        _config.height = _windowHeight;
     }
 
     // A capture's requested resolution wins over both — the ledger needs both

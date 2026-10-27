@@ -164,6 +164,25 @@ public:
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
 protected:
+    /// @brief Selects the constructor an app reporting another one's crash uses.
+    struct CrashReporterRole
+    {
+    };
+
+    /// @brief An app that reports a crashed one's crash. It keeps no log file and
+    /// handles no crash of its own: the crashed run's files are left as they are,
+    /// and a crash in the reporter cannot start another reporter.
+    explicit Application(CrashReporterRole role);
+
+    /// @brief Open the window at @p width by @p height, whatever the options and
+    /// the game config say, for an app that is not the game. Must be called
+    /// before Initialize().
+    void SetWindowSize(int32_t width, int32_t height)
+    {
+        _windowWidth = width;
+        _windowHeight = height;
+    }
+
     /// @brief Refuse the launch: close the app and make Run exit with failure.
     ///
     /// For OnStart to call once it has logged what is wrong. Every app that can
@@ -535,6 +554,8 @@ private:
 
     bool _headless = false;
     bool _restrictedViewer = false;
+    /// False for a crash reporter, which starts no reporter for itself.
+    bool _reportsOwnCrashes = true;
     /// Tracks the presentation half specifically: teardown of PostProcess and
     /// RenderSystem must be gated on *that* having been brought up, not on
     /// Initialize() having succeeded — headless satisfies the latter without any
@@ -568,6 +589,11 @@ private:
     /// because Initialize() reloads _config from the game config in between.
     int32_t _captureWidth = 0;
     int32_t _captureHeight = 0;
+
+    /// The window size SetWindowSize asked for, 0 when nothing asked. Applied in
+    /// InitializePresentation, for the same reason.
+    int32_t _windowWidth = 0;
+    int32_t _windowHeight = 0;
 
     /// Whether the capture asked for per-pass timers. Off by default because
     /// they change the frame's render-pass structure — see PerfCaptureConfig.

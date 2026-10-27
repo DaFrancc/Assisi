@@ -19,6 +19,7 @@
 #include <Assisi/Editor/EditorApp.hpp>
 #include <Assisi/Editor/SourceAssets.hpp>
 
+#include <Assisi/App/CrashReporter.hpp>
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -503,6 +504,14 @@ int main(int argc, char **argv)
     // String tables the same way: compiled from the file an author edits into
     // the bytes the cook would write, and read back.
     (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
+
+    // Started by a crash, as the crashed run's reporter, reading its window from
+    // the source tree like everything else here.
+    if (const std::optional<Assisi::App::CrashReportLaunch> report =
+            Assisi::App::CrashReportLaunchFrom({argv, static_cast<std::size_t>(argc)}))
+    {
+        return Assisi::App::RunCrashReporter(*report);
+    }
 
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it

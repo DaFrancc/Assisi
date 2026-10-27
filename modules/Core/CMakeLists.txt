@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Core)
 
 target_sources(Assisi-Core
   PRIVATE
+    "src/Abort.cpp"
     "src/AssetDatabase.cpp"
     "src/AssetDocument.cpp"
     "src/AssetId.cpp"

@@ -373,6 +373,13 @@ class Layouter
                          });
         }
 
+        // A container that scrolls on this axis shows what does not fit by
+        // scrolling, so it can shrink to nothing there. Held to its content
+        // instead, it pushes everything after it out of its parent.
+        if (style.enabledScrollBars[At(axis)])
+        {
+            minContent = 0.f;
+        }
         Component(result.content, axis) = content;
         Component(result.minContent, axis) = minContent;
         result.inFlowChildren = count;

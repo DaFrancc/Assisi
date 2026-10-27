@@ -29,6 +29,7 @@ assisi_reflect(
 
 add_executable(Assisi-Core-Tests
   main.cpp
+  TestAbort.cpp
   TestAssetDatabase.cpp
   TestAssetId.cpp
   TestAssetIdJson.cpp

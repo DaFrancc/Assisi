@@ -5,9 +5,10 @@
 
 #ifndef NDEBUG
 
-#    include <Assisi/Core/Logger.hpp>
+#    include <Assisi/Core/Abort.hpp>
 
-#    include <cstdlib>
+#    include <cstdint>
+#    include <format>
 
 namespace Assisi::Core
 {
@@ -34,11 +35,11 @@ void ReportContractViolation(const ContractViolation &violation)
         // silently ignored — the checked code must not proceed into the UB.
     }
 
-    // Log through Core::Log so the failure lands in the log/crash report even in
-    // a windowed build with no console, then fail fast.
-    Log::Fatal("Contract violation: {}  [{}:{}]  {}", violation.condition, violation.file, violation.line,
-               violation.message != nullptr ? violation.message : "");
-    std::abort();
+    // Through Abort, so the failure lands in the log and the crash report quotes
+    // it, even in a windowed build with no console.
+    AbortAt(std::format("Contract violation: {}  {}", violation.condition,
+                        violation.message != nullptr ? violation.message : ""),
+            violation.file, static_cast<std::uint32_t>(violation.line));
 }
 
 } // namespace Assisi::Core
