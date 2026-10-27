@@ -140,7 +140,7 @@ World &WorldManager::Create(std::string_view label)
 }
 
 bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context,
-                                PlacedUndeclared placed)
+                                IfUndeclared undeclared)
 {
     // The level's request is recorded whether or not it could be honoured — it is
     // what a save round-trips, and a failed install must not rewrite the file.
@@ -159,15 +159,26 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // instance's systems would otherwise be dropped by the next load and never
     // reinstated. Only App::SpawnBlueprint queued them, so a level *loaded* with
     // instances in it, or one placed in the editor, ran none of their behaviour.
-    std::vector<std::string> required(names.begin(), names.end());
+    const bool skip = undeclared == IfUndeclared::Skip;
+    std::vector<std::string> required;
+    for (const std::string &name : names)
+    {
+        if (skip && SystemCatalog::Instance().Find(name) == nullptr)
+        {
+            Core::Log::Error("'{}' names system '{}', which this build does not declare. It is left out.", context,
+                             name);
+            continue;
+        }
+        required.push_back(name);
+    }
     for (const auto &[name, count] : RequiredSystemCounts(world))
     {
         (void)count;
-        if (std::find(required.begin(), required.end(), name) != required.end())
+        if (std::ranges::find(names, name) != names.end() || std::ranges::find(required, name) != required.end())
         {
             continue;
         }
-        if (placed == PlacedUndeclared::Skip && SystemCatalog::Instance().Find(name) == nullptr)
+        if (skip && SystemCatalog::Instance().Find(name) == nullptr)
         {
             Core::Log::Error("'{}': system '{}', needed by {}, is not declared by this build. It is left out.",
                              context, name, QuotedNames(SourcesRequiring(world, name)));

@@ -65,10 +65,9 @@ edit them by hand, but it helps to know the shape:
   renaming an asset doesn't break levels, as long as its `.aast` file moves with
   it.
 
-**A level that names a system the game doesn't have won't load**, in the editor
-or in the game. It usually means a system was renamed or deleted in code:
+**A level that names a system the game doesn't have won't load in the game.**
+It usually means a system was renamed or deleted in code:
 
-- The editor refuses to open it.
 - The game refuses to start, if it's the startup level.
 - A `RequestTravel` to it fails, and you stay in the current level.
 
@@ -77,16 +76,16 @@ level that loaded anyway would look fine but silently do nothing.
 
 **Blueprints and screens list systems too, and the same rule holds for them:**
 
-- In the game, a level that places a blueprint needing a missing system won't
-  load either.
+- A level that places a blueprint needing a missing system won't load either.
 - A blueprint spawned while the game runs, or a screen that's shown, that needs
   a missing system ends the game on the spot, in a shipped build as much as a
   debug one. The [crash report](troubleshooting.md#when-the-game-crashes) gives
   the system and the file that asked for it.
-- The editor still opens a level whose blueprints need a missing system, so you
-  can see what's wrong. The **Systems** panel shows the system in red, the log
-  names the blueprint that needs it, and the editor won't save the file or start
-  **Play** until it's fixed.
+
+**The editor opens these levels anyway**, so you can see what's wrong. The
+**Systems** panel shows each missing system in red, the log names the level or
+blueprint that asks for it, and the editor won't save the file or start **Play**
+until it's fixed.
 
 To fix it, add the system back, or open the file in an editor built from the
 old code and remove the name in the **Systems** panel, or remove the blueprint

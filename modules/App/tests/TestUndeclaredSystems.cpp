@@ -211,7 +211,7 @@ TEST_CASE("Opened for editing, a level installs all but what its placed blueprin
     World &edited = worlds.Create("Edited");
     Assisi::Runtime::LevelHeader editedHeader;
     ReadYard(edited, editedHeader);
-    REQUIRE(worlds.ApplySystems(edited, editedHeader.systems, "levels/yard.alvl", PlacedUndeclared::Skip));
+    REQUIRE(worlds.ApplySystems(edited, editedHeader.systems, "levels/yard.alvl", IfUndeclared::Skip));
     CHECK(edited.systems.Has("Follower"));
     CHECK(edited.systems.Has("Counter"));
     CHECK(SourcesRequiring(edited, kMissing) == std::vector<std::string>{"car.abp"});
@@ -219,15 +219,27 @@ TEST_CASE("Opened for editing, a level installs all but what its placed blueprin
     std::filesystem::remove_all(root);
 }
 
-TEST_CASE("Opened for editing, a level whose own list names an undeclared system is still refused")
+TEST_CASE("Opened for editing, a level naming an undeclared system itself installs the rest and keeps the name")
 {
     const std::filesystem::path root = WriteYard({"Follower", "AlsoMissing"});
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
+    // A game refuses it.
+    World &game = worlds.Create("Game");
+    Assisi::Runtime::LevelHeader gameHeader;
+    ReadYard(game, gameHeader);
+    CHECK_FALSE(worlds.ApplySystems(game, gameHeader.systems, "levels/yard.alvl"));
+
     World &edited = worlds.Create("Edited");
     Assisi::Runtime::LevelHeader header;
     ReadYard(edited, header);
-    CHECK_FALSE(worlds.ApplySystems(edited, header.systems, "levels/yard.alvl", PlacedUndeclared::Skip));
+    REQUIRE(worlds.ApplySystems(edited, header.systems, "levels/yard.alvl", IfUndeclared::Skip));
+    CHECK(edited.systems.Has("Follower"));
+    CHECK(edited.systems.Has("Counter"));
+
+    // Still the level's, so the Systems panel shows it and the save refuses.
+    CHECK(edited.systemNames == std::vector<std::string>{"Follower", "AlsoMissing"});
+    CHECK(UndeclaredRequiredSystems(edited) == std::vector<std::string>{"AlsoMissing", kMissing});
 
     std::filesystem::remove_all(root);
 }

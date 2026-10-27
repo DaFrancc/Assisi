@@ -29,12 +29,14 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Assisi::Editor
 {
@@ -1094,15 +1096,20 @@ void EditorApp::AbandonReplacedScene(std::string_view virtualPath)
 
 bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 {
-    // **First, before anything is torn down.** The load below replaces the scene in
-    // place, so a level whose systems cannot be installed has to be refused here or
-    // not at all: discovering it afterwards leaves the world holding the new content
-    // with none of its behaviour, and the level it replaced is already gone. Ahead
-    // of ShutdownNetSession for the same reason — a refused load must not have ended
-    // the session on the way to refusing.
-    if (!Assisi::App::LevelSystemsAreDeclared(virtualPath))
+    // **First, before anything is torn down.** A file whose system list cannot be
+    // read is refused here, ahead of ShutdownNetSession: a refused load must not
+    // have ended the session on the way to refusing.
+    //
+    // A name this build does not declare does not refuse it, unlike in a game: the
+    // author has to be able to open the level to see what is missing. The systems
+    // are installed without it below, the Systems panel shows it in red, and save
+    // and Play refuse.
+    const std::expected<std::vector<std::string>, Assisi::Runtime::LevelError> systems =
+        Assisi::Runtime::SceneSerializer::ReadLevelSystems(virtualPath);
+    if (!systems)
     {
-        Assisi::Core::Log::Error("Editor: refusing to open '{}'.", virtualPath);
+        Assisi::Core::Log::Error("Editor: refusing to open '{}' - {}.", virtualPath,
+                                 Assisi::Runtime::ToString(systems.error()));
         return false;
     }
 
@@ -1151,23 +1158,13 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // case ApplyProfile's Clear exists for: the world still holds the previous
     // level's profile.
     //
-    // A failed install fails the load: an unknown system name is a hard error by
-    // design, since a level that silently runs none of its behaviour is worse than
-    // one that refuses to open. The LevelSystemsAreDeclared check at the top of this
-    // function is what normally catches that, and has to — by here the scene has
-    // already been replaced.
-    //
-    // The pre-check subsumes this one by construction: same `Find` predicate, and
-    // the same `ParseSystemNames` for the list they run it over, so neither can see
-    // a name the other does not. This return stays survivable regardless, because
-    // that argument is exactly the kind that stops being true quietly.
-    //
-    // A system only a placed blueprint needs is left out instead, rather than
-    // refusing the level: the author has to be able to open it to see what is
-    // missing. The Systems panel shows it in red, and save and Play refuse.
-    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath, Assisi::App::PlacedUndeclared::Skip))
+    // Undeclared names are left out rather than refusing the level, and the world
+    // still records them, which is what the Systems panel and the save refusal
+    // read. Skipping them, the install has nothing left to refuse; the return
+    // stays survivable regardless, because by here the scene has been replaced.
+    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath, Assisi::App::IfUndeclared::Skip))
     {
-        Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
+        Assisi::Core::Log::Error("Editor: the systems of '{}' could not be installed.", virtualPath);
         AbandonReplacedScene(virtualPath);
         return false;
     }
