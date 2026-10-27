@@ -65,11 +65,13 @@ void EditorApp::StartPlay(NetIntent intent)
     // behaviour missing, which tests a game that can never happen.
     if (_world != nullptr)
     {
-        const std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
+        std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
         if (!undeclared.empty())
         {
             Assisi::Core::Log::Error("Play: refusing to start - '{}' needs systems this build does not declare: {}.",
                                      _world->levelPath, Assisi::App::QuotedNames(undeclared));
+            _refusedForSystems = std::move(undeclared);
+            _undeclaredRefusal = UndeclaredRefusal::Play;
             return;
         }
     }

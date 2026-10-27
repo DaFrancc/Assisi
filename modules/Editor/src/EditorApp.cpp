@@ -1934,12 +1934,14 @@ void EditorApp::DrawPanels()
         ASSISI_PROFILE_SCOPE("panel/save-confirm-modal");
         DrawSaveConfirmModal();
     }
+    {
+        ASSISI_PROFILE_SCOPE("panel/undeclared-modal");
+        DrawUndeclaredSystemsModal();
+    }
     if (!blueprintMode)
     {
-        {
-            ASSISI_PROFILE_SCOPE("panel/host-modal");
-            DrawHostUnsavedModal();
-        }
+        ASSISI_PROFILE_SCOPE("panel/host-modal");
+        DrawHostUnsavedModal();
     }
 
     // One gesture up from the capture sweep below. The gizmo and the Inspector both move an

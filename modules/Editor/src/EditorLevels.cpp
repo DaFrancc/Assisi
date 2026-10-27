@@ -845,12 +845,14 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     }
 
     // Saved, the file would look valid and no build of this code could load it.
-    const std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
+    std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
     if (!undeclared.empty())
     {
         Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' - it needs systems this build does not declare: "
                                  "{}. Remove them in the Systems panel, or the blueprints that need them.",
                                  virtualPath, Assisi::App::QuotedNames(undeclared));
+        _refusedForSystems = std::move(undeclared);
+        _undeclaredRefusal = UndeclaredRefusal::Save;
         return false;
     }
 
