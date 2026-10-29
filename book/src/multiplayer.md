@@ -245,9 +245,9 @@ runs once, live. When a rollback runs over the step the dash happened in, the
 dash isn't run again, and the host's next answers bring your character back in
 line over a moment.
 
-What your systems write into a character's `CharacterIntent`, such as a sprint's
-`speedScale`, is different: a rollback steps each step again with the intent that
-step had, so it comes out as it did live.
+What your systems write into a character's `CharacterIntent`, such as a slowing
+effect's `speedScale`, is different: a rollback steps each step again with the
+intent that step had, so it comes out as it did live.
 
 The network panel's **Sync test** checkbox, on a client, checks rollbacks while
 you develop: it runs every step a second time and compares the two. Each value

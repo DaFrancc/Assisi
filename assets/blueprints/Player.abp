@@ -24,6 +24,7 @@
           "radius": 0.3
         },
         "CharacterLocomotion": {
+          "canSprint": true,
           "coyoteTime": 0.1,
           "crouchSpeedScale": 0.4,
           "gravityScale": 1.0,
@@ -31,6 +32,7 @@
           "jumpSpeed": 4.5,
           "maxFallSpeed": 0.0,
           "preset": 1,
+          "sprintSpeedScale": 1.6,
           "walkSpeed": 5.0
         },
         "Player": {},
@@ -135,7 +137,6 @@
     "LocalPlayer",
     "PlayerCamera",
     "PlayerGather",
-    "Sprint",
     "CharacterCommand",
     "CharacterEye"
   ],

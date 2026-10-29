@@ -8,8 +8,8 @@ over a network.
 ## The player blueprint
 
 `blueprints/Player.abp` is a complete player. Place it in a level and press Play:
-W, A, S and D walk, the mouse looks around, Space jumps and Left Control
-crouches.
+W, A, S and D walk, the mouse looks around, Space jumps, Left Control crouches
+and Left Shift sprints.
 
 It holds three entities:
 
@@ -57,9 +57,10 @@ player that needs one:
 | `held` | The buttons held now. |
 | `pressed` | The buttons pressed since the last fixed step. |
 
-Each button is a **player action**. The engine has two of its own,
-`PlayerAction::Jump` and `PlayerAction::Crouch`, which read the input actions
-`Jump` and `Crouch` from `assets/config/input.json` (see [Input](input.md)).
+Each button is a **player action**. The engine has three of its own,
+`PlayerAction::Jump`, `PlayerAction::Crouch` and `PlayerAction::Sprint`, which
+read the input actions `Jump`, `Crouch` and `Sprint` from
+`assets/config/input.json` (see [Input](input.md)).
 Check one like this:
 
 ```cpp
@@ -84,7 +85,7 @@ sent, and what everyone else sees all come from the step.
 
 ## Your own actions
 
-There are 32 player actions. The engine uses the first two; the other 30 belong
+There are 32 player actions. The engine uses the first three; the other 29 belong
 to your game. Take one with `GameAction` and give it the name of the input
 action that presses it, in a header under your game's `src/`:
 

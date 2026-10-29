@@ -56,7 +56,8 @@ body.
 | `move` | Where to go, in world space. A unit vector asks for the walk speed; a shorter one asks for less. |
 | `jump` | Set to `true` to ask for a jump. The step clears it. |
 | `stance` | `Standing` or `Crouching`. Hold it for as long as it is wanted. |
-| `speedScale` | Multiplies the walk speed, whatever the `CharacterLocomotion` preset says. 1 by default; above 1 to sprint, below to slow down. Hold it for as long as it is wanted. |
+| `sprint` | Set to `true` to sprint. Hold it for as long as it is wanted. |
+| `speedScale` | Multiplies the walk speed, whatever the `CharacterLocomotion` preset says, sprinting included. 1 by default; below 1 to slow the character down. Hold it for as long as it is wanted. |
 
 ```cpp
 for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
@@ -65,33 +66,47 @@ for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
 }
 ```
 
-### Example: sprinting
+A player's controls fill these in for you (see [Players](players.md)): the
+movement keys `move`, the `Jump` input action `jump`, `Crouch` `stance`, and
+`Sprint` `sprint`. The input actions are bound to keys in `config/input.json`;
+by default `Sprint` is Left Shift.
 
-The sample game's `Sprint` system makes a player run 1.6 times as fast while
-Left Shift is held. It takes a player action for the `Sprint` input action (see
-[Your own actions](players.md#your-own-actions)) and sets `speedScale` from it:
+### Sprinting
 
-```cpp
-ASYSTEM(FixedUpdate, name = "Sprint", before = "CharacterCommand")
-void SprintSystem(Assisi::App::SystemContext &ctx)
-{
-    for (auto [entity, controls, intent] :
-         ctx.world.scene.Query<Assisi::App::PlayerInput, Mut<Assisi::Physics::CharacterIntent>>())
-    {
-        intent.speedScale = controls.held.Has(Sprint) ? 1.6f : 1.f;
-    }
-}
-```
+While `sprint` is asked for, a standing character moves at `walkSpeed` times its
+`CharacterLocomotion`'s `sprintSpeedScale`, 1.6 by default. Crouching rules a
+sprint out: a crouched character moves at its crouch speed whatever is held.
+Clear `canSprint` on the `CharacterLocomotion` and the character never sprints;
+`sprintSpeedScale` is greyed out in the editor then.
 
-`blueprints/Player.abp` lists `Sprint` among its systems. A slowing effect or an
-NPC that should walk calmly sets `speedScale` the same way. In a networked game
-nothing more is needed: a client that steps its character again to correct a
-prediction uses the `speedScale` each step had, not the one it has now.
+For a slowing effect, or an NPC that should walk calmly, set `speedScale`
+instead. In a networked game neither needs anything more: a client that steps
+its character again to correct a prediction uses the `sprint` and `speedScale`
+each step had, not the ones it has now.
 
-`CharacterState` is the result of the last step: `velocity`, `ground`
-(`OnGround`, `OnSteepGround`, `NotSupported` or `InAir`), `stance`, `canJump`,
-`eyeHeight`, what the character is standing on (`groundEntity`) and the carrier
-it is riding (`baseEntity`).
+### What the last step did: `CharacterState`
+
+| Field | Meaning |
+|---|---|
+| `velocity` | Its velocity in the world, the motion of what it stands on included. |
+| `groundSpeed` | How fast it moves across what it stands on: `velocity` less the ground's, along the ground. A character standing still on a moving boat reads 0. What a walk or run animation reads. |
+| `ground` | `OnGround`, `OnSteepGround`, `NotSupported` or `InAir`. |
+| `stance` | The stance it is actually in. Standing up under something low leaves it `Crouching`. |
+| `sprinting` | Whether it sprinted: asked to, allowed to, and not crouched. |
+| `canJump` | Whether a jump asked for now would fire. |
+| `jumps`, `landings` | How many times it has jumped, and landed after a jump or a fall. See below. |
+| `eyeHeight` | How high its eye is above its feet. |
+| `groundEntity`, `baseEntity` | What it stands on, and the carrier it rides. |
+
+`jumps` and `landings` are counts rather than true-for-a-step flags because a
+step and a frame don't line up. A frame that runs two steps would overwrite a
+flag set by the first, and one that runs no step would see it again. Something
+that reads `CharacterState` once a frame, such as an animation, remembers the
+count it last saw and reacts when it changes; see
+[Setting params from code](animator.md#setting-params-from-code). A count only
+ever goes up by one, so it can't be missed. A drop off a stair edge is not a
+landing: without a jump, the character has to be in the air for a tenth of a
+second first.
 
 ## Walk speed and jump: `CharacterLocomotion`
 
@@ -121,6 +136,8 @@ Distances are in meters and times in seconds.
 | `coyoteTime` | 0.1 | How long after walking off a ledge a jump still works. Not set by the preset. |
 | `jumpBufferTime` | 0.15 | How long before landing a jump request is remembered. Not set by the preset. |
 | `maxFallSpeed` | 0 | The fastest the character falls, in m/s. Zero sets no limit. Not set by the preset. |
+| `canSprint` | on | Whether the character may sprint at all. |
+| `sprintSpeedScale` | 1.6 | Multiplies `walkSpeed` while sprinting. Not set by the preset. |
 
 On a moving platform, both movements steer relative to the platform, so a
 character standing still rides along with it.

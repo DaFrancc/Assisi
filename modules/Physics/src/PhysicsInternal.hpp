@@ -437,6 +437,10 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 /// returns @p from unchanged.
 JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta);
 
+/// Less time than this in the air, without a jump, is a stair edge or a bump
+/// rather than a fall, and touching down after it is not a landing (s).
+constexpr float kLandingAirTime = 0.1f;
+
 /// What a character with no movement component moves by: no walk, no jump, and
 /// the world's own gravity.
 inline constexpr LocomotionSettings kNoLocomotion{.gravityScale = 1.f};
@@ -1617,6 +1621,8 @@ private:
         float coyoteTime = 0.f;
         float jumpBufferTime = 0.f;
         float maxFallSpeed = 0.f; ///< Zero is no limit; see CharacterLocomotion.
+
+        float sprintSpeedScale = 1.f;
         float maxStepHeight = 0.f;
         float radius = 0.f;
         float standingHalfHeight = 0.f;
@@ -1642,9 +1648,20 @@ private:
         /// holds is let go; see Carrier::graceTime.
         float graceRemaining = 0.f;
 
+        /// See CharacterState::jumps and CharacterState::landings.
+        std::uint32_t jumps = 0;
+        std::uint32_t landings = 0;
+
         Stance stance = Stance::Standing;
 
         MovementModel movement = MovementModel::None;
+
+        /// Its CharacterLocomotion allows a sprint, and it has a movement
+        /// component to sprint with.
+        bool canSprint = false;
+
+        /// Whether its most recent step sprinted; see CharacterState::sprinting.
+        bool sprinting = false;
 
         /// Set when a jump fires, cleared on landing. Without it the jump buffer
         /// would fire a second jump in the same flight the moment the first one
@@ -1703,8 +1720,9 @@ private:
         /// policy changes it.
         JPH::Vec3 TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
 
-        /// The walk speed times the speed scale its step's intent asked for:
-        /// what the take-off limits are measured against.
+        /// The walk speed as its step's sprint and speed scale make it, before
+        /// any crouch: what a full `move` asks for standing, and what the
+        /// take-off limits are measured against.
         float ScaledWalkSpeed() const;
 
         /// The most horizontal speed a jump may leave the ground with.

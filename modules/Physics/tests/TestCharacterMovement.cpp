@@ -216,6 +216,40 @@ float AirSpeedAfterLettingGo(float airBrakingDeceleration)
     return HorizontalSpeed(scene, character);
 }
 
+/// How fast a character asking to sprint goes, and whether its state says it
+/// sprinted.
+struct SprintOutcome
+{
+    float speed = 0.f;
+    bool sprinting = false;
+};
+
+/// An Arcade-preset character, asked to sprint in @p stance, after running up.
+SprintOutcome Sprinting(bool canSprint, Physics::Stance stance)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    const Physics::CharacterLocomotion locomotion{.preset = Physics::LocomotionPreset::Arcade, .canSprint = canSprint};
+    const ECS::Entity character = SpawnArcade(
+        scene, world, locomotion,
+        Physics::ArcadeMovement{.groundAcceleration = kInstantAcceleration, .brakingDeceleration = kInstantAcceleration});
+    Settle(scene, world, character);
+    REQUIRE(PhysicsTests::AskStance(scene, world, character, stance));
+
+    scene.GetMut<Physics::CharacterIntent>(character)->sprint = true;
+    for (int32_t i = 0; i < kRunUpSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    return SprintOutcome{HorizontalSpeed(scene, character), PhysicsTests::StateOf(scene, character).sprinting};
+}
+
+/// How fast a platform carries the groundSpeed case along (m/s), and how long.
+constexpr glm::vec3 kPlatformVelocity{2.f, 0.f, 0.f};
+constexpr int32_t kRideSteps = 60;
+
 /// How fast a character with nothing under it falls a second after letting go.
 float FallSpeedAfterASecond(float maxFallSpeed)
 {
@@ -358,6 +392,77 @@ TEST_CASE("A sprinting SourceMovement character's take-off limits grow with its 
     Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ true);
     REQUIRE(PhysicsTests::StateOf(scene, character).velocity.y > 1.f);
     CHECK(HorizontalSpeed(scene, character) == doctest::Approx(kSprint * kWalkSpeed).epsilon(kSpeedTolerance));
+}
+
+TEST_CASE("Asking to sprint multiplies the walk speed by sprintSpeedScale, unless crouched or not allowed")
+{
+    const float walkSpeed = Physics::kArcadeLocomotion.walkSpeed;
+    const float sprintScale = Physics::CharacterLocomotion{}.sprintSpeedScale;
+
+    const SprintOutcome running = Sprinting(/*canSprint=*/ true, Physics::Stance::Standing);
+    CHECK(running.speed == doctest::Approx(walkSpeed * sprintScale).epsilon(kSpeedTolerance));
+    CHECK(running.sprinting);
+
+    const SprintOutcome forbidden = Sprinting(/*canSprint=*/ false, Physics::Stance::Standing);
+    CHECK(forbidden.speed == doctest::Approx(walkSpeed).epsilon(kSpeedTolerance));
+    CHECK_FALSE(forbidden.sprinting);
+
+    const SprintOutcome crouched = Sprinting(/*canSprint=*/ true, Physics::Stance::Crouching);
+    CHECK(crouched.speed ==
+          doctest::Approx(walkSpeed * Physics::kArcadeLocomotion.crouchSpeedScale).epsilon(kSpeedTolerance));
+    CHECK_FALSE(crouched.sprinting);
+}
+
+TEST_CASE("groundSpeed is the speed across what a character stands on, not its speed in the world")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+
+    PhysicsTests::BodySpec spec = PhysicsTests::Box({10.f, 0.25f, 10.f}, /*isStatic=*/ false);
+    spec.rigidBody->motion = Physics::MotionType::Kinematic;
+    const glm::vec3 platformStart{0.f, -0.25f, 0.f};
+    const ECS::Entity platform = PhysicsTests::AddBody(scene, platformStart, spec);
+    const ECS::Entity character = SpawnArcade(scene, world, Physics::CharacterLocomotion{}, Physics::ArcadeMovement{});
+    Settle(scene, world, character);
+
+    for (int32_t i = 0; i < kRideSteps; ++i)
+    {
+        scene.GetMut<ECS::Transform>(platform)->position =
+            platformStart + kPlatformVelocity * (kStep * static_cast<float>(i + 1));
+        Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
+    }
+    const Physics::CharacterState riding = PhysicsTests::StateOf(scene, character);
+    REQUIRE(riding.velocity.x == doctest::Approx(kPlatformVelocity.x).epsilon(0.05));
+    CHECK(riding.groundSpeed < 0.05f); // standing still on it
+}
+
+TEST_CASE("jumps and landings count every jump and every landing, and a rewind puts them back")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    // Dropped from a metre up: a fall that ends in a landing, with no jump.
+    const ECS::Entity character =
+        SpawnArcade(scene, world, Physics::CharacterLocomotion{}, Physics::ArcadeMovement{});
+    scene.GetMut<ECS::Transform>(character)->position = {0.f, 1.f, 0.f};
+    world.Reconcile();
+    Settle(scene, world, character);
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 0u);
+    CHECK(PhysicsTests::StateOf(scene, character).landings == 1u);
+
+    const Physics::CharacterFrame beforeJump = world.CaptureCharacter(character);
+    Step(scene, world, character, glm::vec3(0.f), /*jump=*/ true);
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 1u);
+    CHECK(PhysicsTests::StateOf(scene, character).landings == 1u); // still in the air
+    Settle(scene, world, character);
+    CHECK(PhysicsTests::StateOf(scene, character).landings == 2u);
+
+    // Back to before the jump, the counts with it: stepping the jump again
+    // does not count it twice.
+    world.RewindCharacter(character, beforeJump);
+    Step(scene, world, character, glm::vec3(0.f), /*jump=*/ true);
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 1u);
 }
 
 TEST_CASE("maxFallSpeed holds a falling character to it, and zero sets no limit")

@@ -617,6 +617,21 @@ struct CharacterState
     /// air moves the feet, so the eye itself stays where it was.
     AFIELD() float eyeHeight = 0.f;
 
+    /// How fast it moves across what it stands on (m/s): @ref velocity less
+    /// @ref groundVelocity, along the ground. What an animation's walk and run
+    /// speed reads, so a character standing still on a moving deck stands
+    /// rather than runs.
+    AFIELD() float groundSpeed = 0.f;
+
+    /// How many times it has jumped. Goes up by one on the step a jump fires,
+    /// so something that reads it once a frame sees every jump even when a
+    /// frame runs several steps: a jump animation fires when it changes.
+    AFIELD() std::uint32_t jumps = 0;
+
+    /// How many times it has landed: touched walkable ground after a jump, or
+    /// after a fall longer than a stair edge's. Counted like @ref jumps.
+    AFIELD() std::uint32_t landings = 0;
+
     AFIELD() GroundState ground = GroundState::InAir;
 
     /// The stance the character is **actually** in, which is not always the one
@@ -632,6 +647,10 @@ struct CharacterState
     /// @ref ground stays the simulation's plain answer about what is underfoot.
     /// Always false for a character with no movement component.
     AFIELD() bool canJump = false;
+
+    /// Whether the last step sprinted: asked to, allowed to by its
+    /// CharacterLocomotion, and standing rather than crouched.
+    AFIELD() bool sprinting = false;
 };
 
 /// @brief What happens to a character's speed when it jumps on the step it
@@ -842,10 +861,19 @@ struct CharacterLocomotion
     /// preset.
     AFIELD(min = 0.0) float maxFallSpeed = 0.f;
 
+    /// @ref walkSpeed multiplier while sprinting: while CharacterIntent::sprint
+    /// is asked for, @ref canSprint is set and the character is standing. Not
+    /// part of a preset.
+    AFIELD(min = 0.0, radioListen = {source = canSprint, value = true, behavior = grey}) float sprintSpeedScale = 1.6f;
+
     /// Which speeds and jump arc these are. Every value but Custom answers for
     /// the four fields it greys out, and follows the preset if its numbers
     /// change; Custom keeps exactly what was typed.
     AFIELD(radioBroadcast) LocomotionPreset preset = LocomotionPreset::Source;
+
+    /// Whether the character may sprint at all. Cleared, asking to sprint
+    /// changes nothing.
+    AFIELD(radioBroadcast) bool canSprint = true;
 };
 
 /// @brief The speeds and jump arc @p locomotion's preset stands for.
@@ -973,7 +1001,7 @@ struct CharacterIntent
     AFIELD() ECS::Entity base{ECS::NullEntity};
 
     /// Multiplies the speed @ref move asks for, whatever CharacterLocomotion's
-    /// preset says: above 1 for a sprint, below for a slowing effect or an NPC
+    /// preset says, sprinting included: below 1 for a slowing effect or an NPC
     /// walking calmly. Held for as long as it is wanted. Negative is taken as
     /// zero.
     AFIELD(min = 0.0) float speedScale = 1.f;
@@ -992,6 +1020,12 @@ struct CharacterIntent
     /// step instead of being swallowed. Set again every step, the character
     /// jumps again as soon as it may.
     AFIELD() bool jump = false;
+
+    /// Whether to sprint, held for as long as it is wanted like @ref stance.
+    /// Speeds the character up by CharacterLocomotion's sprintSpeedScale while
+    /// it is standing and its canSprint is set; CharacterState::sprinting is
+    /// whether it did.
+    AFIELD() bool sprint = false;
 };
 
 } // namespace Assisi::Physics

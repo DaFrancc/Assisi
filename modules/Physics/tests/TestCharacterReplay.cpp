@@ -142,6 +142,8 @@ void CheckSameFrame(const Physics::CharacterFrame &replayed, const Physics::Char
     CHECK(replayed.stance == live.stance);
     CHECK(replayed.ground == live.ground);
     CHECK(replayed.jumpedSinceGrounded == live.jumpedSinceGrounded);
+    CHECK(replayed.jumps == live.jumps);
+    CHECK(replayed.landings == live.landings);
 }
 
 /// Steps @p character again, alone, on the intent @p frame's step consumed.

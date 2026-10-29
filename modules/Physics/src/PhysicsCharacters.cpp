@@ -197,7 +197,7 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::TakeOff(JPH::Vec3Arg velocity, JP
 
 float PhysicsWorld::Impl::CharacterRecord::ScaledWalkSpeed() const
 {
-    return locomotion.walkSpeed * lastIntent.speedScale;
+    return locomotion.walkSpeed * (sprinting ? sprintSpeedScale : 1.f) * lastIntent.speedScale;
 }
 
 float PhysicsWorld::Impl::CharacterRecord::TakeOffSpeedLimit() const
@@ -420,17 +420,24 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     record.lastIntent = intent;
 
     // The crouch speed applies to the stance the character reached, not the
-    // one it asked for, so one held under a ledge walks crouched.
+    // one it asked for, so one held under a ledge walks crouched. A crouch
+    // rules a sprint out rather than scaling it.
     const LocomotionSettings &locomotion = record.locomotion;
+    const bool crouching = record.stance == Stance::Crouching;
+    record.sprinting = intent.sprint && record.canSprint && !crouching;
     const float speed =
-        record.stance == Stance::Crouching ? locomotion.walkSpeed * locomotion.crouchSpeedScale : locomotion.walkSpeed;
-    const glm::vec3 wishVelocity = intent.move * (speed * intent.speedScale);
+        crouching ? record.ScaledWalkSpeed() * locomotion.crouchSpeedScale : record.ScaledWalkSpeed();
+    const glm::vec3 wishVelocity = intent.move * speed;
 
     const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
     const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
 
     if (standing)
     {
+        if (record.jumpedSinceGrounded || record.timeSinceGrounded >= kLandingAirTime)
+        {
+            ++record.landings;
+        }
         record.timeSinceGrounded = 0.f;
         record.jumpedSinceGrounded = false;
     }
@@ -452,6 +459,7 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     {
         record.jumpedSinceGrounded = true;
         record.jumpBufferRemaining = 0.f;
+        ++record.jumps;
     }
     else
     {
@@ -656,9 +664,12 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
                           .jumpBufferRemaining = record->jumpBufferRemaining,
                           .eyeHeight = record->eyeHeight,
                           .graceRemaining = record->graceRemaining,
+                          .jumps = record->jumps,
+                          .landings = record->landings,
                           .stance = record->stance,
                           .ground = state.ground,
                           .jumpedSinceGrounded = record->jumpedSinceGrounded,
+                          .sprinting = record->sprinting,
                           .leavingBase = record->leavingBase,
                           .basedByIntent = record->basedByIntent,
                           .withGround = record->withGround};
@@ -738,6 +749,9 @@ void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &fra
     record->jumpBufferRemaining = frame.jumpBufferRemaining;
     record->eyeHeight = frame.eyeHeight;
     record->jumpedSinceGrounded = frame.jumpedSinceGrounded;
+    record->sprinting = frame.sprinting;
+    record->jumps = frame.jumps;
+    record->landings = frame.landings;
     record->lastGroundVelocity = ToJoltVector(frame.lastGroundVelocity);
 
     // Back on the base it rode then, if that is still a body; with none, it
@@ -1433,6 +1447,8 @@ void PhysicsWorld::Impl::CharacterRecord::RetuneMovement(const CharacterLocomoti
     coyoteTime = shared.coyoteTime;
     jumpBufferTime = shared.jumpBufferTime;
     maxFallSpeed = movement == MovementModel::None ? 0.f : shared.maxFallSpeed;
+    canSprint = movement != MovementModel::None && shared.canSprint;
+    sprintSpeedScale = shared.sprintSpeedScale;
 }
 
 void PhysicsWorld::Impl::ReadMovement(CharacterRecord &record) const
@@ -1707,6 +1723,12 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
     state.eyeHeight = record.eyeHeight;
     state.stance = record.stance;
     state.canJump = record.MayJump();
+    state.sprinting = record.sprinting;
+    state.jumps = record.jumps;
+    state.landings = record.landings;
+
+    const JPH::Vec3 across = velocity - groundVelocity;
+    state.groundSpeed = (across - kCharacterUp * across.Dot(kCharacterUp)).Length();
 
     // Every enumerator is spelled out rather than defaulted, so a Jolt release
     // that adds one fails the build here instead of silently reading as InAir.

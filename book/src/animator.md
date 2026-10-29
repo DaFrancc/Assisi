@@ -207,26 +207,37 @@ A system sets the params before the Animators system runs, by name:
 #include <Assisi/Runtime/AnimatorStep.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
+/// The jump count the hero's animation last saw.
+ACOMP(transient)
+struct HeroJumpsSeen
+{
+    AFIELD() std::uint32_t jumps = 0;
+};
+
 ASYSTEM(Update, name = "HeroAnimation", before = "Animators")
 void HeroAnimationSystem(Assisi::App::SystemContext &ctx)
 {
     using namespace Assisi;
-    for (auto [entity, animator, state, intent] :
-         ctx.world.scene.Query<Mut<Runtime::Animator>, Physics::CharacterState, Physics::CharacterIntent>())
+    for (auto [entity, animator, state, seen] :
+         ctx.world.scene.Query<Mut<Runtime::Animator>, Physics::CharacterState, Mut<HeroJumpsSeen>>())
     {
-        const glm::vec2 across{state.velocity.x, state.velocity.z};
-        Runtime::SetAnimatorFloat(animator, "speed", glm::length(across));
+        Runtime::SetAnimatorFloat(animator, "speed", state.groundSpeed);
         Runtime::SetAnimatorBool(animator, "grounded", state.ground == Physics::GroundState::OnGround);
-        if (intent.jump)
+        if (state.jumps != seen.jumps)
         {
             Runtime::FireAnimatorTrigger(animator, "jump");
+            seen.jumps = state.jumps;
         }
     }
 }
 ```
 
-This one reads a [character controller](physics-character.md): its speed across
-the ground, whether it stands on something, and whether it was asked to jump.
+This one reads a [character controller](physics-character.md)'s
+`CharacterState`: its speed across what it stands on, whether it stands on
+something, and whether it has jumped since the last frame. Give the character a
+`HeroJumpsSeen` as well. `jumps` counts every jump, and the system fires the
+trigger when the count has moved since it last looked, so it fires once for each
+jump at any frame rate.
 
 | Function | Sets |
 |---|---|

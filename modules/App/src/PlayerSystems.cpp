@@ -155,6 +155,7 @@ std::vector<std::string> PlayerActionNames()
     std::vector<std::string> names(static_cast<std::size_t>(PlayerAction::Count_));
     names[static_cast<std::size_t>(PlayerAction::Jump)] = kActionJump;
     names[static_cast<std::size_t>(PlayerAction::Crouch)] = kActionCrouch;
+    names[static_cast<std::size_t>(PlayerAction::Sprint)] = kActionSprint;
     for (const Core::Reflect::EnumConstant &label : Core::Reflect::EnumLabelsOf(kPlayerActionEnumType))
     {
         if (label.value >= 0 && label.value < static_cast<std::int64_t>(names.size()))
@@ -291,6 +292,7 @@ void CharacterCommandSystem(SystemContext &ctx)
         intent.move = WorldMove(scene, entity, controls.move);
         intent.stance =
             controls.held.Has(PlayerAction::Crouch) ? Physics::Stance::Crouching : Physics::Stance::Standing;
+        intent.sprint = controls.held.Has(PlayerAction::Sprint);
         // OR rather than assign: the step clears the request once it has taken
         // it, and a press must survive steps that could not jump yet.
         intent.jump = intent.jump || controls.pressed.Has(PlayerAction::Jump);
