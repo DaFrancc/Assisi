@@ -127,7 +127,9 @@ TEST_CASE("App: a child of a walking character follows it")
                        {"components",
                         {{"Transform",
                             {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                            {"Character", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
+                            {"Character", nlohmann::json::object()},
+                            {"CharacterLocomotion", {{"preset", static_cast<int32_t>(Physics::LocomotionPreset::Arcade)}}},
+                            {"ArcadeMovement", {{"groundAcceleration", 1000.f}}}}}},
                        {{"name", "eye"},
                            {"components",
                             {{"Transform",
@@ -179,7 +181,7 @@ TEST_CASE("App: a child of a walking character follows it")
     uint64_t tick = 0;
     for (int32_t i = 0; i < 120; ++i)
     {
-        world.scene.GetMut<Physics::CharacterIntent>(body)->move = {1.f, 0.f, 0.f}; // walkSpeed is 5 m/s
+        world.scene.GetMut<Physics::CharacterIntent>(body)->move = {1.f, 0.f, 0.f}; // the Arcade preset walks at 5 m/s
         world.physics.Update(kStep);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }

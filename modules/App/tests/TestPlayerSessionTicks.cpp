@@ -90,7 +90,16 @@ TEST_CASE("The sync test finds every tick a client steps a second time the same 
     // A level with an oscillator each machine moves from the tick, and a
     // client walking and looking around: everything a replay must put back.
     const std::filesystem::path root = FreshRoot("assisi_players_ticks");
-    WritePlayerBlueprint(root);
+    std::string_view movement;
+    SUBCASE("moving by SourceMovement")
+    {
+        movement = "SourceMovement";
+    }
+    SUBCASE("moving by ArcadeMovement")
+    {
+        movement = "ArcadeMovement";
+    }
+    WritePlayerBlueprint(root, movement);
 
     Session session;
     Machine &host = session.Add();

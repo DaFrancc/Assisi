@@ -6,26 +6,45 @@ knocked over. A `Character` component does this.
 
 A character's collision is a capsule (a cylinder with rounded ends). Each step,
 the engine moves the capsule through the level by the character's own rules:
-it slides along walls, climbs steps and stays on slopes. Those rules copy
-Half-Life 2's: the character speeds up towards the direction it is asked to go,
-and ground friction brings it to a quick stop when it is asked to stop.
+it slides along walls, climbs steps and stays on slopes. How it speeds up,
+slows down and steers in the air is chosen by its **movement** component:
+
+- **`ArcadeMovement`** speeds the character up and slows it down at a steady
+  rate, straight towards the velocity it is asked for. It never goes faster
+  than it asks to. `blueprints/Player.abp` uses this one.
+- **`SourceMovement`** moves it the way Half-Life 2 does: ground friction slows
+  it, speed is added only along the direction asked for, and a player can gain
+  speed in the air by turning while strafing.
 
 ## Character components
 
-A character is three components:
+A character is made of these components:
 
 | Component | What it is | Written by |
 |---|---|---|
-| `Character` | The controller's settings: its shape and how it moves. Saved with the level. | You, in the editor. |
+| `Character` | The capsule: its size, the slopes and steps it can climb, its eye height, and how it pushes and is pushed. | You, in the editor. |
+| `CharacterLocomotion` | How fast it walks, how high it jumps, and how strongly gravity pulls it. Both movements read it. | You, in the editor. |
+| `ArcadeMovement` or `SourceMovement` | How it speeds up, slows down and steers in the air. One or the other, never both. | You, in the editor. |
 | `CharacterIntent` | What the character is asked to do. | Your systems: the keyboard, an AI, or a network command. |
 | `CharacterState` | What the last step did. | The engine, after every step. |
 
-Give an entity a **`Character`** and a `Transform`; the other two come with it.
-The entity's `Transform` is at the character's **feet**. The physics step reads
-the intent and writes the state itself, so nothing else has to run for a
-character to move. The `blueprints/Player.abp` blueprint is a complete example,
-with a camera and keyboard and mouse control; [Players](players.md) explains
-how a person's controls reach it.
+Give an entity a `Transform` and an **`ArcadeMovement`** or a
+**`SourceMovement`**; the other components come with it. The entity's
+`Transform` is at the character's **feet**. The physics step reads the intent
+and writes the state itself, so nothing else has to run for a character to
+move. The `blueprints/Player.abp` blueprint is a complete example, with a camera
+and keyboard and mouse control; [Players](players.md) explains how a person's
+controls reach it.
+
+To change a character's movement, remove one movement component and add the
+other. This works in the editor and from code, also while the game runs; the
+character keeps its speed and changes how it steers from the next step. To
+remove a character, remove its movement component first: the `Character` can't
+go while a movement component needs it.
+
+A `Character` with no movement component doesn't walk or jump. On the ground it
+stays still on whatever it stands on; in the air it keeps its speed and falls at
+the world's gravity.
 
 A `Character` cannot also have a `Collider` or a `RigidBody`: it already is a
 body.
@@ -50,12 +69,53 @@ for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
 `eyeHeight`, what the character is standing on (`groundEntity`) and the carrier
 it is riding (`baseEntity`).
 
-## The order of a movement step
+## Walk speed and jump: `CharacterLocomotion`
 
 The step turns `move` into a **wish velocity**: the direction of `move`, with a
-length of `walkSpeed` (times `crouchSpeedScale` while crouched). The character
-is never set to that velocity. Each fixed step the controller does this, in
-order:
+length of `walkSpeed` times the length of `move` (and times `crouchSpeedScale`
+while crouched). Both movements steer towards the wish velocity; they differ in
+how.
+
+`preset` picks the walk speed, crouch speed, jump speed and gravity scale
+together. While it is anything but `Custom`, those four fields are greyed out in
+the editor and the preset's numbers are used instead.
+
+| `preset` | `walkSpeed` | `crouchSpeedScale` | `jumpSpeed` | `gravityScale` | Feels like |
+|---|---|---|---|---|---|
+| `Source` (default) | 3.62 | 0.333 | 3.05 | 1.165 | A brisk run and a short, heavy jump that rises about 0.4 m. Made for `SourceMovement`. |
+| `Arcade` | 5 | 0.4 | 6 | 1 | Faster, with a high jump that rises about 1.8 m. Made for `ArcadeMovement`. |
+| `Custom` | the fields | the fields | the fields | the fields | Whatever you type. |
+
+Distances are in meters and times in seconds.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `walkSpeed` | 3.62 | The speed asked for with a full `move`. |
+| `crouchSpeedScale` | 0.333 | Multiplies `walkSpeed` while crouched. |
+| `jumpSpeed` | 3.05 | Upward speed at the start of a jump. |
+| `gravityScale` | 1.165 | Multiplies the world's gravity for this character. |
+| `coyoteTime` | 0.1 | How long after walking off a ledge a jump still works. Not set by the preset. |
+| `jumpBufferTime` | 0.15 | How long before landing a jump request is remembered. Not set by the preset. |
+
+On a moving platform, both movements steer relative to the platform, so a
+character standing still rides along with it.
+
+## `ArcadeMovement`
+
+Each step, the character's horizontal velocity moves straight towards the wish
+velocity by at most `acceleration * dt`, and stops exactly on it. Letting go of
+the keys asks for zero, so the character slows down at the same rate it speeds
+up. There is no separate friction, and the character never goes faster than it
+asks to.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `groundAcceleration` | 60 | How fast it speeds up and slows down on the ground, in m/s². At 60 it reaches a walk speed of 5 m/s in under a tenth of a second, which feels instant. Lower it to make the character feel heavy, and much lower for ice. |
+| `airAcceleration` | 10 | The same in the air. Zero means the character can't steer once it has jumped. |
+
+## `SourceMovement`
+
+Each fixed step, a `SourceMovement` character does this, in order:
 
 1. **Stance.** The character changes to the stance asked for, if it fits.
 2. **Jump.** A jump fires if one was asked for and the character may jump.
@@ -71,10 +131,73 @@ order:
 
 Because friction and acceleration are separate, stopping is quick, and a change
 of direction on the ground has a short slide while friction removes the old
-velocity.
+velocity. `walkSpeed` is not a hard limit: speed gained in the air or carried
+off a moving platform is kept until friction takes it.
 
-On a moving platform, friction and acceleration work relative to the platform,
-so a character standing still rides along with it.
+The defaults are Half-Life 2's values, converted at 1.905 cm to one of its
+units.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `friction` | 4 | Fraction of the speed lost per second on the ground. Half-Life 2's `sv_friction`. |
+| `stopSpeed` | 1.905 | Below this speed, friction acts as if the character were moving this fast, so the last of the speed goes quickly. `sv_stopspeed` 100. |
+| `groundAcceleration` | 10 | Speed gained per second on the ground, as a multiple of the wish speed. `sv_accelerate`. |
+| `airAcceleration` | 10 | The same in the air. `sv_airaccelerate`. Zero means no steering in the air. |
+| `airWishSpeedCap` | 0.5715 | The wish speed limit used in the air. 30 units a second. |
+| `bunnyHop` | `Cap` | What a jump on the landing step keeps. See below. |
+| `bunnyHopSpeedCap` | 1.7 | The limit for `Cap`, as a multiple of `walkSpeed`. |
+
+### Air movement and air strafing
+
+In the air there is no friction, and step 5 changes in one way: the wish speed
+is cut down to `airWishSpeedCap` before the controller decides how much speed
+may be added. The amount added per second still uses the full wish speed.
+
+- Holding one direction adds speed only up to `airWishSpeedCap` in that
+  direction, which is slow. A jump mostly keeps the velocity it started with.
+- Turning the wish direction away from the current velocity keeps adding
+  speed. Holding a strafe key and turning the view curves the jump and makes
+  the character faster. This is air strafing.
+
+### Jumping on the landing step (bunny hopping)
+
+Friction only applies on the ground, and a character that jumps on the step it
+lands never spends a step on the ground. It keeps the speed it gained in the
+air, and a chain of such jumps keeps building speed. With the default
+`jumpBufferTime`, pressing jump shortly before landing is enough to do this.
+
+`bunnyHop` decides what happens to that speed at take-off:
+
+| Value | Effect |
+|---|---|
+| `Allow` | Nothing is removed. Speed builds without limit. |
+| `Cap` (default) | Horizontal speed is limited to `bunnyHopSpeedCap * walkSpeed`. |
+| `Disallow` | Horizontal speed is limited to `walkSpeed`, so hopping gains nothing. |
+| `Boost` | Half-Life 2's own rule, which allows accelerated back hopping. See below. |
+
+### Accelerated back hopping
+
+`Boost` copies what Half-Life 2 does on a jump, including the bug that
+speedrunners use. It is off unless you choose it.
+
+On each jump the controller:
+
+1. Works out a boost: half of the forward speed being asked for (a tenth while
+   crouched).
+2. Sets a limit: `walkSpeed` plus half of it (plus a tenth while crouched).
+3. If the current speed plus the boost is over the limit, takes the excess out
+   of the boost. A character already over the limit ends up with a negative
+   boost.
+4. Adds the boost along the direction the character is **facing**.
+
+Facing the way it travels, a character over the limit is slowed down to it.
+Facing the other way, the same negative boost pushes it along its travel, so it
+speeds up. To back hop: get over the limit, turn around, let go of the movement
+keys and jump each time you land. Every jump adds the excess again. Crouching
+lowers the limit, so it gains more.
+
+The facing comes from the character's `Transform`, which the step reads each
+time.
 
 ## Riding a moving body
 
@@ -182,58 +305,6 @@ Two `options` on the character decide whether it rides at all:
 character.options = Physics::AllCharacterOptions.Without(Physics::CharacterOption::TurnsWithBase);
 ```
 
-## Air movement and air strafing
-
-In the air there is no friction, and step 5 changes in one way: the wish speed
-is cut down to `airWishSpeedCap` before the controller decides how much speed
-may be added. The amount added per second still uses the full wish speed.
-
-- Holding one direction adds speed only up to `airWishSpeedCap` in that
-  direction, which is slow. A jump mostly keeps the velocity it started with.
-- Turning the wish direction away from the current velocity keeps adding
-  speed. Holding a strafe key and turning the view curves the jump and makes
-  the character faster. This is air strafing.
-
-## Jumping on the landing step (bunny hopping)
-
-Friction only applies on the ground, and a character that jumps on the step it
-lands never spends a step on the ground. It keeps the speed it gained in the
-air, and a chain of such jumps keeps building speed. With the default
-`jumpBufferTime`, pressing jump shortly before landing is enough to do this.
-
-`bunnyHop` decides what happens to that speed at take-off:
-
-| Value | Effect |
-|---|---|
-| `Allow` | Nothing is removed. Speed builds without limit. |
-| `Cap` (default) | Horizontal speed is limited to `bunnyHopSpeedCap * walkSpeed`. |
-| `Disallow` | Horizontal speed is limited to `walkSpeed`, so hopping gains nothing. |
-| `Boost` | Half-Life 2's own rule, which allows accelerated back hopping. See below. |
-
-### Accelerated back hopping
-
-`Boost` copies what Half-Life 2 does on a jump, including the bug that
-speedrunners use. It is off unless you choose it.
-
-On each jump the controller:
-
-1. Works out a boost: half of the forward speed being asked for (a tenth while
-   crouched).
-2. Sets a limit: `walkSpeed` plus half of it (plus a tenth while crouched).
-3. If the current speed plus the boost is over the limit, takes the excess out
-   of the boost. A character already over the limit ends up with a negative
-   boost.
-4. Adds the boost along the direction the character is **facing**.
-
-Facing the way it travels, a character over the limit is slowed down to it.
-Facing the other way, the same negative boost pushes it along its travel, so it
-speeds up. To back hop: get over the limit, turn around, let go of the movement
-keys and jump each time you land. Every jump adds the excess again. Crouching
-lowers the limit, so it gains more.
-
-The facing comes from the character's `Transform`, which the step reads each
-time.
-
 ## Crouching and the crouch jump
 
 On the ground, crouching keeps the feet in place and lowers the head. Standing
@@ -251,27 +322,6 @@ steps like everything else. The eye eases between `eyeHeight` and
 `crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height
 changes by the same amount at once, so the view stays where it was.
 
-## Movement settings
-
-Distances are in meters and times in seconds. The defaults are Half-Life 2's
-values, converted at 1.905 cm to one of its units.
-
-| Field | Default | Meaning |
-|---|---|---|
-| `walkSpeed` | 3.62 | The speed asked for with a full `move`. It is not a hard limit. Half-Life 2's normal run, 190 units a second. |
-| `crouchSpeedScale` | 0.333 | Multiplies `walkSpeed` while crouched. |
-| `friction` | 4 | Fraction of the speed lost per second on the ground. Half-Life 2's `sv_friction`. |
-| `stopSpeed` | 1.905 | Below this speed, friction acts as if the character were moving this fast, so the last of the speed goes quickly. `sv_stopspeed` 100. |
-| `groundAcceleration` | 10 | Speed gained per second on the ground, as a multiple of the wish speed. `sv_accelerate`. |
-| `airAcceleration` | 10 | The same in the air. `sv_airaccelerate`. Zero means no steering in the air. |
-| `airWishSpeedCap` | 0.5715 | The wish speed limit used in the air. 30 units a second. |
-| `bunnyHop` | `Cap` | What a jump on the landing step keeps. See above. |
-| `bunnyHopSpeedCap` | 1.7 | The limit for `Cap`, as a multiple of `walkSpeed`. |
-| `jumpSpeed` | 3.05 | Upward speed at the start of a jump. Rises about 0.4 m. |
-| `gravityScale` | 1.165 | Multiplies the world's gravity for this character. |
-| `coyoteTime` | 0.1 | How long after walking off a ledge a jump still works. |
-| `jumpBufferTime` | 0.15 | How long before landing a jump request is remembered. |
-
 ## When two characters meet
 
 Two characters block each other: one walking into another stops against it,
@@ -286,7 +336,7 @@ give them a collision channel of your own and leave it out of their
 the other's `collidesWith`, so players on that channel pass through each other
 but still meet everything else, other characters included.
 
-## Shape settings
+## `Character` settings
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -301,4 +351,5 @@ but still meet everything else, other characters included.
 | `options` | all | What the character does: `PushesBodies` and `Pushable` turn either direction of pushing bodies off; `RidesBases` and `TurnsWithBase` are described under riding a moving body. |
 | `collidesWith` | all | Which collision channels the character hits. |
 
-Changing a setting in the editor rebuilds the character in place.
+Changing a setting of any of these components in the editor applies at once,
+and the character keeps its place and speed.

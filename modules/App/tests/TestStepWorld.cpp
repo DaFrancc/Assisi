@@ -46,7 +46,7 @@ ECS::Entity AddWalker(App::World &world, glm::vec3 feet)
 {
     const ECS::Entity entity = world.scene.Create();
     (void)world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = feet});
-    (void)world.scene.Add<Physics::Character>(entity);
+    (void)world.scene.Add<Physics::SourceMovement>(entity);
     return entity;
 }
 

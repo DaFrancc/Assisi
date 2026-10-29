@@ -138,14 +138,21 @@ void PhysicsWorld::Impl::ReconcileScene(float stepTime)
     // physics components, its Parent link, or anything just removed. A RigidBody
     // or a Character gained or lost turns the colliders below it into parts or
     // back, and a Parent changed moves them between owners, so each entity
-    // brings every collider listed below it.
+    // brings every collider listed below it. A character's movement components
+    // gained, edited or lost retune it in place.
     scratchChanged.clear();
     scratchChanged.insert(scratchChanged.end(), scratchRemoved.begin(), scratchRemoved.end());
     scene.ChangedSince<Collider>(changeCursor, scratchChanged);
     scene.ChangedSince<RigidBody>(changeCursor, scratchChanged);
     scene.ChangedSince<Character>(changeCursor, scratchChanged);
+    scene.ChangedSince<CharacterLocomotion>(changeCursor, scratchChanged);
+    scene.ChangedSince<SourceMovement>(changeCursor, scratchChanged);
+    scene.ChangedSince<ArcadeMovement>(changeCursor, scratchChanged);
     scene.ChangedSince<ECS::Parent>(changeCursor, scratchChanged);
     complete = scene.RemovedSince<RigidBody>(changeCursor, scratchChanged) && complete;
+    complete = scene.RemovedSince<CharacterLocomotion>(changeCursor, scratchChanged) && complete;
+    complete = scene.RemovedSince<SourceMovement>(changeCursor, scratchChanged) && complete;
+    complete = scene.RemovedSince<ArcadeMovement>(changeCursor, scratchChanged) && complete;
     complete = scene.RemovedSince<ECS::Parent>(changeCursor, scratchChanged) && complete;
     if (!complete)
     {

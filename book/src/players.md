@@ -15,12 +15,14 @@ It holds three entities:
 
 | Entity | Components |
 |---|---|
-| `Player` | `Character`, `Player`, `Replicated` |
+| `Player` | `Character`, `CharacterLocomotion`, `ArcadeMovement`, `Player`, `Replicated` |
 | `Camera` | `Camera`, `Parent` (the `Player`), `Replicated` |
 | `Body` | `MeshRenderer`, `Parent` (the `Player`), `Replicated` |
 
-- **`Character`** is the [character controller](physics-character.md): the
-  capsule and how it moves.
+- **`Character`**, **`CharacterLocomotion`** and **`ArcadeMovement`** are the
+  [character controller](physics-character.md): the capsule, how fast it walks
+  and jumps, and how it speeds up and slows down. Swap `ArcadeMovement` for
+  `SourceMovement` to move like Half-Life 2 instead.
 - **`Player`** marks the character as one a person controls. A character
   without it is never driven by the keyboard, so put it on your player and leave
   it off your NPCs.

@@ -432,6 +432,24 @@ JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float ta
 /// its direction.
 JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 
+/// Moves @p from toward @p to by at most @p maxDelta, landing exactly on @p to
+/// rather than overshooting and oscillating around it. A zero @p maxDelta
+/// returns @p from unchanged.
+JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta);
+
+/// What a character with no movement component moves by: no walk, no jump, and
+/// the world's own gravity.
+inline constexpr LocomotionSettings kNoLocomotion{.gravityScale = 1.f};
+
+/// @brief Which movement component a character steers by.
+enum class MovementModel : std::uint8_t
+{
+    None,   ///< Neither: it does not walk or jump.
+    Source, ///< SourceMovement.
+    Arcade, ///< ArcadeMovement.
+    Count_,
+};
+
 /// Whether every component is a number. Nothing that fails this is handed to
 /// Jolt or written to a component: one NaN in a body spreads to everything it
 /// touches within a step.
@@ -1240,6 +1258,9 @@ private:
     /// changed, since the solver bakes that in.
     void EditCharacter(ECS::Entity entity, const Character &character);
 
+    /// Copies into @p record the movement components its entity has now.
+    void ReadMovement(CharacterRecord &record) const;
+
     /// Destroys whatever the slot at @p index holds, queuing the contact Exits
     /// its departure causes.
     void DestroySlot(std::uint32_t index);
@@ -1581,19 +1602,18 @@ private:
         /// keeps the full mask, which is what lets the sensor see it.
         CollisionFilter queryFilter;
 
-        float jumpSpeed = 0.f;
-        float walkSpeed = 0.f;
-        float crouchSpeedScale = 0.f;
-        float friction = 0.f;
-        float stopSpeed = 0.f;
-        float groundAcceleration = 0.f;
-        float airAcceleration = 0.f;
-        float airWishSpeedCap = 0.f;
-        float bunnyHopSpeedCap = 0.f;
+        /// The CharacterLocomotion's preset resolved, or kNoLocomotion for a
+        /// character with no movement component.
+        LocomotionSettings locomotion = kNoLocomotion;
+
+        /// The movement component's tuning; only the one @ref movement names
+        /// is read.
+        SourceMovement source;
+        ArcadeMovement arcade;
+
         float standingEyeHeight = 0.f;
         float crouchEyeHeight = 0.f;
         float eyeSpeed = 0.f;
-        float gravityScale = 1.f;
         float coyoteTime = 0.f;
         float jumpBufferTime = 0.f;
         float maxStepHeight = 0.f;
@@ -1623,7 +1643,7 @@ private:
 
         Stance stance = Stance::Standing;
 
-        BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
+        MovementModel movement = MovementModel::None;
 
         /// Set when a jump fires, cleared on landing. Without it the jump buffer
         /// would fire a second jump in the same flight the moment the first one
@@ -1653,10 +1673,31 @@ private:
         /// character's motion, timers and stance as they are.
         void Retune(const Character &character);
 
+        /// Copies the movement a step reads from the components beside the
+        /// Character, each null when the entity has none. At most one of
+        /// @p sourceTuning and @p arcadeTuning is set, as their components
+        /// exclude each other.
+        void RetuneMovement(const CharacterLocomotion *locomotionTuning, const SourceMovement *sourceTuning,
+                            const ArcadeMovement *arcadeTuning);
+
+        /// Whether a jump asked for now would fire.
+        [[nodiscard]] bool MayJump() const;
+
         /// The horizontal velocity, relative to the ground, that one step of
         /// intent turns @p velocity into. @p wish is the horizontal request;
-        /// @p grounded is standing on walkable ground and not jumping this step.
-        JPH::Vec3 Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
+        /// @p standing is standing on walkable ground, and @p jumping is a jump
+        /// firing this step.
+        JPH::Vec3 Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing, bool jumping,
+                        float deltaTime) const;
+
+        /// SourceMovement's part of @ref Steer. @p grounded is standing and not
+        /// jumping.
+        JPH::Vec3 SteerSource(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
+
+        /// What a jump firing this step leaves of the horizontal @p velocity,
+        /// given the horizontal request @p wish. Only SourceMovement's bunny-hop
+        /// policy changes it.
+        JPH::Vec3 TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
 
         /// The most horizontal speed a jump may leave the ground with.
         float TakeOffSpeedLimit() const;

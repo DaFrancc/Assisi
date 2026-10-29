@@ -175,7 +175,7 @@ TEST_CASE("Walking on a turning carrier goes straight across the deck, and the r
     TestScene test;
     const Deck deck = AddDeck(test, deckVelocity, kYawRate, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 3.f});
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 before = OnDeck(test, deck, FeetOf(test, rider));
 
     // Forward along the rider's own facing every step, as the input system does.
@@ -319,7 +319,7 @@ TEST_CASE("Walking off a carrier onto other ground lets go of it without a jump 
     const ECS::Entity rider = AddRider(test, {kDeckHalfWidth - 1.f, 0.f, 0.f});
     REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
 
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 east{1.f, 0.f, 0.f};
     float largestStep = 0.f;
     for (int32_t i = 0; i < kWalkSteps; ++i)
@@ -466,7 +466,7 @@ TEST_CASE("Walking from a dock onto a passing carrier keeps the walk, relative t
     const ECS::Entity rider = AddRider(test, {kStartX, 0.f, 0.f});
     REQUIRE(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
 
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 west{-walkSpeed, 0.f, 0.f};
     float elapsed = 0.f;
     for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).baseEntity != deck.entity; ++i)
@@ -782,7 +782,7 @@ TEST_CASE("A base gameplay sets holds through a jump and a fall, on a body with 
     elapsed += kStep;
 
     // Off the deck's far edge, along -Z, which the deck does not travel.
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 off{0.f, 0.f, -walkSpeed};
     for (int32_t i = 0; i < kWalkOffSteps && FeetOf(test, rider).y > -1.f; ++i)
     {

@@ -1,9 +1,9 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestCharacterFeel.cpp
-/// @brief The numbers on CharacterDescriptor that decide how a character feels:
+/// @brief The numbers that decide how a SourceMovement character feels:
 ///        jumping, friction, the two accelerations, the air cap, the bunny-hop
-///        policy, the eye height, gravity scale, and riding a platform.
+///        policy, the eye height and gravity scale.
 ///
 /// Every case here names one field and fails when that field is ignored. That is
 /// the point of the file: the mechanics in TestCharacter.cpp still pass if every
@@ -39,9 +39,10 @@ ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec
 }
 
 ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
-                           const Physics::Character &descriptor)
+                           const Physics::CharacterLocomotion &locomotion = Physics::CharacterLocomotion{},
+                           const Physics::SourceMovement &movement = Physics::SourceMovement{})
 {
-    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, Physics::Character{}, locomotion, movement);
     world.Reconcile();
     REQUIRE(world.HasBody(entity));
     return entity;
@@ -89,11 +90,11 @@ TEST_CASE("Jumping from the ground leaves it, and jumping again in the air does 
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
-    Physics::Character descriptor{};
-    descriptor.coyoteTime     = 0.f; // the plain case: ground only
-    descriptor.jumpBufferTime = 0.f;
+    Physics::CharacterLocomotion locomotion{};
+    locomotion.coyoteTime = 0.f; // the plain case: ground only
+    locomotion.jumpBufferTime = 0.f;
 
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion);
     Settle(scene, world, character);
     REQUIRE(PhysicsTests::StateOf(scene, character).ground == Physics::GroundState::OnGround);
 
@@ -122,28 +123,28 @@ TEST_CASE("Coyote time lets a jump fire just after walking off a ledge")
         // A ledge ending at x = 0, with nothing beyond it.
         (void)SpawnFloor(scene, world, {-2.f, -0.5f, 0.f}, {2.f, 0.5f, 5.f});
 
-        Physics::Character descriptor{};
-        descriptor.coyoteTime         = coyoteTime;
-        descriptor.jumpBufferTime     = 0.f;
-        descriptor.groundAcceleration = 1000.f; // reach walking speed at once
-        descriptor.walkSpeed          = 4.f;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.coyoteTime = coyoteTime;
+        locomotion.jumpBufferTime = 0.f;
+        locomotion.walkSpeed = 4.f;
+        const Physics::SourceMovement movement{.groundAcceleration = 1000.f}; // reach walking speed at once
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {-2.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {-2.f, 0.f, 0.f}, locomotion, movement);
         Settle(scene, world, character, 60);
 
         // Walk off the end.
         while (PhysicsTests::StateOf(scene, character).ground == Physics::GroundState::OnGround)
         {
-            Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+            Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         }
 
         for (int32_t i = 0; i < stepsInAir; ++i)
         {
-            Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+            Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         }
 
         const float before = PhysicsTests::StateOf(scene, character).velocity.y;
-        Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ true);
+        Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ true);
         return PhysicsTests::StateOf(scene, character).velocity.y > before + 1.f;
     };
 
@@ -163,13 +164,13 @@ TEST_CASE("A jump asked for just before landing fires on the landing step")
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        Physics::Character descriptor{};
-        descriptor.coyoteTime     = 0.f;
-        descriptor.jumpBufferTime = bufferTime;
+        Physics::CharacterLocomotion locomotion{};
+        locomotion.coyoteTime = 0.f;
+        locomotion.jumpBufferTime = bufferTime;
 
         // Dropped from just above the floor, so it lands well inside the buffer
         // below — a longer fall would expire the request and prove nothing.
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.1f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.1f, 0.f}, locomotion);
 
         // Ask once, while still falling, then stop asking.
         Step(scene, world, character, glm::vec3(0.f), /*jump=*/ true);
@@ -203,27 +204,26 @@ TEST_CASE("airAcceleration decides whether a jump can be steered")
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        Physics::Character descriptor{};
-        descriptor.airAcceleration    = airAcceleration;
-        descriptor.groundAcceleration = 1000.f;
-        descriptor.walkSpeed          = 5.f;
-        descriptor.jumpSpeed          = 8.f;
-        descriptor.coyoteTime         = 0.f;
-        descriptor.jumpBufferTime     = 0.f;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.walkSpeed = 5.f;
+        locomotion.jumpSpeed = 8.f;
+        locomotion.coyoteTime = 0.f;
+        locomotion.jumpBufferTime = 0.f;
+        const Physics::SourceMovement movement{.groundAcceleration = 1000.f, .airAcceleration = airAcceleration};
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
         Settle(scene, world, character, 60);
 
         // Build up speed along +x, then jump and ask for the opposite direction.
         for (int32_t i = 0; i < 30; ++i)
         {
-            Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+            Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         }
-        Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ true);
+        Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ true);
 
         for (int32_t i = 0; i < 30; ++i)
         {
-            Step(scene, world, character, {-descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+            Step(scene, world, character, {-locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         }
         return PhysicsTests::StateOf(scene, character).velocity.x;
     };
@@ -243,14 +243,14 @@ TEST_CASE("groundAcceleration decides how quickly walking speed is reached")
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        Physics::Character descriptor{};
-        descriptor.groundAcceleration = groundAcceleration;
-        descriptor.walkSpeed          = 10.f;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.walkSpeed = 10.f;
+        const Physics::SourceMovement movement{.groundAcceleration = groundAcceleration};
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
         Settle(scene, world, character, 60);
 
-        Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+        Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         return PhysicsTests::StateOf(scene, character).velocity.x;
     };
 
@@ -268,16 +268,16 @@ TEST_CASE("With the defaults a character reaches its walk speed in about an eigh
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
-    const Physics::Character descriptor{};
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
     Settle(scene, world, character, 60);
 
-    const glm::vec3 wish{descriptor.walkSpeed, 0.f, 0.f};
+    const float walkSpeed = Physics::kSourceLocomotion.walkSpeed;
+    const glm::vec3 wish{walkSpeed, 0.f, 0.f};
 
     // Not instant: two steps in, less than half way.
     Step(scene, world, character, wish, /*jump=*/ false);
     Step(scene, world, character, wish, /*jump=*/ false);
-    CHECK(HorizontalSpeed(scene, character) < 0.5f * descriptor.walkSpeed);
+    CHECK(HorizontalSpeed(scene, character) < 0.5f * walkSpeed);
 
     // Friction works against the gain on every step after the first, which is
     // why this takes eight steps and not the six the rate alone would give.
@@ -285,7 +285,7 @@ TEST_CASE("With the defaults a character reaches its walk speed in about an eigh
     {
         Step(scene, world, character, wish, /*jump=*/ false);
     }
-    CHECK(HorizontalSpeed(scene, character) == doctest::Approx(descriptor.walkSpeed).epsilon(0.01));
+    CHECK(HorizontalSpeed(scene, character) == doctest::Approx(walkSpeed).epsilon(0.01));
 }
 
 TEST_CASE("Friction stops a character from walk speed in under half a second, and firmly")
@@ -294,15 +294,15 @@ TEST_CASE("Friction stops a character from walk speed in under half a second, an
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
-    const Physics::Character descriptor{};
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
     Settle(scene, world, character, 60);
 
+    const float walkSpeed = Physics::kSourceLocomotion.walkSpeed;
     for (int32_t i = 0; i < 60; ++i)
     {
-        Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+        Step(scene, world, character, {walkSpeed, 0.f, 0.f}, /*jump=*/ false);
     }
-    REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(descriptor.walkSpeed).epsilon(0.01));
+    REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(walkSpeed).epsilon(0.01));
 
     // A fifth of a second after letting go it is still sliding.
     for (int32_t i = 0; i < 12; ++i)
@@ -326,19 +326,20 @@ TEST_CASE("Holding one direction in the air never passes the air cap")
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
     // No floor and no gravity: airborne for as long as the case runs.
-    Physics::Character descriptor{};
-    descriptor.gravityScale = 0.f;
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.gravityScale = 0.f;
+    const Physics::SourceMovement movement{};
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
 
     float fastest = 0.f;
     for (int32_t i = 0; i < 120; ++i)
     {
-        Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
+        Step(scene, world, character, {locomotion.walkSpeed, 0.f, 0.f}, /*jump=*/ false);
         fastest = glm::max(fastest, HorizontalSpeed(scene, character));
     }
 
-    CHECK(fastest <= descriptor.airWishSpeedCap + 0.001f);
-    CHECK(fastest > 0.9f * descriptor.airWishSpeedCap); // it did steer
+    CHECK(fastest <= movement.airWishSpeedCap + 0.001f);
+    CHECK(fastest > 0.9f * movement.airWishSpeedCap); // it did steer
 }
 
 TEST_CASE("Turning the requested direction in the air gains speed past the air cap")
@@ -346,9 +347,10 @@ TEST_CASE("Turning the requested direction in the air gains speed past the air c
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
-    Physics::Character descriptor{};
-    descriptor.gravityScale = 0.f;
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.gravityScale = 0.f;
+    const Physics::SourceMovement movement{};
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
 
     // A quarter turn a second, which is a slow sweep of the mouse.
     constexpr float kTurnRadiansPerSecond = 1.5708f;
@@ -356,11 +358,11 @@ TEST_CASE("Turning the requested direction in the air gains speed past the air c
     for (int32_t i = 0; i < 120; ++i)
     {
         const float angle = kTurnRadiansPerSecond * kStep * static_cast<float>(i);
-        const glm::vec3 wish = glm::vec3(std::cos(angle), 0.f, std::sin(angle)) * descriptor.walkSpeed;
+        const glm::vec3 wish = glm::vec3(std::cos(angle), 0.f, std::sin(angle)) * locomotion.walkSpeed;
         Step(scene, world, character, wish, /*jump=*/ false);
     }
 
-    CHECK(HorizontalSpeed(scene, character) > 2.f * descriptor.airWishSpeedCap);
+    CHECK(HorizontalSpeed(scene, character) > 2.f * movement.airWishSpeedCap);
 }
 
 TEST_CASE("The bunny-hop policy decides how much speed a jump leaves the ground with")
@@ -374,15 +376,14 @@ TEST_CASE("The bunny-hop policy decides how much speed a jump leaves the ground 
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        Physics::Character descriptor{};
-        descriptor.walkSpeed = kWalkSpeed;
-        descriptor.groundAcceleration = 1000.f;
-        descriptor.bunnyHop = policy;
-        descriptor.bunnyHopSpeedCap = 1.7f;
-        descriptor.coyoteTime = 0.f;
-        descriptor.jumpBufferTime = 0.f;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.walkSpeed = kWalkSpeed;
+        locomotion.coyoteTime = 0.f;
+        locomotion.jumpBufferTime = 0.f;
+        const Physics::SourceMovement movement{
+            .groundAcceleration = 1000.f, .bunnyHopSpeedCap = 1.7f, .bunnyHop = policy};
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
         Settle(scene, world, character, 60);
 
         // Faster than the walk speed, standing in for speed carried into a
@@ -420,14 +421,14 @@ TEST_CASE("Under the Boost policy a jump slows a character facing its travel and
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        Physics::Character descriptor{};
-        descriptor.walkSpeed          = kWalkSpeed;
-        descriptor.groundAcceleration = 1000.f;
-        descriptor.bunnyHop           = Physics::BunnyHopPolicy::Boost;
-        descriptor.coyoteTime         = 0.f;
-        descriptor.jumpBufferTime     = 0.f;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.walkSpeed = kWalkSpeed;
+        locomotion.coyoteTime = 0.f;
+        locomotion.jumpBufferTime = 0.f;
+        const Physics::SourceMovement movement{.groundAcceleration = 1000.f,
+                                               .bunnyHop = Physics::BunnyHopPolicy::Boost};
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion, movement);
         Settle(scene, world, character, 60);
         PhysicsTests::Face(scene, character, facing);
 
@@ -460,8 +461,8 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        const Physics::Character descriptor{};
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
+        const float walkSpeed = Physics::kSourceLocomotion.walkSpeed;
 
         const float deltaTime = 1.f / static_cast<float>(stepsPerSecond);
         for (int32_t i = 0; i < stepsPerSecond; ++i)
@@ -472,7 +473,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
         // A second of walking, then a second of letting friction stop it.
         for (int32_t i = 0; i < stepsPerSecond; ++i)
         {
-            Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false, deltaTime);
+            Step(scene, world, character, {walkSpeed, 0.f, 0.f}, /*jump=*/ false, deltaTime);
         }
         for (int32_t i = 0; i < stepsPerSecond; ++i)
         {
@@ -497,8 +498,8 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
         (void)SpawnFloor(scene, world);
 
-        const Physics::Character descriptor{};
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
+        const float walkSpeed = Physics::kSourceLocomotion.walkSpeed;
 
         const float deltaTime = 1.f / static_cast<float>(stepsPerSecond);
         for (int32_t i = 0; i < stepsPerSecond; ++i)
@@ -507,7 +508,7 @@ TEST_CASE("The same input covers the same ground at 60 and at 120 steps a second
         }
         for (int32_t i = 0; i < stepsPerSecond / 20; ++i)
         {
-            Step(scene, world, character, {descriptor.walkSpeed, 0.f, 0.f}, /*jump=*/ false, deltaTime);
+            Step(scene, world, character, {walkSpeed, 0.f, 0.f}, /*jump=*/ false, deltaTime);
         }
         return HorizontalSpeed(scene, character);
     };
@@ -522,7 +523,7 @@ TEST_CASE("The eye eases down when crouching on the ground")
     (void)SpawnFloor(scene, world);
 
     const Physics::Character descriptor{};
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
     Settle(scene, world, character, 60);
     REQUIRE(PhysicsTests::StateOf(scene, character).eyeHeight == doctest::Approx(descriptor.eyeHeight));
 
@@ -545,10 +546,10 @@ TEST_CASE("gravityScale changes how fast a character falls")
         ECS::Scene scene;
         Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
 
-        Physics::Character descriptor{};
-        descriptor.gravityScale = gravityScale;
+        Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+        locomotion.gravityScale = gravityScale;
 
-        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+        const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, locomotion);
         Settle(scene, world, character, steps);
         return CharacterPosition(scene).y;
     };
