@@ -123,6 +123,8 @@ so a press is seen by exactly one step, and a system after it would never see
 one.
 
 In a networked game a client sometimes runs a step again, to correct what it
-predicted (see [Multiplayer basics](multiplayer.md#systems-during-a-rollback)).
-Your controls system then runs again too, with `PlayerInput` holding the
-controls the host received for that step. Nothing in your code has to change.
+predicted (see [Your systems in multiplayer](multiplayer.md#your-systems-in-multiplayer)).
+Your controls system does not run again: it runs once per step, live. What it
+wrote into a character's `CharacterIntent` is put back for each step that runs
+again, so a system that steers a character through its intent needs nothing
+more.
