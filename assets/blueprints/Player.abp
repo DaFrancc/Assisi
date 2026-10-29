@@ -32,6 +32,8 @@
           "jumpSpeed": 4.5,
           "maxFallSpeed": 0.0,
           "preset": 1,
+          "sprintInAir": false,
+          "sprintMaxAngle": 50.0,
           "sprintSpeedScale": 1.6,
           "walkSpeed": 5.0
         },

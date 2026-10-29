@@ -195,6 +195,37 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::TakeOff(JPH::Vec3Arg velocity, JP
                                                     : LimitSpeed(velocity, TakeOffSpeedLimit());
 }
 
+bool PhysicsWorld::Impl::CharacterRecord::Sprints(const CharacterIntent &intent, bool standing) const
+{
+    // A crouch rules a sprint out rather than scaling it.
+    if (!canSprint || stance == Stance::Crouching)
+    {
+        return false;
+    }
+
+    if (!standing && !sprintInAir)
+    {
+        return sprinting;
+    }
+
+    const glm::vec2 asked{intent.move.x, intent.move.z};
+    const float askedLength = glm::length(asked);
+    if (!intent.sprint || askedLength < kMinSprintMove)
+    {
+        return false;
+    }
+    // With no way it faces along the ground, there is no forward to measure
+    // the direction asked for against.
+    const glm::vec2 forward{facing.x, facing.z};
+    const float forwardLength = glm::length(forward);
+    if (forwardLength < kMinSprintMove)
+    {
+        return true;
+    }
+    const float agreement = glm::dot(asked / askedLength, forward / forwardLength);
+    return glm::clamp(agreement, -1.f, 1.f) >= sprintMinCosine;
+}
+
 float PhysicsWorld::Impl::CharacterRecord::ScaledWalkSpeed() const
 {
     return locomotion.walkSpeed * (sprinting ? sprintSpeedScale : 1.f) * lastIntent.speedScale;
@@ -420,11 +451,10 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     record.lastIntent = intent;
 
     // The crouch speed applies to the stance the character reached, not the
-    // one it asked for, so one held under a ledge walks crouched. A crouch
-    // rules a sprint out rather than scaling it.
+    // one it asked for, so one held under a ledge walks crouched.
     const LocomotionSettings &locomotion = record.locomotion;
     const bool crouching = record.stance == Stance::Crouching;
-    record.sprinting = intent.sprint && record.canSprint && !crouching;
+    record.sprinting = record.Sprints(intent, standing);
     const float speed =
         crouching ? record.ScaledWalkSpeed() * locomotion.crouchSpeedScale : record.ScaledWalkSpeed();
     const glm::vec3 wishVelocity = intent.move * speed;
@@ -1448,7 +1478,9 @@ void PhysicsWorld::Impl::CharacterRecord::RetuneMovement(const CharacterLocomoti
     jumpBufferTime = shared.jumpBufferTime;
     maxFallSpeed = movement == MovementModel::None ? 0.f : shared.maxFallSpeed;
     canSprint = movement != MovementModel::None && shared.canSprint;
+    sprintInAir = shared.sprintInAir;
     sprintSpeedScale = shared.sprintSpeedScale;
+    sprintMinCosine = std::cos(glm::radians(glm::clamp(shared.sprintMaxAngle, 0.f, kMaxSprintAngleDegrees)));
 }
 
 void PhysicsWorld::Impl::ReadMovement(CharacterRecord &record) const

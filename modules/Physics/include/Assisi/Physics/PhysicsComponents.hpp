@@ -648,8 +648,8 @@ struct CharacterState
     /// Always false for a character with no movement component.
     AFIELD() bool canJump = false;
 
-    /// Whether the last step sprinted: asked to, allowed to by its
-    /// CharacterLocomotion, and standing rather than crouched.
+    /// Whether the last step sprinted: asked to while moving, within its
+    /// CharacterLocomotion's rules, and not crouched.
     AFIELD() bool sprinting = false;
 };
 
@@ -862,9 +862,16 @@ struct CharacterLocomotion
     AFIELD(min = 0.0) float maxFallSpeed = 0.f;
 
     /// @ref walkSpeed multiplier while sprinting: while CharacterIntent::sprint
-    /// is asked for, @ref canSprint is set and the character is standing. Not
-    /// part of a preset.
+    /// is asked for, @ref canSprint is set, the character is not crouched, and
+    /// it is moving within @ref sprintMaxAngle of where it faces. Not part of a
+    /// preset.
     AFIELD(min = 0.0, radioListen = {source = canSprint, value = true, behavior = grey}) float sprintSpeedScale = 1.6f;
+
+    /// The widest angle between where the character faces and where it is
+    /// asked to go that it still sprints at (degrees). 180 sprints in any
+    /// direction; the default takes in the forward diagonals and leaves out
+    /// sideways and backwards.
+    AFIELD(min = 0.0, max = 180.0, radioListen = {source = canSprint, value = true, behavior = grey}) float sprintMaxAngle = 50.f;
 
     /// Which speeds and jump arc these are. Every value but Custom answers for
     /// the four fields it greys out, and follows the preset if its numbers
@@ -874,6 +881,11 @@ struct CharacterLocomotion
     /// Whether the character may sprint at all. Cleared, asking to sprint
     /// changes nothing.
     AFIELD(radioBroadcast) bool canSprint = true;
+
+    /// Whether a sprint can start and stop in the air. Cleared, the character
+    /// keeps the sprint it left the ground with until it lands, so a sprinting
+    /// jump carries its speed and asking to sprint mid-air does nothing.
+    AFIELD(radioListen = {source = canSprint, value = true, behavior = grey}) bool sprintInAir = false;
 };
 
 /// @brief The speeds and jump arc @p locomotion's preset stands for.
@@ -1022,9 +1034,8 @@ struct CharacterIntent
     AFIELD() bool jump = false;
 
     /// Whether to sprint, held for as long as it is wanted like @ref stance.
-    /// Speeds the character up by CharacterLocomotion's sprintSpeedScale while
-    /// it is standing and its canSprint is set; CharacterState::sprinting is
-    /// whether it did.
+    /// Speeds the character up by CharacterLocomotion's sprintSpeedScale within
+    /// that component's rules; CharacterState::sprinting is whether it did.
     AFIELD() bool sprint = false;
 };
 

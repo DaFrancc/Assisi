@@ -237,6 +237,7 @@ SprintOutcome Sprinting(bool canSprint, Physics::Stance stance)
         Physics::ArcadeMovement{.groundAcceleration = kInstantAcceleration, .brakingDeceleration = kInstantAcceleration});
     Settle(scene, world, character);
     REQUIRE(PhysicsTests::AskStance(scene, world, character, stance));
+    PhysicsTests::Face(scene, character, {1.f, 0.f, 0.f}); // running forward
 
     scene.GetMut<Physics::CharacterIntent>(character)->sprint = true;
     for (int32_t i = 0; i < kRunUpSteps; ++i)
@@ -244,6 +245,56 @@ SprintOutcome Sprinting(bool canSprint, Physics::Stance stance)
         Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
     }
     return SprintOutcome{HorizontalSpeed(scene, character), PhysicsTests::StateOf(scene, character).sprinting};
+}
+
+/// Whether an Arcade-preset character facing +x, asked to sprint along @p move,
+/// sprints when its sprintMaxAngle is @p maxAngle.
+bool SprintsAlong(glm::vec3 move, float maxAngle)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    const Physics::CharacterLocomotion locomotion{.sprintMaxAngle = maxAngle,
+                                                  .preset = Physics::LocomotionPreset::Arcade};
+    const ECS::Entity character = SpawnArcade(scene, world, locomotion, Physics::ArcadeMovement{});
+    Settle(scene, world, character);
+    PhysicsTests::Face(scene, character, {1.f, 0.f, 0.f});
+
+    scene.GetMut<Physics::CharacterIntent>(character)->sprint = true;
+    Step(scene, world, character, move, /*jump=*/ false);
+    return PhysicsTests::StateOf(scene, character).sprinting;
+}
+
+/// Steps in the air the sprint-in-air case flips its sprint for, after taking
+/// off.
+constexpr int32_t kAirSteps = 5;
+
+/// Whether a character that took off sprinting, or not, sprints after asking
+/// for the opposite in the air, with @p sprintInAir as given.
+bool SprintingAfterChangingInAir(bool sprintInAir, bool sprintAtTakeOff)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    const Physics::CharacterLocomotion locomotion{.preset = Physics::LocomotionPreset::Arcade,
+                                                  .sprintInAir = sprintInAir};
+    const ECS::Entity character = SpawnArcade(scene, world, locomotion, Physics::ArcadeMovement{});
+    Settle(scene, world, character);
+    PhysicsTests::Face(scene, character, {1.f, 0.f, 0.f});
+
+    scene.GetMut<Physics::CharacterIntent>(character)->sprint = sprintAtTakeOff;
+    Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ true);
+    REQUIRE(PhysicsTests::StateOf(scene, character).sprinting == sprintAtTakeOff);
+
+    scene.GetMut<Physics::CharacterIntent>(character)->sprint = !sprintAtTakeOff;
+    for (int32_t i = 0; i < kAirSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    REQUIRE(PhysicsTests::StateOf(scene, character).ground != Physics::GroundState::OnGround);
+    return PhysicsTests::StateOf(scene, character).sprinting;
 }
 
 /// How fast a platform carries the groundSpeed case along (m/s), and how long.
@@ -411,6 +462,38 @@ TEST_CASE("Asking to sprint multiplies the walk speed by sprintSpeedScale, unles
     CHECK(crouched.speed ==
           doctest::Approx(walkSpeed * Physics::kArcadeLocomotion.crouchSpeedScale).epsilon(kSpeedTolerance));
     CHECK_FALSE(crouched.sprinting);
+}
+
+TEST_CASE("sprintMaxAngle decides which directions from where a character faces it sprints in")
+{
+    const glm::vec3 forward{1.f, 0.f, 0.f};
+    const glm::vec3 forwardDiagonal = glm::normalize(glm::vec3(1.f, 0.f, 1.f));
+    const glm::vec3 sideways{0.f, 0.f, 1.f};
+    const glm::vec3 backwards{-1.f, 0.f, 0.f};
+
+    // The default takes in the forward diagonals and no more.
+    const float defaultAngle = Physics::CharacterLocomotion{}.sprintMaxAngle;
+    CHECK(SprintsAlong(forward, defaultAngle));
+    CHECK(SprintsAlong(forwardDiagonal, defaultAngle));
+    CHECK_FALSE(SprintsAlong(sideways, defaultAngle));
+    CHECK_FALSE(SprintsAlong(backwards, defaultAngle));
+
+    // 180 is any direction.
+    CHECK(SprintsAlong(backwards, 180.f));
+
+    // Standing still is not sprinting, whatever is held.
+    CHECK_FALSE(SprintsAlong(glm::vec3(0.f), 180.f));
+}
+
+TEST_CASE("Without sprintInAir a jump keeps the sprint it took off with, and with it a sprint changes in the air")
+{
+    // Let go of in the air: kept without sprintInAir, dropped with it.
+    CHECK(SprintingAfterChangingInAir(/*sprintInAir=*/ false, /*sprintAtTakeOff=*/ true));
+    CHECK_FALSE(SprintingAfterChangingInAir(/*sprintInAir=*/ true, /*sprintAtTakeOff=*/ true));
+
+    // Asked for in the air: refused without sprintInAir, taken with it.
+    CHECK_FALSE(SprintingAfterChangingInAir(/*sprintInAir=*/ false, /*sprintAtTakeOff=*/ false));
+    CHECK(SprintingAfterChangingInAir(/*sprintInAir=*/ true, /*sprintAtTakeOff=*/ false));
 }
 
 TEST_CASE("groundSpeed is the speed across what a character stands on, not its speed in the world")

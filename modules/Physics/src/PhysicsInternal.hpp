@@ -437,6 +437,14 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 /// returns @p from unchanged.
 JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta);
 
+/// A move shorter than this, or a facing with less than this along the ground,
+/// has no direction to measure a sprint's angle with (a fraction of a full
+/// move).
+constexpr float kMinSprintMove = 1.0e-3f;
+
+/// The widest a sprint's angle can be: straight back from where it faces.
+constexpr float kMaxSprintAngleDegrees = 180.f;
+
 /// Less time than this in the air, without a jump, is a stair edge or a bump
 /// rather than a fall, and touching down after it is not a landing (s).
 constexpr float kLandingAirTime = 0.1f;
@@ -1623,6 +1631,10 @@ private:
         float maxFallSpeed = 0.f; ///< Zero is no limit; see CharacterLocomotion.
 
         float sprintSpeedScale = 1.f;
+
+        /// The cosine of CharacterLocomotion::sprintMaxAngle: the least the
+        /// facing and the direction asked for may agree by to sprint.
+        float sprintMinCosine = -1.f;
         float maxStepHeight = 0.f;
         float radius = 0.f;
         float standingHalfHeight = 0.f;
@@ -1659,6 +1671,9 @@ private:
         /// Its CharacterLocomotion allows a sprint, and it has a movement
         /// component to sprint with.
         bool canSprint = false;
+
+        /// See CharacterLocomotion::sprintInAir.
+        bool sprintInAir = false;
 
         /// Whether its most recent step sprinted; see CharacterState::sprinting.
         bool sprinting = false;
@@ -1719,6 +1734,12 @@ private:
         /// given the horizontal request @p wish. Only SourceMovement's bunny-hop
         /// policy changes it.
         JPH::Vec3 TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
+
+        /// Whether a step with @p intent sprints, @p standing or not: asked to
+        /// while moving within the sprint angle, allowed to, and not crouched.
+        /// In the air, unless sprintInAir is set, it keeps the sprint it left
+        /// the ground with.
+        [[nodiscard]] bool Sprints(const CharacterIntent &intent, bool standing) const;
 
         /// The walk speed as its step's sprint and speed scale make it, before
         /// any crouch: what a full `move` asks for standing, and what the

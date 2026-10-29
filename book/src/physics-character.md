@@ -73,11 +73,20 @@ by default `Sprint` is Left Shift.
 
 ### Sprinting
 
-While `sprint` is asked for, a standing character moves at `walkSpeed` times its
-`CharacterLocomotion`'s `sprintSpeedScale`, 1.6 by default. Crouching rules a
-sprint out: a crouched character moves at its crouch speed whatever is held.
-Clear `canSprint` on the `CharacterLocomotion` and the character never sprints;
-`sprintSpeedScale` is greyed out in the editor then.
+While `sprint` is asked for, the character moves at `walkSpeed` times its
+`CharacterLocomotion`'s `sprintSpeedScale`, 1.6 by default, as long as:
+
+- it is moving within `sprintMaxAngle` of the way it faces. The default, 50°,
+  takes in the forward diagonals, so W with A or D still sprints, but sideways
+  and backwards don't. 180° sprints in any direction.
+- it isn't crouched. A crouched character moves at its crouch speed whatever is
+  held.
+- it is on the ground, unless `sprintInAir` is set. Without it, a character keeps
+  the sprint it left the ground with until it lands: a sprinting jump carries its
+  speed, and asking to sprint in the air does nothing.
+
+Clear `canSprint` and the character never sprints; the other sprint settings are
+greyed out in the editor then.
 
 For a slowing effect, or an NPC that should walk calmly, set `speedScale`
 instead. In a networked game neither needs anything more: a client that steps
@@ -92,7 +101,7 @@ each step had, not the ones it has now.
 | `groundSpeed` | How fast it moves across what it stands on: `velocity` less the ground's, along the ground. A character standing still on a moving boat reads 0. What a walk or run animation reads. |
 | `ground` | `OnGround`, `OnSteepGround`, `NotSupported` or `InAir`. |
 | `stance` | The stance it is actually in. Standing up under something low leaves it `Crouching`. |
-| `sprinting` | Whether it sprinted: asked to, allowed to, and not crouched. |
+| `sprinting` | Whether it sprinted, by the rules under [Sprinting](#sprinting). |
 | `canJump` | Whether a jump asked for now would fire. |
 | `jumps`, `landings` | How many times it has jumped, and landed after a jump or a fall. See below. |
 | `eyeHeight` | How high its eye is above its feet. |
@@ -138,6 +147,8 @@ Distances are in meters and times in seconds.
 | `maxFallSpeed` | 0 | The fastest the character falls, in m/s. Zero sets no limit. Not set by the preset. |
 | `canSprint` | on | Whether the character may sprint at all. |
 | `sprintSpeedScale` | 1.6 | Multiplies `walkSpeed` while sprinting. Not set by the preset. |
+| `sprintMaxAngle` | 50 | The widest angle, in degrees, between where it faces and where it moves that it still sprints at. 180 is any direction. |
+| `sprintInAir` | off | Whether a sprint can start and stop in the air. Off, a jump keeps the sprint it took off with. |
 
 On a moving platform, both movements steer relative to the platform, so a
 character standing still rides along with it.
