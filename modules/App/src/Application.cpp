@@ -28,6 +28,7 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/SampleScreen.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 
 #include <Assisi/Core/ConfigReader.hpp>
@@ -408,7 +409,7 @@ bool Application::InitializePresentation()
         {
             _ui->SetFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
-        LoadUiStrings();
+        LoadUiSettings();
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
@@ -1355,16 +1356,36 @@ void Application::InitializeAudio()
     }
 }
 
-void Application::LoadUiStrings()
+void Application::LoadUiSettings()
 {
-    // A project with no UI settings has no tables, which is not an error.
+    // A project with no UI settings has no tables and no themes, which is not
+    // an error.
     Mondrian::UiConfig settings;
     if (const std::expected<void, Core::ConfigError> read = Core::ReadConfig(Mondrian::kUiConfigPath, settings); !read)
     {
-        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables.", Mondrian::kUiConfigPath,
-                        Core::ToString(read.error()));
+        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables and no themes.",
+                        Mondrian::kUiConfigPath, Core::ToString(read.error()));
         return;
     }
+    LoadUiStrings(settings);
+    LoadUiThemes(settings);
+}
+
+void Application::LoadUiThemes(const Mondrian::UiConfig &settings)
+{
+    std::expected<Mondrian::Themes, Mondrian::ThemeLoadError> themes = Mondrian::LoadThemes(settings);
+    if (!themes)
+    {
+        Core::Log::Error("UI: the theme '{}' did not load ({}); every node wears only its own look.",
+                         themes.error().vpath, Mondrian::ToString(themes.error().error));
+        return;
+    }
+    _uiThemes = std::move(*themes);
+    _ui->SetThemes(&_uiThemes);
+}
+
+void Application::LoadUiStrings(const Mondrian::UiConfig &settings)
+{
     std::expected<Mondrian::StringTables, Mondrian::StringTableLoadError> tables = Mondrian::LoadStringTables(settings);
     if (!tables)
     {

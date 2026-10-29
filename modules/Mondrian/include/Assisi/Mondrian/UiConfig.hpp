@@ -2,11 +2,11 @@
 #pragma once
 
 /// @file UiConfig.hpp
-/// @brief The project's UI settings: which files are string tables, and how
-/// strictly the cook treats the text screens show.
+/// @brief The project's UI settings: which files are string tables and themes,
+/// and how strictly the cook treats the text screens show.
 ///
 /// A `config/ui.json` document. The cook reads it to check screens and tables;
-/// the game reads it to know which tables to load.
+/// the game reads it to know which tables and themes to load.
 
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
@@ -26,6 +26,10 @@ struct UiConfig
     /// Every string table the project has. A `.csv` listed nowhere here is not
     /// a string table, whatever it holds.
     AFIELD() std::vector<Assisi::Core::AssetPath> stringTables;
+
+    /// Every theme the project has. The first is the one the game starts in,
+    /// in its first mode, and every screen is checked against all of them.
+    AFIELD() std::vector<Assisi::Core::AssetPath> themes;
 
     /// Whether text a player reads must come from a table. On, literal text on
     /// such a field fails the cook, except on a screen marked debug-only.

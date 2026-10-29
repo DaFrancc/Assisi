@@ -38,15 +38,19 @@ bool InPool(const Core::StringPool &pool, Core::PooledString handle)
 }
 
 /// Whether @p node's looks are ones a cook writes: at most one per state, which
-/// otherwise would stack in whatever order they were kept, and each writing
-/// only properties this build has.
+/// otherwise would stack in whatever order they were kept, and each, like the
+/// node itself, writing only properties this build has.
 bool LooksConsistent(const ScreenNode &node)
 {
-    StateSet seen{};
-    for (const StylePatch &look : node.states)
+    if ((node.written & ~kEveryProperty) != 0)
     {
-        const std::size_t state = static_cast<std::size_t>(look.state);
-        if (state >= seen.size() || seen[state] || !look.WritesOnlyKnown())
+        return false;
+    }
+    StateSet seen{};
+    for (const ThemedPatch &look : node.states)
+    {
+        const std::size_t state = static_cast<std::size_t>(look.patch.state);
+        if (state >= seen.size() || seen[state] || !look.patch.WritesOnlyKnown())
         {
             return false;
         }

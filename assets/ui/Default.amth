@@ -1,0 +1,33 @@
+<!-- The game's look. A screen names these styles and tokens rather than
+     colours, so a mode switched restyles every screen at once.
+
+     Two modes: dark, the everyday one, and high_contrast, with plainer edges
+     and stronger colours for a player who needs them. The pause menu's
+     Contrast button switches between them. -->
+<theme>
+  <palette mode="dark"
+           scrim="rgbf(0, 0, 0, 0.55)" surface="#1a1c24f0" edge="#575f7a" edge_width="2"
+           ink="#ffffff" accent="#e63319" accent_hover="#ff6a4d" accent_pressed="#a02010"
+           accent_ink="#ffffff" ghost_hover="#ffffff26" ghost_pressed="#ffffff4d" focus="#ffd23c" />
+  <palette mode="high_contrast"
+           scrim="#000000e6" surface="#000000" edge="#ffffff" edge_width="4"
+           ink="#ffffff" accent="#ffd23c" accent_hover="#ffe680" accent_pressed="#c9a000"
+           accent_ink="#000000" ghost_hover="#ffffff4d" ghost_pressed="#ffffff80" focus="#00e5ff" />
+
+  <!-- A box that holds a menu. -->
+  <style name="panel" background="$surface" border_width="$edge_width" border_color="$edge"
+         corner_radius="16" corner_style="rounded" text_color="$ink" />
+
+  <!-- What every menu button shares. The two after it say how one is
+       coloured: filled for the action a player most likely wants, outlined
+       for the rest. -->
+  <style name="menu_button" padding="28 10 28 10" text_size="28"
+         corner_radius="10" corner_style="rounded"
+         focused:border_width="3" focused:border_color="$focus" />
+  <style name="primary_button" extends="menu_button"
+         background="$accent" text_color="$accent_ink"
+         hover:background="$accent_hover" pressed:background="$accent_pressed" />
+  <style name="secondary_button" extends="menu_button"
+         border_width="$edge_width" border_color="$ink"
+         hover:background="$ghost_hover" pressed:background="$ghost_pressed" />
+</theme>

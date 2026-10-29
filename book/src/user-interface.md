@@ -15,6 +15,7 @@ it describe each part of the system in reference form:
 | [Templates](ui-templates.md) | Declaring an element once and reusing it. |
 | [Template libraries](ui-template-libraries.md) | Sharing templates between screens. |
 | [String tables](ui-string-tables.md) | Keeping a screen's words in `.csv` tables, ready to translate. |
+| [Themes](ui-themes.md) | Keeping colours and sizes in named styles and tokens, and switching them while the game runs. |
 | [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, and sharing screens between levels. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 

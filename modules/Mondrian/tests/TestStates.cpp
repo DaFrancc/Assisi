@@ -293,15 +293,26 @@ TEST_CASE("States: looks stack focused, hover, pressed, disabled, whatever order
     // the opposite of the answer.
     const std::vector<StylePatch> looks{Wearing(StyleState::Disabled, kDisabled), Wearing(StyleState::Pressed, kPressed),
                                         Wearing(StyleState::Hover, kHovered), Wearing(StyleState::Focused, kFocused)};
-    Style resting;
-    resting.background = kResting;
+    StylePatch resting;
+    resting.values.background = kResting;
 
-    CHECK(Restyled(resting, looks, Holds(false, false, false, false)).background == kResting);
-    CHECK(Restyled(resting, looks, Holds(true, false, false, false)).background == kFocused);
-    CHECK(Restyled(resting, looks, Holds(true, true, false, false)).background == kHovered);
-    CHECK(Restyled(resting, looks, Holds(true, true, true, false)).background == kPressed);
-    CHECK(Restyled(resting, looks, Holds(true, true, true, true)).background == kDisabled);
-    CHECK(Restyled(resting, looks, Holds(false, true, false, true)).background == kDisabled);
+    CHECK(Restyled(resting, looks, Holds(false, false, false, false)).values.background == kResting);
+    CHECK(Restyled(resting, looks, Holds(true, false, false, false)).values.background == kFocused);
+    CHECK(Restyled(resting, looks, Holds(true, true, false, false)).values.background == kHovered);
+    CHECK(Restyled(resting, looks, Holds(true, true, true, false)).values.background == kPressed);
+    CHECK(Restyled(resting, looks, Holds(true, true, true, true)).values.background == kDisabled);
+    CHECK(Restyled(resting, looks, Holds(false, true, false, true)).values.background == kDisabled);
+}
+
+TEST_CASE("States: what a node wears writes what its resting look and the looks that hold write")
+{
+    const std::vector<StylePatch> looks{Wearing(StyleState::Hover, kHovered)};
+    StylePatch resting;
+    resting.Take(StyleProperty::Gap, Distinct());
+
+    CHECK(Restyled(resting, looks, Holds(false, false, false, false)).written == PropertyBit(StyleProperty::Gap));
+    CHECK(Restyled(resting, looks, Holds(false, true, false, false)).written ==
+          (PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::Background)));
 }
 
 // -----------------------------------------------------------------------------

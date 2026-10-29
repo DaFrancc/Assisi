@@ -104,6 +104,12 @@ naming the call that takes that range.
 | `text_color` | colour | Text colour. |
 | `text_align` | `left`, `center`, `right` | Horizontal alignment of the text. |
 
+An element that sets no `text_size` or `text_color` takes its parent's, so
+setting either on a container sets it for everything inside. A screen's own
+text size is 24 and its text colour white. A state passes down too: a row with
+`hover:text_color` turns the text of every label inside it while the pointer
+is over the row.
+
 ## Floating
 
 A floating element is placed on top of the others instead of taking space in its
@@ -139,7 +145,7 @@ and moves:
 | `blocks_pointer` | `true`, `false` | Whether clicks on this element stop here instead of reaching the game. Use on a panel's background. |
 | `takes_keyboard` | `true`, `false` | Whether, while focused, it receives the keyboard even when the game would otherwise have it. |
 | `selectable` | `true`, `false` | Whether the player can select and copy its text. |
-| `style` | a name | Reserved for themes. Accepted and stored, but has no effect yet. |
+| `style` | a name | The [theme](ui-themes.md) style the element takes its look from. |
 
 ## States
 

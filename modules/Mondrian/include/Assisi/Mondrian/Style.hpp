@@ -81,8 +81,9 @@ struct Length
     return {.value = value, .unit = LengthUnit::Em};
 }
 
-/// Text size a style starts with, and what the root's text size is relative
-/// to, in UI pixels.
+/// What the root's text size is relative to, in UI pixels. A style's own text
+/// size starts at its parent's, so this is every node's until one says
+/// otherwise.
 inline constexpr float kDefaultTextSize = 24.f;
 
 /// How short a scroll bar's thumb may draw before it stops shrinking, in
@@ -224,7 +225,8 @@ struct Style
     AFIELD() Padding padding;
     AFIELD() Floating floating;
     AFIELD() Length gap; ///< between consecutive in-flow children
-    AFIELD() Length textSize = Px(kDefaultTextSize);
+    /// Its parent's until set, as `1em` is.
+    AFIELD() Length textSize = Em(1.f);
     AFIELD() Length borderWidth; ///< at least one device pixel once resolved, unless zero
     AFIELD() Length cornerRadius;
     AFIELD() CornerStyle cornerStyle = CornerStyle::Square;
@@ -268,6 +270,7 @@ using StateSet = std::array<bool, static_cast<std::size_t>(StyleState::Count_)>;
 
 /// @brief One thing a file can say about how a node looks or is laid out. Each
 /// is one attribute, and reaches one field of Style.
+AENUM()
 enum class StyleProperty : uint8_t
 {
     Background,
@@ -303,8 +306,22 @@ inline constexpr uint32_t kStylePropertyBits = 64;
 static_assert(static_cast<uint32_t>(StyleProperty::Count_) <= kStylePropertyBits,
               "a look records what it writes as the bits of one word");
 
-/// @brief What a node looks like in one state: the properties that state
-/// changes, put on over whatever the node looks like otherwise.
+/// @brief @p property's bit in a set of properties written.
+[[nodiscard]] constexpr uint64_t PropertyBit(StyleProperty property)
+{
+    return uint64_t{1} << static_cast<uint32_t>(property);
+}
+
+/// @brief Every property this build has, as a set of properties written. A
+/// shift by the word's whole width is undefined, so a build with exactly that
+/// many properties sets every bit instead.
+inline constexpr uint64_t kEveryProperty = static_cast<uint32_t>(StyleProperty::Count_) == kStylePropertyBits
+                                               ? ~uint64_t{0}
+                                               : PropertyBit(StyleProperty::Count_) - 1;
+
+/// @brief Some properties of a style and their values: what a node looks like
+/// in one state, put on over whatever it looks like otherwise, and also what a
+/// node looks like at rest and what a theme's token holds.
 ASTRUCT()
 struct StylePatch
 {
@@ -312,6 +329,8 @@ struct StylePatch
     AFIELD() Style values;
     /// One bit per StyleProperty.
     AFIELD() uint64_t written = 0;
+    /// The state this is the look for. Unused where the patch is a resting look
+    /// or a token's values.
     AFIELD() StyleState state = StyleState::Focused;
 
     [[nodiscard]] bool Writes(StyleProperty property) const;
@@ -321,6 +340,9 @@ struct StylePatch
 
     /// @brief Every property written, put on @p style. The rest stay as they are.
     void ApplyTo(Style &style) const;
+
+    /// @brief Every property @p over writes, as it writes it, over this one's.
+    void Add(const StylePatch &over);
 
     /// @brief Whether every bit written names a property this build has.
     [[nodiscard]] bool WritesOnlyKnown() const;
@@ -334,7 +356,9 @@ struct StylePatch
 };
 
 /// @brief @p resting with each of @p looks whose state @p holds put on over it,
-/// weakest state first, whatever order @p looks keeps them in.
-[[nodiscard]] Style Restyled(const Style &resting, std::span<const StylePatch> looks, const StateSet &holds);
+/// weakest state first, whatever order @p looks keeps them in. What it writes is
+/// what @p resting writes and what each of those looks does.
+[[nodiscard]] StylePatch Restyled(const StylePatch &resting, std::span<const StylePatch> looks,
+                                  const StateSet &holds);
 
 } // namespace Assisi::Mondrian

@@ -92,25 +92,20 @@ struct SameField
     template <typename T> bool operator()(const T &a, const T &b) const { return a == b; }
 };
 
-uint64_t Bit(StyleProperty property)
-{
-    return uint64_t{1} << static_cast<uint32_t>(property);
-}
-
 constexpr std::size_t kPropertyCount = static_cast<std::size_t>(StyleProperty::Count_);
 
 } // namespace
 
 bool StylePatch::Writes(StyleProperty property) const
 {
-    return property != StyleProperty::Count_ && (written & Bit(property)) != 0;
+    return property != StyleProperty::Count_ && (written & PropertyBit(property)) != 0;
 }
 
 void StylePatch::Take(StyleProperty property, const Style &from)
 {
     if (OnField(property, from, values, CopyField{}))
     {
-        written |= Bit(property);
+        written |= PropertyBit(property);
     }
 }
 
@@ -126,12 +121,15 @@ void StylePatch::ApplyTo(Style &style) const
     }
 }
 
+void StylePatch::Add(const StylePatch &over)
+{
+    over.ApplyTo(values);
+    written |= over.written;
+}
+
 bool StylePatch::WritesOnlyKnown() const
 {
-    // A shift by the word's whole width is undefined, so a build with exactly
-    // that many properties knows every bit instead.
-    const uint64_t known = kPropertyCount == kStylePropertyBits ? ~uint64_t{0} : Bit(StyleProperty::Count_) - 1;
-    return (written & ~known) == 0;
+    return (written & ~kEveryProperty) == 0;
 }
 
 StylePatch StylePatch::Changes(StyleState state, const Style &resting, const Style &look)
@@ -149,9 +147,9 @@ StylePatch StylePatch::Changes(StyleState state, const Style &resting, const Sty
     return patch;
 }
 
-Style Restyled(const Style &resting, std::span<const StylePatch> looks, const StateSet &holds)
+StylePatch Restyled(const StylePatch &resting, std::span<const StylePatch> looks, const StateSet &holds)
 {
-    Style style = resting;
+    StylePatch style = resting;
     for (std::size_t state = 0; state < holds.size(); ++state)
     {
         if (!holds[state])
@@ -162,7 +160,7 @@ Style Restyled(const Style &resting, std::span<const StylePatch> looks, const St
         {
             if (look.state == static_cast<StyleState>(state))
             {
-                look.ApplyTo(style);
+                style.Add(look);
             }
         }
     }

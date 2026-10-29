@@ -2,6 +2,7 @@
   "version": 1,
   "type": "UiConfig",
   "stringTables": ["ui/pause.csv"],
+  "themes": ["ui/Default.amth"],
   "requireStringKeys": false,
   "allowEmptyStrings": false
 }

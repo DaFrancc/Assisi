@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 
@@ -35,7 +35,7 @@ EmptyText EmptyTextFor(const UiConfig &config)
     return config.allowEmptyStrings ? EmptyText::Allow : EmptyText::Refuse;
 }
 
-std::expected<TextRules, MarkupError> LoadTextRules(const SourceReader &read)
+std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read)
 {
     const std::expected<UiConfig, MarkupError> config = LoadUiConfig(read);
     if (!config)
@@ -43,7 +43,7 @@ std::expected<TextRules, MarkupError> LoadTextRules(const SourceReader &read)
         return std::unexpected(config.error());
     }
 
-    TextRules rules;
+    ScreenRules rules;
     rules.literals = config->requireStringKeys ? LiteralText::RequiresKey : LiteralText::Allowed;
 
     // Which path each name came from, so a second table with the name can say
@@ -80,6 +80,27 @@ std::expected<TextRules, MarkupError> LoadTextRules(const SourceReader &read)
             return std::unexpected(std::move(error));
         }
         rules.tables.byName.emplace(name, std::move(*table));
+    }
+
+    for (const Core::AssetPath &listed : config->themes)
+    {
+        const std::string vpath{listed.View()};
+        const std::expected<std::string, std::string> text = read(vpath);
+        if (!text)
+        {
+            return std::unexpected(MarkupError{.message = "'" + vpath +
+                                                          "' is listed as a theme and could not be read (" +
+                                                          text.error() + ").",
+                                               .file = std::string{kUiConfigPath}});
+        }
+        std::expected<CompiledTheme, MarkupError> theme = CompileThemeSource(*text);
+        if (!theme)
+        {
+            MarkupError error = theme.error();
+            error.file = vpath;
+            return std::unexpected(std::move(error));
+        }
+        rules.themes.push_back(ProjectTheme{.vpath = vpath, .compiled = std::move(*theme)});
     }
     return rules;
 }
