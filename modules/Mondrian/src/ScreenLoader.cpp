@@ -7,6 +7,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/EventCatalog.hpp>
+#include <Assisi/Core/Logger.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -210,6 +211,30 @@ NodeLook LookOf(const ScreenNode &node)
                     .written = node.written};
 }
 
+/// The picture @p node shows, put on @p id: a sprite from a sheet @p ui has,
+/// or an image @p ui loads by its path.
+void ApplyPicture(Ui &ui, NodeTree &tree, NodeId id, const ScreenNode &node)
+{
+    if (!node.sprite.Empty())
+    {
+        const Sprite *const sprite = ui.FindSprite(node.sprite.View());
+        if (sprite == nullptr)
+        {
+            // The cook refuses a screen naming a sprite no listed sheet has, so
+            // this is a stale package or a sheet that did not load. A screen
+            // with a picture missing is still worth showing.
+            Core::Log::Error("Mondrian: no sprite sheet the UI has holds '{}'; it shows the placeholder.",
+                             node.sprite.View());
+        }
+        tree.SetImage(id, sprite != nullptr ? *sprite : WholeTexture(ui.GetPlaceholderTexture(), 0, 0));
+        return;
+    }
+    if (!node.texture.Empty())
+    {
+        tree.SetImage(id, ui.TextureSprite(node.texture.View()));
+    }
+}
+
 /// Everything about a node that is neither its style nor its place.
 void ApplyFlags(NodeTree &tree, NodeId id, const ScreenNode &node)
 {
@@ -358,6 +383,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
         const std::expected<void, NameError> named = tree.SetName(id, node.name.View());
         ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
+        ApplyPicture(ui, tree, id, node);
         if (node.selectable)
         {
             screen.SetSelectable(id, true);

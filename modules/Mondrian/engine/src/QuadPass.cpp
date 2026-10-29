@@ -4,11 +4,14 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Image/Image.hpp>
+#include <Assisi/Render/AssetSource.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <string>
 
 namespace Assisi::Mondrian::Engine
 {
@@ -292,6 +295,42 @@ void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device)
         }
     }
     texture.UploadDecoded(device, image, "Mondrian::Placeholder");
+}
+
+std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device, std::string_view vpath)
+{
+    const Render::AssetSource *source = Render::GetAssetSource();
+    if (source == nullptr)
+    {
+        Core::Log::Error("Mondrian: no asset source is installed to load the image '{}'.", vpath);
+        return std::nullopt;
+    }
+    const std::expected<Core::AssetId, Render::AssetLoadError> id = source->Resolve(vpath);
+    if (!id)
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be found ({}).", vpath, Render::ToString(id.error()));
+        return std::nullopt;
+    }
+    // Asked for as colour, which is how the cook encodes an image no material
+    // binds, and how a source image is encoded to match.
+    std::expected<Image::DecodedImage, Render::AssetLoadError> image =
+        source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7);
+    if (!image)
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", vpath, Render::ToString(image.error()));
+        return std::nullopt;
+    }
+    // The texels are the display values the file holds. Sampled through an
+    // sRGB format they would be decoded to linear and draw too dark.
+    image->colorSpace = Image::ColorSpace::Linear;
+    const std::string debugName = "Mondrian::" + std::string{vpath};
+    texture.UploadDecoded(device, *image, debugName.c_str());
+    if (!texture.IsValid())
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be uploaded.", vpath);
+        return std::nullopt;
+    }
+    return Extent{.width = image->width, .height = image->height};
 }
 
 } // namespace Assisi::Mondrian::Engine

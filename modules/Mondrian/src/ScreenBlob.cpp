@@ -46,6 +46,11 @@ bool LooksConsistent(const ScreenNode &node)
     {
         return false;
     }
+    // A node shows one picture, so a cook never writes one naming both.
+    if (!node.sprite.Empty() && !node.texture.Empty())
+    {
+        return false;
+    }
     StateSet seen{};
     for (const ThemedPatch &look : node.states)
     {

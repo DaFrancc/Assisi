@@ -37,7 +37,7 @@ constexpr std::array kBuiltInKinds{
     Assisi::Core::kReflectedKind, Assisi::Core::kSceneKind,  Assisi::Core::kMeshKind,
     Assisi::Core::kTextureKind,   Assisi::Core::kShaderKind, Assisi::Core::kVerbatimKind,
     Assisi::Core::kFontKind,      Assisi::Core::kScreenKind, Assisi::Core::kStringTableKind,
-    Assisi::Core::kThemeKind};
+    Assisi::Core::kThemeKind,     Assisi::Core::kSpriteSheetKind};
 
 } // namespace
 

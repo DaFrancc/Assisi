@@ -1023,6 +1023,20 @@ std::string ReadFile(const char *path)
     return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
 }
 
+/// A reader serving the project's own asset tree, in place.
+SourceReader ProjectAssets()
+{
+    return [](std::string_view vpath) -> std::expected<std::string, std::string>
+    {
+        std::ifstream file{std::string{ASSISI_ASSET_ROOT} + "/" + std::string{vpath}, std::ios::binary};
+        if (!file.is_open())
+        {
+            return std::unexpected(std::string{"no such file"});
+        }
+        return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    };
+}
+
 /// What @p node wears at rest under @p theme in its mode @p mode.
 Style Worn(const ScreenNode &node, const ListedTheme &theme, uint32_t mode)
 {
@@ -1060,21 +1074,19 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its
     catalog.Register(
         {.name = "Game::ContrastToggled", .push = [](const EventRoute &events) { events.Push(ContrastStandIn{}); }});
 
-    // The table the shipped file's keys name and the theme it wears, read in
-    // place like the file.
-    const std::expected<StringTable, MarkupError> table =
-        CompileStringTable(ReadFile(ASSISI_PAUSE_TABLE_PATH), EmptyText::Refuse);
-    REQUIRE_MESSAGE(table.has_value(), Why(table));
-    std::expected<CompiledTheme, MarkupError> theme = CompileThemeSource(ReadFile(ASSISI_DEFAULT_THEME_PATH));
-    REQUIRE_MESSAGE(theme.has_value(), Why(theme));
-    ScreenRules rules;
-    rules.tables.byName["pause"] = *table;
-    rules.themes.push_back(ProjectTheme{.vpath = "ui/Default.amth", .compiled = *theme});
-    rules.literals = LiteralText::RequiresKey;
+    // The project's own rules, read in place as the cook reads them: the table
+    // the file's keys name, the theme it wears and the sheets its pictures
+    // come from. Held to keys whatever the project says, since a player reads
+    // every word on it.
+    std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(ProjectAssets());
+    REQUIRE_MESSAGE(rules.has_value(), Why(rules));
+    REQUIRE(rules->themes.size() == 1);
+    rules->literals = LiteralText::RequiresKey;
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     REQUIRE_MESSAGE(parsed.has_value(), Why(parsed));
-    const std::expected<ScreenDocument, MarkupError> document = CompileScreen(*parsed, catalog, NoFiles(), rules);
+    const std::expected<ScreenDocument, MarkupError> document =
+        CompileScreen(*parsed, catalog, ProjectAssets(), *rules);
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     // Everything the C++ builder this file replaced set, so a difference shows
@@ -1087,7 +1099,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its
     CHECK(document->systems[0].View() == "PauseMenu");
 
     // The look as the everyday mode puts it on.
-    const ListedTheme listed{.vpath = "ui/Default.amth", .document = theme->document};
+    const ListedTheme listed{.vpath = rules->themes[0].vpath, .document = rules->themes[0].compiled.document};
     REQUIRE(listed.document.modes[0].View() == "dark");
     const Style root = Worn(document->nodes[0], listed, 0);
     CHECK(document->nodes[0].blocksPointer);
@@ -1100,20 +1112,25 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its
     CHECK(panel.sizing[0].value == Px(420.f));
     CHECK(panel.padding.left == Px(32.f));
     CHECK(panel.gap == Px(20.f));
-    CHECK(panel.borderWidth == Px(2.f));
-    CHECK(panel.cornerRadius == Px(16.f));
-    CHECK(panel.cornerStyle == CornerStyle::Rounded);
     CHECK(panel.direction == Direction::Column);
+    // Framed from a sheet, a frame per mode.
+    CHECK(panel.backgroundImage.View() == "frames:panel");
+    CHECK(Worn(NodeNamed(*document, "panel"), listed, 1).backgroundImage.View() == "frames:panel_contrast");
 
     // Every word from the table, which RequiresKey above holds the file to.
     const ScreenNode &title = NodeNamed(*document, "title");
     CHECK(title.textIsKey);
-    CHECK(*rules.tables.Find("pause", "title") == "Paused");
+    CHECK(*rules->tables.Find("pause", "title") == "Paused");
     CHECK(title.style.textSize == Px(48.f));
+
+    // The icon beside it, from its sheet, in the theme's accent.
+    const ScreenNode &icon = NodeNamed(*document, "icon");
+    CHECK(icon.sprite.View() == "icons:pause");
+    CHECK(Worn(icon, listed, 0).tint.r == doctest::Approx(static_cast<float>(0xe6) / 255.f));
 
     const ScreenNode &resume = NodeNamed(*document, "resume");
     CHECK(resume.textIsKey);
-    CHECK(*rules.tables.Find("pause", "resume") == "Resume");
+    CHECK(*rules->tables.Find("pause", "resume") == "Resume");
     CHECK(resume.action == ActionKind::Event);
     CHECK(resume.eventName.View() == "Game::ResumeRequested");
     const Style resting = Worn(resume, listed, 0);
@@ -1129,7 +1146,7 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its
 
     const ScreenNode &quit = NodeNamed(*document, "quit");
     CHECK(quit.textIsKey);
-    CHECK(*rules.tables.Find("pause", "quit") == "Quit");
+    CHECK(*rules->tables.Find("pause", "quit") == "Quit");
     CHECK(quit.action == ActionKind::Event);
     CHECK(quit.eventName.View() == "Assisi::App::QuitRequested");
 

@@ -13,6 +13,7 @@
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Text.hpp>
 
+#include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Math/Color.hpp>
 
@@ -214,6 +215,17 @@ struct Floating
     [[nodiscard]] friend constexpr bool operator==(const Floating &, const Floating &) = default;
 };
 
+/// @brief How a node's picture fills the space inside its padding when the two
+/// differ in shape.
+AENUM()
+enum class ImageFit : uint8_t
+{
+    Stretch, ///< all of it, over all of the space, its shape changed to match
+    Contain, ///< all of it, as large as fits, keeping its shape
+    Cover,   ///< all of the space, keeping its shape, with what overhangs cut off
+    Count_
+};
+
 /// @brief Everything about a node that is not its content.
 ASTRUCT()
 struct Style
@@ -221,6 +233,9 @@ struct Style
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> background { 0.f, 0.f, 0.f, 0.f };
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> borderColor { 0.f, 0.f, 0.f, 0.f };
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> textColor { 1.f, 1.f, 1.f, 1.f };
+    /// Multiplies every image the node draws, its background image and its
+    /// picture alike. White draws them as they are.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> tint { 1.f, 1.f, 1.f, 1.f };
     AFIELD() std::array<Sizing, kAxisCount> sizing {};
     AFIELD() Padding padding;
     AFIELD() Floating floating;
@@ -229,6 +244,9 @@ struct Style
     AFIELD() Length textSize = Em(1.f);
     AFIELD() Length borderWidth; ///< at least one device pixel once resolved, unless zero
     AFIELD() Length cornerRadius;
+    /// The sprite drawn over the background colour, across the whole node, as
+    /// `sheet:name`; empty for none. One with borders draws as a nine-slice.
+    AFIELD() Core::InternedString backgroundImage;
     AFIELD() CornerStyle cornerStyle = CornerStyle::Square;
     AFIELD() Direction direction = Direction::Row;
     AFIELD() std::array<Alignment, kAxisCount> childAlign { Alignment::Start, Alignment::Start };
@@ -244,6 +262,7 @@ struct Style
     AFIELD() std::array<bool, kAxisCount> enabledScrollBars { false, false };
     AFIELD() ScrollBarVisibility scrollBarVisibility = ScrollBarVisibility::Never;
     AFIELD() ScrollBarDrag scrollBarDrag = ScrollBarDrag::FollowsPointer;
+    AFIELD() ImageFit fit = ImageFit::Stretch;
 
     /// Member by member, so a field added here is compared without anyone
     /// remembering to.
@@ -298,6 +317,9 @@ enum class StyleProperty : uint8_t
     FloatAttach,
     FloatTarget,
     FloatClip,
+    BackgroundImage,
+    Tint,
+    Fit,
     Count_
 };
 

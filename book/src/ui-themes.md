@@ -37,7 +37,8 @@ A theme is a `.amth` file. This one has two modes, `dark` and
   other attribute gives a token its value in that mode. Every palette gives
   every token a value.
 - **A token holds any value an attribute can.** A colour, a length such as
-  `edge_width`, a number, or a word such as `rounded`.
+  `edge_width`, a number, a word such as `rounded`, or a sprite such as
+  `frames:panel` (see [Frames from a theme](ui-images.md#frames-from-a-theme)).
 - **A style takes the attributes an element takes about how it looks:** sizes,
   spacing, colours, borders, text, floating and scrolling, written as they are
   on an element, with a [state](ui-layout.md#states) in front if you like. It

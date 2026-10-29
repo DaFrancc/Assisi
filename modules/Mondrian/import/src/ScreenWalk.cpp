@@ -448,6 +448,67 @@ std::expected<void, MarkupError> ApplyStyleName(const Walk &walk, ScreenNode &no
     return {};
 }
 
+/// Refuses @p attribute giving a node a picture when it already names @p other
+/// the other way: a node shows one.
+std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute,
+                                                     const Core::InternedString &other)
+{
+    if (!attribute.value.empty() && !other.Empty())
+    {
+        return std::unexpected(At(attribute, "a node shows one picture, named by a sprite or by a texture; this one "
+                                             "already names '" +
+                                                 std::string{other.View()} + "'."));
+    }
+    return {};
+}
+
+/// `sprite`, which a sheet the project lists must have.
+std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.texture); !refused)
+    {
+        return refused;
+    }
+    if (!attribute.value.empty())
+    {
+        if (const std::expected<void, std::string> checked = CheckSprite(walk.rules, attribute.value); !checked)
+        {
+            return std::unexpected(At(attribute, "'sprite' " + checked.error()));
+        }
+    }
+    node.sprite = Core::InternedString{attribute.value};
+    return {};
+}
+
+/// `texture`, which must be an image the project has.
+std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.sprite); !refused)
+    {
+        return refused;
+    }
+    if (!attribute.value.empty())
+    {
+        if (!walk.rules.read)
+        {
+            return std::unexpected(At(attribute, "the image '" + attribute.value +
+                                                     "' cannot be checked here: nothing reads the project's files."));
+        }
+        const std::expected<std::string, std::string> bytes = walk.rules.read(attribute.value);
+        if (!bytes)
+        {
+            return std::unexpected(
+                At(attribute, "the texture '" + attribute.value + "' could not be read (" + bytes.error() + ")."));
+        }
+        if (const std::expected<Extent, std::string> size = ImageSize(*bytes); !size)
+        {
+            return std::unexpected(At(attribute, "'" + attribute.value + "' " + size.error()));
+        }
+    }
+    node.texture = Core::InternedString{attribute.value};
+    return {};
+}
+
 /// An attribute the table leaves to this file, with its parameters replaced.
 std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, HandledAttribute handled,
                                               const MarkupAttribute &attribute)
@@ -470,9 +531,14 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
         return ApplyPattern(walk.document, node, attribute);
     case HandledAttribute::StyleName:
         return ApplyStyleName(walk, node, attribute);
+    case HandledAttribute::Sprite:
+        return ApplySprite(walk, node, attribute);
+    case HandledAttribute::Texture:
+        return ApplyTexture(walk, node, attribute);
     case HandledAttribute::Background:
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
+    case HandledAttribute::Tint:
         return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
@@ -719,6 +785,16 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        // Checked here, where the project's sheets are in hand, whether it is
+        // the node's own look or a state's.
+        if (spec->property == StyleProperty::BackgroundImage && !attribute.value.empty() &&
+            !NamesToken(attribute.value))
+        {
+            if (const std::expected<void, std::string> checked = CheckSprite(walk.rules, attribute.value); !checked)
+            {
+                return std::unexpected(At(attribute, "'" + attribute.name + "' " + checked.error()));
+            }
         }
         if (*state)
         {

@@ -20,7 +20,6 @@ constexpr Math::Color4<Math::ColorSpace::Srgb> kAccent{0.90f, 0.20f, 0.10f, 1.f}
 constexpr Math::Color4<Math::ColorSpace::Srgb> kWhite{1.f, 1.f, 1.f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kBodyText{0.80f, 0.82f, 0.86f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kListColor{0.06f, 0.07f, 0.09f, 1.f};
-constexpr Rect kWholeTexture{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
 
 constexpr Length kPanelWidth = Px(720.f);
 constexpr Length kPanelPadding = Px(32.f);
@@ -113,7 +112,8 @@ NodeId BuildPanel(Screen &screen, TextureId picture)
     pictureStyle.cornerRadius = kPictureRadius;
     pictureStyle.cornerStyle = CornerStyle::Rounded;
     const NodeId pictureId = Named(screen.Add(headerId, pictureStyle, "picture"));
-    screen.Tree().SetImage(pictureId, picture, kWholeTexture);
+    // Of no known size: the node's fixed size is what it takes.
+    screen.Tree().SetImage(pictureId, WholeTexture(picture, 0, 0));
 
     Style title;
     title.sizing = {Sizing::Grow(), Sizing::Fit()};

@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace Assisi::Mondrian
 {
@@ -137,9 +138,15 @@ std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
 
 /// Puts on every node of @p tree the look of each state that holds for it under
 /// @p interaction, over its resting look, and its parent's text colour where
-/// nothing it wears writes one. Parents first, so the colour a node passes on
-/// is the one it wears this frame.
-void Restyle(NodeTree &tree, const Interaction &interaction)
+/// nothing it wears writes one, with the background image it names found among
+/// @p sprites. Parents first, so the colour a node passes on is the one it
+/// wears this frame.
+///
+/// A background image no sheet has draws nothing: the cook refuses a screen or
+/// theme naming one, so this is a stale package, and saying so every frame
+/// would bury the log.
+void Restyle(NodeTree &tree, const Interaction &interaction,
+             const std::unordered_map<Core::InternedString, Sprite> &sprites)
 {
     // Hover and a press hold for a node and for everything holding it, so a
     // row is hovered while the pointer is over the label inside it.
@@ -173,6 +180,13 @@ void Restyle(NodeTree &tree, const Interaction &interaction)
         if (const Node *parent = tree.Get(node->parent); parent != nullptr && !worn.Writes(StyleProperty::TextColor))
         {
             node->style.textColor = parent->style.textColor;
+        }
+        const std::unordered_map<Core::InternedString, Sprite>::const_iterator background =
+            node->style.backgroundImage.Empty() ? sprites.end() : sprites.find(node->style.backgroundImage);
+        node->hasBackgroundImage = background != sprites.end();
+        if (node->hasBackgroundImage)
+        {
+            node->background = background->second;
         }
     }
 }
@@ -871,7 +885,7 @@ void Ui::Sync(Extent viewport)
             // Before layout, so a look that changes a size is placed in the
             // frame it takes hold. Hover, presses and focus are only the input
             // screen's, for the reason drawing gives below.
-            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{});
+            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{}, _sprites);
             ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
             // Only the screen with the keys draws anything as hovered, pressed
             // or focused. A node id means nothing on another screen, so handing
@@ -980,6 +994,43 @@ std::string Ui::StringFor(std::string_view qualified) const
         }
     }
     return kKeyMark + std::string{qualified};
+}
+
+void Ui::AddSpriteSheet(std::string_view vpath, const SpriteSheetDocument &sheet, TextureId texture)
+{
+    const std::string_view name = SheetName(vpath);
+    for (const SheetSprite &sprite : sheet.sprites)
+    {
+        _sprites.insert_or_assign(Core::InternedString{QualifiedSprite(name, sprite.name.View())},
+                                  SpriteOf(sheet, sprite, texture));
+    }
+}
+
+const Sprite *Ui::FindSprite(std::string_view qualified) const
+{
+    const std::unordered_map<Core::InternedString, Sprite>::const_iterator found =
+        _sprites.find(Core::InternedString{qualified});
+    return found != _sprites.end() ? &found->second : nullptr;
+}
+
+Sprite Ui::TextureSprite(std::string_view vpath)
+{
+    const Core::InternedString key{vpath};
+    if (const std::unordered_map<Core::InternedString, Sprite>::const_iterator found = _textures.find(key);
+        found != _textures.end())
+    {
+        return found->second;
+    }
+    std::optional<Sprite> loaded = _textureLoader ? _textureLoader(vpath) : std::nullopt;
+    if (!_textureLoader)
+    {
+        Core::Log::Error("Mondrian: no texture loader is installed to load '{}'; it shows the placeholder.", vpath);
+    }
+    // Kept even when it failed, so a texture that cannot load is tried, and
+    // reported, once rather than by every screen naming it.
+    const Sprite sprite = loaded.value_or(WholeTexture(_placeholderTexture, 0, 0));
+    _textures.emplace(key, sprite);
+    return sprite;
 }
 
 } // namespace Assisi::Mondrian

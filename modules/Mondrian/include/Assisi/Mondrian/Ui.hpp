@@ -23,6 +23,7 @@
 #include <Assisi/Mondrian/Navigation.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
 
@@ -31,9 +32,12 @@
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -144,6 +148,30 @@ class Ui
     /// asset has not arrived. kWhiteTexture until the host sets one.
     void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
     [[nodiscard]] TextureId GetPlaceholderTexture() const { return _placeholderTexture; }
+
+    /// @brief Makes every sprite of @p sheet, the sheet loaded from @p vpath,
+    /// one a screen can name as `sheet:name`, drawn from @p texture, which the
+    /// engine registered holding the sheet's image. Add sheets before loading
+    /// screens that name their sprites.
+    void AddSpriteSheet(std::string_view vpath, const SpriteSheetDocument &sheet, TextureId texture);
+
+    /// @brief The sprite called @p qualified, `sheet:name`, or null when no
+    /// sheet added has it.
+    [[nodiscard]] const Sprite *FindSprite(std::string_view qualified) const;
+
+    /// @brief Uploads the image at an asset path and registers it, giving all
+    /// of it as one picture of its size; nullopt, logged, when it cannot.
+    using TextureLoader = std::function<std::optional<Sprite>(std::string_view vpath)>;
+
+    /// @brief What a picture named by its texture's path is loaded through:
+    /// the engine's, which can reach the GPU and the UI cannot. Until set,
+    /// every such picture is the placeholder.
+    void SetTextureLoader(TextureLoader loader) { _textureLoader = std::move(loader); }
+
+    /// @brief All of the image at @p vpath as one picture: loaded the first
+    /// time it is asked for, and kept until the UI goes. The placeholder, of
+    /// no known size, when it cannot be loaded.
+    [[nodiscard]] Sprite TextureSprite(std::string_view vpath);
 
     /// @brief How the UI reaches the system clipboard. Until set, it reads as
     /// empty and writes go nowhere.
@@ -305,6 +333,12 @@ class Ui
     const Themes *_themes = nullptr;
     /// The theme every screen wears, which a screen made later is given too.
     ThemeView _theme;
+    /// Every sheet's sprites, by `sheet:name`.
+    std::unordered_map<Core::InternedString, Sprite> _sprites;
+    /// Every picture named by its texture's path that a screen has asked for,
+    /// by that path, the placeholder standing in for one that did not load.
+    std::unordered_map<Core::InternedString, Sprite> _textures;
+    TextureLoader _textureLoader;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;

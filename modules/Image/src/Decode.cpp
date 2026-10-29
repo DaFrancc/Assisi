@@ -16,6 +16,7 @@
 #include <webp/demux.h>
 
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -67,6 +68,25 @@ void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generate
         }
         image.mips[level] = std::move(mip);
     }
+}
+
+std::expected<ImageExtent, Core::AssetError> ReadImageExtent(std::span<const std::byte> bytes) noexcept
+{
+    // stb measures its buffer in int.
+    if (bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::unexpected(Core::AssetErrorCode::CorruptAsset);
+    }
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    if (stbi_info_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size()), &width,
+                              &height, &channels) == 0 ||
+        width <= 0 || height <= 0)
+    {
+        return std::unexpected(Core::AssetErrorCode::CorruptAsset);
+    }
+    return ImageExtent{.width = static_cast<std::uint32_t>(width), .height = static_cast<std::uint32_t>(height)};
 }
 
 std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath, ColorSpace colorSpace) noexcept

@@ -127,6 +127,23 @@ TEST_CASE("Layout: UI lengths are scaled to device pixels")
     CHECK(scene.RectOf(box).height == 20.f);
 }
 
+TEST_CASE("Layout: a picture sized to fit is one UI pixel to each of its own, padding around it")
+{
+    Scene scene;
+    Style style;
+    style.padding = Padding::All(Px(5.f));
+    const NodeId picture = scene.Add(scene.tree.Root(), style);
+    scene.tree.SetImage(picture, WholeTexture(TextureId{1}, 40, 30));
+    const NodeId unknown = scene.Add(scene.tree.Root(), Style{});
+    scene.tree.SetImage(unknown, WholeTexture(TextureId{1}, 0, 0));
+    scene.Run(kReference, 2.f);
+
+    CHECK(scene.RectOf(picture).width == 100.f);
+    CHECK(scene.RectOf(picture).height == 80.f);
+    // A picture of no known size asks for no room of its own.
+    CHECK(scene.RectOf(unknown).width == 0.f);
+}
+
 TEST_CASE("Layout: text wraps at its final width before heights are fitted")
 {
     // A single pass that measured text on both axes at once would size the

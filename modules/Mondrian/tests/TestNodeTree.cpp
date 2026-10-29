@@ -149,7 +149,7 @@ TEST_CASE("NodeTree: setters reach the node their id names")
     tree.SetText(node, "caf\xC3\xA9");
     tree.SetVisible(node, false);
     tree.SetBehaviour(node, 3);
-    tree.SetImage(node, TextureId{4}, Rect{.x = 0.f, .y = 0.f, .width = 0.5f, .height = 0.5f});
+    tree.SetImage(node, WholeTexture(TextureId{4}, 16, 8));
 
     const Node *read = tree.Get(node);
     REQUIRE(read != nullptr);
@@ -158,7 +158,8 @@ TEST_CASE("NodeTree: setters reach the node their id names")
     CHECK_FALSE(read->visible);
     CHECK(read->behaviour == 3);
     CHECK(read->hasImage);
-    CHECK(read->image == TextureId{4});
+    CHECK(read->image.texture == TextureId{4});
+    CHECK(read->image.width == 16);
 
     tree.ClearImage(node);
     CHECK_FALSE(tree.Get(node)->hasImage);

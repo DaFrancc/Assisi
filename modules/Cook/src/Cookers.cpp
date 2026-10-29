@@ -24,9 +24,11 @@
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 #include <Assisi/Mondrian/Import/ScreenRules.hpp>
+#include <Assisi/Mondrian/Import/SpriteSheetCompiler.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
 #include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
@@ -607,8 +609,9 @@ class ScreenCooker final : public Cooker
     {
         // Editing a library changes every screen built from it without
         // touching the screen this is keyed on; so does editing a string
-        // table or a theme, or the settings that say which there are. A file
-        // not there yet counts for nothing, so listing one later re-cooks too.
+        // table, a theme or a sprite sheet, or the settings that say which
+        // there are. A file not there yet counts for nothing, so listing one
+        // later re-cooks too.
         if (!HasExtension(vpath, ".amdn"))
         {
             return {};
@@ -631,6 +634,10 @@ class ScreenCooker final : public Cooker
             for (const Core::AssetPath &theme : config->themes)
             {
                 dependencies.emplace_back(theme.View());
+            }
+            for (const Core::AssetPath &sheet : config->spriteSheets)
+            {
+                dependencies.emplace_back(sheet.View());
             }
         }
         return dependencies;
@@ -708,6 +715,57 @@ class ThemeCooker final : public Cooker
         }
         const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
             Mondrian::Import::CompileThemeText(*text);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
+        }
+        return *cooked;
+    }
+};
+
+/// `.amsp` sprite sheets: one texture's named rectangles, each checked against
+/// the texture's size, which is read here and carried in the sheet so the game
+/// never opens the image to learn it.
+class SpriteSheetCooker final : public Cooker
+{
+  public:
+    [[nodiscard]] std::string_view Name() const override { return "sprite sheet"; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kSpriteSheetKind; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        const std::array<std::uint64_t, 2> parts{Mondrian::kSpriteSheetPayloadVersion,
+                                                 Mondrian::SpriteSheetLayoutHash()};
+        return Core::ContentHash64(std::as_bytes(std::span{parts}));
+    }
+
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
+    {
+        // The texture's size is what every rectangle is checked against, and
+        // what the sheet carries.
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return {};
+        }
+        std::string texture = Mondrian::Import::SpriteSheetTexture(*text);
+        if (texture.empty())
+        {
+            return {};
+        }
+        return {std::move(texture)};
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileSpriteSheetText(*text, ReadMarkup);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, Where(cooked.error())));
@@ -909,6 +967,7 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
     cookers.push_back(std::make_unique<ThemeCooker>());
+    cookers.push_back(std::make_unique<SpriteSheetCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     // One per kind a module registered. The engine's own kinds have no load
     // function in the registry, and their cookers are the ones above.

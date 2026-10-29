@@ -22,6 +22,8 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Pattern.hpp"
     "include/Assisi/Mondrian/SampleScreen.hpp"
     "include/Assisi/Mondrian/Screen.hpp"
+    "include/Assisi/Mondrian/Sprite.hpp"
+    "include/Assisi/Mondrian/SpriteSheetReader.hpp"
     "include/Assisi/Mondrian/ScreenBlob.hpp"
     "include/Assisi/Mondrian/ScreenDocument.hpp"
     "include/Assisi/Mondrian/ScreenLoader.hpp"
@@ -52,6 +54,8 @@ target_sources(Assisi-Mondrian
     "src/ScreenBlob.cpp"
     "src/ScreenLoader.cpp"
     "src/ScreenReader.cpp"
+    "src/Sprite.cpp"
+    "src/SpriteSheetReader.cpp"
     "src/StringTable.cpp"
     "src/StringTableReader.cpp"
     "src/Style.cpp"
@@ -89,6 +93,7 @@ assisi_reflect(
     include/Assisi/Mondrian/UiConfig.hpp
     include/Assisi/Mondrian/Style.hpp
     include/Assisi/Mondrian/Theme.hpp
+    include/Assisi/Mondrian/Sprite.hpp
     include/Assisi/Mondrian/Widget.hpp
     include/Assisi/Mondrian/Screen.hpp
     include/Assisi/Mondrian/ScreenDocument.hpp

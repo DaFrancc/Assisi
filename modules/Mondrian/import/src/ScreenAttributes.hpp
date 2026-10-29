@@ -65,9 +65,12 @@ enum class HandledAttribute : uint8_t
     Focus,       ///< `focus`: at most one node on a screen
     Pattern,     ///< `pattern`: a failed compile has a message of its own
     StyleName,   ///< `style`: checked against every theme the project lists
+    Sprite,      ///< `sprite`: checked against every sheet the project lists
+    Texture,     ///< `texture`: checked against the images the project has
     Background,  ///< a colour: each likely mistake has a message of its own
     BorderColor, ///< as Background
     TextColor,   ///< as Background
+    Tint,        ///< as Background
     Count_
 };
 

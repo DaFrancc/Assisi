@@ -240,12 +240,11 @@ void NodeTree::SetTheme(const ThemeView &theme)
     }
 }
 
-void NodeTree::SetImage(NodeId id, TextureId texture, const Rect &uv)
+void NodeTree::SetImage(NodeId id, const Sprite &sprite)
 {
     if (Node *node = GetMutable(id))
     {
-        node->image = texture;
-        node->imageUv = uv;
+        node->image = sprite;
         node->hasImage = true;
     }
 }
