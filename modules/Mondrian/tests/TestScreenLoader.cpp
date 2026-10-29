@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -547,6 +548,35 @@ TEST_CASE("ScreenLoader: a named style is carried and ignored")
     REQUIRE(loaded.has_value());
     // The node's own attributes are what it looks like, untouched by the name.
     CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap.value == 20.f);
+}
+
+TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes")
+{
+    EventQueue events;
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document = PauseMenu();
+    Style hovered;
+    hovered.background = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.9f, 0.2f, 0.1f, 1.f};
+    Style disabled;
+    disabled.textColor = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.4f, 0.4f, 0.4f, 1.f};
+    const StylePatch hover = StylePatch::Changes(StyleState::Hover, Style{}, hovered);
+    const StylePatch off = StylePatch::Changes(StyleState::Disabled, Style{}, disabled);
+    document.nodes[3].states = {hover, off};
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+    REQUIRE(loaded.has_value());
+
+    const Node *resume = loaded->screen->Tree().Get(loaded->screen->Find("resume"));
+    REQUIRE(resume != nullptr);
+    REQUIRE(resume->states.size() == 2);
+    CHECK(std::ranges::find(resume->states, hover) != resume->states.end());
+    CHECK(std::ranges::find(resume->states, off) != resume->states.end());
+    // Nothing holds yet, so it wears its resting look.
+    CHECK(resume->style == resume->resting);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")

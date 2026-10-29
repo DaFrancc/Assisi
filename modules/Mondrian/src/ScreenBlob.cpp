@@ -37,6 +37,24 @@ bool InPool(const Core::StringPool &pool, Core::PooledString handle)
     return static_cast<std::size_t>(handle.offset) + handle.length <= pool.Size();
 }
 
+/// Whether @p node's looks are ones a cook writes: at most one per state, which
+/// otherwise would stack in whatever order they were kept, and each writing
+/// only properties this build has.
+bool LooksConsistent(const ScreenNode &node)
+{
+    StateSet seen{};
+    for (const StylePatch &look : node.states)
+    {
+        const std::size_t state = static_cast<std::size_t>(look.state);
+        if (state >= seen.size() || seen[state] || !look.WritesOnlyKnown())
+        {
+            return false;
+        }
+        seen[state] = true;
+    }
+    return true;
+}
+
 /// Whether the table describes a tree this build can walk in one pass.
 bool IsConsistent(const ScreenDocument &document)
 {
@@ -85,6 +103,11 @@ bool IsConsistent(const ScreenDocument &document)
             {
                 return false;
             }
+        }
+
+        if (!LooksConsistent(node))
+        {
+            return false;
         }
     }
     return true;

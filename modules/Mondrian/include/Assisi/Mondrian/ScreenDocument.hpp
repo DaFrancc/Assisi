@@ -124,6 +124,10 @@ struct ScreenNode
     /// it a change rather than a migration.
     AFIELD() Style style;
 
+    /// How the node looks in each state the file wrote a look for, at most one
+    /// per state. Each holds only what its state changes.
+    AFIELD() std::vector<StylePatch> states;
+
     /// What a slider's ends mean, and how far one press moves it. A stepped
     /// slider moves a whole step at a time and ignores the step here.
     AFIELD() SliderRange range;

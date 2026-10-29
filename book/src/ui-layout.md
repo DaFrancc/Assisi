@@ -140,3 +140,51 @@ and moves:
 | `takes_keyboard` | `true`, `false` | Whether, while focused, it receives the keyboard even when the game would otherwise have it. |
 | `selectable` | `true`, `false` | Whether the player can select and copy its text. |
 | `style` | a name | Reserved for themes. Accepted and stored, but has no effect yet. |
+
+## States
+
+An element can look different while the player is pointing at it, holding it
+down or has moved to it with the keys, and while it is disabled. Write the
+attribute again with the state in front of it and a `:` between them:
+
+```xml
+<button background="#222222" hover:background="#e63319"
+        pressed:background="#a02010" disabled:text_color="#666666">Quit</button>
+```
+
+| State | Holds while |
+|---|---|
+| `focused` | The keys act on the element: the player moved to it with the arrow keys or Tab. |
+| `hover` | The pointer is over the element, or over anything inside it. |
+| `pressed` | The player is holding the element down, or holding a control inside it. Only a control can be held: a press on a `<text>` presses nothing. |
+| `disabled` | The element has `enabled="false"`. |
+
+Any attribute on this page can be given a state, including sizes and spacing.
+The attributes about what an element is or does can't: `name`, `on_click`,
+`focus`, `visible`, `enabled` and `style`.
+
+Because `hover` holds for everything the pointer is inside, a whole row can
+light up while the pointer is anywhere over it:
+
+```xml
+<row padding="8" gap="12" background="#1a1c24" hover:background="#2a2e3a">
+  <text>Iron sword</text>
+  <button>Equip</button>
+</row>
+```
+
+When more than one state holds and they change the same attribute, the one
+lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`, and
+`hover` over `focused`. A disabled button looks disabled even with the pointer
+on it, and a button being held shows its pressed look rather than its hover
+look.
+
+`focused` shows only while the player is using the keys, as the focus ring
+does. Clicking a button gives it focus without showing it. A text field is the
+exception: it shows `focused` however it got focus, because the player is
+typing into it.
+
+A state that changes a size or spacing moves the elements around it, as the
+same attribute would without a state. A button that grows on hover pushes its
+neighbours aside, and if it grows out from under the pointer it stops being
+hovered.

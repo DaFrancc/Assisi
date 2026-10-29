@@ -66,12 +66,16 @@ enum class HandledAttribute : uint8_t
     Count_
 };
 
-/// What an attribute is written onto: the screen, and the node it is on, which
-/// for the root is the screen's first node.
+/// What an attribute is written onto: the screen, the node it is on, which for
+/// the root is the screen's first node, and the style an attribute about how
+/// the node looks writes. That is the node's own, or, for an attribute given a
+/// state, the look the node has in it; an entry writing a style writes only
+/// here, so the one entry serves both.
 struct AttributeTarget
 {
     ScreenDocument &document;
     ScreenNode &node;
+    Style &style;
 };
 
 /// Reads @p value into what @p target holds, saying whether it could.
@@ -87,6 +91,12 @@ struct AttributeSpec
     /// The control it belongs to, for AttributeOwner::Control.
     BuiltinWidget widget = BuiltinWidget::None;
     HandledAttribute handled = HandledAttribute::None;
+    /// The part of the node's style it writes, for one about how the node
+    /// looks or is laid out, which is what a state may change. Empty for one
+    /// about what the node is or does. The `{}` is what lets an entry be built
+    /// without naming it: GCC's missing-initializer warning passes over a
+    /// member that has an initializer of its own.
+    std::optional<StyleProperty> property{};
 };
 
 /// An error about @p attribute, placed where it was written.
@@ -108,8 +118,18 @@ struct AttributeSpec
 /// Whether @p name is an attribute any element has.
 [[nodiscard]] bool IsMarkupAttribute(std::string_view name);
 
-/// The colour field a colour attribute sets.
-[[nodiscard]] Color &ColorField(Style &style, HandledAttribute colour);
+/// Reads the colour @p attribute writes into @p style. A colour's likeliest
+/// mistakes each have one fix to name, which a table entry saying only "bad
+/// value" could not.
+[[nodiscard]] std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colour,
+                                                          const MarkupAttribute &attribute);
+
+/// The state a file spells @p name, or nullopt.
+[[nodiscard]] std::optional<StyleState> LookUpState(std::string_view name);
+
+/// Every state as it is written, in the order they stack, for the message an
+/// unknown one prints.
+[[nodiscard]] std::string KnownStates();
 
 /// The expression `pattern` names or spells, compiled once here to find out
 /// whether it would.

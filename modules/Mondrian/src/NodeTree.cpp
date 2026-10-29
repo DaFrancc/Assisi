@@ -4,6 +4,7 @@
 #include <Assisi/Core/Assert.hpp>
 
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -188,7 +189,22 @@ void NodeTree::SetStyle(NodeId id, const Style &style)
 {
     if (Node *node = GetMutable(id))
     {
+        node->resting = style;
         node->style = style;
+    }
+}
+
+void NodeTree::SetStateStyle(NodeId id, const StylePatch &look)
+{
+    Node *node = GetMutable(id);
+    if (node == nullptr)
+    {
+        return;
+    }
+    std::erase_if(node->states, [&look](const StylePatch &held) { return held.state == look.state; });
+    if (look.written != 0)
+    {
+        node->states.push_back(look);
     }
 }
 

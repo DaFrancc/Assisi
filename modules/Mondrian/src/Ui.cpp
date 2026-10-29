@@ -123,6 +123,46 @@ WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
     return event;
 }
 
+/// @p id and every node holding it, or none for an id naming no node.
+std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
+{
+    std::vector<NodeId> chain;
+    for (NodeId at = id; tree.IsAlive(at); at = tree.Get(at)->parent)
+    {
+        chain.push_back(at);
+    }
+    return chain;
+}
+
+/// Puts on every node of @p tree that has looks for its states the look of each
+/// state that holds for it under @p interaction, over its resting style.
+void Restyle(NodeTree &tree, const Interaction &interaction)
+{
+    // Hover and a press hold for a node and for everything holding it, so a
+    // row is hovered while the pointer is over the label inside it.
+    const std::vector<NodeId> hovered = WithAncestors(tree, interaction.pointed);
+    const std::vector<NodeId> pressed = WithAncestors(tree, interaction.pressed);
+    for (uint32_t index = 0; index < tree.Slots().size(); ++index)
+    {
+        const NodeId id = tree.IdOf(index);
+        Node *node = tree.Editable(id);
+        if (node == nullptr || node->states.empty())
+        {
+            continue;
+        }
+        StateSet holds{};
+        // Shown as the focus ring is, while the keys were used last, or always
+        // on what is being typed into: a button clicked with the mouse does
+        // not go on looking focused.
+        holds[static_cast<std::size_t>(StyleState::Focused)] =
+            interaction.focused == id && (interaction.device == InputDevice::Keys || node->takesKeyboard);
+        holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(hovered, id) != hovered.end();
+        holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(pressed, id) != pressed.end();
+        holds[static_cast<std::size_t>(StyleState::Disabled)] = !node->enabled;
+        node->style = Restyled(node->resting, node->states, holds);
+    }
+}
+
 } // namespace
 
 Ui::Ui(Core::EventQueue &universal) : _universal(universal)
@@ -329,6 +369,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     else
     {
         _session.interaction.hovered = {};
+        _session.interaction.pointed = {};
         _session.interaction.pressed = {};
         _session.interaction.activated = {};
     }
@@ -560,12 +601,14 @@ InputResult Ui::Interact(Screen &screen, const UiInput &input)
     if (input.grant == InputGrant::Nothing || input.pointerClaimed)
     {
         now.hovered = {};
+        now.pointed = {};
         now.pressed = {};
     }
     else
     {
         const NodeId hit = HitTest(tree, layout, input.pointer);
         now.hovered = CanFocus(tree, layout, hit) ? hit : NodeId{};
+        now.pointed = PointedAt(tree, layout, input.pointer);
         if (moved || input.primaryPressed)
         {
             now.device = InputDevice::Pointer;
@@ -810,6 +853,10 @@ void Ui::Sync(Extent viewport)
     {
         for (Screen *screen : DrawOrder())
         {
+            // Before layout, so a look that changes a size is placed in the
+            // frame it takes hold. Hover, presses and focus are only the input
+            // screen's, for the reason drawing gives below.
+            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{});
             ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
             // Only the screen with the keys draws anything as hovered, pressed
             // or focused. A node id means nothing on another screen, so handing

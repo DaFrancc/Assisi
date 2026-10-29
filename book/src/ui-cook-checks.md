@@ -3,6 +3,9 @@
 Every one of these fails the cook with the file, line and column:
 
 - An unknown element, attribute or value.
+- A state that isn't `focused`, `hover`, `pressed` or `disabled`, two states on
+  one attribute, a state on an attribute about what an element is or does such
+  as `on_click`, or a `:` with no name on one side of it.
 - Text or child elements inside an element that can't hold them.
 - A length with an unknown unit, a `px` suffix, or a space before its unit.
 - A colour written as bare numbers, or with a channel outside its call's range.

@@ -78,6 +78,15 @@ ScreenDocument Everything()
     panel.style.textAlign = TextAlign::Right;
     panel.style.textColor = Color{0.9f, 0.8f, 0.7f, 0.6f};
     panel.style.textSize = Em(1.5f);
+    // Two looks writing different properties, so a look the codec drops, or
+    // two it merges, shows up as a difference.
+    Style hovered;
+    hovered.background = Color{0.9f, 0.2f, 0.1f, 1.f};
+    hovered.sizing[0] = Sizing::Fixed(Px(300.f));
+    panel.states.push_back(StylePatch::Changes(StyleState::Hover, Style{}, hovered));
+    Style disabled;
+    disabled.textColor = Color{0.4f, 0.4f, 0.4f, 1.f};
+    panel.states.push_back(StylePatch::Changes(StyleState::Disabled, Style{}, disabled));
     document.nodes.push_back(panel);
 
     ScreenNode resume;
@@ -374,6 +383,51 @@ TEST_CASE("ScreenBlob: an enumerator this build does not have is refused")
         ScreenDocument document;
         document.nodes.emplace_back();
         document.nodes[0].mask = static_cast<TextMask>(9);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a look's state")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        StylePatch look;
+        look.state = static_cast<StyleState>(9);
+        document.nodes[0].states.push_back(look);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+}
+
+TEST_CASE("ScreenBlob: a node's looks that no cook writes are refused")
+{
+    SUBCASE("two looks for one state")
+    {
+        // Which of the two the node wore would depend on the order they were
+        // applied in, which nothing promises.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        StylePatch hovered;
+        hovered.state = StyleState::Hover;
+        document.nodes[0].states = {hovered, hovered};
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a look writing a property this build does not have")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        StylePatch hovered;
+        hovered.state = StyleState::Hover;
+        hovered.written = uint64_t{1} << static_cast<uint32_t>(StyleProperty::Count_);
+        document.nodes[0].states.push_back(hovered);
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());

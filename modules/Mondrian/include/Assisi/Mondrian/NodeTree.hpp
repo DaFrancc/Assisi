@@ -53,7 +53,11 @@ enum class NameError : uint8_t
 /// @brief One slot: a box with optional text or image.
 struct Node
 {
+    /// How the node looks this frame: its resting style, with the look of each
+    /// state that holds put on over it. What layout and drawing read.
     Style style;
+    /// How it looks while no state holds. What SetStyle sets.
+    Style resting;
     std::string text;
     std::string name;
     /// The string table key the text came from, `table:key`, so new tables can
@@ -72,6 +76,8 @@ struct Node
     /// Pushes this node's event when what it holds is finished rather than
     /// merely changed: Enter in a field. Empty for none.
     std::function<void(const Core::EventRoute &, const Node &)> onSubmit;
+    /// How it looks in each state it has a look for, at most one per state.
+    std::vector<StylePatch> states;
     /// Where the caret is and what may be typed, on a node holding text.
     TextEdit edit;
     /// What the control on this node holds; nothing on a node that is none.
@@ -139,7 +145,12 @@ class NodeTree
     /// takes the name off.
     [[nodiscard]] std::expected<void, NameError> SetName(NodeId id, std::string_view name);
     void SetVisible(NodeId id, bool visible);
+    /// @brief How @p id looks while no state holds. It wears it at once, until
+    /// the UI next puts on the looks of the states that hold.
     void SetStyle(NodeId id, const Style &style);
+    /// @brief How @p id looks in @p look's state, replacing the look it had for
+    /// it. A look that writes nothing takes the state's look off.
+    void SetStateStyle(NodeId id, const StylePatch &look);
     /// @brief Draws @p texture over @p uv across the node, over its background.
     void SetImage(NodeId id, TextureId texture, const Rect &uv);
     void ClearImage(NodeId id);
