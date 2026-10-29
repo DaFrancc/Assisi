@@ -3,10 +3,11 @@
 /// @file TestCharacterMovement.cpp
 /// @brief Which movement a character has: ArcadeMovement's numbers, swapping
 ///        one movement component for the other, a Character with neither, and
-///        CharacterLocomotion's presets.
+///        CharacterLocomotion's presets and fall limit.
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <cstdint>
 
 #include <Assisi/ECS/Scene.hpp>
@@ -28,6 +29,9 @@ constexpr int32_t kSettleSteps = 60;
 
 /// Steps of walking that bring any character here to its walk speed.
 constexpr int32_t kRunUpSteps = 60;
+
+/// Steps of letting go the stopping cases watch: a fifth of a second.
+constexpr int32_t kStoppingSteps = 12;
 
 /// How near a speed must come to the one worked out by hand (m/s).
 constexpr float kSpeedTolerance = 0.01f;
@@ -148,6 +152,85 @@ float WalkSpeedReached(Physics::LocomotionPreset preset)
     return HorizontalSpeed(scene, character);
 }
 
+/// The walk speed of the turning case (m/s), and the slow acceleration that
+/// leaves a turn to turnFriction (m/s²).
+constexpr float kTurnWalkSpeed = 5.f;
+constexpr float kTurnAcceleration = 5.f;
+
+/// Steps the turning case runs up for, long enough to reach kTurnWalkSpeed at
+/// kTurnAcceleration, and the quarter of a second it then turns for.
+constexpr int32_t kTurnRunUpSteps = 120;
+constexpr int32_t kTurnSteps = 15;
+
+/// The velocity of an ArcadeMovement character that ran along +x at walk speed,
+/// then asked for +z for kTurnSteps.
+glm::vec3 VelocityAfterTurning(float turnFriction)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.walkSpeed = kTurnWalkSpeed;
+    const ECS::Entity character =
+        SpawnArcade(scene, world, locomotion,
+                    Physics::ArcadeMovement{.groundAcceleration = kTurnAcceleration, .turnFriction = turnFriction});
+    Settle(scene, world, character);
+    for (int32_t i = 0; i < kTurnRunUpSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(kTurnWalkSpeed).epsilon(kSpeedTolerance));
+
+    for (int32_t i = 0; i < kTurnSteps; ++i)
+    {
+        Step(scene, world, character, {0.f, 0.f, 1.f}, /*jump=*/ false);
+    }
+    const glm::vec3 velocity = PhysicsTests::StateOf(scene, character).velocity;
+    return {velocity.x, 0.f, velocity.z};
+}
+
+/// The speed of an ArcadeMovement character in the air at 5 m/s, after
+/// letting go for kStoppingSteps.
+float AirSpeedAfterLettingGo(float airBrakingDeceleration)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.walkSpeed = 5.f;
+    locomotion.gravityScale = 0.f; // airborne for as long as the case runs
+    const ECS::Entity character = SpawnArcade(
+        scene, world, locomotion,
+        Physics::ArcadeMovement{.airAcceleration = kInstantAcceleration, .airBrakingDeceleration = airBrakingDeceleration});
+    for (int32_t i = 0; i < kRunUpSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(5.f).epsilon(kSpeedTolerance));
+
+    for (int32_t i = 0; i < kStoppingSteps; ++i)
+    {
+        Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
+    }
+    return HorizontalSpeed(scene, character);
+}
+
+/// How fast a character with nothing under it falls a second after letting go.
+float FallSpeedAfterASecond(float maxFallSpeed)
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+
+    const Physics::CharacterLocomotion locomotion{.maxFallSpeed = maxFallSpeed};
+    const ECS::Entity character = SpawnArcade(scene, world, locomotion, Physics::ArcadeMovement{});
+    for (int32_t i = 0; i < kRunUpSteps; ++i)
+    {
+        Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
+    }
+    return -PhysicsTests::StateOf(scene, character).velocity.y;
+}
+
 } // namespace
 
 TEST_CASE("ArcadeMovement's groundAcceleration decides how quickly walking speed is reached")
@@ -169,19 +252,19 @@ TEST_CASE("ArcadeMovement's airAcceleration decides whether a jump can be steere
     CHECK(DriftAfterJump(100.f) == doctest::Approx(-5.f).epsilon(kSpeedTolerance));
 }
 
-TEST_CASE("Letting go slows an ArcadeMovement character at its ground acceleration, with no friction")
+TEST_CASE("Letting go slows an ArcadeMovement character at its brakingDeceleration, whatever its groundAcceleration")
 {
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     SpawnFloor(scene, world);
 
-    constexpr float kGroundAcceleration = 10.f;
-    constexpr int32_t kStoppingSteps = 12;
+    constexpr float kBraking = 10.f;
 
     Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
     locomotion.walkSpeed = 5.f;
-    const ECS::Entity character =
-        SpawnArcade(scene, world, locomotion, Physics::ArcadeMovement{.groundAcceleration = kGroundAcceleration});
+    const ECS::Entity character = SpawnArcade(
+        scene, world, locomotion,
+        Physics::ArcadeMovement{.groundAcceleration = kInstantAcceleration, .brakingDeceleration = kBraking});
     Settle(scene, world, character);
 
     for (int32_t i = 0; i < kRunUpSteps; ++i)
@@ -191,13 +274,96 @@ TEST_CASE("Letting go slows an ArcadeMovement character at its ground accelerati
     REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(5.f).epsilon(kSpeedTolerance));
 
     // A fifth of a second at 10 m/s² takes 2 m/s away, exactly: the slowing is
-    // the acceleration and nothing else.
+    // the braking and nothing else, not the instant acceleration.
     for (int32_t i = 0; i < kStoppingSteps; ++i)
     {
         Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
     }
-    const float expected = 5.f - kGroundAcceleration * kStep * static_cast<float>(kStoppingSteps);
+    const float expected = 5.f - kBraking * kStep * static_cast<float>(kStoppingSteps);
     CHECK(HorizontalSpeed(scene, character) == doctest::Approx(expected).epsilon(kSpeedTolerance));
+}
+
+TEST_CASE("ArcadeMovement's turnFriction swings a character round to a new direction without losing its speed")
+{
+    // A slow acceleration, so that without turnFriction a turn is slow too.
+    const glm::vec3 none = VelocityAfterTurning(0.f);
+    CHECK(none.x > 0.5f * kTurnWalkSpeed); // still mostly heading the old way
+    CHECK(glm::length(none) < 0.9f * kTurnWalkSpeed); // and slowed by the turn
+
+    const glm::vec3 sharp = VelocityAfterTurning(20.f);
+    CHECK(std::abs(sharp.x) < 0.1f * kTurnWalkSpeed);
+    CHECK(sharp.z == doctest::Approx(kTurnWalkSpeed).epsilon(0.05)); // round, at full speed
+}
+
+TEST_CASE("ArcadeMovement's airBrakingDeceleration decides how much momentum letting go in the air keeps")
+{
+    CHECK(AirSpeedAfterLettingGo(0.f) == doctest::Approx(5.f).epsilon(kSpeedTolerance));
+
+    const float expected = 5.f - 10.f * kStep * static_cast<float>(kStoppingSteps);
+    CHECK(AirSpeedAfterLettingGo(10.f) == doctest::Approx(expected).epsilon(kSpeedTolerance));
+}
+
+TEST_CASE("CharacterIntent's speedScale multiplies the walk speed a preset gives, and a negative one stops it")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    const ECS::Entity character =
+        SpawnArcade(scene, world, Physics::CharacterLocomotion{.preset = Physics::LocomotionPreset::Arcade},
+                    Physics::ArcadeMovement{.groundAcceleration = kInstantAcceleration,
+                                            .brakingDeceleration = kInstantAcceleration});
+    Settle(scene, world, character);
+
+    scene.GetMut<Physics::CharacterIntent>(character)->speedScale = 2.f;
+    for (int32_t i = 0; i < kRunUpSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    CHECK(HorizontalSpeed(scene, character) ==
+          doctest::Approx(2.f * Physics::kArcadeLocomotion.walkSpeed).epsilon(kSpeedTolerance));
+
+    scene.GetMut<Physics::CharacterIntent>(character)->speedScale = -1.f;
+    Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    CHECK(HorizontalSpeed(scene, character) < kSpeedTolerance);
+}
+
+TEST_CASE("A sprinting SourceMovement character's take-off limits grow with its speedScale")
+{
+    // Disallow limits a jump to the walk speed. Measured against the walk speed
+    // alone, every jump of a sprinting character would throw the sprint away.
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+
+    constexpr float kWalkSpeed = 4.f;
+    constexpr float kSprint = 2.f;
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.walkSpeed = kWalkSpeed;
+    locomotion.coyoteTime = 0.f;
+    locomotion.jumpBufferTime = 0.f;
+    const ECS::Entity character = PhysicsTests::AddCharacter(
+        scene, glm::vec3(0.f), Physics::Character{}, locomotion,
+        Physics::SourceMovement{.groundAcceleration = kInstantAcceleration, .bunnyHop = Physics::BunnyHopPolicy::Disallow});
+    world.Reconcile();
+    Settle(scene, world, character);
+
+    scene.GetMut<Physics::CharacterIntent>(character)->speedScale = kSprint;
+    for (int32_t i = 0; i < kRunUpSteps; ++i)
+    {
+        Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ false);
+    }
+    REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(kSprint * kWalkSpeed).epsilon(kSpeedTolerance));
+
+    Step(scene, world, character, {1.f, 0.f, 0.f}, /*jump=*/ true);
+    REQUIRE(PhysicsTests::StateOf(scene, character).velocity.y > 1.f);
+    CHECK(HorizontalSpeed(scene, character) == doctest::Approx(kSprint * kWalkSpeed).epsilon(kSpeedTolerance));
+}
+
+TEST_CASE("maxFallSpeed holds a falling character to it, and zero sets no limit")
+{
+    CHECK(FallSpeedAfterASecond(5.f) == doctest::Approx(5.f).epsilon(kSpeedTolerance));
+    CHECK(FallSpeedAfterASecond(0.f) > 9.f); // the world's gravity for a second
 }
 
 TEST_CASE("Holding one direction in the air brings an ArcadeMovement character to its walk speed, and no further")
@@ -228,8 +394,7 @@ TEST_CASE("Swapping SourceMovement for ArcadeMovement while the character runs s
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     SpawnFloor(scene, world);
 
-    constexpr float kGroundAcceleration = 5.f;
-    constexpr int32_t kStoppingSteps = 12;
+    constexpr float kBraking = 5.f;
 
     const ECS::Entity character = PhysicsTests::AddCharacter(scene, glm::vec3(0.f));
     world.Reconcile();
@@ -242,15 +407,15 @@ TEST_CASE("Swapping SourceMovement for ArcadeMovement while the character runs s
     REQUIRE(HorizontalSpeed(scene, character) == doctest::Approx(walkSpeed).epsilon(kSpeedTolerance));
 
     REQUIRE(scene.Remove<Physics::SourceMovement>(character) == ECS::RemoveResult::Removed);
-    REQUIRE(scene.Add(character, Physics::ArcadeMovement{.groundAcceleration = kGroundAcceleration}) != nullptr);
+    REQUIRE(scene.Add(character, Physics::ArcadeMovement{.brakingDeceleration = kBraking}) != nullptr);
 
     // Under SourceMovement's friction a fifth of a second would have taken
-    // nearly all of it; at 5 m/s² it takes 1 m/s.
+    // nearly all of it; braking at 5 m/s² takes 1 m/s.
     for (int32_t i = 0; i < kStoppingSteps; ++i)
     {
         Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
     }
-    const float expected = walkSpeed - kGroundAcceleration * kStep * static_cast<float>(kStoppingSteps);
+    const float expected = walkSpeed - kBraking * kStep * static_cast<float>(kStoppingSteps);
     CHECK(HorizontalSpeed(scene, character) == doctest::Approx(expected).epsilon(kSpeedTolerance));
 }
 

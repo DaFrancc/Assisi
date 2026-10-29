@@ -33,6 +33,7 @@
 #include <Jolt/Physics/StateRecorder.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -124,8 +125,7 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::Steer(JPH::Vec3Arg velocity, JPH:
         // That is what lets a jump on the landing step keep its speed.
         return SteerSource(velocity, wish, standing && !jumping, deltaTime);
     case MovementModel::Arcade:
-        return MoveToward(velocity, wish,
-                          (standing ? arcade.groundAcceleration : arcade.airAcceleration) * deltaTime);
+        return SteerArcade(velocity, wish, standing, deltaTime);
     case MovementModel::None:
     case MovementModel::Count_:
         break;
@@ -159,6 +159,32 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::SteerSource(JPH::Vec3Arg velocity
                       source.airAcceleration * wishSpeed * deltaTime);
 }
 
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::SteerArcade(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing,
+                                                           float deltaTime) const
+{
+    const float wishSpeed = wish.Length();
+    if (wishSpeed < kMinWishSpeed)
+    {
+        const float braking = standing ? arcade.brakingDeceleration : arcade.airBrakingDeceleration;
+        return MoveToward(velocity, JPH::Vec3::sZero(), braking * deltaTime);
+    }
+
+    // Turned about up toward the direction asked for, by a share of the angle
+    // between them, so a turn keeps the speed it had instead of braking and
+    // accelerating again. Blending the two vectors would cut the corner and
+    // slow it through the turn.
+    JPH::Vec3 turned = velocity;
+    if (standing && arcade.turnFriction > 0.f)
+    {
+        const float angle = std::atan2(velocity.Cross(wish).Dot(kCharacterUp), velocity.Dot(wish));
+        const float share = glm::min(arcade.turnFriction * deltaTime, 1.f);
+        turned = JPH::Quat::sRotation(kCharacterUp, angle * share) * velocity;
+    }
+
+    const float acceleration = standing ? arcade.groundAcceleration : arcade.airAcceleration;
+    return MoveToward(turned, wish, acceleration * deltaTime);
+}
+
 JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const
 {
     if (movement != MovementModel::Source)
@@ -169,15 +195,20 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::TakeOff(JPH::Vec3Arg velocity, JP
                                                     : LimitSpeed(velocity, TakeOffSpeedLimit());
 }
 
+float PhysicsWorld::Impl::CharacterRecord::ScaledWalkSpeed() const
+{
+    return locomotion.walkSpeed * lastIntent.speedScale;
+}
+
 float PhysicsWorld::Impl::CharacterRecord::TakeOffSpeedLimit() const
 {
     if (source.bunnyHop == BunnyHopPolicy::Cap)
     {
-        return source.bunnyHopSpeedCap * locomotion.walkSpeed;
+        return source.bunnyHopSpeedCap * ScaledWalkSpeed();
     }
     if (source.bunnyHop == BunnyHopPolicy::Disallow)
     {
-        return locomotion.walkSpeed;
+        return ScaledWalkSpeed();
     }
     return std::numeric_limits<float>::max();
 }
@@ -198,7 +229,7 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::BoostTakeOff(JPH::Vec3Arg velocit
 
     const float boost = stance == Stance::Crouching ? kJumpBoostCrouching : kJumpBoostStanding;
     const float forwardMove = wish.Dot(forward);
-    const float maxSpeed = locomotion.walkSpeed * (1.f + boost);
+    const float maxSpeed = ScaledWalkSpeed() * (1.f + boost);
 
     // The excess is taken out of the boost, so a character already over the
     // limit gets a negative one. It is applied along the facing whichever way
@@ -298,6 +329,10 @@ void PhysicsWorld::Impl::StepCharacter(CharacterRecord &record, float deltaTime)
     {
         intent.move = glm::vec3(0.f);
     }
+    if (!std::isfinite(intent.speedScale) || intent.speedScale < 0.f)
+    {
+        intent.speedScale = 0.f;
+    }
     if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
     {
         record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
@@ -389,7 +424,7 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     const LocomotionSettings &locomotion = record.locomotion;
     const float speed =
         record.stance == Stance::Crouching ? locomotion.walkSpeed * locomotion.crouchSpeedScale : locomotion.walkSpeed;
-    const glm::vec3 wishVelocity = intent.move * speed;
+    const glm::vec3 wishVelocity = intent.move * (speed * intent.speedScale);
 
     const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
     const float groundUpSpeed = groundVelocity.Dot(kCharacterUp);
@@ -460,6 +495,13 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
 
     const JPH::Vec3 gravity = physicsSystem.GetGravity() * locomotion.gravityScale;
     newVelocity += gravity * deltaTime;
+
+    // After gravity, so a long fall reaches the limit and holds it.
+    const float fallingSpeed = -newVelocity.Dot(kCharacterUp);
+    if (record.maxFallSpeed > 0.f && fallingSpeed > record.maxFallSpeed)
+    {
+        newVelocity += kCharacterUp * (fallingSpeed - record.maxFallSpeed);
+    }
     character.SetLinearVelocity(newVelocity);
 
     JPH::CharacterVirtual::ExtendedUpdateSettings settings;
@@ -1390,6 +1432,7 @@ void PhysicsWorld::Impl::CharacterRecord::RetuneMovement(const CharacterLocomoti
     locomotion = movement == MovementModel::None ? kNoLocomotion : ToLocomotionSettings(shared);
     coyoteTime = shared.coyoteTime;
     jumpBufferTime = shared.jumpBufferTime;
+    maxFallSpeed = movement == MovementModel::None ? 0.f : shared.maxFallSpeed;
 }
 
 void PhysicsWorld::Impl::ReadMovement(CharacterRecord &record) const

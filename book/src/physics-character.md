@@ -56,6 +56,7 @@ body.
 | `move` | Where to go, in world space. A unit vector asks for the walk speed; a shorter one asks for less. |
 | `jump` | Set to `true` to ask for a jump. The step clears it. |
 | `stance` | `Standing` or `Crouching`. Hold it for as long as it is wanted. |
+| `speedScale` | Multiplies the walk speed, whatever the `CharacterLocomotion` preset says. 1 by default; above 1 to sprint, below to slow down. Hold it for as long as it is wanted. |
 
 ```cpp
 for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
@@ -63,6 +64,29 @@ for (auto [entity, intent] : scene.Query<Mut<Physics::CharacterIntent>>())
     intent.move = glm::vec3(1.f, 0.f, 0.f); // walk along +X
 }
 ```
+
+### Example: sprinting
+
+The sample game's `Sprint` system makes a player run 1.6 times as fast while
+Left Shift is held. It takes a player action for the `Sprint` input action (see
+[Your own actions](players.md#your-own-actions)) and sets `speedScale` from it:
+
+```cpp
+ASYSTEM(FixedUpdate, name = "Sprint", before = "CharacterCommand")
+void SprintSystem(Assisi::App::SystemContext &ctx)
+{
+    for (auto [entity, controls, intent] :
+         ctx.world.scene.Query<Assisi::App::PlayerInput, Mut<Assisi::Physics::CharacterIntent>>())
+    {
+        intent.speedScale = controls.held.Has(Sprint) ? 1.6f : 1.f;
+    }
+}
+```
+
+`blueprints/Player.abp` lists `Sprint` among its systems. A slowing effect or an
+NPC that should walk calmly sets `speedScale` the same way. In a networked game
+nothing more is needed: a client that steps its character again to correct a
+prediction uses the `speedScale` each step had, not the one it has now.
 
 `CharacterState` is the result of the last step: `velocity`, `ground`
 (`OnGround`, `OnSteepGround`, `NotSupported` or `InAir`), `stance`, `canJump`,
@@ -83,7 +107,7 @@ the editor and the preset's numbers are used instead.
 | `preset` | `walkSpeed` | `crouchSpeedScale` | `jumpSpeed` | `gravityScale` | Feels like |
 |---|---|---|---|---|---|
 | `Source` (default) | 3.62 | 0.333 | 3.05 | 1.165 | A brisk run and a short, heavy jump that rises about 0.4 m. Made for `SourceMovement`. |
-| `Arcade` | 5 | 0.4 | 6 | 1 | Faster, with a high jump that rises about 1.8 m. Made for `ArcadeMovement`. |
+| `Arcade` | 5 | 0.4 | 4.5 | 1 | Faster, with a higher jump that rises about 1 m. Made for `ArcadeMovement`. |
 | `Custom` | the fields | the fields | the fields | the fields | Whatever you type. |
 
 Distances are in meters and times in seconds.
@@ -96,6 +120,7 @@ Distances are in meters and times in seconds.
 | `gravityScale` | 1.165 | Multiplies the world's gravity for this character. |
 | `coyoteTime` | 0.1 | How long after walking off a ledge a jump still works. Not set by the preset. |
 | `jumpBufferTime` | 0.15 | How long before landing a jump request is remembered. Not set by the preset. |
+| `maxFallSpeed` | 0 | The fastest the character falls, in m/s. Zero sets no limit. Not set by the preset. |
 
 On a moving platform, both movements steer relative to the platform, so a
 character standing still rides along with it.
@@ -103,15 +128,23 @@ character standing still rides along with it.
 ## `ArcadeMovement`
 
 Each step, the character's horizontal velocity moves straight towards the wish
-velocity by at most `acceleration * dt`, and stops exactly on it. Letting go of
-the keys asks for zero, so the character slows down at the same rate it speeds
-up. There is no separate friction, and the character never goes faster than it
-asks to.
+velocity by at most `acceleration * dt`, and stops exactly on it. When nothing
+is asked for, it slows to a stop at the **braking** rate instead. The character
+never goes faster than it asks to.
+
+On the ground, `turnFriction` first swings the velocity round towards the
+direction asked for while keeping its speed. With it at zero, a turn is left to
+`groundAcceleration`, which slows the character through the turn.
+
+All rates are in m/s², except `turnFriction`.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `groundAcceleration` | 60 | How fast it speeds up and slows down on the ground, in m/s². At 60 it reaches a walk speed of 5 m/s in under a tenth of a second, which feels instant. Lower it to make the character feel heavy, and much lower for ice. |
-| `airAcceleration` | 10 | The same in the air. Zero means the character can't steer once it has jumped. |
+| `groundAcceleration` | 60 | How fast it speeds up on the ground. At 60 it reaches a walk speed of 5 m/s in under a tenth of a second, which feels instant. Lower it to make the character feel heavy. |
+| `brakingDeceleration` | 60 | How fast it slows down on the ground once the keys are let go. Lower it for a slide to a stop, and much lower for ice. |
+| `turnFriction` | 0 | How quickly it turns to a new direction without losing speed, per second. At 10, a tenth of a second makes up about two thirds of a turn. |
+| `airAcceleration` | 10 | How fast it steers in the air. Zero means the character can't steer once it has jumped. |
+| `airBrakingDeceleration` | 10 | How fast it slows down in the air once the keys are let go. Zero keeps all the momentum it jumped or fell with. |
 
 ## `SourceMovement`
 

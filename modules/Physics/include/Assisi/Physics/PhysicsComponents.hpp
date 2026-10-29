@@ -769,8 +769,8 @@ enum class LocomotionPreset : std::uint8_t
     /// A brisk run and a short, heavy jump whose arc rises about 0.4 m: what
     /// SourceMovement is tuned for.
     Source,
-    /// Faster on the ground, with a jump that rises about 1.8 m under the
-    /// world's own gravity: what ArcadeMovement is tuned for.
+    /// Faster on the ground, with a jump that rises about 1 m under the world's
+    /// own gravity: what ArcadeMovement is tuned for.
     Arcade,
     /// The fields of CharacterLocomotion, as authored.
     Custom,
@@ -792,7 +792,7 @@ inline constexpr LocomotionSettings kSourceLocomotion{
 
 /// LocomotionPreset::Arcade.
 inline constexpr LocomotionSettings kArcadeLocomotion{
-    .walkSpeed = 5.f, .crouchSpeedScale = 0.4f, .jumpSpeed = 6.f, .gravityScale = 1.f};
+    .walkSpeed = 5.f, .crouchSpeedScale = 0.4f, .jumpSpeed = 4.5f, .gravityScale = 1.f};
 
 /// Every preset but Custom, in the order LocomotionPreset declares them.
 inline constexpr std::array<LocomotionSettings, static_cast<std::size_t>(LocomotionPreset::Custom)>
@@ -837,6 +837,10 @@ struct CharacterLocomotion
     /// How long before landing a jump request is remembered (seconds). Covers
     /// the opposite mistake: the button pressed a frame before touching down.
     AFIELD(min = 0.0) float jumpBufferTime = 0.15f;
+
+    /// The fastest the character falls (m/s). Zero sets no limit. Not part of a
+    /// preset.
+    AFIELD(min = 0.0) float maxFallSpeed = 0.f;
 
     /// Which speeds and jump arc these are. Every value but Custom answers for
     /// the four fields it greys out, and follows the preset if its numbers
@@ -911,20 +915,38 @@ struct SourceMovement
 ///
 /// Each step the horizontal velocity, relative to the ground, moves toward the
 /// requested one by at most the acceleration times the step, and stops exactly
-/// on it. There is no separate friction: letting go asks for zero, and the
-/// character slows to it at the same rate. It never goes faster than it asks
-/// to, and in the air it blends toward the request.
+/// on it. Once nothing is asked for it slows to a stop at the braking rate
+/// instead. It never goes faster than it asks to, and in the air it blends
+/// toward the request.
+///
+/// The defaults brake as hard as they accelerate and leave turning to the
+/// acceleration.
 ACOMP(replicable, requires = {Character, CharacterLocomotion}, excludes = {SourceMovement})
 struct ArcadeMovement
 {
-    /// How hard the character speeds up and slows down on the ground (m/s²).
-    /// The default reaches walk speed in under a tenth of a second, which
-    /// reads as instant; lower it for weight, and far lower for ice.
+    /// How hard the character speeds up toward the velocity asked for on the
+    /// ground (m/s²). The default reaches walk speed in under a tenth of a
+    /// second, which reads as instant; lower it for weight.
     AFIELD(min = 0.0) float groundAcceleration = 60.f;
 
-    /// The same while airborne (m/s²). Zero keeps whatever horizontal velocity
-    /// the jump launched with and ignores steering entirely.
+    /// How hard it slows down on the ground once nothing is asked for (m/s²).
+    /// Lower it for a slide to a stop, and far lower for ice.
+    AFIELD(min = 0.0) float brakingDeceleration = 60.f;
+
+    /// How quickly, on the ground, its velocity swings round to a new
+    /// direction while keeping its speed, as a rate per second: at 10, a tenth
+    /// of a second makes up about two thirds of the turn. Zero leaves a turn to
+    /// @ref groundAcceleration, which slows the character through it.
+    AFIELD(min = 0.0) float turnFriction = 0.f;
+
+    /// How hard it steers toward the velocity asked for in the air (m/s²).
+    /// Zero keeps whatever horizontal velocity the jump launched with and
+    /// ignores steering entirely.
     AFIELD(min = 0.0) float airAcceleration = 10.f;
+
+    /// How hard it slows down in the air once nothing is asked for (m/s²).
+    /// Zero keeps all the momentum it jumped or fell with.
+    AFIELD(min = 0.0) float airBrakingDeceleration = 10.f;
 };
 
 /// @brief What a character is being asked to do.
@@ -949,6 +971,12 @@ struct CharacterIntent
     /// Carrier's rules nor CharacterOption::RidesBases apply to it. The physics
     /// world clears it when the body is gone or has no RigidBody.
     AFIELD() ECS::Entity base{ECS::NullEntity};
+
+    /// Multiplies the speed @ref move asks for, whatever CharacterLocomotion's
+    /// preset says: above 1 for a sprint, below for a slowing effect or an NPC
+    /// walking calmly. Held for as long as it is wanted. Negative is taken as
+    /// zero.
+    AFIELD(min = 0.0) float speedScale = 1.f;
 
     /// The stance being asked for, held for as long as it is wanted rather than
     /// pulsed. Asking to stand under something too low fails silently and is

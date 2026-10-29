@@ -4,7 +4,10 @@
       "components": {
         "ArcadeMovement": {
           "airAcceleration": 10.0,
-          "groundAcceleration": 60.0
+          "airBrakingDeceleration": 10.0,
+          "brakingDeceleration": 60.0,
+          "groundAcceleration": 60.0,
+          "turnFriction": 0.0
         },
         "Character": {
           "collidesWith": "All",
@@ -25,7 +28,8 @@
           "crouchSpeedScale": 0.4,
           "gravityScale": 1.0,
           "jumpBufferTime": 0.15,
-          "jumpSpeed": 6.0,
+          "jumpSpeed": 4.5,
+          "maxFallSpeed": 0.0,
           "preset": 1,
           "walkSpeed": 5.0
         },
@@ -131,6 +135,7 @@
     "LocalPlayer",
     "PlayerCamera",
     "PlayerGather",
+    "Sprint",
     "CharacterCommand",
     "CharacterEye"
   ],

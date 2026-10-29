@@ -1616,6 +1616,7 @@ private:
         float eyeSpeed = 0.f;
         float coyoteTime = 0.f;
         float jumpBufferTime = 0.f;
+        float maxFallSpeed = 0.f; ///< Zero is no limit; see CharacterLocomotion.
         float maxStepHeight = 0.f;
         float radius = 0.f;
         float standingHalfHeight = 0.f;
@@ -1694,10 +1695,17 @@ private:
         /// jumping.
         JPH::Vec3 SteerSource(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
 
+        /// ArcadeMovement's part of @ref Steer.
+        JPH::Vec3 SteerArcade(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing, float deltaTime) const;
+
         /// What a jump firing this step leaves of the horizontal @p velocity,
         /// given the horizontal request @p wish. Only SourceMovement's bunny-hop
         /// policy changes it.
         JPH::Vec3 TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
+
+        /// The walk speed times the speed scale its step's intent asked for:
+        /// what the take-off limits are measured against.
+        float ScaledWalkSpeed() const;
 
         /// The most horizontal speed a jump may leave the ground with.
         float TakeOffSpeedLimit() const;
