@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace Assisi::Mondrian
 {
@@ -246,5 +247,94 @@ struct Style
     /// remembering to.
     [[nodiscard]] friend bool operator==(const Style &, const Style &) = default;
 };
+
+/// @brief A condition a node can be in that changes how it looks.
+///
+/// In the order they stack, weakest first: where two hold and both say
+/// something about one property, the later one's wins. A disabled control
+/// always looks disabled, and a press shows over a hover.
+AENUM()
+enum class StyleState : uint8_t
+{
+    Focused,  ///< has the keys, while they were used last or on a node that takes the keyboard
+    Hover,    ///< under the pointer, or holding what is
+    Pressed,  ///< the control held down, or holding it
+    Disabled, ///< not enabled
+    Count_
+};
+
+/// @brief Which states hold for one node, indexed by StyleState.
+using StateSet = std::array<bool, static_cast<std::size_t>(StyleState::Count_)>;
+
+/// @brief One thing a file can say about how a node looks or is laid out. Each
+/// is one attribute, and reaches one field of Style.
+enum class StyleProperty : uint8_t
+{
+    Background,
+    BorderColor,
+    TextColor,
+    Width,
+    Height,
+    Padding,
+    Gap,
+    TextSize,
+    BorderWidth,
+    CornerRadius,
+    CornerStyle,
+    Direction,
+    Align,
+    TextAlign,
+    ScrollSmoothing,
+    ScrollBarMinLength,
+    ScrollBars,
+    ScrollBarVisibility,
+    ScrollBarDrag,
+    Float,
+    FloatOffset,
+    FloatAnchor,
+    FloatAttach,
+    FloatTarget,
+    FloatClip,
+    Count_
+};
+
+/// Bits in StylePatch::written, one per property.
+inline constexpr uint32_t kStylePropertyBits = 64;
+static_assert(static_cast<uint32_t>(StyleProperty::Count_) <= kStylePropertyBits,
+              "a look records what it writes as the bits of one word");
+
+/// @brief What a node looks like in one state: the properties that state
+/// changes, put on over whatever the node looks like otherwise.
+ASTRUCT()
+struct StylePatch
+{
+    /// Meaningful only for the properties written.
+    AFIELD() Style values;
+    /// One bit per StyleProperty.
+    AFIELD() uint64_t written = 0;
+    AFIELD() StyleState state = StyleState::Focused;
+
+    [[nodiscard]] bool Writes(StyleProperty property) const;
+
+    /// @brief @p property as @p from has it, written.
+    void Take(StyleProperty property, const Style &from);
+
+    /// @brief Every property written, put on @p style. The rest stay as they are.
+    void ApplyTo(Style &style) const;
+
+    /// @brief Whether every bit written names a property this build has.
+    [[nodiscard]] bool WritesOnlyKnown() const;
+
+    /// @brief The look for @p state that turns @p resting into @p look: every
+    /// property in which the two differ. How a screen built in C++ says what a
+    /// state changes, by writing the whole style it wants.
+    [[nodiscard]] static StylePatch Changes(StyleState state, const Style &resting, const Style &look);
+
+    [[nodiscard]] friend bool operator==(const StylePatch &, const StylePatch &) = default;
+};
+
+/// @brief @p resting with each of @p looks whose state @p holds put on over it,
+/// weakest state first, whatever order @p looks keeps them in.
+[[nodiscard]] Style Restyled(const Style &resting, std::span<const StylePatch> looks, const StateSet &holds);
 
 } // namespace Assisi::Mondrian

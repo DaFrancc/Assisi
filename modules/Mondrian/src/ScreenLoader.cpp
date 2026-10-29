@@ -342,6 +342,11 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
             }
         }
 
+        for (const StylePatch &look : node.states)
+        {
+            tree.SetStateStyle(id, look);
+        }
+
         // Resolve refused any name two nodes carry, and every node on this
         // screen came from this document.
         const std::expected<void, NameError> named = tree.SetName(id, node.name.View());

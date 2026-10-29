@@ -26,6 +26,7 @@ add_executable(Assisi-Mondrian-Tests
   TestScreenBlob.cpp
   TestScreenLoader.cpp
   TestScreens.cpp
+  TestStates.cpp
   TestText.cpp
   TestTextField.cpp
   TestUi.cpp

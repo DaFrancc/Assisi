@@ -52,6 +52,7 @@ target_sources(Assisi-Mondrian
     "src/ScreenReader.cpp"
     "src/StringTable.cpp"
     "src/StringTableReader.cpp"
+    "src/Style.cpp"
     "src/Text.cpp"
     "src/TextField.cpp"
     "src/Ui.cpp"

@@ -9,7 +9,7 @@ it describe each part of the system in reference form:
 | [Tutorial: a pause menu](ui-tutorial.md) | A working menu, from screen file to level. |
 | [Screen settings](ui-screen-settings.md) | Input, pausing, hiding what's beneath and draw order. |
 | [Elements and names](ui-elements.md) | The nine elements, and how nodes are named. |
-| [Layout and appearance](ui-layout.md) | Lengths and units, sizes, colours, text, floating and scrolling. |
+| [Layout and appearance](ui-layout.md) | Lengths and units, sizes, colours, text, floating, scrolling, and how an element looks while hovered, pressed, focused or disabled. |
 | [Controls](ui-controls.md) | Toggles, sliders, scroll areas and text fields. |
 | [Button actions](ui-actions.md) | What a button does when clicked: an action or an event. |
 | [Templates](ui-templates.md) | Declaring an element once and reusing it. |

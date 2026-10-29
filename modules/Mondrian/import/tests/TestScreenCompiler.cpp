@@ -501,6 +501,147 @@ TEST_CASE("ScreenCompiler: a sort key is a named layer or a number between them"
     CHECK(Compiled(R"(<screen sort="1500" />)").sortKey == 1500);
 }
 
+namespace
+{
+
+/// The look @p node has in @p state, or null when the file wrote none.
+const StylePatch *PatchFor(const ScreenNode &node, StyleState state)
+{
+    for (const StylePatch &patch : node.states)
+    {
+        if (patch.state == state)
+        {
+            return &patch;
+        }
+    }
+    return nullptr;
+}
+
+/// A channel written as two hex digits, on the 0 to 1 scale a colour holds.
+constexpr float Hex(uint32_t channel)
+{
+    return static_cast<float>(channel) / 255.f;
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: a state's prefix writes the look the node has in that state, and nothing else")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <button name="quit" background="#222222" hover:background="#e63319" hover:width="300"
+          pressed:background="#a02010" disabled:text_color="#666666">Quit</button>
+</screen>)amdn");
+    const ScreenNode &quit = NodeNamed(document, "quit");
+
+    // Resting, the node wears what it was written with and nothing a state says.
+    CHECK(quit.style.background.r == doctest::Approx(Hex(0x22)));
+    CHECK(quit.style.sizing[0].kind == SizingKind::Fit);
+    REQUIRE(quit.states.size() == 3);
+
+    const StylePatch *hover = PatchFor(quit, StyleState::Hover);
+    REQUIRE(hover != nullptr);
+    CHECK(hover->Writes(StyleProperty::Background));
+    CHECK(hover->Writes(StyleProperty::Width));
+    CHECK_FALSE(hover->Writes(StyleProperty::Height));
+    CHECK_FALSE(hover->Writes(StyleProperty::TextColor));
+    CHECK(hover->values.background.r == doctest::Approx(Hex(0xe6)));
+    CHECK(hover->values.sizing[0] == Sizing::Fixed(Px(300.f)));
+
+    const StylePatch *pressed = PatchFor(quit, StyleState::Pressed);
+    REQUIRE(pressed != nullptr);
+    CHECK(pressed->values.background.r == doctest::Approx(Hex(0xa0)));
+
+    const StylePatch *disabled = PatchFor(quit, StyleState::Disabled);
+    REQUIRE(disabled != nullptr);
+    CHECK(disabled->Writes(StyleProperty::TextColor));
+    CHECK_FALSE(disabled->Writes(StyleProperty::Background));
+
+    CHECK(PatchFor(quit, StyleState::Focused) == nullptr);
+}
+
+TEST_CASE("ScreenCompiler: a state's prefix the markup does not have, or cannot have there, is refused where it was "
+          "written")
+{
+    // Each fault sits on line 3, as in the refusals above.
+    SUBCASE("a state that is not one")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <button\n"
+                                          "      hovered:background=\"#ffffff\">Quit</button>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("hovered") != std::string::npos);
+        CHECK(error.message.find("focused, hover, pressed, disabled") != std::string::npos);
+    }
+
+    SUBCASE("two states on one attribute")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <button\n"
+                                          "      hover:pressed:background=\"#ffffff\">Quit</button>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("one state") != std::string::npos);
+    }
+
+    SUBCASE("a state on what the node does rather than how it looks")
+    {
+        for (const std::string_view attribute : {"on_click=\"hide()\"", "name=\"quit\"", "enabled=\"false\"",
+                                                 "visible=\"false\"", "focus=\"true\"", "style=\"plain\""})
+        {
+            CAPTURE(attribute);
+            const MarkupError error = Refused("<screen>\n"
+                                              "  <button\n"
+                                              "      hover:" +
+                                              std::string{attribute} +
+                                              ">Quit</button>\n"
+                                              "</screen>\n");
+            CHECK(error.line == 3);
+            const std::string_view name = attribute.substr(0, attribute.find('='));
+            CHECK(error.message.find(std::string{name}) != std::string::npos);
+        }
+    }
+
+    SUBCASE("an attribute the markup does not have")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <button\n"
+                                          "      hover:colour=\"#ffffff\">Quit</button>\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("colour") != std::string::npos);
+    }
+
+    SUBCASE("a value its attribute cannot hold")
+    {
+        const MarkupError error = Refused("<screen>\n"
+                                          "  <column\n"
+                                          "      hover:gap=\"12px\" />\n"
+                                          "</screen>\n");
+        CHECK(error.line == 3);
+        CHECK(error.message.find("12px") != std::string::npos);
+    }
+}
+
+TEST_CASE("ScreenCompiler: an instance's state attribute replaces its template's, and a parameter reaches a state")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <template name="menu_button" params="accent">
+    <button hover:background="@accent" pressed:background="#000000">Label</button>
+  </template>
+  <menu_button name="quit" accent="#e63319" pressed:background="#ffffff" />
+</screen>)amdn");
+    const ScreenNode &quit = NodeNamed(document, "quit");
+
+    const StylePatch *hover = PatchFor(quit, StyleState::Hover);
+    REQUIRE(hover != nullptr);
+    CHECK(hover->values.background.r == doctest::Approx(Hex(0xe6)));
+
+    const StylePatch *pressed = PatchFor(quit, StyleState::Pressed);
+    REQUIRE(pressed != nullptr);
+    CHECK(pressed->values.background.r == doctest::Approx(1.f));
+}
+
 TEST_CASE("ScreenCompiler: a name nothing declares is refused where it was written")
 {
     // Each fault sits on line 3, so a compiler that reported the element's line

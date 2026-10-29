@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian::Import
 {
@@ -434,23 +437,76 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::Background:
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
-    {
-        // A colour's likeliest mistakes each have one fix to name, which a
-        // table entry saying only "bad value" could not.
-        const ParsedColor read = ParseColor(attribute.value);
-        if (!read)
-        {
-            return std::unexpected(At(attribute, read.error()));
-        }
-        ColorField(node.style, handled) = *read;
-        return {};
-    }
+        return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
     case HandledAttribute::None:
     case HandledAttribute::Count_:
         break;
     }
+    return {};
+}
+
+/// The state @p attribute is written for, or none for one written with no
+/// prefix. A prefix that is no state, or more than one, is refused.
+std::expected<std::optional<StyleState>, MarkupError> StateOf(const MarkupAttribute &attribute)
+{
+    const std::string_view name = attribute.name;
+    const std::size_t separator = name.find(kPrefixSeparator);
+    if (separator == std::string_view::npos)
+    {
+        return std::optional<StyleState>{};
+    }
+    if (name.find(kPrefixSeparator, separator + 1) != std::string_view::npos)
+    {
+        return std::unexpected(At(attribute, "'" + attribute.name +
+                                                 "' gives one attribute two prefixes. An attribute takes one state, "
+                                                 "and states that hold at once stack on their own."));
+    }
+    const std::string_view prefix = name.substr(0, separator);
+    const std::optional<StyleState> state = LookUpState(prefix);
+    if (!state)
+    {
+        return std::unexpected(
+            At(attribute, "'" + std::string{prefix} + "' is not a state. The states are: " + KnownStates() + "."));
+    }
+    return state;
+}
+
+/// What @p name says after its prefix.
+std::string_view AfterPrefix(std::string_view name)
+{
+    return name.substr(name.find(kPrefixSeparator) + 1);
+}
+
+/// @p attribute read into the look node @p index has in @p state, over what
+/// that look already writes.
+std::expected<void, MarkupError> ApplyLook(Walk &walk, uint32_t index, StyleState state, const AttributeSpec &spec,
+                                           const MarkupAttribute &attribute)
+{
+    ScreenNode &node = walk.document.nodes[index];
+    std::vector<StylePatch>::iterator look = std::ranges::find(node.states, state, &StylePatch::state);
+    if (look == node.states.end())
+    {
+        node.states.push_back(StylePatch{.values = {}, .written = 0, .state = state});
+        look = std::prev(node.states.end());
+    }
+
+    Style written = look->values;
+    if (spec.handled != HandledAttribute::None)
+    {
+        // A colour is the one attribute both handled here and about looks.
+        if (const std::expected<void, MarkupError> colour = ApplyColor(written, spec.handled, attribute); !colour)
+        {
+            return colour;
+        }
+    }
+    else if (!spec.apply(AttributeTarget{.document = walk.document, .node = node, .style = written}, attribute.value))
+    {
+        return std::unexpected(
+            At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
+    }
+    look->Take(*spec.property, written);
     return {};
 }
 
@@ -562,10 +618,22 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        const AttributeSpec *const spec = FindAttribute(written.name, node.widget, isRoot);
+        const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
+        if (!state)
+        {
+            return std::unexpected(state.error());
+        }
+        const std::string_view name = *state ? AfterPrefix(written.name) : std::string_view{written.name};
+        const AttributeSpec *const spec = FindAttribute(name, node.widget, isRoot);
         if (spec == nullptr)
         {
             return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
+        }
+        if (*state && !spec->property)
+        {
+            return std::unexpected(At(written, "'" + std::string{name} +
+                                                   "' says what the node is or does rather than how it looks, so it "
+                                                   "cannot be given a state."));
         }
 
         // Read as written: which parts of a call came from parameters decides
@@ -591,11 +659,20 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             continue;
         }
         MarkupAttribute attribute = written;
+        attribute.name = name;
         attribute.value = substituted->text;
 
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        if (*state)
+        {
+            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, **state, *spec, attribute); !look)
+            {
+                return look;
+            }
+            continue;
         }
         if (spec->handled != HandledAttribute::None)
         {
@@ -606,7 +683,7 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             }
             continue;
         }
-        if (!spec->apply(AttributeTarget{.document = walk.document, .node = node}, attribute.value))
+        if (!spec->apply(AttributeTarget{.document = walk.document, .node = node, .style = node.style}, attribute.value))
         {
             return std::unexpected(
                 At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
