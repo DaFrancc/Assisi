@@ -62,12 +62,13 @@ ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world)
     return SpawnBox(scene, world, {0.f, -0.5f, 0.f}, {20.f, 0.5f, 20.f});
 }
 
-/// A character standing at @p at, with whatever the descriptor defaults are
+/// A SourceMovement character standing at @p at, with whatever the defaults are
 /// unless the caller changed them first, reconciled into @p world at once.
 ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
-                           Physics::Character descriptor = {})
+                           Physics::Character descriptor = {}, Physics::CharacterLocomotion locomotion = {},
+                           Physics::SourceMovement movement = {})
 {
-    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor, locomotion, movement);
     world.Reconcile();
     REQUIRE(world.HasBody(entity));
     return entity;
@@ -212,14 +213,15 @@ TEST_CASE("A character whose mask excludes World walks through the wall")
 
     Physics::Character descriptor{};
     descriptor.collidesWith = Physics::AllChannels.Without(Physics::CollisionChannel::World);
-    descriptor.gravityScale = 0.f; // nothing left to stand on once World is out
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.gravityScale = 0.f; // nothing left to stand on once World is out
 
     // With nothing underfoot it moves by the air rules, which hold a straight
     // request to the air cap. Lifted out of the way: this case is about the
     // mask, and needs the character to actually arrive at the wall.
-    descriptor.airWishSpeedCap = 100.f;
+    const Physics::SourceMovement movement{.airWishSpeedCap = 100.f};
 
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor, locomotion, movement);
     Walk(scene, world, character, kWalkForward, kSettleSteps);
 
     CHECK(CharacterPosition(scene).x > 4.f); // straight through where the wall is
@@ -593,12 +595,13 @@ TEST_CASE("Crouching in the air lifts the feet and leaves the eye where it was")
     descriptor.radius = 0.3f;
     descriptor.halfHeight = 0.6f;
     descriptor.crouchHalfHeight = 0.3f;
-    descriptor.jumpSpeed = 8.f; // high enough to stand back up before landing
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.jumpSpeed = 8.f; // high enough to stand back up before landing
 
     // Standing is 1.8 tall and crouching 1.2, so the feet have 0.6 to travel.
     constexpr float kLift = 0.6f;
 
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, descriptor, locomotion);
     Walk(scene, world, character, glm::vec3(0.f), 60);
 
     PhysicsTests::Drive(scene, character, glm::vec3(0.f), /*jump=*/ true);
@@ -643,10 +646,10 @@ TEST_CASE("A character crouched in the air cannot stand while the floor is too c
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
-    Physics::Character descriptor{};
-    descriptor.gravityScale = 0.f; // hangs where it is put
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.gravityScale = 0.f; // hangs where it is put
 
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 2.f, 0.f}, descriptor);
+    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 2.f, 0.f}, Physics::Character{}, locomotion);
     Walk(scene, world, character, glm::vec3(0.f), 2);
     REQUIRE(PhysicsTests::AskStance(scene, world, character, Physics::Stance::Crouching));
 
@@ -775,10 +778,11 @@ TEST_CASE("CharacterIntent drives a character: move at its walk speed, and a jum
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
 
-    Physics::Character tuning;
-    tuning.walkSpeed = 4.f;
-    tuning.groundAcceleration = 1000.f; // at speed within one step
-    const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, tuning);
+    Physics::CharacterLocomotion locomotion = PhysicsTests::CustomLocomotion();
+    locomotion.walkSpeed = 4.f;
+    const Physics::SourceMovement movement{.groundAcceleration = 1000.f}; // at speed within one step
+    const ECS::Entity character =
+        SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, Physics::Character{}, locomotion, movement);
     Walk(scene, world, character, glm::vec3(0.f), kSettleSteps);
 
     scene.GetMut<Physics::CharacterIntent>(character)->move = {1.f, 0.f, 0.f};

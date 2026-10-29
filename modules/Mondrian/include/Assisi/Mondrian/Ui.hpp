@@ -24,11 +24,13 @@
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 
 #include <Assisi/Core/Assert.hpp>
 
 #include <array>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -168,6 +170,26 @@ class Ui
     /// something to see and fix, not a reason for a screen not to load.
     [[nodiscard]] std::string StringFor(std::string_view qualified) const;
 
+    /// @brief The themes a node naming a style or a token takes them from, and
+    /// the first of them, in its first mode, put on every screen now. They must
+    /// outlive the Ui or be replaced first; null or none takes them away, and
+    /// every node wears only its own look.
+    void SetThemes(const Themes *themes);
+
+    /// @brief Puts the theme loaded from @p vpath on every screen, in the mode
+    /// called what the current one is when it has one, and its first otherwise.
+    std::expected<void, ThemeError> SetTheme(std::string_view vpath);
+
+    /// @brief Puts the current theme's mode called @p mode on every screen.
+    std::expected<void, ThemeError> SetThemeMode(std::string_view mode);
+
+    /// @brief Where the theme every screen wears was loaded from, or empty for
+    /// none.
+    [[nodiscard]] std::string_view GetTheme() const;
+
+    /// @brief The mode it is in, or empty for no theme.
+    [[nodiscard]] std::string_view GetThemeMode() const;
+
   private:
     friend class Screen;
 
@@ -176,6 +198,9 @@ class Ui
     /// owns the screen is what decides how long the UI holds it.
     void Adopt(Screen &screen);
     void Forget(Screen &screen);
+
+    /// Puts @p theme on every screen.
+    void PutOn(const ThemeView &theme);
 
     /// Which step the host loop owes next.
     enum class FrameStep : uint8_t
@@ -277,6 +302,9 @@ class Ui
     Core::EventQueue &_universal;
     const Font *_font = nullptr;
     const StringTables *_tables = nullptr;
+    const Themes *_themes = nullptr;
+    /// The theme every screen wears, which a screen made later is given too.
+    ThemeView _theme;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;

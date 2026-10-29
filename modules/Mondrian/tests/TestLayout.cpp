@@ -257,6 +257,20 @@ TEST_CASE("Layout: a text size in em is of its parent's, and chains down the tre
     CHECK(scene.NodeOf(grandchild).padding.left == doctest::Approx(20.f));
 }
 
+TEST_CASE("Layout: a text size nobody sets is the parent's, and the root's is the default")
+{
+    Scene scene;
+    Style parentStyle = Box(Fixed(100.f), Fixed(100.f));
+    parentStyle.textSize = Px(10.f);
+    const NodeId parent = scene.Add(scene.tree.Root(), parentStyle);
+    const NodeId child = scene.Add(parent, Box(Fixed(50.f), Fixed(50.f)));
+    const NodeId beside = scene.Add(scene.tree.Root(), Box(Fixed(50.f), Fixed(50.f)));
+    scene.Run();
+
+    CHECK(scene.NodeOf(child).textSize == 10.f);
+    CHECK(scene.NodeOf(beside).textSize == kDefaultTextSize);
+}
+
 TEST_CASE("Layout: each edge of a padding keeps its own unit")
 {
     Scene scene;

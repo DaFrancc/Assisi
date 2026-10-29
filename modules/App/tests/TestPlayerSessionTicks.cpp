@@ -21,6 +21,7 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
 using namespace Assisi;
@@ -38,6 +39,44 @@ struct Stepped
 {
     std::uint64_t tick = 0;
 };
+
+/// Frames between the speed the speed test's client asks for changing, as a
+/// sprint key pressed and let go would change it.
+constexpr std::int32_t kFramesPerSpeedChange = 7;
+
+/// A speed scale the speed test's game code sets.
+constexpr float kFastSpeedScale = 2.f;
+
+/// Whether the speed test's client goes fast on @p frame: in every other run of
+/// kFramesPerSpeedChange frames.
+bool FastOnFrame(std::int32_t frame)
+{
+    return (frame / kFramesPerSpeedChange) % 2 != 0;
+}
+
+/// One frame of the speed test: @p own walks forward, its speed scale set the
+/// way a game's own system sets it.
+void WalkAtChangingSpeed(ECS::Scene &scene, ECS::Entity own, std::int32_t frame)
+{
+    if (App::PlayerInput *controls = scene.GetMut<App::PlayerInput>(own))
+    {
+        controls->move = {0.f, 1.f};
+    }
+    if (Physics::CharacterIntent *intent = scene.GetMut<Physics::CharacterIntent>(own))
+    {
+        intent->speedScale = FastOnFrame(frame) ? kFastSpeedScale : 1.f;
+    }
+}
+
+/// One frame of the sprint test: @p own walks forward, holding Sprint by turns.
+void WalkSprintingByTurns(ECS::Scene &scene, ECS::Entity own, std::int32_t frame)
+{
+    if (App::PlayerInput *controls = scene.GetMut<App::PlayerInput>(own))
+    {
+        controls->move = {0.f, 1.f};
+        controls->held = FastOnFrame(frame) ? App::PlayerButtons::Of(App::PlayerAction::Sprint) : App::PlayerButtons{};
+    }
+}
 
 } // namespace
 
@@ -90,7 +129,16 @@ TEST_CASE("The sync test finds every tick a client steps a second time the same 
     // A level with an oscillator each machine moves from the tick, and a
     // client walking and looking around: everything a replay must put back.
     const std::filesystem::path root = FreshRoot("assisi_players_ticks");
-    WritePlayerBlueprint(root);
+    std::string_view movement;
+    SUBCASE("moving by SourceMovement")
+    {
+        movement = "SourceMovement";
+    }
+    SUBCASE("moving by ArcadeMovement")
+    {
+        movement = "ArcadeMovement";
+    }
+    WritePlayerBlueprint(root, movement);
 
     Session session;
     Machine &host = session.Add();
@@ -120,6 +168,59 @@ TEST_CASE("The sync test finds every tick a client steps a second time the same 
         }
     });
 
+    CHECK(replication.SyncTestResults().replays > static_cast<std::uint64_t>(kLongWalkFrames) / 2u);
+    CHECK(replication.SyncTestResults().differences == 0);
+}
+
+TEST_CASE("With the sync test on, a speed a game's system sets on a client's character is stepped again as it was set")
+{
+    // A game's systems run once, live, so a step stepped again must take the
+    // speed scale that step had rather than the one set since.
+    const std::filesystem::path root = FreshRoot("assisi_players_ticks");
+    WritePlayerBlueprint(root, "ArcadeMovement");
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    REQUIRE(own != ECS::NullEntity);
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    replication.SetSyncTest(true);
+
+    std::int32_t frame = 0;
+    session.Run(kLongWalkFrames, [&] { WalkAtChangingSpeed(client.world.scene, own, frame++); });
+
+    CHECK(replication.SyncTestResults().replays > static_cast<std::uint64_t>(kLongWalkFrames) / 2u);
+    CHECK(replication.SyncTestResults().differences == 0);
+}
+
+TEST_CASE("With the sync test on, a client sprinting by turns steps each tick again as it did live")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_ticks");
+    WritePlayerBlueprint(root, "ArcadeMovement");
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+
+    const ECS::Entity own = LocalPlayerOf(client.world.scene);
+    REQUIRE(own != ECS::NullEntity);
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    replication.SetSyncTest(true);
+
+    std::int32_t frame = 0;
+    bool sprinted = false;
+    session.Run(kLongWalkFrames,
+                [&]
+    {
+        WalkSprintingByTurns(client.world.scene, own, frame++);
+        sprinted = sprinted || client.world.scene.Get<Physics::CharacterState>(own)->sprinting;
+    });
+
+    CHECK(sprinted);
     CHECK(replication.SyncTestResults().replays > static_cast<std::uint64_t>(kLongWalkFrames) / 2u);
     CHECK(replication.SyncTestResults().differences == 0);
 }

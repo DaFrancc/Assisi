@@ -31,6 +31,8 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/TextEdit.hpp"
+    "include/Assisi/Mondrian/Theme.hpp"
+    "include/Assisi/Mondrian/ThemeReader.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
     "include/Assisi/Mondrian/UiConfig.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
@@ -52,8 +54,11 @@ target_sources(Assisi-Mondrian
     "src/ScreenReader.cpp"
     "src/StringTable.cpp"
     "src/StringTableReader.cpp"
+    "src/Style.cpp"
     "src/Text.cpp"
     "src/TextField.cpp"
+    "src/Theme.cpp"
+    "src/ThemeReader.cpp"
     "src/Ui.cpp"
     "src/Utf8.cpp"
     "src/Widget.cpp"
@@ -83,6 +88,7 @@ assisi_reflect(
     include/Assisi/Mondrian/FontDescription.hpp
     include/Assisi/Mondrian/UiConfig.hpp
     include/Assisi/Mondrian/Style.hpp
+    include/Assisi/Mondrian/Theme.hpp
     include/Assisi/Mondrian/Widget.hpp
     include/Assisi/Mondrian/Screen.hpp
     include/Assisi/Mondrian/ScreenDocument.hpp

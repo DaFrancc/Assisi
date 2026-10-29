@@ -43,6 +43,7 @@ add_executable(Assisi-MondrianImport-Tests
   TestScreenCompiler.cpp
   TestStringTables.cpp
   TestTemplateLibraries.cpp
+  TestThemeCompiler.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-MondrianImport-Tests)
@@ -68,6 +69,7 @@ target_link_libraries(Assisi-MondrianImport-Tests
 target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   ASSISI_PAUSE_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Pause.amdn"
   ASSISI_PAUSE_TABLE_PATH="${CMAKE_SOURCE_DIR}/assets/ui/pause.csv"
+  ASSISI_DEFAULT_THEME_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Default.amth"
   ASSISI_CONTROLS_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Controls.amdn"
 )
 

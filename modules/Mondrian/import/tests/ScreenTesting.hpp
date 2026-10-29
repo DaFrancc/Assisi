@@ -69,10 +69,10 @@ template <typename T, typename E> std::string Why(const std::expected<T, E> &res
 
 /// The rules a screen's text meets with the one table `pause`, holding a title,
 /// the two button labels and a field's hint, and literal text as @p literals says.
-inline Assisi::Mondrian::Import::TextRules PauseTable(
+inline Assisi::Mondrian::Import::ScreenRules PauseTable(
     Assisi::Mondrian::Import::LiteralText literals = Assisi::Mondrian::Import::LiteralText::Allowed)
 {
-    Assisi::Mondrian::Import::TextRules rules;
+    Assisi::Mondrian::Import::ScreenRules rules;
     rules.tables.byName["pause"].entries = {
         {"title", "Paused"}, {"resume", "Resume"}, {"quit", "Quit"}, {"hint", "Type here"}};
     rules.literals = literals;
@@ -81,7 +81,7 @@ inline Assisi::Mondrian::Import::TextRules PauseTable(
 
 /// @p text compiled, importing from @p files, its text checked against @p rules.
 inline Assisi::Mondrian::ScreenDocument Compiled(std::string_view text, const Files &files = {},
-                                                 const Assisi::Mondrian::Import::TextRules &rules = {})
+                                                 const Assisi::Mondrian::Import::ScreenRules &rules = {})
 {
     using namespace Assisi::Mondrian::Import;
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
@@ -96,7 +96,7 @@ inline Assisi::Mondrian::ScreenDocument Compiled(std::string_view text, const Fi
 /// The error from compiling @p text, importing from @p files, its text checked
 /// against @p rules, which the case expects to fail.
 inline Assisi::Mondrian::Import::MarkupError Refused(std::string_view text, const Files &files = {},
-                                                     const Assisi::Mondrian::Import::TextRules &rules = {})
+                                                     const Assisi::Mondrian::Import::ScreenRules &rules = {})
 {
     using namespace Assisi::Mondrian::Import;
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);

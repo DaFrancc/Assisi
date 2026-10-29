@@ -31,18 +31,18 @@ constexpr char kCallOpen = '(';
 constexpr char kCallClose = ')';
 
 constexpr std::array<ElementKind, 9> kElements{{
-    {"row", BuiltinWidget::None, Direction::Row, false, true},
-    {"column", BuiltinWidget::None, Direction::Column, false, true},
-    {"text", BuiltinWidget::None, Direction::Row, true, false},
-    {"button", BuiltinWidget::Button, Direction::Row, true, false},
-    {"toggle", BuiltinWidget::Toggle, Direction::Row, false, false},
-    {"slider", BuiltinWidget::ContinuousSlider, Direction::Row, false, false},
-    {"stepped_slider", BuiltinWidget::SteppedSlider, Direction::Row, false, false},
+    {"row", BuiltinWidget::None, Direction::Row, false, true, true},
+    {"column", BuiltinWidget::None, Direction::Column, false, true, true},
+    {"text", BuiltinWidget::None, Direction::Row, true, false, false},
+    {"button", BuiltinWidget::Button, Direction::Row, true, false, false},
+    {"toggle", BuiltinWidget::Toggle, Direction::Row, false, false, false},
+    {"slider", BuiltinWidget::ContinuousSlider, Direction::Row, false, false, false},
+    {"stepped_slider", BuiltinWidget::SteppedSlider, Direction::Row, false, false, false},
     // A column, because what a scroll usually holds is a list.
-    {"scroll", BuiltinWidget::Scroll, Direction::Column, false, true},
+    {"scroll", BuiltinWidget::Scroll, Direction::Column, false, true, false},
     // Its text is what it starts holding, which is the one control whose text
     // a player can then change.
-    {"text_field", BuiltinWidget::TextField, Direction::Row, true, false},
+    {"text_field", BuiltinWidget::TextField, Direction::Row, true, false, false},
 }};
 
 /// How a file marks a value as an expression rather than the name of one.
@@ -118,7 +118,7 @@ bool ReadFloatOffset(const AttributeTarget &target, std::string_view value)
     {
         return false;
     }
-    target.node.style.floating.offset = {*x, *y};
+    target.style.floating.offset = {*x, *y};
     return true;
 }
 
@@ -128,16 +128,32 @@ constexpr AttributeSpec ForScreen(std::string_view name, ApplyAttribute apply)
     return AttributeSpec{.name = name, .apply = apply, .owner = AttributeOwner::Screen};
 }
 
-/// An attribute only @p widget has: an argument its own call takes.
-constexpr AttributeSpec ForControl(BuiltinWidget widget, std::string_view name, ApplyAttribute apply)
+/// An attribute only @p widget has: an argument its own call takes, which
+/// writes @p property of the style when it says how the node looks.
+constexpr AttributeSpec ForControl(BuiltinWidget widget, std::string_view name, ApplyAttribute apply,
+                                   std::optional<StyleProperty> property = std::nullopt)
 {
-    return AttributeSpec{.name = name, .apply = apply, .owner = AttributeOwner::Control, .widget = widget};
+    return AttributeSpec{
+        .name = name, .apply = apply, .owner = AttributeOwner::Control, .widget = widget, .property = property};
 }
 
-/// An attribute every node has.
+/// An attribute every node has, about what it is or does.
 constexpr AttributeSpec ForAny(std::string_view name, ApplyAttribute apply)
 {
     return AttributeSpec{.name = name, .apply = apply};
+}
+
+/// An attribute every node has about how it looks or is laid out, writing
+/// @p property of the style it is handed and nothing else.
+constexpr AttributeSpec ForStyle(std::string_view name, StyleProperty property, ApplyAttribute apply)
+{
+    return AttributeSpec{.name = name, .apply = apply, .property = property};
+}
+
+/// A colour every node has, which ApplyAttributes reads for its own messages.
+constexpr AttributeSpec ForColor(std::string_view name, HandledAttribute colour, StyleProperty property)
+{
+    return AttributeSpec{.name = name, .handled = colour, .property = property};
 }
 
 /// An attribute ApplyAttributes reads itself, on @p widget alone, or on every
@@ -197,10 +213,10 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     // Which axes scroll is a style field, so this writes the same place
     // `scroll_bars` does — and ApplyAttributes refuses that spelling on a
     // scroll, so the two can never disagree on one node.
-    ForControl(BuiltinWidget::Scroll, "axes",
-               [](const AttributeTarget &t, std::string_view v) {
-                   return Read(t.node.style.enabledScrollBars, v, ParseAxes);
-               }),
+    ForControl(
+        BuiltinWidget::Scroll, "axes",
+        [](const AttributeTarget &t, std::string_view v) { return Read(t.style.enabledScrollBars, v, ParseAxes); },
+        StyleProperty::ScrollBars),
     ForControl(BuiltinWidget::TextField, "lines", ReadLines),
     ForControl(BuiltinWidget::TextField, "placeholder",
                [](const AttributeTarget &t, std::string_view v) {
@@ -218,18 +234,11 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     Handled("on_click", HandledAttribute::Action),
     Handled("name", HandledAttribute::Name),
     Handled("focus", HandledAttribute::Focus),
-    Handled("background", HandledAttribute::Background),
-    Handled("border_color", HandledAttribute::BorderColor),
-    Handled("text_color", HandledAttribute::TextColor),
+    ForColor("background", HandledAttribute::Background, StyleProperty::Background),
+    ForColor("border_color", HandledAttribute::BorderColor, StyleProperty::BorderColor),
+    ForColor("text_color", HandledAttribute::TextColor, StyleProperty::TextColor),
 
-    ForAny("style",
-           [](const AttributeTarget &t, std::string_view v) {
-               // Carried and not resolved: there is nowhere for a name to
-               // resolve to yet, and a file written today should not need an
-               // edit when there is.
-               t.node.styleName = Core::InternedString{v};
-               return true;
-           }),
+    Handled("style", HandledAttribute::StyleName),
     ForAny("visible", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.visible, v, ParseBool); }),
     ForAny("enabled", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.enabled, v, ParseBool); }),
     ForAny("blocks_pointer",
@@ -240,82 +249,61 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
            [](const AttributeTarget &t, std::string_view v) { return Read(t.node.selectable, v, ParseBool); }),
 
     // Style: how a node looks, and how it places what is inside it.
-    ForAny("width",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.sizing[static_cast<std::size_t>(Axis::X)], v, ParseSizing);
-           }),
-    ForAny("height",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.sizing[static_cast<std::size_t>(Axis::Y)], v, ParseSizing);
-           }),
-    ForAny("padding",
-           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.padding, v, ParsePadding); }),
-    ForAny("gap", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.gap, v, ParseLength); }),
-    ForAny("text_size",
-           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.textSize, v, ParseLength); }),
-    ForAny("border_width",
-           [](const AttributeTarget &t, std::string_view v) { return Read(t.node.style.borderWidth, v, ParseLength); }),
-    ForAny("corner_radius",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.cornerRadius, v, ParseLength);
-           }),
-    ForAny("corner_style",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.cornerStyle, v, ParseCornerStyle);
-           }),
-    ForAny("direction",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.direction, v, ParseDirection);
-           }),
-    ForAny("align",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.childAlign, v, ParseAlignPair);
-           }),
-    ForAny("text_align",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.textAlign, v, ParseTextAlign);
-           }),
-    ForAny("scroll_smoothing",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.scrollSmoothing, v, ParseFloat);
-           }),
-    ForAny("scroll_bar_min_length",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.scrollBarMinLength, v, ParseLength);
-           }),
-    ForAny("scroll_bars",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.enabledScrollBars, v, ParseAxes);
-           }),
-    ForAny("scroll_bar_visibility",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.scrollBarVisibility, v, ParseScrollBarVisibility);
-           }),
-    ForAny("scroll_bar_drag",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.scrollBarDrag, v, ParseScrollBarDrag);
-           }),
-    ForAny("float",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.floating.enabled, v, ParseBool);
-           }),
-    ForAny("float_offset", ReadFloatOffset),
-    ForAny("float_anchor",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.floating.anchor, v, ParseAlignPair);
-           }),
-    ForAny("float_attach",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.floating.attach, v, ParseAlignPair);
-           }),
-    ForAny("float_target",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.floating.target, v, ParseFloatAnchor);
-           }),
-    ForAny("float_clip",
-           [](const AttributeTarget &t, std::string_view v) {
-               return Read(t.node.style.floating.clipToParent, v, ParseBool);
-           }),
+    ForStyle("width", StyleProperty::Width,
+             [](const AttributeTarget &t, std::string_view v) {
+                 return Read(t.style.sizing[static_cast<std::size_t>(Axis::X)], v, ParseSizing);
+             }),
+    ForStyle("height", StyleProperty::Height,
+             [](const AttributeTarget &t, std::string_view v) {
+                 return Read(t.style.sizing[static_cast<std::size_t>(Axis::Y)], v, ParseSizing);
+             }),
+    ForStyle("padding", StyleProperty::Padding,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.padding, v, ParsePadding); }),
+    ForStyle("gap", StyleProperty::Gap,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.gap, v, ParseLength); }),
+    ForStyle("text_size", StyleProperty::TextSize,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.textSize, v, ParseLength); }),
+    ForStyle("border_width", StyleProperty::BorderWidth,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.borderWidth, v, ParseLength); }),
+    ForStyle("corner_radius", StyleProperty::CornerRadius,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.cornerRadius, v, ParseLength); }),
+    ForStyle("corner_style", StyleProperty::CornerStyle,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.cornerStyle, v, ParseCornerStyle); }),
+    ForStyle("direction", StyleProperty::Direction,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.direction, v, ParseDirection); }),
+    ForStyle("align", StyleProperty::Align,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.childAlign, v, ParseAlignPair); }),
+    ForStyle("text_align", StyleProperty::TextAlign,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.textAlign, v, ParseTextAlign); }),
+    ForStyle("scroll_smoothing", StyleProperty::ScrollSmoothing,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.scrollSmoothing, v, ParseFloat); }),
+    ForStyle("scroll_bar_min_length", StyleProperty::ScrollBarMinLength,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.scrollBarMinLength, v, ParseLength); }),
+    ForStyle("scroll_bars", StyleProperty::ScrollBars,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.enabledScrollBars, v, ParseAxes); }),
+    ForStyle("scroll_bar_visibility", StyleProperty::ScrollBarVisibility,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.scrollBarVisibility, v, ParseScrollBarVisibility); }),
+    ForStyle("scroll_bar_drag", StyleProperty::ScrollBarDrag,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.scrollBarDrag, v, ParseScrollBarDrag); }),
+    ForStyle("float", StyleProperty::Float,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.floating.enabled, v, ParseBool); }),
+    ForStyle("float_offset", StyleProperty::FloatOffset, ReadFloatOffset),
+    ForStyle("float_anchor", StyleProperty::FloatAnchor,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.floating.anchor, v, ParseAlignPair); }),
+    ForStyle("float_attach", StyleProperty::FloatAttach,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.floating.attach, v, ParseAlignPair); }),
+    ForStyle("float_target", StyleProperty::FloatTarget,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.floating.target, v, ParseFloatAnchor); }),
+    ForStyle("float_clip", StyleProperty::FloatClip,
+             [](const AttributeTarget &t, std::string_view v)
+             { return Read(t.style.floating.clipToParent, v, ParseBool); }),
 });
 
 /// Each entry is read one way: through its own function, or by ApplyAttributes.
@@ -378,6 +366,38 @@ constexpr bool EveryHandledOnce()
     return true;
 }
 static_assert(EveryHandledOnce(), "every handled attribute has exactly one entry");
+
+/// Whether every part of a style is written by exactly one attribute every node
+/// has: one a file can always write, and give a state, and one spelling of it.
+constexpr bool EveryPropertyOnce()
+{
+    for (uint32_t property = 0; property < static_cast<uint32_t>(StyleProperty::Count_); ++property)
+    {
+        const std::ptrdiff_t entries =
+            std::ranges::count_if(kAttributes,
+                                  [property](const AttributeSpec &spec)
+                                  {
+                                      return spec.owner == AttributeOwner::AnyNode &&
+                                             spec.property == static_cast<StyleProperty>(property);
+                                  });
+        if (entries != 1)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(EveryPropertyOnce(), "every style property is written by exactly one attribute every node has");
+
+/// How a file spells each state, in the order they stack. One entry per
+/// StyleState, which the assert below holds the table to.
+constexpr std::array<NamedEnum<StyleState>, 4> kStates{{
+    {"focused", StyleState::Focused},
+    {"hover", StyleState::Hover},
+    {"pressed", StyleState::Pressed},
+    {"disabled", StyleState::Disabled},
+}};
+static_assert(kStates.size() == static_cast<std::size_t>(StyleState::Count_), "every state needs a spelling");
 
 /// How a file spells @p verb.
 std::string_view VerbName(ScreenVerb verb)
@@ -451,24 +471,107 @@ bool IsMarkupAttribute(std::string_view name)
     return std::ranges::find(kAttributes, name, &AttributeSpec::name) != kAttributes.end();
 }
 
-Color &ColorField(Style &style, HandledAttribute colour)
+std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colour, const MarkupAttribute &attribute)
 {
+    const ParsedColor read = ParseColor(attribute.value);
+    if (!read)
+    {
+        return std::unexpected(At(attribute, read.error()));
+    }
     switch (colour)
     {
-    case HandledAttribute::BorderColor:
-        return style.borderColor;
-    case HandledAttribute::TextColor:
-        return style.textColor;
     case HandledAttribute::Background:
+        style.background = *read;
+        return {};
+    case HandledAttribute::BorderColor:
+        style.borderColor = *read;
+        return {};
+    case HandledAttribute::TextColor:
+        style.textColor = *read;
+        return {};
     case HandledAttribute::None:
     case HandledAttribute::Action:
     case HandledAttribute::Name:
     case HandledAttribute::Focus:
     case HandledAttribute::Pattern:
+    case HandledAttribute::StyleName:
     case HandledAttribute::Count_:
         break;
     }
-    return style.background;
+    return {};
+}
+
+const AttributeSpec &AttributeFor(StyleProperty property)
+{
+    // EveryPropertyOnce holds the table to exactly one.
+    return *std::ranges::find_if(kAttributes, [property](const AttributeSpec &spec)
+                                 { return spec.owner == AttributeOwner::AnyNode && spec.property == property; });
+}
+
+std::expected<void, MarkupError> ApplyStyleAttribute(const AttributeSpec &spec, const MarkupAttribute &attribute,
+                                                     Style &style)
+{
+    if (spec.handled != HandledAttribute::None)
+    {
+        // A colour is the one attribute both handled and about looks.
+        return ApplyColor(style, spec.handled, attribute);
+    }
+    // An entry writing a style writes only the style it is handed, so the
+    // document and node it is also handed are never touched.
+    ScreenDocument unused;
+    ScreenNode unusedNode;
+    if (!spec.apply(AttributeTarget{.document = unused, .node = unusedNode, .style = style}, attribute.value))
+    {
+        return std::unexpected(
+            At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
+    }
+    return {};
+}
+
+std::expected<std::optional<StyleState>, MarkupError> StateOf(const MarkupAttribute &attribute)
+{
+    const std::string_view name = attribute.name;
+    const std::size_t separator = name.find(kPrefixSeparator);
+    if (separator == std::string_view::npos)
+    {
+        return std::optional<StyleState>{};
+    }
+    if (name.find(kPrefixSeparator, separator + 1) != std::string_view::npos)
+    {
+        return std::unexpected(At(attribute, "'" + attribute.name +
+                                                 "' gives one attribute two prefixes. An attribute takes one state, "
+                                                 "and states that hold at once stack on their own."));
+    }
+    const std::string_view prefix = name.substr(0, separator);
+    const std::optional<StyleState> state = LookUpState(prefix);
+    if (!state)
+    {
+        return std::unexpected(
+            At(attribute, "'" + std::string{prefix} + "' is not a state. The states are: " + KnownStates() + "."));
+    }
+    return state;
+}
+
+std::string_view AfterPrefix(std::string_view name)
+{
+    const std::size_t separator = name.find(kPrefixSeparator);
+    return separator == std::string_view::npos ? name : name.substr(separator + 1);
+}
+
+std::optional<StyleState> LookUpState(std::string_view name)
+{
+    return LookUpEnum(name, kStates);
+}
+
+std::string KnownStates()
+{
+    std::string states;
+    for (const NamedEnum<StyleState> &entry : kStates)
+    {
+        states += states.empty() ? "" : ", ";
+        states += entry.name;
+    }
+    return states;
 }
 
 std::expected<void, MarkupError> ApplyPattern(ScreenDocument &document, ScreenNode &node,

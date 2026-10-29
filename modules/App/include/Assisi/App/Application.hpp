@@ -21,6 +21,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Mondrian/Engine/QuadPass.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
+#include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -455,10 +456,16 @@ private:
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
-    /// Loads every string table the UI settings list and hands them to the UI.
-    /// A game whose tables do not load still runs, showing keys where the text
+    /// Reads the UI settings and loads the string tables and themes they list.
+    void LoadUiSettings();
+    /// Loads every string table @p settings list and hands them to the UI. A
+    /// game whose tables do not load still runs, showing keys where the text
     /// would be.
-    void LoadUiStrings();
+    void LoadUiStrings(const Mondrian::UiConfig &settings);
+    /// Loads every theme @p settings list and hands them to the UI, which puts
+    /// the first on. A game whose themes do not load still runs, each node
+    /// wearing only its own look.
+    void LoadUiThemes(const Mondrian::UiConfig &settings);
     /// Builds the mixer from the game's bus declarations and starts a device on
     /// it. A game that cannot open a sound device still runs, silently, with
     /// sounds starting and finishing as they would.
@@ -492,10 +499,11 @@ private:
     std::unique_ptr<Window::InputContext> _input;
     Window::ActionMap _actions;
 
-    /// The UI's font and string tables. Declared before the UI, which points at
-    /// them, so they are destroyed after.
+    /// The UI's font, string tables and themes. Declared before the UI, which
+    /// points at them, so they are destroyed after.
     Mondrian::Font _uiFont;
     Mondrian::StringTables _uiStrings;
+    Mondrian::Themes _uiThemes;
     /// The DisplayedString resolver installed before this app's own, put back
     /// when the app goes: the one it installs points at _uiStrings.
     Core::DisplayedStringResolver _previousStringResolver;

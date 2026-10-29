@@ -18,7 +18,7 @@
 
 #include <Assisi/Mondrian/Import/Markup.hpp>
 #include <Assisi/Mondrian/Import/SourceReader.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
@@ -51,13 +51,13 @@ inline constexpr uint32_t kMaxTemplateNesting = 8;
 [[nodiscard]] std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root,
                                                                        const Core::EventCatalog &catalog,
                                                                        const SourceReader &read,
-                                                                       const TextRules &rules);
+                                                                       const ScreenRules &rules);
 
 /// @brief Parses and compiles @p text, and writes the cooked blob.
 [[nodiscard]] std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
                                                                                    const Core::EventCatalog &catalog,
                                                                                    const SourceReader &read,
-                                                                                   const TextRules &rules);
+                                                                                   const ScreenRules &rules);
 
 /// @brief Checks the template library at @p vpath: its form, its imports, and
 /// every template it declares, used or not. A library cooks to nothing, so this
@@ -66,7 +66,7 @@ inline constexpr uint32_t kMaxTemplateNesting = 8;
 /// A library belongs to no screen, so none of its text is exempt from
 /// @p rules as a debug-only screen's would be.
 [[nodiscard]] std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core::EventCatalog &catalog,
-                                                            const SourceReader &read, const TextRules &rules);
+                                                            const SourceReader &read, const ScreenRules &rules);
 
 /// @brief Every library the file @p text imports, directly or through another
 /// library, sorted: what its cooked bytes depend on besides itself.

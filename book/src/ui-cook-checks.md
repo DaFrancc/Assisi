@@ -3,6 +3,9 @@
 Every one of these fails the cook with the file, line and column:
 
 - An unknown element, attribute or value.
+- A state that isn't `focused`, `hover`, `pressed` or `disabled`, two states on
+  one attribute, a state on an attribute about what an element is or does such
+  as `on_click`, or a `:` with no name on one side of it.
 - Text or child elements inside an element that can't hold them.
 - A length with an unknown unit, a `px` suffix, or a space before its unit.
 - A colour written as bare numbers, or with a channel outside its call's range.
@@ -32,6 +35,10 @@ Every one of these fails the cook with the file, line and column:
   entry the table doesn't have.
 - Text written as it is, when `requireStringKeys` is on and the screen isn't
   `debug_only`.
+- A `style` one theme `config/ui.json` lists doesn't have, a `$token` one
+  listed theme doesn't have, or one whose value in some mode its attribute
+  can't hold. A style or a token used while `ui.json` lists no theme. A state
+  on `style`, or a token for an attribute about what an element is or does.
 
 An error inside a template library names the library's file. An error about a
 node's text points at the element that wrote it, or at the `placeholder`
@@ -47,7 +54,25 @@ These fail the cook of a string table, with the line:
 Two listed tables with the same file name, or a listed table that isn't
 there, fail the cook of every screen.
 
+These fail the cook of a theme, with the line:
+
+- A root that isn't `<theme>`, an attribute on it, or anything in it but
+  `<palette>` and `<style>`.
+- No palette, a palette with no `mode`, two palettes for one mode, or a palette
+  holding anything.
+- A token one palette gives and another doesn't, a token's name that isn't
+  letters, digits and `_`, or a token's value that names another token.
+- A style with no `name`, two styles with one name, or a style holding anything.
+- A style's attribute that is unknown, belongs to one kind of control, or says
+  what a node is or does, or a value the attribute can't hold.
+- A style's `$token` the palettes don't give, or give a value in some mode its
+  attribute can't hold.
+- An `extends` naming a style the theme doesn't declare, or a chain of them
+  that comes back round to where it started.
+
+A listed theme that isn't there, or doesn't compile, fails the cook of every
+screen.
+
 ## What's next
 
-Themes, for keeping colours and sizes out of the layout, and data bindings, for
-showing values from the world, are planned next.
+Data bindings, for showing values from the world, are planned next.

@@ -7,6 +7,7 @@
 #include <Assisi/Mondrian/Utf8.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
 #include <array>
@@ -123,6 +124,59 @@ WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
     return event;
 }
 
+/// @p id and every node holding it, or none for an id naming no node.
+std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
+{
+    std::vector<NodeId> chain;
+    for (NodeId at = id; tree.IsAlive(at); at = tree.Get(at)->parent)
+    {
+        chain.push_back(at);
+    }
+    return chain;
+}
+
+/// Puts on every node of @p tree the look of each state that holds for it under
+/// @p interaction, over its resting look, and its parent's text colour where
+/// nothing it wears writes one. Parents first, so the colour a node passes on
+/// is the one it wears this frame.
+void Restyle(NodeTree &tree, const Interaction &interaction)
+{
+    // Hover and a press hold for a node and for everything holding it, so a
+    // row is hovered while the pointer is over the label inside it.
+    const std::vector<NodeId> hovered = WithAncestors(tree, interaction.pointed);
+    const std::vector<NodeId> pressed = WithAncestors(tree, interaction.pressed);
+
+    // Depth-first with an explicit stack, so a deep tree cannot overflow the
+    // call stack.
+    std::vector<NodeId> pending{tree.Root()};
+    while (!pending.empty())
+    {
+        const NodeId id = pending.back();
+        pending.pop_back();
+        Node *node = tree.Editable(id);
+        for (NodeId child = node->firstChild; child; child = tree.Get(child)->nextSibling)
+        {
+            pending.push_back(child);
+        }
+
+        StateSet holds{};
+        // Shown as the focus ring is, while the keys were used last, or always
+        // on what is being typed into: a button clicked with the mouse does
+        // not go on looking focused.
+        holds[static_cast<std::size_t>(StyleState::Focused)] =
+            interaction.focused == id && (interaction.device == InputDevice::Keys || node->takesKeyboard);
+        holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(hovered, id) != hovered.end();
+        holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(pressed, id) != pressed.end();
+        holds[static_cast<std::size_t>(StyleState::Disabled)] = !node->enabled;
+        const StylePatch worn = Restyled(node->resting, node->states, holds);
+        node->style = worn.values;
+        if (const Node *parent = tree.Get(node->parent); parent != nullptr && !worn.Writes(StyleProperty::TextColor))
+        {
+            node->style.textColor = parent->style.textColor;
+        }
+    }
+}
+
 } // namespace
 
 Ui::Ui(Core::EventQueue &universal) : _universal(universal)
@@ -137,6 +191,7 @@ Ui::~Ui() = default;
 void Ui::Adopt(Screen &screen)
 {
     _screens.push_back(&screen);
+    screen.Tree().SetTheme(_theme);
 }
 
 void Ui::Forget(Screen &screen)
@@ -329,6 +384,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     else
     {
         _session.interaction.hovered = {};
+        _session.interaction.pointed = {};
         _session.interaction.pressed = {};
         _session.interaction.activated = {};
     }
@@ -560,12 +616,14 @@ InputResult Ui::Interact(Screen &screen, const UiInput &input)
     if (input.grant == InputGrant::Nothing || input.pointerClaimed)
     {
         now.hovered = {};
+        now.pointed = {};
         now.pressed = {};
     }
     else
     {
         const NodeId hit = HitTest(tree, layout, input.pointer);
         now.hovered = CanFocus(tree, layout, hit) ? hit : NodeId{};
+        now.pointed = PointedAt(tree, layout, input.pointer);
         if (moved || input.primaryPressed)
         {
             now.device = InputDevice::Pointer;
@@ -810,6 +868,10 @@ void Ui::Sync(Extent viewport)
     {
         for (Screen *screen : DrawOrder())
         {
+            // Before layout, so a look that changes a size is placed in the
+            // frame it takes hold. Hover, presses and focus are only the input
+            // screen's, for the reason drawing gives below.
+            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{});
             ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
             // Only the screen with the keys draws anything as hovered, pressed
             // or focused. A node id means nothing on another screen, so handing
@@ -849,6 +911,60 @@ void Ui::SetStringTables(const StringTables *tables)
             }
         }
     }
+}
+
+void Ui::PutOn(const ThemeView &theme)
+{
+    _theme = theme;
+    for (Screen *screen : _screens)
+    {
+        screen->Tree().SetTheme(_theme);
+    }
+}
+
+void Ui::SetThemes(const Themes *themes)
+{
+    _themes = themes;
+    const bool any = _themes != nullptr && !_themes->listed.empty();
+    PutOn(any ? ThemeView{.theme = &_themes->listed.front(), .mode = 0} : ThemeView{});
+}
+
+std::expected<void, ThemeError> Ui::SetTheme(std::string_view vpath)
+{
+    const ListedTheme *theme = _themes != nullptr ? _themes->Find(vpath) : nullptr;
+    if (theme == nullptr)
+    {
+        Core::Log::Error("UI: no listed theme was loaded from '{}'; the theme stays as it is.", vpath);
+        return std::unexpected(ThemeError::UnknownTheme);
+    }
+    // The same variant of the new look, where it has one: a player who chose
+    // high contrast keeps it across a change of theme.
+    const std::optional<uint32_t> mode = theme->document.FindMode(GetThemeMode());
+    PutOn(ThemeView{.theme = theme, .mode = mode.value_or(0)});
+    return {};
+}
+
+std::expected<void, ThemeError> Ui::SetThemeMode(std::string_view mode)
+{
+    const std::optional<uint32_t> found =
+        _theme.theme != nullptr ? _theme.theme->document.FindMode(mode) : std::nullopt;
+    if (!found)
+    {
+        Core::Log::Error("UI: the theme '{}' has no mode '{}'; the mode stays as it is.", GetTheme(), mode);
+        return std::unexpected(ThemeError::UnknownMode);
+    }
+    PutOn(ThemeView{.theme = _theme.theme, .mode = *found});
+    return {};
+}
+
+std::string_view Ui::GetTheme() const
+{
+    return _theme.theme != nullptr ? std::string_view{_theme.theme->vpath} : std::string_view{};
+}
+
+std::string_view Ui::GetThemeMode() const
+{
+    return _theme.theme != nullptr ? _theme.theme->document.modes[_theme.mode].View() : std::string_view{};
 }
 
 std::string Ui::StringFor(std::string_view qualified) const

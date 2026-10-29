@@ -4,13 +4,17 @@
 
 #include "MarkupValues.hpp"
 #include "ScreenAttributes.hpp"
+#include "ThemeTokens.hpp"
 
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian::Import
 {
@@ -411,6 +415,39 @@ std::expected<void, MarkupError> ApplyFocus(Walk &walk, uint32_t index, const Ma
     return {};
 }
 
+/// `style`, which names a style every theme the project lists must have.
+std::expected<void, MarkupError> ApplyStyleName(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::string &name = attribute.value;
+    if (name.empty())
+    {
+        node.styleName = {};
+        return {};
+    }
+    if (walk.rules.themes.empty())
+    {
+        return std::unexpected(At(attribute, "the style '" + name + "' is named, and " + std::string{kUiConfigPath} +
+                                                 " lists no theme to hold it. List one under \"themes\"."));
+    }
+    for (const ProjectTheme &theme : walk.rules.themes)
+    {
+        const ThemeDocument &document = theme.compiled.document;
+        if (document.FindStyle(name) == nullptr)
+        {
+            std::string message = "the theme '" + theme.vpath + "' has no style '" + name + "'.";
+            for (std::size_t style = 0; style < document.styles.size(); ++style)
+            {
+                message += style == 0 ? " Its styles are: " : ", ";
+                message += document.styles[style].name.View();
+            }
+            message += document.styles.empty() ? "" : ".";
+            return std::unexpected(At(attribute, std::move(message)));
+        }
+    }
+    node.styleName = Core::InternedString{name};
+    return {};
+}
+
 /// An attribute the table leaves to this file, with its parameters replaced.
 std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, HandledAttribute handled,
                                               const MarkupAttribute &attribute)
@@ -431,20 +468,12 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
         return ApplyFocus(walk, index, attribute);
     case HandledAttribute::Pattern:
         return ApplyPattern(walk.document, node, attribute);
+    case HandledAttribute::StyleName:
+        return ApplyStyleName(walk, node, attribute);
     case HandledAttribute::Background:
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
-    {
-        // A colour's likeliest mistakes each have one fix to name, which a
-        // table entry saying only "bad value" could not.
-        const ParsedColor read = ParseColor(attribute.value);
-        if (!read)
-        {
-            return std::unexpected(At(attribute, read.error()));
-        }
-        ColorField(node.style, handled) = *read;
-        return {};
-    }
+        return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
     case HandledAttribute::None:
@@ -453,6 +482,82 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     }
     return {};
 }
+
+/// The look node @p node has in @p state, made empty if it has none yet.
+ThemedPatch &LookIn(ScreenNode &node, StyleState state)
+{
+    std::vector<ThemedPatch>::iterator look =
+        std::ranges::find_if(node.states, [state](const ThemedPatch &held) { return held.patch.state == state; });
+    if (look == node.states.end())
+    {
+        ThemedPatch empty;
+        empty.patch.state = state;
+        node.states.push_back(std::move(empty));
+        look = std::prev(node.states.end());
+    }
+    return *look;
+}
+
+/// The use of a token @p attribute writes for @p property, once every theme
+/// the project lists gives it a value that property can hold in every mode.
+std::expected<TokenUse, MarkupError> UseToken(const Walk &walk, StyleProperty property,
+                                              const MarkupAttribute &attribute)
+{
+    const std::expected<std::string_view, MarkupError> token = TokenNamed(attribute);
+    if (!token)
+    {
+        return std::unexpected(token.error());
+    }
+    if (walk.rules.themes.empty())
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' is a token, and " + std::string{kUiConfigPath} +
+                                                 " lists no theme to give it a value. List one under \"themes\"."));
+    }
+    for (const ProjectTheme &theme : walk.rules.themes)
+    {
+        if (const std::expected<void, MarkupError> checked =
+                CheckToken(theme.compiled, "the theme '" + theme.vpath + "'", *token, property, attribute);
+            !checked)
+        {
+            return std::unexpected(checked.error());
+        }
+    }
+    return TokenUse{.token = Core::InternedString{*token}, .property = property};
+}
+
+/// @p attribute read into the look node @p index has in @p state, over what
+/// that look already writes.
+std::expected<void, MarkupError> ApplyLook(Walk &walk, uint32_t index, StyleState state, const AttributeSpec &spec,
+                                           const MarkupAttribute &attribute)
+{
+    ThemedPatch &look = LookIn(walk.document.nodes[index], state);
+    if (NamesToken(attribute.value))
+    {
+        const std::expected<TokenUse, MarkupError> use = UseToken(walk, *spec.property, attribute);
+        if (!use)
+        {
+            return std::unexpected(use.error());
+        }
+        look.Bind(*use);
+        return {};
+    }
+    Style written = look.patch.values;
+    if (const std::expected<void, MarkupError> read = ApplyStyleAttribute(spec, attribute, written); !read)
+    {
+        return read;
+    }
+    look.Take(*spec.property, written);
+    return {};
+}
+
+/// Records that node @p node writes @p property itself, with a value written
+/// out, so neither its named style nor a token it took before fills it.
+void WriteOwn(ScreenNode &node, StyleProperty property)
+{
+    node.written |= PropertyBit(property);
+    std::erase_if(node.tokens, [property](const TokenUse &use) { return use.property == property; });
+}
+
 
 /// Whether the step @p element writes, if it writes one, has a value in the
 /// scope open now. In a template's own check, one naming a parameter with no
@@ -562,10 +667,27 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        const AttributeSpec *const spec = FindAttribute(written.name, node.widget, isRoot);
+        const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
+        if (!state)
+        {
+            return std::unexpected(state.error());
+        }
+        const std::string_view name = *state ? AfterPrefix(written.name) : std::string_view{written.name};
+        const AttributeSpec *const spec = FindAttribute(name, node.widget, isRoot);
         if (spec == nullptr)
         {
             return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
+        }
+        if (*state && spec->handled == HandledAttribute::StyleName)
+        {
+            return std::unexpected(At(written, "a node names one style, which holds its own look for each state. "
+                                               "Write the state on the style's attributes instead."));
+        }
+        if (*state && !spec->property)
+        {
+            return std::unexpected(At(written, "'" + std::string{name} +
+                                                   "' says what the node is or does rather than how it looks, so it "
+                                                   "cannot be given a state."));
         }
 
         // Read as written: which parts of a call came from parameters decides
@@ -591,11 +713,31 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             continue;
         }
         MarkupAttribute attribute = written;
+        attribute.name = name;
         attribute.value = substituted->text;
 
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        if (*state)
+        {
+            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, **state, *spec, attribute); !look)
+            {
+                return look;
+            }
+            continue;
+        }
+        if (spec->property && NamesToken(attribute.value))
+        {
+            const std::expected<TokenUse, MarkupError> use = UseToken(walk, *spec->property, attribute);
+            if (!use)
+            {
+                return std::unexpected(use.error());
+            }
+            WriteOwn(node, use->property);
+            node.tokens.push_back(*use);
+            continue;
         }
         if (spec->handled != HandledAttribute::None)
         {
@@ -604,12 +746,18 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             {
                 return handled;
             }
-            continue;
         }
-        if (!spec->apply(AttributeTarget{.document = walk.document, .node = node}, attribute.value))
+        else if (!spec->apply(AttributeTarget{.document = walk.document, .node = node, .style = node.style},
+                              attribute.value))
         {
-            return std::unexpected(
-                At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
+            return std::unexpected(At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name +
+                                                     "' can hold." + (NamesToken(attribute.value)
+                                                                          ? " A token gives only how a node looks."
+                                                                          : "")));
+        }
+        if (spec->property)
+        {
+            WriteOwn(node, *spec->property);
         }
     }
     return {};
@@ -650,6 +798,10 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     node.widget = kind.widget;
     Seed(node);
     node.style.direction = kind.direction;
+    if (kind.namesDirection)
+    {
+        node.written |= PropertyBit(StyleProperty::Direction);
+    }
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
     walk.document.nodes.push_back(std::move(node));
 
@@ -792,6 +944,10 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     // are written over.
     Seed(node);
     node.style.direction = kind->direction;
+    if (kind->namesDirection)
+    {
+        node.written |= PropertyBit(StyleProperty::Direction);
+    }
 
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
     walk.document.nodes.push_back(std::move(node));

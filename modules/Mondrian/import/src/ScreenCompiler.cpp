@@ -37,7 +37,7 @@ void PackText(ScreenDocument &document)
 } // namespace
 
 std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root, const Core::EventCatalog &catalog,
-                                                         const SourceReader &read, const TextRules &rules)
+                                                         const SourceReader &read, const ScreenRules &rules)
 {
     if (root.name == kTemplatesElement)
     {
@@ -121,7 +121,7 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
 
 std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
                                                                      const Core::EventCatalog &catalog,
-                                                                     const SourceReader &read, const TextRules &rules)
+                                                                     const SourceReader &read, const ScreenRules &rules)
 {
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     if (!parsed)

@@ -55,8 +55,9 @@ std::filesystem::path FreshRoot(std::string_view name);
 
 /// A player: a character with a camera, both sent to every client whole. The
 /// client that plays it predicts both, so the host's copies of them arriving
-/// late never set its own back.
-void WritePlayerBlueprint(const std::filesystem::path &root);
+/// late never set its own back. @p movement names the character's movement
+/// component.
+void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view movement = "SourceMovement");
 
 /// One machine: its world, its session, its players, and its own fixed-step
 /// clock and tick, since a client runs a little faster or slower than the host.

@@ -2,32 +2,40 @@
   "entities": [
     {
       "components": {
-        "Character": {
+        "ArcadeMovement": {
           "airAcceleration": 10.0,
-          "airWishSpeedCap": 0.5715,
-          "bunnyHop": 1,
-          "bunnyHopSpeedCap": 1.7,
+          "airBrakingDeceleration": 10.0,
+          "brakingDeceleration": 60.0,
+          "groundAcceleration": 60.0,
+          "turnFriction": 0.0
+        },
+        "Character": {
           "collidesWith": "All",
-          "coyoteTime": 0.1,
           "crouchEyeHeight": 0.9,
           "crouchHalfHeight": 0.3,
-          "crouchSpeedScale": 0.333,
           "eyeHeight": 1.5,
           "eyeSpeed": 3.0,
-          "friction": 4.0,
-          "gravityScale": 1.165,
-          "groundAcceleration": 10.0,
           "halfHeight": 0.6,
-          "jumpBufferTime": 0.15,
-          "jumpSpeed": 3.05,
           "mass": 70.0,
           "maxSlopeDegrees": 50.0,
           "maxStepHeight": 0.4,
           "options": "All",
           "pushStrength": 100.0,
-          "radius": 0.3,
-          "stopSpeed": 1.905,
-          "walkSpeed": 3.62
+          "radius": 0.3
+        },
+        "CharacterLocomotion": {
+          "canSprint": true,
+          "coyoteTime": 0.1,
+          "crouchSpeedScale": 0.4,
+          "gravityScale": 1.0,
+          "jumpBufferTime": 0.15,
+          "jumpSpeed": 4.5,
+          "maxFallSpeed": 0.0,
+          "preset": 1,
+          "sprintInAir": false,
+          "sprintMaxAngle": 50.0,
+          "sprintSpeedScale": 1.6,
+          "walkSpeed": 5.0
         },
         "Player": {},
         "Replicated": {},

@@ -141,14 +141,26 @@ inline ECS::Entity AddChildCollider(ECS::Scene &scene, ECS::Entity parent, glm::
     return entity;
 }
 
-/// A character standing with its feet at @p feet.
+/// A character standing with its feet at @p feet, walking by @p movement, a
+/// SourceMovement or an ArcadeMovement.
+template <typename Movement = Physics::SourceMovement>
 inline ECS::Entity AddCharacter(ECS::Scene &scene, glm::vec3 feet,
-                                const Physics::Character &character = Physics::Character{})
+                                const Physics::Character &character = Physics::Character{},
+                                const Physics::CharacterLocomotion &locomotion = Physics::CharacterLocomotion{},
+                                const Movement &movement = Movement{})
 {
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, ECS::Transform{.position = feet}) != nullptr);
     REQUIRE(scene.Add(entity, character) != nullptr);
+    REQUIRE(scene.Add(entity, locomotion) != nullptr);
+    REQUIRE(scene.Add(entity, movement) != nullptr);
     return entity;
+}
+
+/// A CharacterLocomotion whose own fields are read, rather than a preset's.
+inline Physics::CharacterLocomotion CustomLocomotion()
+{
+    return Physics::CharacterLocomotion{.preset = Physics::LocomotionPreset::Custom};
 }
 
 /// What @p character's last step left behind.
@@ -164,12 +176,19 @@ inline Physics::CharacterState StateOf(const ECS::Scene &scene, ECS::Entity char
 /// speed for the stance it is in, so it is divided by that here.
 inline void Drive(ECS::Scene &scene, ECS::Entity character, glm::vec3 wishVelocity, bool jump)
 {
-    const Physics::Character &tuning = *scene.Get<Physics::Character>(character);
+    const Physics::LocomotionSettings tuning =
+        Physics::ToLocomotionSettings(*scene.Get<Physics::CharacterLocomotion>(character));
     const bool crouching = StateOf(scene, character).stance == Physics::Stance::Crouching;
     const float speed = crouching ? tuning.walkSpeed * tuning.crouchSpeedScale : tuning.walkSpeed;
     Physics::CharacterIntent &intent = *scene.GetMut<Physics::CharacterIntent>(character);
     intent.move = speed > 0.f ? wishVelocity / speed : glm::vec3(0.f);
     intent.jump = intent.jump || jump;
+}
+
+/// @p character's walk speed, as its CharacterLocomotion's preset gives it.
+inline float WalkSpeedOf(const ECS::Scene &scene, ECS::Entity character)
+{
+    return Physics::ToLocomotionSettings(*scene.Get<Physics::CharacterLocomotion>(character)).walkSpeed;
 }
 
 /// Asks @p character for @p stance and applies it now, through a reconcile.

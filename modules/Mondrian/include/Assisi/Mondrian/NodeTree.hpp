@@ -13,6 +13,7 @@
 #include <Assisi/Mondrian/NodeId.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <Assisi/Core/EventRoute.hpp>
@@ -53,7 +54,16 @@ enum class NameError : uint8_t
 /// @brief One slot: a box with optional text or image.
 struct Node
 {
+    /// How the node looks this frame: its resting look, with the look of each
+    /// state that holds put on over it, and its parent's text colour where
+    /// nothing it wears writes one. What layout and drawing read.
     Style style;
+    /// How it looks while no state holds, under the tree's theme, and which
+    /// properties anything wrote.
+    StylePatch resting;
+    /// How it asks to look, which the tree resolves against its theme into
+    /// resting and states whenever either changes.
+    NodeLook look;
     std::string text;
     std::string name;
     /// The string table key the text came from, `table:key`, so new tables can
@@ -72,6 +82,9 @@ struct Node
     /// Pushes this node's event when what it holds is finished rather than
     /// merely changed: Enter in a field. Empty for none.
     std::function<void(const Core::EventRoute &, const Node &)> onSubmit;
+    /// How it looks in each state it has a look for under the tree's theme, at
+    /// most one per state.
+    std::vector<StylePatch> states;
     /// Where the caret is and what may be typed, on a node holding text.
     TextEdit edit;
     /// What the control on this node holds; nothing on a node that is none.
@@ -139,7 +152,22 @@ class NodeTree
     /// takes the name off.
     [[nodiscard]] std::expected<void, NameError> SetName(NodeId id, std::string_view name);
     void SetVisible(NodeId id, bool visible);
+    /// @brief How @p id looks while no state holds, every property of it the
+    /// node's own: a style it names gives way to all of it, and it takes no
+    /// token. It wears it at once, until the UI next puts on the looks of the
+    /// states that hold.
     void SetStyle(NodeId id, const Style &style);
+    /// @brief How @p id looks in @p look's state, replacing the look it had for
+    /// it. A look that writes nothing takes the state's look off.
+    void SetStateStyle(NodeId id, const StylePatch &look);
+    /// @brief How @p id asks to look, whole: what it writes itself at rest and
+    /// in each state, and the style and tokens it takes from the theme.
+    void SetLook(NodeId id, NodeLook look);
+    /// @brief The theme every node's look is resolved against, and every node
+    /// resolved against it now. The theme must outlive the tree or be replaced
+    /// first.
+    void SetTheme(const ThemeView &theme);
+    [[nodiscard]] const ThemeView &GetTheme() const { return _theme; }
     /// @brief Draws @p texture over @p uv across the node, over its background.
     void SetImage(NodeId id, TextureId texture, const Rect &uv);
     void ClearImage(NodeId id);
@@ -203,10 +231,14 @@ class NodeTree
   private:
     Node *GetMutable(NodeId id);
     void Unlink(NodeId id);
+    /// Resolves @p node's look against the tree's theme, and has it wear the
+    /// result at rest until the UI next restyles it.
+    void Relook(Node &node) const;
 
     WidgetRegistry _widgets;
     std::vector<Node> _slots;
     std::vector<uint32_t> _free;
+    ThemeView _theme;
     NodeId _root;
 };
 

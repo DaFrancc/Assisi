@@ -293,7 +293,7 @@ std::expected<void, MarkupError> ApplyImports(TemplateFile &into, Libraries &lib
 }
 
 std::expected<void, MarkupError> CheckLibrary(std::string_view vpath, const Core::EventCatalog &catalog,
-                                              const SourceReader &read, const TextRules &rules)
+                                              const SourceReader &read, const ScreenRules &rules)
 {
     const std::expected<std::string, std::string> text = read(vpath);
     if (!text)

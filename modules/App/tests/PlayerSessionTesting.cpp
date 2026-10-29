@@ -53,10 +53,12 @@ std::filesystem::path FreshRoot(std::string_view name)
     return root;
 }
 
-void WritePlayerBlueprint(const std::filesystem::path &root)
+void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view movement)
 {
     const nlohmann::json body = {{"Transform", Pose(0.f)},
         {"Character", nlohmann::json::object()},
+        {"CharacterLocomotion", nlohmann::json::object()},
+        {std::string(movement), nlohmann::json::object()},
         {"Player", nlohmann::json::object()},
         {"Replicated", nlohmann::json::object()}};
     const nlohmann::json eye = {{"Transform", Pose(1.5f)},

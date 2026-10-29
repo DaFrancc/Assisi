@@ -7,10 +7,9 @@
 /// A character is not a rigid body being pushed around. Rigid body physics has
 /// no concept of a step height, skates down slopes it should hold on, and turns
 /// a jump into a guess about impulses. A character is swept through the world
-/// instead, under rules this file owns: lose speed to the ground, gain it along
-/// the direction asked for, keep in the air whatever it left the ground with,
-/// climb what is short enough, slide off what is too steep, and stay on the floor
-/// while walking down stairs.
+/// instead, under rules this file owns: speed up and slow down the way its
+/// SourceMovement or ArcadeMovement says, climb what is short enough, slide off
+/// what is too steep, and stay on the floor while walking down stairs.
 ///
 /// All of that lives here rather than in a gameplay system because it needs the
 /// ground state the sweep produces, and that is stale by a tick anywhere else.
@@ -34,6 +33,7 @@
 #include <Jolt/Physics/StateRecorder.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -103,10 +103,42 @@ JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed)
     return velocity * (maxSpeed / speed);
 }
 
-JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded,
-                                                     float deltaTime) const
+JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta)
 {
-    const JPH::Vec3 slowed = grounded ? ApplyFriction(velocity, friction, stopSpeed, deltaTime) : velocity;
+    const JPH::Vec3 delta = to - from;
+    const float length = delta.Length();
+    if (length <= maxDelta)
+    {
+        return to;
+    }
+    return from + delta * (maxDelta / length);
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing,
+                                                     bool jumping, float deltaTime) const
+{
+    switch (movement)
+    {
+    case MovementModel::Source:
+        // A character that jumps this step has already left the ground as far
+        // as movement goes: it takes no friction and steers by the air rules.
+        // That is what lets a jump on the landing step keep its speed.
+        return SteerSource(velocity, wish, standing && !jumping, deltaTime);
+    case MovementModel::Arcade:
+        return SteerArcade(velocity, wish, standing, deltaTime);
+    case MovementModel::None:
+    case MovementModel::Count_:
+        break;
+    }
+    // Still on what it stands on, and carried on by what it had in the air.
+    return standing ? JPH::Vec3::sZero() : JPH::Vec3(velocity);
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::SteerSource(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded,
+                                                           float deltaTime) const
+{
+    const JPH::Vec3 slowed =
+        grounded ? ApplyFriction(velocity, source.friction, source.stopSpeed, deltaTime) : JPH::Vec3(velocity);
 
     const float wishSpeed = wish.Length();
     if (wishSpeed < kMinWishSpeed)
@@ -117,27 +149,107 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::Steer(JPH::Vec3Arg velocity, JPH:
 
     if (grounded)
     {
-        return Accelerate(slowed, wishDirection, wishSpeed, groundAcceleration * wishSpeed * deltaTime);
+        return Accelerate(slowed, wishDirection, wishSpeed, source.groundAcceleration * wishSpeed * deltaTime);
     }
 
     // The target is cut down and the gain is not. A request held straight ahead
     // is already past the small target and adds nothing; one turned away from
     // the velocity is short of it every step and keeps adding at the full rate.
-    return Accelerate(slowed, wishDirection, glm::min(wishSpeed, airWishSpeedCap),
-                      airAcceleration * wishSpeed * deltaTime);
+    return Accelerate(slowed, wishDirection, glm::min(wishSpeed, source.airWishSpeedCap),
+                      source.airAcceleration * wishSpeed * deltaTime);
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::SteerArcade(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing,
+                                                           float deltaTime) const
+{
+    const float wishSpeed = wish.Length();
+    if (wishSpeed < kMinWishSpeed)
+    {
+        const float braking = standing ? arcade.brakingDeceleration : arcade.airBrakingDeceleration;
+        return MoveToward(velocity, JPH::Vec3::sZero(), braking * deltaTime);
+    }
+
+    // Turned about up toward the direction asked for, by a share of the angle
+    // between them, so a turn keeps the speed it had instead of braking and
+    // accelerating again. Blending the two vectors would cut the corner and
+    // slow it through the turn.
+    JPH::Vec3 turned = velocity;
+    if (standing && arcade.turnFriction > 0.f)
+    {
+        const float angle = std::atan2(velocity.Cross(wish).Dot(kCharacterUp), velocity.Dot(wish));
+        const float share = glm::min(arcade.turnFriction * deltaTime, 1.f);
+        turned = JPH::Quat::sRotation(kCharacterUp, angle * share) * velocity;
+    }
+
+    const float acceleration = standing ? arcade.groundAcceleration : arcade.airAcceleration;
+    return MoveToward(turned, wish, acceleration * deltaTime);
+}
+
+JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const
+{
+    if (movement != MovementModel::Source)
+    {
+        return velocity;
+    }
+    return source.bunnyHop == BunnyHopPolicy::Boost ? BoostTakeOff(velocity, wish)
+                                                    : LimitSpeed(velocity, TakeOffSpeedLimit());
+}
+
+bool PhysicsWorld::Impl::CharacterRecord::Sprints(const CharacterIntent &intent, bool standing) const
+{
+    // A crouch rules a sprint out rather than scaling it.
+    if (!canSprint || stance == Stance::Crouching)
+    {
+        return false;
+    }
+
+    if (!standing && !sprintInAir)
+    {
+        return sprinting;
+    }
+
+    const glm::vec2 asked{intent.move.x, intent.move.z};
+    const float askedLength = glm::length(asked);
+    if (!intent.sprint || askedLength < kMinSprintMove)
+    {
+        return false;
+    }
+    // With no way it faces along the ground, there is no forward to measure
+    // the direction asked for against.
+    const glm::vec2 forward{facing.x, facing.z};
+    const float forwardLength = glm::length(forward);
+    if (forwardLength < kMinSprintMove)
+    {
+        return true;
+    }
+    const float agreement = glm::dot(asked / askedLength, forward / forwardLength);
+    return glm::clamp(agreement, -1.f, 1.f) >= sprintMinCosine;
+}
+
+float PhysicsWorld::Impl::CharacterRecord::ScaledWalkSpeed() const
+{
+    return locomotion.walkSpeed * (sprinting ? sprintSpeedScale : 1.f) * lastIntent.speedScale;
 }
 
 float PhysicsWorld::Impl::CharacterRecord::TakeOffSpeedLimit() const
 {
-    if (bunnyHop == BunnyHopPolicy::Cap)
+    if (source.bunnyHop == BunnyHopPolicy::Cap)
     {
-        return bunnyHopSpeedCap * walkSpeed;
+        return source.bunnyHopSpeedCap * ScaledWalkSpeed();
     }
-    if (bunnyHop == BunnyHopPolicy::Disallow)
+    if (source.bunnyHop == BunnyHopPolicy::Disallow)
     {
-        return walkSpeed;
+        return ScaledWalkSpeed();
     }
     return std::numeric_limits<float>::max();
+}
+
+bool PhysicsWorld::Impl::CharacterRecord::MayJump() const
+{
+    // Late within coyote time, but only once per time in the air: without the
+    // flag, a character that jumped inside the coyote window would still be
+    // inside it on the next step and jump again.
+    return movement != MovementModel::None && !jumpedSinceGrounded && timeSinceGrounded <= coyoteTime;
 }
 
 JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::BoostTakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const
@@ -148,7 +260,7 @@ JPH::Vec3 PhysicsWorld::Impl::CharacterRecord::BoostTakeOff(JPH::Vec3Arg velocit
 
     const float boost = stance == Stance::Crouching ? kJumpBoostCrouching : kJumpBoostStanding;
     const float forwardMove = wish.Dot(forward);
-    const float maxSpeed = walkSpeed * (1.f + boost);
+    const float maxSpeed = ScaledWalkSpeed() * (1.f + boost);
 
     // The excess is taken out of the boost, so a character already over the
     // limit gets a negative one. It is applied along the facing whichever way
@@ -248,6 +360,10 @@ void PhysicsWorld::Impl::StepCharacter(CharacterRecord &record, float deltaTime)
     {
         intent.move = glm::vec3(0.f);
     }
+    if (!std::isfinite(intent.speedScale) || intent.speedScale < 0.f)
+    {
+        intent.speedScale = 0.f;
+    }
     if (const ECS::Transform *transform = scene.Get<ECS::Transform>(record.entity); transform != nullptr)
     {
         record.facing = transform->rotation * glm::vec3(0.f, 0.f, -1.f);
@@ -336,8 +452,11 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
 
     // The crouch speed applies to the stance the character reached, not the
     // one it asked for, so one held under a ledge walks crouched.
+    const LocomotionSettings &locomotion = record.locomotion;
+    const bool crouching = record.stance == Stance::Crouching;
+    record.sprinting = record.Sprints(intent, standing);
     const float speed =
-        record.stance == Stance::Crouching ? record.walkSpeed * record.crouchSpeedScale : record.walkSpeed;
+        crouching ? record.ScaledWalkSpeed() * locomotion.crouchSpeedScale : record.ScaledWalkSpeed();
     const glm::vec3 wishVelocity = intent.move * speed;
 
     const float currentUpSpeed = currentVelocity.Dot(kCharacterUp);
@@ -345,6 +464,10 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
 
     if (standing)
     {
+        if (record.jumpedSinceGrounded || record.timeSinceGrounded >= kLandingAirTime)
+        {
+            ++record.landings;
+        }
         record.timeSinceGrounded = 0.f;
         record.jumpedSinceGrounded = false;
     }
@@ -361,16 +484,12 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
         record.jumpBufferRemaining = record.jumpBufferTime;
     }
     const bool pending = intent.jump || record.jumpBufferRemaining > 0.f;
-
-    // A jump may fire late (coyote time) but only once per time in the air:
-    // without the flag, a character that jumped inside the coyote window
-    // would still be inside it on the next step and jump again.
-    const bool mayJump = !record.jumpedSinceGrounded && record.timeSinceGrounded <= record.coyoteTime;
-    const bool jumping = pending && mayJump;
+    const bool jumping = pending && record.MayJump();
     if (jumping)
     {
         record.jumpedSinceGrounded = true;
         record.jumpBufferRemaining = 0.f;
+        ++record.jumps;
     }
     else
     {
@@ -400,26 +519,27 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
 
     if (jumping)
     {
-        relativeHorizontal = record.bunnyHop == BunnyHopPolicy::Boost
-                                 ? record.BoostTakeOff(relativeHorizontal, wish)
-                                 : LimitSpeed(relativeHorizontal, record.TakeOffSpeedLimit());
+        relativeHorizontal = record.TakeOff(relativeHorizontal, wish);
     }
 
-    // A character that jumps this step has already left the ground as far
-    // as movement goes: it takes no friction and steers by the air rules.
-    // That is what lets a jump on the landing step keep its speed.
-    const bool grounded = standing && !jumping;
-    const JPH::Vec3 steered = record.Steer(relativeHorizontal, wish, grounded, deltaTime);
+    const JPH::Vec3 steered = record.Steer(relativeHorizontal, wish, standing, jumping, deltaTime);
 
     JPH::Vec3 newVelocity = reference - kCharacterUp * reference.Dot(kCharacterUp) + steered +
                             kCharacterUp * (standing ? groundUpSpeed : currentUpSpeed);
     if (jumping)
     {
-        newVelocity += kCharacterUp * record.jumpSpeed;
+        newVelocity += kCharacterUp * locomotion.jumpSpeed;
     }
 
-    const JPH::Vec3 gravity = physicsSystem.GetGravity() * record.gravityScale;
+    const JPH::Vec3 gravity = physicsSystem.GetGravity() * locomotion.gravityScale;
     newVelocity += gravity * deltaTime;
+
+    // After gravity, so a long fall reaches the limit and holds it.
+    const float fallingSpeed = -newVelocity.Dot(kCharacterUp);
+    if (record.maxFallSpeed > 0.f && fallingSpeed > record.maxFallSpeed)
+    {
+        newVelocity += kCharacterUp * (fallingSpeed - record.maxFallSpeed);
+    }
     character.SetLinearVelocity(newVelocity);
 
     JPH::CharacterVirtual::ExtendedUpdateSettings settings;
@@ -574,9 +694,12 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
                           .jumpBufferRemaining = record->jumpBufferRemaining,
                           .eyeHeight = record->eyeHeight,
                           .graceRemaining = record->graceRemaining,
+                          .jumps = record->jumps,
+                          .landings = record->landings,
                           .stance = record->stance,
                           .ground = state.ground,
                           .jumpedSinceGrounded = record->jumpedSinceGrounded,
+                          .sprinting = record->sprinting,
                           .leavingBase = record->leavingBase,
                           .basedByIntent = record->basedByIntent,
                           .withGround = record->withGround};
@@ -656,6 +779,9 @@ void PhysicsWorld::RewindCharacter(ECS::Entity entity, const CharacterFrame &fra
     record->jumpBufferRemaining = frame.jumpBufferRemaining;
     record->eyeHeight = frame.eyeHeight;
     record->jumpedSinceGrounded = frame.jumpedSinceGrounded;
+    record->sprinting = frame.sprinting;
+    record->jumps = frame.jumps;
+    record->landings = frame.landings;
     record->lastGroundVelocity = ToJoltVector(frame.lastGroundVelocity);
 
     // Back on the base it rode then, if that is still a body; with none, it
@@ -1318,29 +1444,49 @@ void PhysicsWorld::Impl::CharacterRecord::Retune(const Character &tuning)
     // them.
     queryFilter = CharacterFilter(tuning).Without(CollisionChannel::Trigger);
 
-    jumpSpeed = tuning.jumpSpeed;
-    walkSpeed = tuning.walkSpeed;
-    crouchSpeedScale = tuning.crouchSpeedScale;
-    friction = tuning.friction;
-    stopSpeed = tuning.stopSpeed;
-    groundAcceleration = tuning.groundAcceleration;
-    airAcceleration = tuning.airAcceleration;
-    airWishSpeedCap = tuning.airWishSpeedCap;
-    bunnyHopSpeedCap = tuning.bunnyHopSpeedCap;
-    bunnyHop = tuning.bunnyHop;
     standingEyeHeight = tuning.eyeHeight;
     crouchEyeHeight = tuning.crouchEyeHeight;
     eyeSpeed = tuning.eyeSpeed;
     stanceLift = 2.f * (standingHeight - CharacterHalfHeight(tuning.radius, clampedCrouch));
-    gravityScale = tuning.gravityScale;
-    coyoteTime = tuning.coyoteTime;
-    jumpBufferTime = tuning.jumpBufferTime;
     maxStepHeight = glm::min(tuning.maxStepHeight, standingHeight * kMaxStepHeightFraction);
     radius = tuning.radius;
     standingHalfHeight = tuning.halfHeight;
     crouchHalfHeight = clampedCrouch;
     mass = tuning.mass;
     options = tuning.options;
+}
+
+void PhysicsWorld::Impl::CharacterRecord::RetuneMovement(const CharacterLocomotion *locomotionTuning,
+                                                         const SourceMovement *sourceTuning,
+                                                         const ArcadeMovement *arcadeTuning)
+{
+    movement = MovementModel::None;
+    if (sourceTuning != nullptr)
+    {
+        movement = MovementModel::Source;
+    }
+    else if (arcadeTuning != nullptr)
+    {
+        movement = MovementModel::Arcade;
+    }
+    source = sourceTuning != nullptr ? *sourceTuning : SourceMovement{};
+    arcade = arcadeTuning != nullptr ? *arcadeTuning : ArcadeMovement{};
+
+    const CharacterLocomotion shared = locomotionTuning != nullptr ? *locomotionTuning : CharacterLocomotion{};
+    locomotion = movement == MovementModel::None ? kNoLocomotion : ToLocomotionSettings(shared);
+    coyoteTime = shared.coyoteTime;
+    jumpBufferTime = shared.jumpBufferTime;
+    maxFallSpeed = movement == MovementModel::None ? 0.f : shared.maxFallSpeed;
+    canSprint = movement != MovementModel::None && shared.canSprint;
+    sprintInAir = shared.sprintInAir;
+    sprintSpeedScale = shared.sprintSpeedScale;
+    sprintMinCosine = std::cos(glm::radians(glm::clamp(shared.sprintMaxAngle, 0.f, kMaxSprintAngleDegrees)));
+}
+
+void PhysicsWorld::Impl::ReadMovement(CharacterRecord &record) const
+{
+    record.RetuneMovement(scene.Get<CharacterLocomotion>(record.entity), scene.Get<SourceMovement>(record.entity),
+                          scene.Get<ArcadeMovement>(record.entity));
 }
 
 PhysicsWorld::Impl::CharacterRecord *PhysicsWorld::Impl::FindCharacter(ECS::Entity entity)
@@ -1440,6 +1586,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     CharacterRecord record;
     record.entity = entity;
     record.Retune(tuning);
+    ReadMovement(record);
     record.eyeHeight = tuning.eyeHeight;
     if (!BuildCharacterVirtual(record, tuning, pose))
     {
@@ -1478,6 +1625,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
                          !Math::Identical(crouchHalfHeight, record.crouchHalfHeight);
 
     record.Retune(tuning);
+    ReadMovement(record);
 
     // Before either path: a resize builds the inner body on the new layer
     // already, and other characters read what this one is from here.
@@ -1606,7 +1754,13 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
     state.timeSinceGrounded = record.timeSinceGrounded;
     state.eyeHeight = record.eyeHeight;
     state.stance = record.stance;
-    state.canJump = !record.jumpedSinceGrounded && record.timeSinceGrounded <= record.coyoteTime;
+    state.canJump = record.MayJump();
+    state.sprinting = record.sprinting;
+    state.jumps = record.jumps;
+    state.landings = record.landings;
+
+    const JPH::Vec3 across = velocity - groundVelocity;
+    state.groundSpeed = (across - kCharacterUp * across.Dot(kCharacterUp)).Length();
 
     // Every enumerator is spelled out rather than defaulted, so a Jolt release
     // that adds one fails the build here instead of silently reading as InAir.

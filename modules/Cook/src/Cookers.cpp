@@ -23,10 +23,12 @@
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -605,8 +607,8 @@ class ScreenCooker final : public Cooker
     {
         // Editing a library changes every screen built from it without
         // touching the screen this is keyed on; so does editing a string
-        // table, or the settings that say which tables there are. A file not
-        // there yet counts for nothing, so listing one later re-cooks too.
+        // table or a theme, or the settings that say which there are. A file
+        // not there yet counts for nothing, so listing one later re-cooks too.
         if (!HasExtension(vpath, ".amdn"))
         {
             return {};
@@ -626,6 +628,10 @@ class ScreenCooker final : public Cooker
             {
                 dependencies.emplace_back(table.View());
             }
+            for (const Core::AssetPath &theme : config->themes)
+            {
+                dependencies.emplace_back(theme.View());
+            }
         }
         return dependencies;
     }
@@ -636,8 +642,8 @@ class ScreenCooker final : public Cooker
         {
             return {};
         }
-        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
-            Mondrian::Import::LoadTextRules(ReadMarkup);
+        const std::expected<Mondrian::Import::ScreenRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadScreenRules(ReadMarkup);
         if (!rules)
         {
             return std::unexpected(Failure(vpath, Where(rules.error())));
@@ -660,14 +666,48 @@ class ScreenCooker final : public Cooker
             return std::unexpected(Failure(vpath, "could not be read"));
         }
 
-        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
-            Mondrian::Import::LoadTextRules(ReadMarkup);
+        const std::expected<Mondrian::Import::ScreenRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadScreenRules(ReadMarkup);
         if (!rules)
         {
             return std::unexpected(Failure(vpath, Where(rules.error())));
         }
         const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
             Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance(), ReadMarkup, *rules);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
+        }
+        return *cooked;
+    }
+};
+
+/// `.amth` themes: palette modes of tokens and named styles, every value parsed
+/// here, so the game reads none.
+class ThemeCooker final : public Cooker
+{
+  public:
+    [[nodiscard]] std::string_view Name() const override { return "theme"; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kThemeKind; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        // The layout as well as the framing version, as a screen's: a field
+        // added to Style changes what every theme cooks to.
+        const std::array<std::uint64_t, 2> parts{Mondrian::kThemePayloadVersion, Mondrian::ThemeLayoutHash()};
+        return Core::ContentHash64(std::as_bytes(std::span{parts}));
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileThemeText(*text);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, Where(cooked.error())));
@@ -868,6 +908,7 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<FontCooker>());
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
+    cookers.push_back(std::make_unique<ThemeCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     // One per kind a module registered. The engine's own kinds have no load
     // function in the registry, and their cookers are the ones above.

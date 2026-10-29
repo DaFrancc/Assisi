@@ -109,6 +109,7 @@ void NetworkedPlay::ReplayMispredicted(const SystemContext &live)
     for (const std::uint64_t tick : replay->ticks)
     {
         const NetSync::ReplicationClient::AppliedCommand applied = client->CommandAppliedAt(tick);
+        client->RestoreIntentsAt(tick);
         _players.ReplayCommand(_world, applied.command, applied.starvedTicks);
         replayed.simTick = tick;
         App::StepWorld(replayed, replay->characters, client->FollowersAt(tick), replay->bodies);

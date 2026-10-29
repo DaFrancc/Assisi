@@ -10,6 +10,8 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Math/GLM.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace Assisi::Physics
@@ -615,6 +617,21 @@ struct CharacterState
     /// air moves the feet, so the eye itself stays where it was.
     AFIELD() float eyeHeight = 0.f;
 
+    /// How fast it moves across what it stands on (m/s): @ref velocity less
+    /// @ref groundVelocity, along the ground. What an animation's walk and run
+    /// speed reads, so a character standing still on a moving deck stands
+    /// rather than runs.
+    AFIELD() float groundSpeed = 0.f;
+
+    /// How many times it has jumped. Goes up by one on the step a jump fires,
+    /// so something that reads it once a frame sees every jump even when a
+    /// frame runs several steps: a jump animation fires when it changes.
+    AFIELD() std::uint32_t jumps = 0;
+
+    /// How many times it has landed: touched walkable ground after a jump, or
+    /// after a fall longer than a stair edge's. Counted like @ref jumps.
+    AFIELD() std::uint32_t landings = 0;
+
     AFIELD() GroundState ground = GroundState::InAir;
 
     /// The stance the character is **actually** in, which is not always the one
@@ -623,12 +640,17 @@ struct CharacterState
 
     /// Whether a jump asked for now would fire.
     ///
-    /// Deliberately not `ground == OnGround`. Within the Character's coyote
-    /// time a character that has already left the ground may still jump, and one
-    /// that has jumped and not yet landed may not even if it is momentarily
-    /// touching something. Gameplay and animation should ask this; @ref ground
-    /// stays the simulation's plain answer about what is underfoot.
+    /// Deliberately not `ground == OnGround`. Within the CharacterLocomotion's
+    /// coyote time a character that has already left the ground may still jump,
+    /// and one that has jumped and not yet landed may not even if it is
+    /// momentarily touching something. Gameplay and animation should ask this;
+    /// @ref ground stays the simulation's plain answer about what is underfoot.
+    /// Always false for a character with no movement component.
     AFIELD() bool canJump = false;
+
+    /// Whether the last step sprinted: asked to while moving, within its
+    /// CharacterLocomotion's rules, and not crouched.
+    AFIELD() bool sprinting = false;
 };
 
 /// @brief What happens to a character's speed when it jumps on the step it
@@ -668,7 +690,14 @@ enum class CharacterOption : std::uint8_t
 inline constexpr Core::Bitmask<CharacterOption, std::uint8_t> AllCharacterOptions =
     Core::Bitmask<CharacterOption, std::uint8_t>::All();
 
-/// @brief A character: the capsule a player or an NPC is, and how it moves.
+/// @brief A character: the capsule a player or an NPC is, and how it meets the
+/// world.
+///
+/// How it walks and jumps is not here. A SourceMovement or an ArcadeMovement
+/// beside it chooses the movement, and CharacterLocomotion holds the speeds
+/// both read. A Character with neither does not walk or jump: on the ground it
+/// stays still on what it stands on, and in the air it keeps its horizontal
+/// speed and falls at the world's gravity.
 ///
 /// Every field here is something a designer tunes. The solver tolerances that
 /// only a physics programmer would touch are named constants inside the
@@ -730,60 +759,6 @@ struct Character
     /// the distance in a fifth of a second.
     AFIELD(min = 0.0) float eyeSpeed = 3.f;
 
-    /// The speed the character asks for with a full `move` (m/s). Not a hard
-    /// limit: speed gained in the air or carried off a moving platform is kept
-    /// until friction takes it. The default is Half-Life 2's normal run, 190
-    /// units a second at 1.905 cm to the unit — every movement default below is
-    /// that game's value at that scale.
-    AFIELD(min = 0.0) float walkSpeed = 3.62f;
-
-    /// @ref walkSpeed multiplier while crouching. A scale rather than a second
-    /// speed so retuning the walk carries the crouch with it.
-    AFIELD(min = 0.0) float crouchSpeedScale = 0.333f;
-
-    /// Upward speed a jump starts with (m/s). With the default
-    /// @ref gravityScale it rises about 0.4 m.
-    AFIELD(min = 0.0) float jumpSpeed = 3.05f;
-
-    /// How strongly the ground slows the character, as the fraction of its
-    /// speed lost per second. Applied every step it stands on walkable ground,
-    /// before acceleration, whether or not it is asking to move — the short
-    /// slide when changing direction is this losing to the old velocity.
-    AFIELD(min = 0.0) float friction = 4.f;
-
-    /// Below this speed friction acts as though the character were moving this
-    /// fast (m/s). Without it the loss shrinks with the speed and a stop creeps
-    /// toward zero forever; with it the last of the speed goes at a constant
-    /// rate and the stop is firm.
-    AFIELD(min = 0.0) float stopSpeed = 1.905f;
-
-    /// How fast speed is gained along the requested direction on the ground, as
-    /// a fraction of the requested speed per second: at 10, a tenth of a second
-    /// of gain reaches it. Only the speed *along* that direction is limited to
-    /// the requested speed; whatever the character has sideways is left to
-    /// friction.
-    AFIELD(min = 0.0) float groundAcceleration = 10.f;
-
-    /// The same while airborne. Zero keeps whatever horizontal velocity the
-    /// jump launched with and ignores steering entirely.
-    AFIELD(min = 0.0) float airAcceleration = 10.f;
-
-    /// In the air, the requested speed is cut down to this before deciding how
-    /// much may be added (m/s), while the gain per second still uses the full
-    /// requested speed. Holding a direction therefore adds almost nothing, and
-    /// turning the request away from the current velocity keeps adding — which
-    /// is what lets a strafing jump curve and gain speed.
-    AFIELD(min = 0.0) float airWishSpeedCap = 0.5715f;
-
-    /// With BunnyHopPolicy::Cap, the most horizontal speed a jump may leave the
-    /// ground with, as a multiple of @ref walkSpeed.
-    AFIELD(min = 0.0) float bunnyHopSpeedCap = 1.7f;
-
-    /// Multiplies the world's gravity for this character alone. Above 1 falls
-    /// heavier and jumps shorter; the arc is what most of a character's weight
-    /// reads as.
-    AFIELD(min = 0.0) float gravityScale = 1.165f;
-
     /// Mass used when pushing down on what it stands on, and when deciding how
     /// far a push moves it (kg).
     AFIELD(min = 0.0) float mass = 70.f;
@@ -791,19 +766,6 @@ struct Character
     /// Greatest force the character can push another body with (N). Zero makes
     /// it unable to shift anything: bodies become immovable walls to it.
     AFIELD(min = 0.0) float pushStrength = 100.f;
-
-    /// How long after walking off a ledge a jump still counts as a ground jump
-    /// (seconds). Zero is literal ground-only, which reads as a jump that
-    /// sometimes ignores the button — the player pressed it a frame after the
-    /// edge and nothing happened.
-    AFIELD(min = 0.0) float coyoteTime = 0.1f;
-
-    /// How long before landing a jump request is remembered (seconds). Covers
-    /// the opposite mistake: the button pressed a frame before touching down.
-    AFIELD(min = 0.0) float jumpBufferTime = 0.15f;
-
-    /// What a jump on the landing step does with speed gained in the air.
-    AFIELD() BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
 
     /// What the character does; see CharacterOption. Clearing Pushable makes
     /// it immovable by anything but its own movement, which an NPC that must
@@ -819,6 +781,214 @@ struct Character
     AFIELD() CollisionChannel channel = CollisionChannel::Character;
 };
 
+/// @brief A named set of the speeds and jump arc in CharacterLocomotion.
+AENUM()
+enum class LocomotionPreset : std::uint8_t
+{
+    /// A brisk run and a short, heavy jump whose arc rises about 0.4 m: what
+    /// SourceMovement is tuned for.
+    Source,
+    /// Faster on the ground, with a jump that rises about 1 m under the world's
+    /// own gravity: what ArcadeMovement is tuned for.
+    Arcade,
+    /// The fields of CharacterLocomotion, as authored.
+    Custom,
+    Count_,
+};
+
+/// @brief The values a LocomotionPreset stands for.
+struct LocomotionSettings
+{
+    float walkSpeed = 0.f;
+    float crouchSpeedScale = 0.f;
+    float jumpSpeed = 0.f;
+    float gravityScale = 0.f;
+};
+
+/// LocomotionPreset::Source.
+inline constexpr LocomotionSettings kSourceLocomotion{
+    .walkSpeed = 3.62f, .crouchSpeedScale = 0.333f, .jumpSpeed = 3.05f, .gravityScale = 1.165f};
+
+/// LocomotionPreset::Arcade.
+inline constexpr LocomotionSettings kArcadeLocomotion{
+    .walkSpeed = 5.f, .crouchSpeedScale = 0.4f, .jumpSpeed = 4.5f, .gravityScale = 1.f};
+
+/// Every preset but Custom, in the order LocomotionPreset declares them.
+inline constexpr std::array<LocomotionSettings, static_cast<std::size_t>(LocomotionPreset::Custom)>
+kLocomotionPresets{{kSourceLocomotion, kArcadeLocomotion}};
+
+static_assert(static_cast<std::size_t>(LocomotionPreset::Custom) + 1 ==
+              static_cast<std::size_t>(LocomotionPreset::Count_),
+              "Custom stays the last LocomotionPreset; every other one needs a row in kLocomotionPresets.");
+
+/// @brief How fast a character walks and how it jumps, whichever movement it
+/// has.
+///
+/// Brought by SourceMovement and ArcadeMovement, which both read it. On a
+/// Character with neither it does nothing.
+ACOMP(replicable)
+struct CharacterLocomotion
+{
+    /// The speed the character asks for with a full `move` (m/s). Not a hard
+    /// limit under SourceMovement: speed gained in the air or carried off a
+    /// moving platform is kept until friction takes it.
+    AFIELD(min = 0.0, radioListen = {source = preset, value = Custom, behavior = grey}) float walkSpeed = kSourceLocomotion.walkSpeed;
+
+    /// @ref walkSpeed multiplier while crouching. A scale rather than a second
+    /// speed so retuning the walk carries the crouch with it.
+    AFIELD(min = 0.0, radioListen = {source = preset, value = Custom, behavior = grey}) float crouchSpeedScale = kSourceLocomotion.crouchSpeedScale;
+
+    /// Upward speed a jump starts with (m/s).
+    AFIELD(min = 0.0, radioListen = {source = preset, value = Custom, behavior = grey}) float jumpSpeed = kSourceLocomotion.jumpSpeed;
+
+    /// Multiplies the world's gravity for this character alone. Above 1 falls
+    /// heavier and jumps shorter; the arc is what most of a character's weight
+    /// reads as.
+    AFIELD(min = 0.0, radioListen = {source = preset, value = Custom, behavior = grey}) float gravityScale = kSourceLocomotion.gravityScale;
+
+    /// How long after walking off a ledge a jump still counts as a ground jump
+    /// (seconds). Zero is literal ground-only, which reads as a jump that
+    /// sometimes ignores the button — the player pressed it a frame after the
+    /// edge and nothing happened. Not part of a preset: it forgives the
+    /// player's timing rather than shaping the movement.
+    AFIELD(min = 0.0) float coyoteTime = 0.1f;
+
+    /// How long before landing a jump request is remembered (seconds). Covers
+    /// the opposite mistake: the button pressed a frame before touching down.
+    AFIELD(min = 0.0) float jumpBufferTime = 0.15f;
+
+    /// The fastest the character falls (m/s). Zero sets no limit. Not part of a
+    /// preset.
+    AFIELD(min = 0.0) float maxFallSpeed = 0.f;
+
+    /// @ref walkSpeed multiplier while sprinting: while CharacterIntent::sprint
+    /// is asked for, @ref canSprint is set, the character is not crouched, and
+    /// it is moving within @ref sprintMaxAngle of where it faces. Not part of a
+    /// preset.
+    AFIELD(min = 0.0, radioListen = {source = canSprint, value = true, behavior = grey}) float sprintSpeedScale = 1.6f;
+
+    /// The widest angle between where the character faces and where it is
+    /// asked to go that it still sprints at (degrees). 180 sprints in any
+    /// direction; the default takes in the forward diagonals and leaves out
+    /// sideways and backwards.
+    AFIELD(min = 0.0, max = 180.0, radioListen = {source = canSprint, value = true, behavior = grey}) float sprintMaxAngle = 50.f;
+
+    /// Which speeds and jump arc these are. Every value but Custom answers for
+    /// the four fields it greys out, and follows the preset if its numbers
+    /// change; Custom keeps exactly what was typed.
+    AFIELD(radioBroadcast) LocomotionPreset preset = LocomotionPreset::Source;
+
+    /// Whether the character may sprint at all. Cleared, asking to sprint
+    /// changes nothing.
+    AFIELD(radioBroadcast) bool canSprint = true;
+
+    /// Whether a sprint can start and stop in the air. Cleared, the character
+    /// keeps the sprint it left the ground with until it lands, so a sprinting
+    /// jump carries its speed and asking to sprint mid-air does nothing.
+    AFIELD(radioListen = {source = canSprint, value = true, behavior = grey}) bool sprintInAir = false;
+};
+
+/// @brief The speeds and jump arc @p locomotion's preset stands for.
+[[nodiscard]] inline LocomotionSettings ToLocomotionSettings(const CharacterLocomotion &locomotion)
+{
+    if (locomotion.preset < LocomotionPreset::Custom)
+    {
+        return kLocomotionPresets[static_cast<std::size_t>(locomotion.preset)];
+    }
+    return LocomotionSettings{.walkSpeed = locomotion.walkSpeed,
+                              .crouchSpeedScale = locomotion.crouchSpeedScale,
+                              .jumpSpeed = locomotion.jumpSpeed,
+                              .gravityScale = locomotion.gravityScale};
+}
+
+/// @brief Half-Life 2's movement: friction, then speed gained only along the
+/// direction asked for.
+///
+/// Each step on walkable ground, friction takes speed away first, whether or
+/// not the character asks to move. Then speed is added along the requested
+/// direction until the velocity's part *along* it reaches the requested speed;
+/// what it has sideways is left to friction, which is the short slide of a
+/// turn. In the air the requested speed is capped before that test, so holding
+/// a direction adds almost nothing and turning the request keeps adding: air
+/// strafing. A jump on the landing step skips friction, and @ref bunnyHop says
+/// how much of that speed it keeps.
+///
+/// The defaults are Half-Life 2's, at 1.905 cm to one of its units.
+ACOMP(replicable, requires = {Character, CharacterLocomotion}, excludes = {ArcadeMovement})
+struct SourceMovement
+{
+    /// How strongly the ground slows the character, as the fraction of its
+    /// speed lost per second.
+    AFIELD(min = 0.0) float friction = 4.f;
+
+    /// Below this speed friction acts as though the character were moving this
+    /// fast (m/s). Without it the loss shrinks with the speed and a stop creeps
+    /// toward zero forever; with it the last of the speed goes at a constant
+    /// rate and the stop is firm.
+    AFIELD(min = 0.0) float stopSpeed = 1.905f;
+
+    /// How fast speed is gained along the requested direction on the ground, as
+    /// a fraction of the requested speed per second: at 10, a tenth of a second
+    /// of gain reaches it.
+    AFIELD(min = 0.0) float groundAcceleration = 10.f;
+
+    /// The same while airborne. Zero keeps whatever horizontal velocity the
+    /// jump launched with and ignores steering entirely.
+    AFIELD(min = 0.0) float airAcceleration = 10.f;
+
+    /// In the air, the requested speed is cut down to this before deciding how
+    /// much may be added (m/s), while the gain per second still uses the full
+    /// requested speed. Holding a direction therefore adds almost nothing, and
+    /// turning the request away from the current velocity keeps adding — which
+    /// is what lets a strafing jump curve and gain speed.
+    AFIELD(min = 0.0) float airWishSpeedCap = 0.5715f;
+
+    /// With BunnyHopPolicy::Cap, the most horizontal speed a jump may leave the
+    /// ground with, as a multiple of the walk speed.
+    AFIELD(min = 0.0) float bunnyHopSpeedCap = 1.7f;
+
+    /// What a jump on the landing step does with speed gained in the air.
+    AFIELD() BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
+};
+
+/// @brief Movement that heads straight for the velocity asked for.
+///
+/// Each step the horizontal velocity, relative to the ground, moves toward the
+/// requested one by at most the acceleration times the step, and stops exactly
+/// on it. Once nothing is asked for it slows to a stop at the braking rate
+/// instead. It never goes faster than it asks to, and in the air it blends
+/// toward the request.
+///
+/// The defaults brake as hard as they accelerate and leave turning to the
+/// acceleration.
+ACOMP(replicable, requires = {Character, CharacterLocomotion}, excludes = {SourceMovement})
+struct ArcadeMovement
+{
+    /// How hard the character speeds up toward the velocity asked for on the
+    /// ground (m/s²). The default reaches walk speed in under a tenth of a
+    /// second, which reads as instant; lower it for weight.
+    AFIELD(min = 0.0) float groundAcceleration = 60.f;
+
+    /// How hard it slows down on the ground once nothing is asked for (m/s²).
+    /// Lower it for a slide to a stop, and far lower for ice.
+    AFIELD(min = 0.0) float brakingDeceleration = 60.f;
+
+    /// How quickly, on the ground, its velocity swings round to a new
+    /// direction while keeping its speed, as a rate per second: at 10, a tenth
+    /// of a second makes up about two thirds of the turn. Zero leaves a turn to
+    /// @ref groundAcceleration, which slows the character through it.
+    AFIELD(min = 0.0) float turnFriction = 0.f;
+
+    /// How hard it steers toward the velocity asked for in the air (m/s²).
+    /// Zero keeps whatever horizontal velocity the jump launched with and
+    /// ignores steering entirely.
+    AFIELD(min = 0.0) float airAcceleration = 10.f;
+
+    /// How hard it slows down in the air once nothing is asked for (m/s²).
+    /// Zero keeps all the momentum it jumped or fell with.
+    AFIELD(min = 0.0) float airBrakingDeceleration = 10.f;
+};
+
 /// @brief What a character is being asked to do.
 ///
 /// Every Character brings one. The fields are the whole input surface:
@@ -830,9 +1000,9 @@ ACOMP(transient)
 struct CharacterIntent
 {
     /// Where the character is trying to go, in world space. A unit direction
-    /// asks for the Character's walk speed (scaled while crouching), and a
-    /// shorter one for proportionally less. The vertical component is ignored:
-    /// going up is @ref jump's business and going down is gravity's.
+    /// asks for the CharacterLocomotion's walk speed (scaled while crouching),
+    /// and a shorter one for proportionally less. The vertical component is
+    /// ignored: going up is @ref jump's business and going down is gravity's.
     AFIELD() glm::vec3 move{0.f};
 
     /// The body to ride whatever the contact, held for as long as it is set,
@@ -841,6 +1011,12 @@ struct CharacterIntent
     /// Carrier's rules nor CharacterOption::RidesBases apply to it. The physics
     /// world clears it when the body is gone or has no RigidBody.
     AFIELD() ECS::Entity base{ECS::NullEntity};
+
+    /// Multiplies the speed @ref move asks for, whatever CharacterLocomotion's
+    /// preset says, sprinting included: below 1 for a slowing effect or an NPC
+    /// walking calmly. Held for as long as it is wanted. Negative is taken as
+    /// zero.
+    AFIELD(min = 0.0) float speedScale = 1.f;
 
     /// The stance being asked for, held for as long as it is wanted rather than
     /// pulsed. Asking to stand under something too low fails silently and is
@@ -856,6 +1032,11 @@ struct CharacterIntent
     /// step instead of being swallowed. Set again every step, the character
     /// jumps again as soon as it may.
     AFIELD() bool jump = false;
+
+    /// Whether to sprint, held for as long as it is wanted like @ref stance.
+    /// Speeds the character up by CharacterLocomotion's sprintSpeedScale within
+    /// that component's rules; CharacterState::sprinting is whether it did.
+    AFIELD() bool sprint = false;
 };
 
 } // namespace Assisi::Physics

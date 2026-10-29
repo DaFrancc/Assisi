@@ -410,7 +410,7 @@ TEST_CASE("a character on the host reaches the client's confirmed copy with its 
     SpawnSharedFloor(harness);
     const ECS::Entity character = harness.serverScene.Create();
     (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
-    (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
+    (void)harness.serverScene.Add<Physics::SourceMovement>(character);
     (void)harness.serverScene.Add<Replicated>(character, Replicated{});
     harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
     harness.Step(10);
@@ -1242,7 +1242,7 @@ TEST_CASE("a walking character arrives on the client simulated, carrying its vel
 
     const ECS::Entity walker = harness.serverScene.Create();
     (void)harness.serverScene.Add<ECS::Transform>(walker, ECS::Transform{});
-    (void)harness.serverScene.Add<Physics::Character>(walker, Physics::Character{});
+    (void)harness.serverScene.Add<Physics::SourceMovement>(walker);
     (void)harness.serverScene.Add<Replicated>(walker, Replicated{});
     harness.Step(30);
 
@@ -1266,7 +1266,7 @@ ECS::Entity SpawnStanding(PhysicsHarness &harness, glm::vec3 feet = glm::vec3{0.
     SpawnSharedFloor(harness);
     const ECS::Entity character = harness.serverScene.Create();
     (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{.position = feet});
-    (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
+    (void)harness.serverScene.Add<Physics::SourceMovement>(character);
     (void)harness.serverScene.Add<Replicated>(character, Replicated{});
     harness.Step(30);
     return character;
@@ -1490,7 +1490,7 @@ struct PredictionRig
         {
             otherPlayer = harness.serverScene.Create();
             (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *level.other});
-            (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
+            (void)harness.serverScene.Add<Physics::SourceMovement>(otherPlayer);
             (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
         }
         for (const glm::vec3 at : level.crates)
@@ -1511,7 +1511,7 @@ struct PredictionRig
         {
             second = harness.serverScene.Create();
             (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = *level.secondAt});
-            (void)harness.serverScene.Add<Physics::Character>(second, Physics::Character{});
+            (void)harness.serverScene.Add<Physics::SourceMovement>(second);
             (void)harness.serverScene.Add<Replicated>(second, Replicated{});
             harness.server.SetControl(second, client);
         }
@@ -2586,7 +2586,7 @@ ECS::Entity AddStranger(PredictionRig &rig, glm::vec3 at)
     ECS::Scene &scene = rig.harness.serverScene;
     const ECS::Entity stranger = scene.Create();
     (void)scene.Add<ECS::Transform>(stranger, ECS::Transform{.position = at});
-    (void)scene.Add<Physics::Character>(stranger, Physics::Character{});
+    (void)scene.Add<Physics::SourceMovement>(stranger);
     (void)scene.Add<Replicated>(stranger, Replicated{});
     rig.harness.server.SetControl(stranger, kStranger);
     rig.harness.serverPhysics.Reconcile();
@@ -2684,7 +2684,7 @@ TEST_CASE("a crate two players push together moves with the client's push, eased
     REQUIRE(counts->physics.compares > 0u);
     // The other player's push reaches this client a round trip late, so it is
     // corrected as they push; each correction is eased, never drawn as a jump.
-    const float walkStep = Physics::Character{}.walkSpeed * kFixedStep;
+    const float walkStep = Physics::kSourceLocomotion.walkSpeed * kFixedStep;
     CHECK(mostBack < kMostBackPerTick);
     CHECK(largestStep < walkStep * kMostStepOverWalk);
     CHECK(largestOwnStep < walkStep * kMostStepOverWalk);

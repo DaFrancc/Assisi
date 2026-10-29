@@ -823,6 +823,59 @@ TEST_CASE("A listed string table cooks, and changing it re-cooks every screen")
     CHECK(second->cooked == 3);
 }
 
+namespace
+{
+
+/// A copy of the fixture tree with UI settings listing one theme, the theme,
+/// and a screen whose button names @p style in it.
+void AddTheme(const std::filesystem::path &root, std::string_view style)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "config/ui.json", R"({ "version": 1, "type": "UiConfig", "themes": ["ui/Look.amth"] })",
+               "6a8c0e2f-4b1d-4e3a-9c5b-7d9f1b3d5a7c");
+    WriteAsset(root, "ui/Look.amth",
+               "<theme>\n  <palette mode=\"dark\" accent=\"#e63319\" />\n"
+               "  <style name=\"button\" background=\"$accent\" />\n</theme>\n",
+               "1c3e5a7b-9d0f-4b2c-8e4a-6f8b0d2c4e6a");
+    WriteAsset(root, "ui/Menu.amdn",
+               "<screen>\n  <button style=\"" + std::string{style} + "\">Play</button>\n</screen>\n",
+               "3e5a7c9b-1d2f-4c4e-a6b8-0d2f4b6d8f1a");
+}
+
+} // namespace
+
+TEST_CASE("A listed theme cooks, and changing it re-cooks every screen")
+{
+    const ScratchDir source("theme-src");
+    const ScratchDir out("theme-out");
+    AddTheme(source.Path(), "button");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    REQUIRE(EntryFor(*first, "ui/Look.amth") != nullptr);
+
+    std::ofstream(source.Path() / "ui" / "Look.amth", std::ios::app) << "<!-- edited -->\n";
+
+    // The theme, and both screens: each is checked against every theme.
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 3);
+}
+
+TEST_CASE("A style the listed theme does not have fails the screen's cook")
+{
+    const ScratchDir source("theme-style-src");
+    const ScratchDir out("theme-style-out");
+    AddTheme(source.Path(), "missing");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Menu.amdn");
+    CHECK(report.error().reason.starts_with("2:"));
+    CHECK(report.error().reason.find("no style 'missing'") != std::string::npos);
+}
+
 TEST_CASE("A key its table does not have fails the screen's cook")
 {
     const ScratchDir source("table-key-src");

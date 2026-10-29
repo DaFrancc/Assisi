@@ -790,6 +790,24 @@ ReplicationClient::AppliedCommand ReplicationClient::CommandAppliedAt(std::uint6
     return starved == 0 ? own : AppliedCommand{.command = nullptr, .starvedTicks = starved};
 }
 
+void ReplicationClient::RestoreIntentsAt(std::uint64_t tick)
+{
+    ASSISI_ASSERT(_rollingBack, "ReplicationClient::RestoreIntentsAt outside a rollback");
+    for (const auto &[netId, history] : _history)
+    {
+        const PredictedRecord &record = history.records[tick % kPredictionHistoryTicks];
+        if (record.tick != tick || !record.hasCharacter)
+        {
+            continue;
+        }
+        Physics::CharacterIntent *intent = _scene.GetMut<Physics::CharacterIntent>(EntityOf(netId));
+        if (intent != nullptr)
+        {
+            *intent = record.character.intent;
+        }
+    }
+}
+
 void ReplicationClient::EndRollback()
 {
     ASSISI_ASSERT(_rollingBack, "ReplicationClient::EndRollback without BeginRollback");

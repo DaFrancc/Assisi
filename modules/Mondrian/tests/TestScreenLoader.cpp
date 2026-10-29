@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -530,23 +531,60 @@ TEST_CASE("ScreenLoader: a button is found by its name, not its label")
     CHECK_FALSE(loaded->screen->Find("Resume"));
 }
 
-TEST_CASE("ScreenLoader: a named style is carried and ignored")
+TEST_CASE("ScreenLoader: the style a node names, the tokens it uses and what it writes reach the node")
 {
-    // There is nowhere for a style name to resolve to yet. A file written today
-    // should load, and start resolving when there is.
+    // What the theme makes of them is the theme's tests' to say; with none, the
+    // node wears what it writes itself.
     EventQueue events;
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     ScreenDocument document = PauseMenu();
-    document.nodes[1].styleName = InternedString{"Panel"};
+    ScreenNode &panel = document.nodes[1];
+    panel.styleName = InternedString{"Panel"};
+    panel.written = PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::Background);
+    panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::Background}};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
         InstantiateScreen(ui, events, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
-    // The node's own attributes are what it looks like, untouched by the name.
-    CHECK(loaded->screen->Tree().Get(loaded->screen->Find("panel"))->style.gap.value == 20.f);
+    const Node *node = loaded->screen->Tree().Get(loaded->screen->Find("panel"));
+    REQUIRE(node != nullptr);
+    CHECK(node->look.styleName.View() == "Panel");
+    CHECK(node->look.written == panel.written);
+    CHECK(node->look.tokens == panel.tokens);
+    CHECK(node->look.style == panel.style);
+    CHECK(node->style.gap.value == 20.f);
+}
+
+TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes")
+{
+    EventQueue events;
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document = PauseMenu();
+    Style hovered;
+    hovered.background = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.9f, 0.2f, 0.1f, 1.f};
+    Style disabled;
+    disabled.textColor = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.4f, 0.4f, 0.4f, 1.f};
+    const StylePatch hover = StylePatch::Changes(StyleState::Hover, Style{}, hovered);
+    const StylePatch off = StylePatch::Changes(StyleState::Disabled, Style{}, disabled);
+    document.nodes[3].states = {ThemedPatch{.patch = hover, .tokens = {}}, ThemedPatch{.patch = off, .tokens = {}}};
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+    REQUIRE(loaded.has_value());
+
+    const Node *resume = loaded->screen->Tree().Get(loaded->screen->Find("resume"));
+    REQUIRE(resume != nullptr);
+    REQUIRE(resume->states.size() == 2);
+    CHECK(std::ranges::find(resume->states, hover) != resume->states.end());
+    CHECK(std::ranges::find(resume->states, off) != resume->states.end());
+    // Nothing holds yet, so it wears its resting look.
+    CHECK(resume->style == resume->resting.values);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")

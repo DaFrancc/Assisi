@@ -56,12 +56,17 @@ Assisi::ECS::Entity SpawnFloor(World &world)
     return entity;
 }
 
-Assisi::ECS::Entity SpawnCharacter(World &world, const Assisi::Physics::Character &descriptor)
+/// A SourceMovement character at the origin.
+Assisi::ECS::Entity SpawnCharacter(
+    World &world, const Assisi::Physics::CharacterLocomotion &locomotion = Assisi::Physics::CharacterLocomotion{},
+    const Assisi::Physics::SourceMovement &movement = Assisi::Physics::SourceMovement{})
 {
     const Assisi::ECS::Entity entity = world.scene.Create();
     Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
     transform->position = {0.f, 0.f, 0.f};
-    (void)world.scene.Add<Assisi::Physics::Character>(entity, descriptor);
+    (void)world.scene.Add<Assisi::Physics::Character>(entity);
+    (void)world.scene.Add<Assisi::Physics::CharacterLocomotion>(entity, locomotion);
+    (void)world.scene.Add<Assisi::Physics::SourceMovement>(entity, movement);
 
     world.physics.Reconcile();
     REQUIRE(world.physics.HasBody(entity));
@@ -81,7 +86,7 @@ void Ask(World &world, Assisi::ECS::Entity entity, glm::vec3 move, bool jump,
 
 } // namespace
 
-TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk speed")
+TEST_CASE("CharacterIntent's move direction is scaled by the CharacterLocomotion's walk speed")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
@@ -89,10 +94,10 @@ TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk sp
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::Character descriptor{};
-    descriptor.walkSpeed = 6.f;
-    descriptor.groundAcceleration = 1000.f; // at speed within one step
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::Physics::CharacterLocomotion locomotion{.walkSpeed = 6.f,
+                                                          .preset = Assisi::Physics::LocomotionPreset::Custom};
+    const Assisi::Physics::SourceMovement movement{.groundAcceleration = 1000.f}; // at speed within one step
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, locomotion, movement);
 
     // Let it settle onto the floor first: accelerating is a ground behaviour.
     for (int32_t i = 0; i < 60; ++i)
@@ -112,7 +117,7 @@ TEST_CASE("CharacterIntent's move direction is scaled by the Character's walk sp
     CHECK(character->velocity.x == doctest::Approx(6.f).epsilon(0.1));
 }
 
-TEST_CASE("Crouching applies the Character's speed scale")
+TEST_CASE("Crouching applies the CharacterLocomotion's speed scale")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Characters");
@@ -120,11 +125,10 @@ TEST_CASE("Crouching applies the Character's speed scale")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::Character descriptor{};
-    descriptor.walkSpeed = 6.f;
-    descriptor.crouchSpeedScale = 0.5f;
-    descriptor.groundAcceleration = 1000.f;
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::Physics::CharacterLocomotion locomotion{
+        .walkSpeed = 6.f, .crouchSpeedScale = 0.5f, .preset = Assisi::Physics::LocomotionPreset::Custom};
+    const Assisi::Physics::SourceMovement movement{.groundAcceleration = 1000.f};
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, locomotion, movement);
 
     for (int32_t i = 0; i < 60; ++i)
     {
@@ -152,8 +156,7 @@ TEST_CASE("A jump request is consumed once, not held")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::Character descriptor{};
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::ECS::Entity entity = SpawnCharacter(world);
 
     for (int32_t i = 0; i < 60; ++i)
     {
@@ -177,7 +180,7 @@ TEST_CASE("A camera parented to a character is placed at its eye height, blended
     (void)SpawnFloor(world);
 
     const Assisi::Physics::Character descriptor{};
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::ECS::Entity entity = SpawnCharacter(world);
 
     // Authored somewhere else on purpose: the height is the character's to set.
     const Assisi::ECS::Entity eye = world.scene.Create();
@@ -227,13 +230,13 @@ TEST_CASE("The step takes a character's facing from its Transform")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::Character descriptor{};
-    descriptor.walkSpeed = 4.f;
-    descriptor.groundAcceleration = 1000.f;
-    descriptor.bunnyHop = Assisi::Physics::BunnyHopPolicy::Boost;
-    descriptor.coyoteTime = 0.f;
-    descriptor.jumpBufferTime = 0.f;
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::Physics::CharacterLocomotion locomotion{.walkSpeed = 4.f,
+                                                          .coyoteTime = 0.f,
+                                                          .jumpBufferTime = 0.f,
+                                                          .preset = Assisi::Physics::LocomotionPreset::Custom};
+    const Assisi::Physics::SourceMovement movement{.groundAcceleration = 1000.f,
+                                                   .bunnyHop = Assisi::Physics::BunnyHopPolicy::Boost};
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, locomotion, movement);
 
     // Turned half way round: forward is +z.
     world.scene.GetMut<Assisi::ECS::Transform>(entity)->rotation =
@@ -269,8 +272,7 @@ TEST_CASE("The step publishes the CharacterState a later system reads")
 
     (void)SpawnFloor(world);
 
-    Assisi::Physics::Character descriptor{};
-    const Assisi::ECS::Entity entity = SpawnCharacter(world, descriptor);
+    const Assisi::ECS::Entity entity = SpawnCharacter(world);
 
     const Assisi::Physics::CharacterState *character = world.scene.Get<Assisi::Physics::CharacterState>(entity);
     REQUIRE(character != nullptr);

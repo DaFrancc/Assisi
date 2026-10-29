@@ -8,19 +8,21 @@ over a network.
 ## The player blueprint
 
 `blueprints/Player.abp` is a complete player. Place it in a level and press Play:
-W, A, S and D walk, the mouse looks around, Space jumps and Left Control
-crouches.
+W, A, S and D walk, the mouse looks around, Space jumps, Left Control crouches
+and Left Shift sprints.
 
 It holds three entities:
 
 | Entity | Components |
 |---|---|
-| `Player` | `Character`, `Player`, `Replicated` |
+| `Player` | `Character`, `CharacterLocomotion`, `ArcadeMovement`, `Player`, `Replicated` |
 | `Camera` | `Camera`, `Parent` (the `Player`), `Replicated` |
 | `Body` | `MeshRenderer`, `Parent` (the `Player`), `Replicated` |
 
-- **`Character`** is the [character controller](physics-character.md): the
-  capsule and how it moves.
+- **`Character`**, **`CharacterLocomotion`** and **`ArcadeMovement`** are the
+  [character controller](physics-character.md): the capsule, how fast it walks
+  and jumps, and how it speeds up and slows down. Swap `ArcadeMovement` for
+  `SourceMovement` to move like Half-Life 2 instead.
 - **`Player`** marks the character as one a person controls. A character
   without it is never driven by the keyboard, so put it on your player and leave
   it off your NPCs.
@@ -55,9 +57,10 @@ player that needs one:
 | `held` | The buttons held now. |
 | `pressed` | The buttons pressed since the last fixed step. |
 
-Each button is a **player action**. The engine has two of its own,
-`PlayerAction::Jump` and `PlayerAction::Crouch`, which read the input actions
-`Jump` and `Crouch` from `assets/config/input.json` (see [Input](input.md)).
+Each button is a **player action**. The engine has three of its own,
+`PlayerAction::Jump`, `PlayerAction::Crouch` and `PlayerAction::Sprint`, which
+read the input actions `Jump`, `Crouch` and `Sprint` from
+`assets/config/input.json` (see [Input](input.md)).
 Check one like this:
 
 ```cpp
@@ -82,7 +85,7 @@ sent, and what everyone else sees all come from the step.
 
 ## Your own actions
 
-There are 32 player actions. The engine uses the first two; the other 30 belong
+There are 32 player actions. The engine uses the first three; the other 29 belong
 to your game. Take one with `GameAction` and give it the name of the input
 action that presses it, in a header under your game's `src/`:
 
@@ -121,6 +124,8 @@ so a press is seen by exactly one step, and a system after it would never see
 one.
 
 In a networked game a client sometimes runs a step again, to correct what it
-predicted (see [Multiplayer basics](multiplayer.md#systems-during-a-rollback)).
-Your controls system then runs again too, with `PlayerInput` holding the
-controls the host received for that step. Nothing in your code has to change.
+predicted (see [Your systems in multiplayer](multiplayer.md#your-systems-in-multiplayer)).
+Your controls system does not run again: it runs once per step, live. What it
+wrote into a character's `CharacterIntent` is put back for each step that runs
+again, so a system that steers a character through its intent needs nothing
+more.

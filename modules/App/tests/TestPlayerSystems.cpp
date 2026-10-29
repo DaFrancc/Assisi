@@ -174,6 +174,24 @@ TEST_CASE("Holding crouch asks the character to crouch")
     CHECK(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->stance == Assisi::Physics::Stance::Standing);
 }
 
+TEST_CASE("Holding sprint asks the character to sprint, for as long as it is held")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    const Assisi::ECS::Entity entity = SpawnCharacter(world, /*player=*/ true);
+    Controls(world, entity).held = PlayerButtons::Of(PlayerAction::Sprint);
+
+    CharacterCommandSystem(ctx);
+    CHECK(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->sprint);
+
+    world.scene.GetMut<PlayerInput>(entity)->held = PlayerButtons{};
+    CharacterCommandSystem(ctx);
+    CHECK_FALSE(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->sprint);
+}
+
 TEST_CASE("Turning is applied once, on the body, and looking up on its camera")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -295,6 +313,7 @@ TEST_CASE("The player actions are the engine's, then the game's, by slot")
     REQUIRE(names.size() == static_cast<std::size_t>(PlayerAction::Count_));
     CHECK(names[static_cast<std::size_t>(PlayerAction::Jump)] == kActionJump);
     CHECK(names[static_cast<std::size_t>(PlayerAction::Crouch)] == kActionCrouch);
+    CHECK(names[static_cast<std::size_t>(PlayerAction::Sprint)] == kActionSprint);
     CHECK(names[static_cast<std::size_t>(kAim)] == "Aim");
     CHECK(names[static_cast<std::size_t>(GameAction(1))].empty());
 }

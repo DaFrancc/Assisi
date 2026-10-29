@@ -29,12 +29,15 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -446,8 +449,8 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
     }
 
     const Assisi::Mondrian::Import::SourceReader read = &ReadSourceText;
-    const std::expected<Assisi::Mondrian::Import::TextRules, Assisi::Mondrian::Import::MarkupError> rules =
-        Assisi::Mondrian::Import::LoadTextRules(read);
+    const std::expected<Assisi::Mondrian::Import::ScreenRules, Assisi::Mondrian::Import::MarkupError> rules =
+        Assisi::Mondrian::Import::LoadScreenRules(read);
     if (!rules)
     {
         Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", rules.error().file, rules.error().line, rules.error().column,
@@ -472,6 +475,33 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
         return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
     }
     return std::move(*document);
+}
+
+/// Compiles the theme at @p vpath and reads the bytes back, as the cook would,
+/// so a theme that would fail the cook fails here too.
+std::expected<Assisi::Mondrian::ThemeDocument, Assisi::Mondrian::ThemeReadError> CompileSourceTheme(
+    std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Missing);
+    }
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileThemeText(*text);
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Invalid);
+    }
+    std::expected<Assisi::Mondrian::ThemeDocument, Assisi::Mondrian::CookedThemeError> theme =
+        Assisi::Mondrian::ReadCookedTheme(*cooked);
+    if (!theme)
+    {
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Invalid);
+    }
+    return std::move(*theme);
 }
 
 /// The file the dedicated server reads a collision model from. Its asset index
@@ -504,6 +534,8 @@ int main(int argc, char **argv)
     // String tables the same way: compiled from the file an author edits into
     // the bytes the cook would write, and read back.
     (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
+    // Themes the same way.
+    (void)Assisi::Mondrian::SetThemeReader(&CompileSourceTheme);
 
     // Started by a crash, as the crashed run's reporter, reading its window from
     // the source tree like everything else here.

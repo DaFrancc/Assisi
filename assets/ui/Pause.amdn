@@ -1,13 +1,14 @@
 <!-- The pause menu. Escape shows it, Resume or Back closes it, Quit ends the
-     game. While it is up it takes the pointer and the keys, and the world
-     stops. -->
+     game, and Contrast switches the theme between its two modes. While it is
+     up it takes the pointer and the keys, and the world stops.
+
+     How it looks is the theme's, ui/Default.amth: the file names a style for
+     each part and says only what is particular to this menu. -->
 <screen input="consume" beneath="hide" pause="true" sort="menu"
         needs="PauseMenu"
-        align="center center" background="rgbf(0, 0, 0, 0.55)" blocks_pointer="true">
+        align="center center" background="$scrim" blocks_pointer="true">
 
-  <column name="panel" width="420" padding="32" gap="20"
-          background="#1a1c24f0" border_width="2" border_color="#575f7a"
-          corner_radius="16" corner_style="rounded" align="center start">
+  <column name="panel" style="panel" width="420" padding="32" gap="20" align="center start">
 
     <!-- Every word comes from the table ui/pause.csv. -->
     <text name="title" width="grow" text_size="48">#pause:title</text>
@@ -16,19 +17,17 @@
 
       <!-- Resume goes through an event, so the system that closes the menu
            also plays its click. -->
-      <menu_button name="resume" on_click="Game::ResumeRequested" focus="true"
-                   background="#e63319">#pause:resume</menu_button>
+      <button name="resume" style="primary_button" on_click="Game::ResumeRequested"
+              focus="true">#pause:resume</button>
 
       <!-- Quit leaves the UI, so it goes through an event a system answers. -->
-      <menu_button name="quit" on_click="Assisi::App::QuitRequested"
-                   border_width="2" border_color="#ffffff">#pause:quit</menu_button>
+      <button name="quit" style="secondary_button"
+              on_click="Assisi::App::QuitRequested">#pause:quit</button>
 
     </row>
-  </column>
 
-  <!-- The look both buttons share. Each instance adds its own colour. -->
-  <template name="menu_button">
-    <button padding="28 10 28 10" text_size="28"
-            corner_radius="10" corner_style="rounded" />
-  </template>
+    <!-- Game code switches the mode, which no file can. -->
+    <button name="contrast" style="secondary_button" width="grow"
+            on_click="Game::ContrastToggled">#pause:contrast</button>
+  </column>
 </screen>
