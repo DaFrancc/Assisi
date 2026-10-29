@@ -10,6 +10,7 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -42,6 +43,8 @@ void InstallCookedReaders(const Core::AssetProvider &provider)
                                     { return Mondrian::ReadCookedScreen(provider, vpath); });
     (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
                                          { return Mondrian::ReadCookedStringTable(provider, vpath); });
+    (void)Mondrian::SetThemeReader([&provider](std::string_view vpath)
+                                   { return Mondrian::ReadCookedTheme(provider, vpath); });
 }
 
 void RemoveCookedReaders()
@@ -51,6 +54,7 @@ void RemoveCookedReaders()
     (void)Mondrian::SetFontReader({});
     (void)Mondrian::SetScreenReader({});
     (void)Mondrian::SetStringTableReader({});
+    (void)Mondrian::SetThemeReader({});
 }
 
 CookedAssetSource::CookedAssetSource(const Core::AssetProvider &provider) noexcept : _provider(&provider)

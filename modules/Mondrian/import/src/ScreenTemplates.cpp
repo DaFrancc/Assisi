@@ -201,7 +201,7 @@ std::expected<void, MarkupError> CollectTemplates(TemplateFile &into, const Mark
 }
 
 std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const MarkupElement &root,
-                                                const Core::EventCatalog &catalog, const TextRules &rules,
+                                                const Core::EventCatalog &catalog, const ScreenRules &rules,
                                                 bool debugOnly)
 {
     for (const MarkupElement &declaration : root.children)

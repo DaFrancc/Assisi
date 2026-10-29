@@ -47,8 +47,10 @@ The default key bindings for named actions. See [Input](input.md).
 
 ## `ui.json`
 
-Which `.csv` files are string tables, and how strictly the cook checks the text
-screens show. See [String tables](ui-string-tables.md#listing-tables).
+Which `.csv` files are string tables, how strictly the cook checks the text
+screens show, and which `.amth` files are themes. See
+[String tables](ui-string-tables.md#listing-tables) and
+[Themes](ui-themes.md#listing-themes).
 
 ## `buses.json`
 

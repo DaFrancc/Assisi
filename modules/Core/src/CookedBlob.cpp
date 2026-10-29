@@ -16,7 +16,7 @@ namespace Assisi::Core
 namespace
 {
 
-constexpr std::array<std::pair<AssetKindId, std::string_view>, 9> kBuiltInKinds{{
+constexpr std::array<std::pair<AssetKindId, std::string_view>, 10> kBuiltInKinds{{
     {kReflectedKind, "reflected"},
     {kSceneKind, "scene"},
     {kMeshKind, "mesh"},
@@ -26,6 +26,7 @@ constexpr std::array<std::pair<AssetKindId, std::string_view>, 9> kBuiltInKinds{
     {kFontKind, "font"},
     {kScreenKind, "screen"},
     {kStringTableKind, "string table"},
+    {kThemeKind, "theme"},
 }};
 
 } // namespace

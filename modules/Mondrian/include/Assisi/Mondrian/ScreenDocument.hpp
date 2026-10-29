@@ -18,6 +18,7 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <Assisi/Core/InternedString.hpp>
@@ -116,17 +117,17 @@ enum class ScreenVerb : uint8_t
 ASTRUCT()
 struct ScreenNode
 {
-    /// Fully resolved: every attribute the file wrote, over the defaults.
-    ///
-    /// Which fields were *written* is not recorded, because nothing yet reads a
-    /// style from anywhere else. When a named style supplies a base for these to
-    /// override, this table gains that set — and the layout hash is what makes
-    /// it a change rather than a migration.
+    /// Every attribute the file wrote, over the defaults. Which of them it
+    /// wrote is in written, and the node's named style gives way to those.
     AFIELD() Style style;
 
     /// How the node looks in each state the file wrote a look for, at most one
     /// per state. Each holds only what its state changes.
-    AFIELD() std::vector<StylePatch> states;
+    AFIELD() std::vector<ThemedPatch> states;
+
+    /// The resting properties the file took from the theme's tokens. Each is in
+    /// written too, and its value in style is a default until a theme fills it.
+    AFIELD() std::vector<TokenUse> tokens;
 
     /// What a slider's ends mean, and how far one press moves it. A stepped
     /// slider moves a whole step at a time and ignores the step here.
@@ -148,13 +149,14 @@ struct ScreenNode
     /// What Screen::Find looks this node up by. Empty for an unnamed node.
     AFIELD() Core::InternedString name;
 
-    /// The named style this node asks for, or empty. Carried and not resolved:
-    /// there is nowhere yet for a name to resolve to, and a file written today
-    /// should not have to be edited when there is.
+    /// The style this node names in whichever theme the UI has, or empty.
     AFIELD() Core::InternedString styleName;
 
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;
+
+    /// Which properties of style the file wrote, one bit per StyleProperty.
+    AFIELD() uint64_t written = 0;
 
     /// Where a continuous slider starts, within its range.
     AFIELD() float value = 0.f;

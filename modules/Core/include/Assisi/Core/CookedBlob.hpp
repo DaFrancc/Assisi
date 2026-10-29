@@ -93,6 +93,8 @@ inline constexpr AssetKindId kFontKind{"font"};
 inline constexpr AssetKindId kScreenKind{"screen"};
 /// One table of UI strings, by key.
 inline constexpr AssetKindId kStringTableKind{"string table"};
+/// A UI theme: palette modes of tokens, and named styles.
+inline constexpr AssetKindId kThemeKind{"theme"};
 
 /// @brief The name of a kind the engine cooks itself, or empty for any other kind.
 [[nodiscard]] std::string_view BuiltInKindName(AssetKindId kind) noexcept;

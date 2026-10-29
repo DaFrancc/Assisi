@@ -78,15 +78,20 @@ ScreenDocument Everything()
     panel.style.textAlign = TextAlign::Right;
     panel.style.textColor = Color{0.9f, 0.8f, 0.7f, 0.6f};
     panel.style.textSize = Em(1.5f);
-    // Two looks writing different properties, so a look the codec drops, or
-    // two it merges, shows up as a difference.
+    panel.written = PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::BorderColor);
+    panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::BorderColor}};
+    // Two looks writing different properties, one of them through a token, so
+    // a look the codec drops, or two it merges, shows up as a difference.
     Style hovered;
     hovered.background = Color{0.9f, 0.2f, 0.1f, 1.f};
     hovered.sizing[0] = Sizing::Fixed(Px(300.f));
-    panel.states.push_back(StylePatch::Changes(StyleState::Hover, Style{}, hovered));
+    ThemedPatch hover{.patch = StylePatch::Changes(StyleState::Hover, Style{}, hovered), .tokens = {}};
+    hover.Bind(TokenUse{.token = InternedString{"accent"}, .property = StyleProperty::TextColor});
+    panel.states.push_back(hover);
     Style disabled;
     disabled.textColor = Color{0.4f, 0.4f, 0.4f, 1.f};
-    panel.states.push_back(StylePatch::Changes(StyleState::Disabled, Style{}, disabled));
+    panel.states.push_back(
+        ThemedPatch{.patch = StylePatch::Changes(StyleState::Disabled, Style{}, disabled), .tokens = {}});
     document.nodes.push_back(panel);
 
     ScreenNode resume;
@@ -393,9 +398,22 @@ TEST_CASE("ScreenBlob: an enumerator this build does not have is refused")
     {
         ScreenDocument document;
         document.nodes.emplace_back();
-        StylePatch look;
-        look.state = static_cast<StyleState>(9);
+        ThemedPatch look;
+        look.patch.state = static_cast<StyleState>(9);
         document.nodes[0].states.push_back(look);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("the property a token is used for")
+    {
+        // Resolving a look switches over it to find the field the token fills.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].tokens.push_back(
+            TokenUse{.token = InternedString{"accent"}, .property = static_cast<StyleProperty>(200)});
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());
@@ -411,8 +429,8 @@ TEST_CASE("ScreenBlob: a node's looks that no cook writes are refused")
         // applied in, which nothing promises.
         ScreenDocument document;
         document.nodes.emplace_back();
-        StylePatch hovered;
-        hovered.state = StyleState::Hover;
+        ThemedPatch hovered;
+        hovered.patch.state = StyleState::Hover;
         document.nodes[0].states = {hovered, hovered};
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
@@ -424,10 +442,21 @@ TEST_CASE("ScreenBlob: a node's looks that no cook writes are refused")
     {
         ScreenDocument document;
         document.nodes.emplace_back();
-        StylePatch hovered;
-        hovered.state = StyleState::Hover;
-        hovered.written = uint64_t{1} << static_cast<uint32_t>(StyleProperty::Count_);
+        ThemedPatch hovered;
+        hovered.patch.state = StyleState::Hover;
+        hovered.patch.written = PropertyBit(StyleProperty::Count_);
         document.nodes[0].states.push_back(hovered);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a node writing a property this build does not have")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].written = PropertyBit(StyleProperty::Count_);
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());

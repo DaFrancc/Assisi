@@ -5,6 +5,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -42,6 +43,13 @@ void PauseMenuSystem(Assisi::App::SystemContext &ctx)
     {
         ctx.input->ConsumeKey(Assisi::Window::Key::Escape);
         pause->Show();
+    }
+
+    // Every press switches once, however many arrive in a frame.
+    for ([[maybe_unused]] const ContrastToggled &toggled : ctx.events.Read<ContrastToggled>())
+    {
+        // A theme without the mode logs why and stays as it is.
+        (void)ctx.ui->SetThemeMode(ctx.ui->GetThemeMode() == kContrastMode ? kEverydayMode : kContrastMode);
     }
 
     if (ctx.events.Read<ResumeRequested>().empty())

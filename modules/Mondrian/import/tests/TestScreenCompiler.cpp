@@ -2,11 +2,13 @@
 #include "ScreenTesting.hpp"
 
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 
 #include <Assisi/Mondrian/Pattern.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventCatalog.hpp>
@@ -16,6 +18,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <fstream>
 #include <iterator>
@@ -507,11 +510,11 @@ namespace
 /// The look @p node has in @p state, or null when the file wrote none.
 const StylePatch *PatchFor(const ScreenNode &node, StyleState state)
 {
-    for (const StylePatch &patch : node.states)
+    for (const ThemedPatch &look : node.states)
     {
-        if (patch.state == state)
+        if (look.patch.state == state)
         {
-            return &patch;
+            return &look.patch;
         }
     }
     return nullptr;
@@ -913,15 +916,6 @@ TEST_CASE("ScreenCompiler: the screen itself cannot be clicked")
     CHECK(Refused(R"amdn(<screen on_click="hide()" />)amdn").message.find("on_click") != std::string::npos);
 }
 
-TEST_CASE("ScreenCompiler: a named style is carried and checked against nothing")
-{
-    // There is nowhere for a style name to resolve to yet. A file written today
-    // should cook, and start resolving when there is.
-    const ScreenDocument document = Compiled(R"(<screen><column style="Panel" gap="4" /></screen>)");
-    CHECK(document.nodes[1].styleName.View() == "Panel");
-    CHECK(document.nodes[1].style.gap == Px(4.f));
-}
-
 TEST_CASE("ScreenCompiler: compiling text produces bytes the reader reads back")
 {
     // The two halves of the format, against each other: what the cooker writes
@@ -1018,18 +1012,44 @@ TEST_CASE("ScreenCompiler: every construction attribute survives the round trip"
     CHECK(louder.moves == 2);
 }
 
-TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it replaced")
+namespace
 {
-    // The file itself, not a copy of it. What this catches is a mistake in the
-    // shipped screen, which otherwise nothing would notice until a cook — and
-    // no test runs one over the real asset tree.
-    std::ifstream file{ASSISI_PAUSE_SCREEN_PATH};
+
+/// The text of the file at @p path, read in place.
+std::string ReadFile(const char *path)
+{
+    std::ifstream file{path};
     REQUIRE(file.is_open());
-    const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
+/// What @p node wears at rest under @p theme in its mode @p mode.
+Style Worn(const ScreenNode &node, const ListedTheme &theme, uint32_t mode)
+{
+    const NodeLook look{.style = node.style,
+                        .tokens = node.tokens,
+                        .states = node.states,
+                        .styleName = node.styleName,
+                        .written = node.written};
+    return ResolveLook(look, ThemeView{.theme = &theme, .mode = mode}).resting.values;
+}
+
+} // namespace
+
+TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its theme looks as it did")
+{
+    // The files themselves, not copies of them. What this catches is a mistake
+    // in the shipped screen or theme, which otherwise nothing would notice
+    // until a cook — and no test runs one over the real asset tree.
+    const std::string text = ReadFile(ASSISI_PAUSE_SCREEN_PATH);
 
     // The events the shipped file names, which this binary does not link: the
-    // game's own is pushed as a stand-in, since only its name is compiled here.
+    // game's own are pushed as stand-ins, since only their names are compiled
+    // here.
     struct ResumeStandIn
+    {
+    };
+    struct ContrastStandIn
     {
     };
     EventCatalog catalog;
@@ -1037,15 +1057,19 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
         {.name = "Assisi::App::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
     catalog.Register(
         {.name = "Game::ResumeRequested", .push = [](const EventRoute &events) { events.Push(ResumeStandIn{}); }});
+    catalog.Register(
+        {.name = "Game::ContrastToggled", .push = [](const EventRoute &events) { events.Push(ContrastStandIn{}); }});
 
-    // The table the shipped file's keys name, read in place like the file.
-    std::ifstream tableFile{ASSISI_PAUSE_TABLE_PATH};
-    REQUIRE(tableFile.is_open());
-    const std::string csv{std::istreambuf_iterator<char>{tableFile}, std::istreambuf_iterator<char>{}};
-    const std::expected<StringTable, MarkupError> table = CompileStringTable(csv, EmptyText::Refuse);
+    // The table the shipped file's keys name and the theme it wears, read in
+    // place like the file.
+    const std::expected<StringTable, MarkupError> table =
+        CompileStringTable(ReadFile(ASSISI_PAUSE_TABLE_PATH), EmptyText::Refuse);
     REQUIRE_MESSAGE(table.has_value(), Why(table));
-    TextRules rules;
+    std::expected<CompiledTheme, MarkupError> theme = CompileThemeSource(ReadFile(ASSISI_DEFAULT_THEME_PATH));
+    REQUIRE_MESSAGE(theme.has_value(), Why(theme));
+    ScreenRules rules;
     rules.tables.byName["pause"] = *table;
+    rules.themes.push_back(ProjectTheme{.vpath = "ui/Default.amth", .compiled = *theme});
     rules.literals = LiteralText::RequiresKey;
 
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
@@ -1062,20 +1086,24 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     REQUIRE(document->systems.size() == 1);
     CHECK(document->systems[0].View() == "PauseMenu");
 
+    // The look as the everyday mode puts it on.
+    const ListedTheme listed{.vpath = "ui/Default.amth", .document = theme->document};
+    REQUIRE(listed.document.modes[0].View() == "dark");
+    const Style root = Worn(document->nodes[0], listed, 0);
     CHECK(document->nodes[0].blocksPointer);
-    CHECK(document->nodes[0].style.childAlign[0] == Alignment::Center);
-    CHECK(document->nodes[0].style.childAlign[1] == Alignment::Center);
-    CHECK(document->nodes[0].style.background.a == doctest::Approx(0.55f));
+    CHECK(root.childAlign[0] == Alignment::Center);
+    CHECK(root.childAlign[1] == Alignment::Center);
+    CHECK(root.background.a == doctest::Approx(0.55f));
 
-    const ScreenNode &panel = NodeNamed(*document, "panel");
-    CHECK(panel.style.sizing[0].kind == SizingKind::Fixed);
-    CHECK(panel.style.sizing[0].value == Px(420.f));
-    CHECK(panel.style.padding.left == Px(32.f));
-    CHECK(panel.style.gap == Px(20.f));
-    CHECK(panel.style.borderWidth == Px(2.f));
-    CHECK(panel.style.cornerRadius == Px(16.f));
-    CHECK(panel.style.cornerStyle == CornerStyle::Rounded);
-    CHECK(panel.style.direction == Direction::Column);
+    const Style panel = Worn(NodeNamed(*document, "panel"), listed, 0);
+    CHECK(panel.sizing[0].kind == SizingKind::Fixed);
+    CHECK(panel.sizing[0].value == Px(420.f));
+    CHECK(panel.padding.left == Px(32.f));
+    CHECK(panel.gap == Px(20.f));
+    CHECK(panel.borderWidth == Px(2.f));
+    CHECK(panel.cornerRadius == Px(16.f));
+    CHECK(panel.cornerStyle == CornerStyle::Rounded);
+    CHECK(panel.direction == Direction::Column);
 
     // Every word from the table, which RequiresKey above holds the file to.
     const ScreenNode &title = NodeNamed(*document, "title");
@@ -1088,8 +1116,16 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles to what it rep
     CHECK(*rules.tables.Find("pause", "resume") == "Resume");
     CHECK(resume.action == ActionKind::Event);
     CHECK(resume.eventName.View() == "Game::ResumeRequested");
-    CHECK(resume.style.textSize == Px(28.f));
-    CHECK(resume.style.cornerRadius == Px(10.f));
+    const Style resting = Worn(resume, listed, 0);
+    CHECK(resting.textSize == Px(28.f));
+    CHECK(resting.cornerRadius == Px(10.f));
+    CHECK(resting.background.r == doctest::Approx(static_cast<float>(0xe6) / 255.f));
+
+    // The other mode changes how it looks and nothing about what it is.
+    const Style contrast = Worn(resume, listed, 1);
+    CHECK(contrast.background != resting.background);
+    CHECK(contrast.textSize == resting.textSize);
+    CHECK(NodeNamed(*document, "contrast").eventName.View() == "Game::ContrastToggled");
 
     const ScreenNode &quit = NodeNamed(*document, "quit");
     CHECK(quit.textIsKey);
@@ -1986,7 +2022,7 @@ TEST_CASE("ScreenCompiler: a key that names nothing is refused where it is writt
 
 TEST_CASE("ScreenCompiler: when keys are required, literal text a player reads is refused")
 {
-    const TextRules strict = PauseTable(LiteralText::RequiresKey);
+    const ScreenRules strict = PauseTable(LiteralText::RequiresKey);
 
     CHECK(Refused("<screen>\n  <text>Paused</text>\n</screen>\n", {}, strict).line == 2);
     CHECK(Refused("<screen>\n  <button on_click=\"hide()\">Resume</button>\n</screen>\n", {}, strict).line == 2);
@@ -2002,7 +2038,7 @@ TEST_CASE("ScreenCompiler: when keys are required, literal text a player reads i
 
 TEST_CASE("ScreenCompiler: a debug-only screen may write text as it is")
 {
-    const TextRules strict = PauseTable(LiteralText::RequiresKey);
+    const ScreenRules strict = PauseTable(LiteralText::RequiresKey);
     const ScreenDocument document =
         Compiled("<screen debug_only=\"true\">\n  <text>frame time</text>\n</screen>\n", {}, strict);
     CHECK(document.debugOnly);

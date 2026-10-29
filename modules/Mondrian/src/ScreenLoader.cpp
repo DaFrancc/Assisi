@@ -131,8 +131,9 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
 
 /// The node @p node describes, built by the same call a screen written in C++
 /// would make. Every control gives its node a style of its own, which the
-/// caller replaces whole with the document's: a document is fully resolved, so
-/// what it carries is the answer and not an override.
+/// caller replaces whole with the document's look: what a control's call would
+/// have set is already under what the file wrote, so the look is the answer
+/// and not an override.
 NodeId Create(Screen &screen, NodeId parent, const ScreenDocument &document, const ScreenNode &node)
 {
     switch (node.widget)
@@ -197,6 +198,16 @@ void ApplyTextFieldText(Screen &screen, TextFieldId field, const ScreenDocument 
     // Last: masking a field also turns copy and cut off, so anything after it
     // that touched the abilities would quietly turn them back on.
     screen.SetMask(field, node.mask);
+}
+
+/// How @p node asks to look, as the file wrote it.
+NodeLook LookOf(const ScreenNode &node)
+{
+    return NodeLook{.style = node.style,
+                    .tokens = node.tokens,
+                    .states = node.states,
+                    .styleName = node.styleName,
+                    .written = node.written};
 }
 
 /// Everything about a node that is neither its style nor its place.
@@ -313,14 +324,14 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
             // The tree comes with a root, which is never created and never
             // destroyed. The document's first node describes that one.
             id = screen.Root();
-            tree.SetStyle(id, node.style);
+            tree.SetLook(id, LookOf(node));
         }
         else
         {
             // Created by the call its control names, then styled — the same
             // order a screen built in C++ uses.
             id = Create(screen, ids[node.parent], document, node);
-            tree.SetStyle(id, node.style);
+            tree.SetLook(id, LookOf(node));
 
             // A control took its text where it was created, from the label or
             // the starting contents its call takes. A keyed label is set again
@@ -340,11 +351,6 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
                 screen.SetPattern(field, std::move((*patterns)[index]), node.check);
                 ApplyTextFieldText(screen, field, document, node, ui);
             }
-        }
-
-        for (const StylePatch &look : node.states)
-        {
-            tree.SetStateStyle(id, look);
         }
 
         // Resolve refused any name two nodes carry, and every node on this

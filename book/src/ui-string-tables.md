@@ -90,6 +90,7 @@ A `.csv` file is a string table only when `assets/config/ui.json` lists it:
 | `stringTables` | Every string table the game has. Two tables with the same file name fail the cook. |
 | `requireStringKeys` | When `true`, any text that is not a key fails the cook, so no text is missed when the game is translated. |
 | `allowEmptyStrings` | When `false` (the default), an entry with no text fails the cook, since it is usually text nobody wrote yet. |
+| `themes` | Every theme the game has. See [Themes](ui-themes.md#listing-themes). |
 
 ## Requiring keys
 

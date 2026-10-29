@@ -36,6 +36,10 @@ struct ElementKind
     /// Whether it may hold elements. A leaf that holds one is the same mistake
     /// the other way round.
     bool carriesChildren;
+    /// Whether its name says which way it lays its children out, as row and
+    /// column do, so that direction is the node's own and a style it names
+    /// gives way to it.
+    bool namesDirection;
 };
 
 /// Which elements an attribute belongs to. In the order a name is looked up in:
@@ -60,6 +64,7 @@ enum class HandledAttribute : uint8_t
     Name,        ///< `name`: qualified by the instance it is in, and unique
     Focus,       ///< `focus`: at most one node on a screen
     Pattern,     ///< `pattern`: a failed compile has a message of its own
+    StyleName,   ///< `style`: checked against every theme the project lists
     Background,  ///< a colour: each likely mistake has a message of its own
     BorderColor, ///< as Background
     TextColor,   ///< as Background
@@ -123,6 +128,21 @@ struct AttributeSpec
 /// value" could not.
 [[nodiscard]] std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colour,
                                                           const MarkupAttribute &attribute);
+
+/// The attribute every node has that writes @p property.
+[[nodiscard]] const AttributeSpec &AttributeFor(StyleProperty property);
+
+/// Reads @p attribute, which @p spec says writes a property of a style, into
+/// @p style, and nothing else.
+[[nodiscard]] std::expected<void, MarkupError> ApplyStyleAttribute(const AttributeSpec &spec,
+                                                                   const MarkupAttribute &attribute, Style &style);
+
+/// The state @p attribute is written for, or none for one written with no
+/// prefix. A prefix that is no state, or more than one, is refused.
+[[nodiscard]] std::expected<std::optional<StyleState>, MarkupError> StateOf(const MarkupAttribute &attribute);
+
+/// What @p name says after its prefix, or all of it when it has none.
+[[nodiscard]] std::string_view AfterPrefix(std::string_view name);
 
 /// The state a file spells @p name, or nullopt.
 [[nodiscard]] std::optional<StyleState> LookUpState(std::string_view name);
