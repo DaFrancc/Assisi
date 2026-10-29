@@ -48,7 +48,8 @@ TEST_CASE("Every engine kind is in the registry, so every file can say it is one
     const Core::AssetKindRegistry &registry = Core::AssetKindRegistry::Instance();
     for (const Core::AssetKindId kind :
          {Core::kReflectedKind, Core::kSceneKind, Core::kMeshKind, Core::kTextureKind, Core::kShaderKind,
-          Core::kVerbatimKind, Core::kFontKind, Core::kScreenKind, Core::kStringTableKind, Core::kThemeKind})
+          Core::kVerbatimKind, Core::kFontKind, Core::kScreenKind, Core::kStringTableKind, Core::kThemeKind,
+          Core::kSpriteSheetKind})
     {
         CAPTURE(Core::DescribeKind(kind));
         CHECK(registry.Find(kind) != nullptr);

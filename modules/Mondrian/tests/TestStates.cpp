@@ -95,6 +95,9 @@ Style Distinct()
     style.enabledScrollBars = {true, true};
     style.scrollBarVisibility = ScrollBarVisibility::Always;
     style.scrollBarDrag = ScrollBarDrag::Smoothed;
+    style.backgroundImage = Assisi::Core::InternedString{"frames:panel"};
+    style.tint = Color{0.25f, 0.5f, 0.75f, 1.f};
+    style.fit = ImageFit::Cover;
     return style;
 }
 

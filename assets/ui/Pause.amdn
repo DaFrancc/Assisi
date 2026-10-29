@@ -10,8 +10,12 @@
 
   <column name="panel" style="panel" width="420" padding="32" gap="20" align="center start">
 
-    <!-- Every word comes from the table ui/pause.csv. -->
-    <text name="title" width="grow" text_size="48">#pause:title</text>
+    <!-- Every word comes from the table ui/pause.csv, and the icon beside the
+         title from the sheet ui/icons.amsp, coloured by the theme. -->
+    <row name="heading" width="grow" gap="16" align="start center">
+      <image name="icon" sprite="icons:pause" tint="$accent" />
+      <text name="title" width="grow" text_size="48">#pause:title</text>
+    </row>
 
     <row name="buttons" width="grow" gap="20" align="center center">
 

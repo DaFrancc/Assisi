@@ -6,17 +6,19 @@
      Contrast button switches between them. -->
 <theme>
   <palette mode="dark"
-           scrim="rgbf(0, 0, 0, 0.55)" surface="#1a1c24f0" edge="#575f7a" edge_width="2"
+           scrim="rgbf(0, 0, 0, 0.55)" edge_width="2"
            ink="#ffffff" accent="#e63319" accent_hover="#ff6a4d" accent_pressed="#a02010"
-           accent_ink="#ffffff" ghost_hover="#ffffff26" ghost_pressed="#ffffff4d" focus="#ffd23c" />
+           accent_ink="#ffffff" ghost_hover="#ffffff26" ghost_pressed="#ffffff4d" focus="#ffd23c"
+           frame="frames:panel" />
   <palette mode="high_contrast"
-           scrim="#000000e6" surface="#000000" edge="#ffffff" edge_width="4"
+           scrim="#000000e6" edge_width="4"
            ink="#ffffff" accent="#ffd23c" accent_hover="#ffe680" accent_pressed="#c9a000"
-           accent_ink="#000000" ghost_hover="#ffffff4d" ghost_pressed="#ffffff80" focus="#00e5ff" />
+           accent_ink="#000000" ghost_hover="#ffffff4d" ghost_pressed="#ffffff80" focus="#00e5ff"
+           frame="frames:panel_contrast" />
 
-  <!-- A box that holds a menu. -->
-  <style name="panel" background="$surface" border_width="$edge_width" border_color="$edge"
-         corner_radius="16" corner_style="rounded" text_color="$ink" />
+  <!-- A box that holds a menu: its frame, from ui/frames.amsp, is its fill
+       and its edge, and keeps its corners however large the box grows. -->
+  <style name="panel" background_image="$frame" text_color="$ink" />
 
   <!-- What every menu button shares. The two after it say how one is
        coloured: filled for the action a player most likely wants, outlined

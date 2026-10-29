@@ -32,6 +32,8 @@ struct Rect
     float y = 0.f;
     float width = 0.f;
     float height = 0.f;
+
+    [[nodiscard]] friend constexpr bool operator==(const Rect &, const Rect &) = default;
 };
 
 /// @brief A position in window pixels, origin top-left, y down.
@@ -85,9 +87,31 @@ enum class QuadKind : uint32_t
     Solid,     ///< colour only; the texture is ignored
     Glyph,     ///< colour times the coverage in the texture's red channel
     Image,     ///< colour times the texture
-    NineSlice, ///< an image whose borders keep their size; drawn as Image for now
+    NineSlice, ///< an image whose borders keep their size while its edges and middle stretch
     Count_
 };
+
+/// @brief How far in from each edge, in whole pixels, a nine-slice's corners
+/// reach: on the quad, or in the texture it samples.
+struct SliceInsets
+{
+    uint16_t left = 0;
+    uint16_t top = 0;
+    uint16_t right = 0;
+    uint16_t bottom = 0;
+
+    [[nodiscard]] friend constexpr bool operator==(const SliceInsets &, const SliceInsets &) = default;
+};
+
+/// Bits one inset takes in QuadInstance::slice, two to a word.
+inline constexpr uint32_t kSliceInsetBits = 16;
+inline constexpr uint32_t kSliceInsetMask = (1u << kSliceInsetBits) - 1u;
+
+/// @brief @p low and @p high in one word, @p low in the low half.
+[[nodiscard]] constexpr uint32_t PackSliceInsets(uint16_t low, uint16_t high)
+{
+    return static_cast<uint32_t>(low) | (static_cast<uint32_t>(high) << kSliceInsetBits);
+}
 
 /// The shape of one corner. The values are read by the shader.
 AENUM()
@@ -154,6 +178,10 @@ struct QuadInstance
     uint32_t cornerStyles = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
     uint32_t kind = static_cast<uint32_t>(QuadKind::Solid);
     uint32_t transformIndex = kIdentityTransform; ///< reserved; always identity for now
+    /// A NineSlice's insets, packed by PackSliceInsets: on the quad left and
+    /// top, then right and bottom, in device pixels; then the same in texels
+    /// of its texture. Unused by every other kind.
+    std::array<uint32_t, 4> slice{};
 };
 
 /// The vec4 slots of a QuadInstance, mirrored as constants in mondrian/quad.glsl.
@@ -166,6 +194,7 @@ enum class InstanceSlot : uint32_t
     BorderColor,
     CornerRadius,
     Scalars, ///< borderWidth, cornerStyles, kind, transformIndex
+    Slice,
     Count_
 };
 
@@ -187,6 +216,7 @@ static_assert(offsetof(QuadInstance, borderWidth) == SlotOffset(InstanceSlot::Sc
 static_assert(offsetof(QuadInstance, cornerStyles) == SlotOffset(InstanceSlot::Scalars) + sizeof(float));
 static_assert(offsetof(QuadInstance, kind) == SlotOffset(InstanceSlot::Scalars) + 2 * sizeof(float));
 static_assert(offsetof(QuadInstance, transformIndex) == SlotOffset(InstanceSlot::Scalars) + 3 * sizeof(float));
+static_assert(offsetof(QuadInstance, slice) == SlotOffset(InstanceSlot::Slice));
 
 /// @brief A run of consecutive instances drawn with one texture, material and mask.
 struct DrawEntry
@@ -215,6 +245,10 @@ class QuadBuilder
     QuadBuilder &Clip(const Rect &clip);
     /// @brief Samples @p texture over @p uv, and makes the quad an Image.
     QuadBuilder &Texture(TextureId texture, const Rect &uv);
+    /// @brief Makes the textured quad a NineSlice: its corners @p destination
+    /// device pixels in from its edges show the texels @p source in from the
+    /// edges of its uv, and the edges and middle between them stretch.
+    QuadBuilder &NineSlice(const SliceInsets &destination, const SliceInsets &source);
     QuadBuilder &Kind(QuadKind kind);
     QuadBuilder &Material(MaterialId material);
     QuadBuilder &Mask(MaskId mask);

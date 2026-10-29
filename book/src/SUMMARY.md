@@ -29,6 +29,7 @@
     - [Template libraries](ui-template-libraries.md)
     - [String tables](ui-string-tables.md)
     - [Themes](ui-themes.md)
+    - [Images](ui-images.md)
     - [Screens at run time](ui-run-time.md)
     - [What the cook checks](ui-cook-checks.md)
 - [Physics](physics.md)

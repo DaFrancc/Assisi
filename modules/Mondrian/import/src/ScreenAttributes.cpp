@@ -5,6 +5,7 @@
 #include "MarkupValues.hpp"
 
 #include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/StringTable.hpp>
 
 #include <algorithm>
 #include <array>
@@ -30,10 +31,14 @@ static_assert(kVerbs.size() == static_cast<std::size_t>(ScreenVerb::Count_), "ev
 constexpr char kCallOpen = '(';
 constexpr char kCallClose = ')';
 
-constexpr std::array<ElementKind, 9> kElements{{
+/// The element that is a picture and nothing else.
+constexpr std::string_view kImageElement = "image";
+
+constexpr std::array<ElementKind, 10> kElements{{
     {"row", BuiltinWidget::None, Direction::Row, false, true, true},
     {"column", BuiltinWidget::None, Direction::Column, false, true, true},
     {"text", BuiltinWidget::None, Direction::Row, true, false, false},
+    {kImageElement, BuiltinWidget::None, Direction::Row, false, false, false},
     {"button", BuiltinWidget::Button, Direction::Row, true, false, false},
     {"toggle", BuiltinWidget::Toggle, Direction::Row, false, false, false},
     {"slider", BuiltinWidget::ContinuousSlider, Direction::Row, false, false, false},
@@ -119,6 +124,18 @@ bool ReadFloatOffset(const AttributeTarget &target, std::string_view value)
         return false;
     }
     target.style.floating.offset = {*x, *y};
+    return true;
+}
+
+/// A sprite spelled `sheet:name`, or nothing to take one off. Whether a listed
+/// sheet has it is the walk's to check, which has the project's sheets.
+bool ReadBackgroundImage(const AttributeTarget &target, std::string_view value)
+{
+    if (!value.empty() && !SplitKey(value))
+    {
+        return false;
+    }
+    target.style.backgroundImage = Core::InternedString{value};
     return true;
 }
 
@@ -237,8 +254,11 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForColor("background", HandledAttribute::Background, StyleProperty::Background),
     ForColor("border_color", HandledAttribute::BorderColor, StyleProperty::BorderColor),
     ForColor("text_color", HandledAttribute::TextColor, StyleProperty::TextColor),
+    ForColor("tint", HandledAttribute::Tint, StyleProperty::Tint),
 
     Handled("style", HandledAttribute::StyleName),
+    Handled("sprite", HandledAttribute::Sprite),
+    Handled("texture", HandledAttribute::Texture),
     ForAny("visible", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.visible, v, ParseBool); }),
     ForAny("enabled", [](const AttributeTarget &t, std::string_view v) { return Read(t.node.enabled, v, ParseBool); }),
     ForAny("blocks_pointer",
@@ -304,6 +324,9 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForStyle("float_clip", StyleProperty::FloatClip,
              [](const AttributeTarget &t, std::string_view v)
              { return Read(t.style.floating.clipToParent, v, ParseBool); }),
+    ForStyle("background_image", StyleProperty::BackgroundImage, ReadBackgroundImage),
+    ForStyle("fit", StyleProperty::Fit,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.fit, v, ParseImageFit); }),
 });
 
 /// Each entry is read one way: through its own function, or by ApplyAttributes.
@@ -489,12 +512,17 @@ std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colou
     case HandledAttribute::TextColor:
         style.textColor = *read;
         return {};
+    case HandledAttribute::Tint:
+        style.tint = *read;
+        return {};
     case HandledAttribute::None:
     case HandledAttribute::Action:
     case HandledAttribute::Name:
     case HandledAttribute::Focus:
     case HandledAttribute::Pattern:
     case HandledAttribute::StyleName:
+    case HandledAttribute::Sprite:
+    case HandledAttribute::Texture:
     case HandledAttribute::Count_:
         break;
     }
@@ -639,6 +667,14 @@ void Seed(ScreenNode &node)
 std::expected<void, MarkupError> Required(const MarkupElement &element, const ScreenNode &node, bool stepWritten,
                                           bool stepKnown)
 {
+    // An image is its picture, so one naming none is a mistake rather than an
+    // empty box. Asked of what the element writes, so a template's own image
+    // may name its picture through a parameter it has no value for yet.
+    if (element.name == kImageElement && element.Find("sprite") == nullptr && element.Find("texture") == nullptr)
+    {
+        return std::unexpected(At(element, "an image shows a picture, named by sprite=\"sheet:name\" or by "
+                                           "texture=\"path/to/image.png\"."));
+    }
     if (node.widget != BuiltinWidget::ContinuousSlider)
     {
         return {};

@@ -72,6 +72,12 @@ bool OnField(StyleProperty property, From &a, To &b, const Visit &visit)
         return visit(a.floating.target, b.floating.target);
     case StyleProperty::FloatClip:
         return visit(a.floating.clipToParent, b.floating.clipToParent);
+    case StyleProperty::BackgroundImage:
+        return visit(a.backgroundImage, b.backgroundImage);
+    case StyleProperty::Tint:
+        return visit(a.tint, b.tint);
+    case StyleProperty::Fit:
+        return visit(a.fit, b.fit);
     case StyleProperty::Count_:
         break;
     }

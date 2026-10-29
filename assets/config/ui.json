@@ -3,6 +3,7 @@
   "type": "UiConfig",
   "stringTables": ["ui/pause.csv"],
   "themes": ["ui/Default.amth"],
+  "spriteSheets": ["ui/frames.amsp", "ui/icons.amsp"],
   "requireStringKeys": false,
   "allowEmptyStrings": false
 }

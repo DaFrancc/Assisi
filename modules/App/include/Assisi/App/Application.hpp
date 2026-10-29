@@ -456,7 +456,8 @@ private:
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
-    /// Reads the UI settings and loads the string tables and themes they list.
+    /// Reads the UI settings, loads the string tables and themes they list,
+    /// and keeps them for the sprite sheets, which load once OnStart has run.
     void LoadUiSettings();
     /// Loads every string table @p settings list and hands them to the UI. A
     /// game whose tables do not load still runs, showing keys where the text
@@ -466,6 +467,13 @@ private:
     /// the first on. A game whose themes do not load still runs, each node
     /// wearing only its own look.
     void LoadUiThemes(const Mondrian::UiConfig &settings);
+    /// Loads every sprite sheet @p settings list, uploads each one's texture
+    /// and hands its sprites to the UI. A sprite of a sheet that does not load
+    /// shows the placeholder.
+    void LoadUiSprites(const Mondrian::UiConfig &settings);
+    /// Uploads the image at @p vpath for the UI and registers it: all of it as
+    /// one picture of its size, or nullopt, logged, when it cannot be loaded.
+    [[nodiscard]] std::optional<Mondrian::Sprite> LoadUiTexture(std::string_view vpath);
     /// Builds the mixer from the game's bus declarations and starts a device on
     /// it. A game that cannot open a sound device still runs, silently, with
     /// sounds starting and finishing as they would.
@@ -504,6 +512,8 @@ private:
     Mondrian::Font _uiFont;
     Mondrian::StringTables _uiStrings;
     Mondrian::Themes _uiThemes;
+    /// The UI settings, read with the window and kept for the sheets they list.
+    Mondrian::UiConfig _uiSettings;
     /// The DisplayedString resolver installed before this app's own, put back
     /// when the app goes: the one it installs points at _uiStrings.
     Core::DisplayedStringResolver _previousStringResolver;
@@ -515,6 +525,9 @@ private:
     Mondrian::Engine::QuadPass _uiPass;
     Render::Texture _uiPlaceholderTexture;
     Render::Texture _uiFontAtlas;
+    /// Every image the UI has asked for, sheets' and screens', each kept until
+    /// the app goes: the pass draws from them by the ids it gave them.
+    std::vector<Render::Texture> _uiTextures;
 
     /// Audio, created with the window, so a headless process has none. The
     /// device is declared after the mixer it plays, so it is destroyed first and

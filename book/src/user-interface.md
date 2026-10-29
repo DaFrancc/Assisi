@@ -8,7 +8,7 @@ it describe each part of the system in reference form:
 |---|---|
 | [Tutorial: a pause menu](ui-tutorial.md) | A working menu, from screen file to level. |
 | [Screen settings](ui-screen-settings.md) | Input, pausing, hiding what's beneath and draw order. |
-| [Elements and names](ui-elements.md) | The nine elements, and how nodes are named. |
+| [Elements and names](ui-elements.md) | The ten elements, and how nodes are named. |
 | [Layout and appearance](ui-layout.md) | Lengths and units, sizes, colours, text, floating, scrolling, and how an element looks while hovered, pressed, focused or disabled. |
 | [Controls](ui-controls.md) | Toggles, sliders, scroll areas and text fields. |
 | [Button actions](ui-actions.md) | What a button does when clicked: an action or an event. |
@@ -16,6 +16,7 @@ it describe each part of the system in reference form:
 | [Template libraries](ui-template-libraries.md) | Sharing templates between screens. |
 | [String tables](ui-string-tables.md) | Keeping a screen's words in `.csv` tables, ready to translate. |
 | [Themes](ui-themes.md) | Keeping colours and sizes in named styles and tokens, and switching them while the game runs. |
+| [Images](ui-images.md) | Icons and pictures from sprite sheets, background images, and frames that fit any size. |
 | [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, and sharing screens between levels. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 

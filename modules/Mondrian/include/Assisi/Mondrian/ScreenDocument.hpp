@@ -155,6 +155,11 @@ struct ScreenNode
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;
 
+    /// The picture the node shows: a sprite as `sheet:name`, or the asset path
+    /// of an image shown whole. At most one of the two; both empty for none.
+    AFIELD() Core::InternedString sprite;
+    AFIELD() Core::InternedString texture;
+
     /// Which properties of style the file wrote, one bit per StyleProperty.
     AFIELD() uint64_t written = 0;
 

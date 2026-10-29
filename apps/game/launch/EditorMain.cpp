@@ -30,10 +30,13 @@
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 #include <Assisi/Mondrian/Import/ScreenRules.hpp>
+#include <Assisi/Mondrian/Import/SpriteSheetCompiler.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
 #include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
+#include <Assisi/Mondrian/SpriteSheetReader.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
@@ -504,6 +507,33 @@ std::expected<Assisi::Mondrian::ThemeDocument, Assisi::Mondrian::ThemeReadError>
     return std::move(*theme);
 }
 
+/// Compiles the sprite sheet at @p vpath and reads the bytes back, as the cook
+/// would, so a sheet that would fail the cook fails here too.
+std::expected<Assisi::Mondrian::SpriteSheetDocument, Assisi::Mondrian::SpriteSheetReadError>
+CompileSourceSpriteSheet(std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Missing);
+    }
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileSpriteSheetText(*text, &ReadSourceText);
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Invalid);
+    }
+    std::expected<Assisi::Mondrian::SpriteSheetDocument, Assisi::Mondrian::CookedSpriteSheetError> sheet =
+        Assisi::Mondrian::ReadCookedSpriteSheet(*cooked);
+    if (!sheet)
+    {
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Invalid);
+    }
+    return std::move(*sheet);
+}
+
 /// The file the dedicated server reads a collision model from. Its asset index
 /// is built on the first read, since the asset root is only known once the
 /// server has initialised, and read-only, since the editor may share the tree.
@@ -534,8 +564,9 @@ int main(int argc, char **argv)
     // String tables the same way: compiled from the file an author edits into
     // the bytes the cook would write, and read back.
     (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
-    // Themes the same way.
+    // Themes and sprite sheets the same way.
     (void)Assisi::Mondrian::SetThemeReader(&CompileSourceTheme);
+    (void)Assisi::Mondrian::SetSpriteSheetReader(&CompileSourceSpriteSheet);
 
     // Started by a crash, as the crashed run's reporter, reading its window from
     // the source tree like everything else here.

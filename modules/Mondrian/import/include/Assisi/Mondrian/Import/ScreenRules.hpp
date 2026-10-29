@@ -3,7 +3,8 @@
 
 /// @file ScreenRules.hpp
 /// @brief What a screen is checked against beyond its own file: the project's
-/// string tables, whether literal text is allowed, and the project's themes.
+/// string tables, whether literal text is allowed, and the project's themes
+/// and sprite sheets.
 ///
 /// Read once per compile from the UI settings and the files they list, and
 /// handed to the screen compiler, so the cook and the editor check a screen
@@ -13,6 +14,7 @@
 
 #include <Assisi/Mondrian/Import/Markup.hpp>
 #include <Assisi/Mondrian/Import/SourceReader.hpp>
+#include <Assisi/Mondrian/Import/SpriteSheetCompiler.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
 #include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 
@@ -22,6 +24,7 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Assisi::Mondrian::Import
@@ -43,6 +46,14 @@ struct ProjectTheme
     CompiledTheme compiled;
 };
 
+/// @brief A sprite sheet the project lists, as a screen is checked against it.
+struct ProjectSheet
+{
+    /// Where it was read from, which names it.
+    std::string vpath;
+    SpriteSheetDocument document;
+};
+
 /// @brief What a screen is checked against.
 struct ScreenRules
 {
@@ -50,8 +61,17 @@ struct ScreenRules
     /// A style or a token a screen names must be in every one of these, in
     /// every mode, since the game may be wearing any of them.
     std::vector<ProjectTheme> themes;
+    /// A sprite a screen or a theme names must be in one of these.
+    std::vector<ProjectSheet> sheets;
+    /// What an image a screen names by its path is read through, to check it
+    /// is one. Without one, naming an image that way is refused.
+    SourceReader read;
     LiteralText literals = LiteralText::Allowed;
 };
+
+/// @brief Whether a sheet @p rules lists has the sprite @p qualified,
+/// `sheet:name`, or a message saying why not.
+[[nodiscard]] std::expected<void, std::string> CheckSprite(const ScreenRules &rules, std::string_view qualified);
 
 /// @brief The UI settings, through @p read. A project with none has the
 /// defaults; one that does not parse is an error naming the file.
@@ -60,11 +80,13 @@ struct ScreenRules
 /// @brief What an empty cell in a table means under @p config.
 [[nodiscard]] EmptyText EmptyTextFor(const UiConfig &config);
 
-/// @brief The settings and every table and theme they list, through @p read.
+/// @brief The settings and every table, theme and sprite sheet they list,
+/// through @p read.
 ///
-/// A listed table or theme that cannot be read or compiled is an error naming
-/// it: a screen's keys and looks cannot be checked without it. Two listed
-/// tables with one name are an error naming both.
+/// A listed file that cannot be read or compiled is an error naming it: a
+/// screen's keys and looks cannot be checked without it. Two listed tables, or
+/// two listed sheets, with one name are an error naming both, and so is a
+/// theme naming a sprite no listed sheet has.
 [[nodiscard]] std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read);
 
 } // namespace Assisi::Mondrian::Import

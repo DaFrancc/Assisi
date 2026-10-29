@@ -876,6 +876,70 @@ TEST_CASE("A style the listed theme does not have fails the screen's cook")
     CHECK(report.error().reason.find("no style 'missing'") != std::string::npos);
 }
 
+namespace
+{
+
+/// A copy of the fixture tree with UI settings listing one sprite sheet, cut
+/// from the fixture's 256-pixel checker, and a screen showing @p sprite from it.
+/// @p rect is the sheet's one sprite's rectangle.
+void AddSpriteSheet(const std::filesystem::path &root, std::string_view sprite, std::string_view rect)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "config/ui.json", R"({ "version": 1, "type": "UiConfig", "spriteSheets": ["ui/frames.amsp"] })",
+               "8e0a2c4d-6f1b-4d3e-a5c7-9b1d3f5a7c9e");
+    WriteAsset(root, "ui/frames.amsp",
+               "<sheet texture=\"textures/checker.png\">\n  <sprite name=\"panel\" rect=\"" + std::string{rect} +
+               "\" borders=\"8\" />\n</sheet>\n",
+               "5b7d9f1a-3c2e-4f4a-8b6d-0e2a4c6e8a0b");
+    WriteAsset(root, "ui/Menu.amdn",
+               "<screen>\n  <image sprite=\"" + std::string{sprite} + "\" />\n</screen>\n",
+               "9c1e3a5b-7d4f-4a6c-b8e0-2f4a6c8e0b2d");
+}
+
+} // namespace
+
+TEST_CASE("A listed sprite sheet cooks, and changing it re-cooks every screen")
+{
+    const ScratchDir source("sheet-src");
+    const ScratchDir out("sheet-out");
+    AddSpriteSheet(source.Path(), "frames:panel", "0 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    REQUIRE(EntryFor(*first, "ui/frames.amsp") != nullptr);
+
+    std::ofstream(source.Path() / "ui" / "frames.amsp", std::ios::app) << "<!-- edited -->\n";
+
+    // The sheet, and both screens: each is checked against every sheet.
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 3);
+}
+
+TEST_CASE("A sprite the listed sheet does not have fails the screen's cook")
+{
+    const ScratchDir source("sheet-sprite-src");
+    const ScratchDir out("sheet-sprite-out");
+    AddSpriteSheet(source.Path(), "frames:missing", "0 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Menu.amdn");
+    CHECK(report.error().reason.find("has no sprite 'missing'") != std::string::npos);
+}
+
+TEST_CASE("A sprite reaching past its texture fails the sheet's cook")
+{
+    const ScratchDir source("sheet-rect-src");
+    const ScratchDir out("sheet-rect-out");
+    AddSpriteSheet(source.Path(), "frames:panel", "240 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().reason.find("reaches past the texture") != std::string::npos);
+}
+
 TEST_CASE("A key its table does not have fails the screen's cook")
 {
     const ScratchDir source("table-key-src");

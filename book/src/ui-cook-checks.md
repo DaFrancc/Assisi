@@ -39,6 +39,10 @@ Every one of these fails the cook with the file, line and column:
   listed theme doesn't have, or one whose value in some mode its attribute
   can't hold. A style or a token used while `ui.json` lists no theme. A state
   on `style`, or a token for an attribute about what an element is or does.
+- A `sprite` or `background_image` naming a sheet `config/ui.json` doesn't
+  list, or a sprite its sheet doesn't have. A `texture` naming an image that
+  isn't there. An `<image>` naming no picture, or a `sprite` and a `texture` on
+  one element.
 
 An error inside a template library names the library's file. An error about a
 node's text points at the element that wrote it, or at the `placeholder`
@@ -71,7 +75,21 @@ These fail the cook of a theme, with the line:
   that comes back round to where it started.
 
 A listed theme that isn't there, or doesn't compile, fails the cook of every
-screen.
+screen. So does one naming a sprite no listed sheet has, in a token's value in
+any mode or in a style.
+
+These fail the cook of a sprite sheet, with the line:
+
+- A root that isn't `<sheet>`, no `texture`, or an image that isn't there or
+  isn't an image.
+- A sprite with no `name`, a name holding `:`, or two sprites with one name.
+- A `rect` that isn't four whole numbers, holds no pixels, or reaches past the
+  image's edge.
+- `borders` that aren't one or four whole numbers, or don't fit inside their
+  sprite.
+
+Two listed sheets with the same file name, or a listed sheet that isn't there
+or doesn't compile, fail the cook of every screen.
 
 ## What's next
 

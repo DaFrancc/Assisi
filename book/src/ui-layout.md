@@ -96,6 +96,16 @@ which scale they're on: `1 1 1` is white on a 0–1 scale and nearly black on a
 0–255 scale. A channel outside its call's range also fails, with a message
 naming the call that takes that range.
 
+## Images
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `background_image` | a sprite, `sheet:name` | A picture drawn across the whole element, over its `background`. |
+| `tint` | colour | Multiplies the colours of every image the element draws. White, the default, leaves them as they are. |
+| `fit` | `stretch`, `contain`, `cover` | How the element's picture fills the space inside its padding. |
+
+See [Images](ui-images.md) for sprites, pictures and frames.
+
 ## Text
 
 | Attribute | Values | Meaning |

@@ -11,6 +11,7 @@
 
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/NodeId.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
@@ -93,10 +94,14 @@ struct Node
     SliderRange range;
     /// How many positions a stepped control has; zero on everything else.
     int32_t steps = 0;
+    /// The picture it shows inside its padding, when hasImage.
+    Sprite image;
+    /// The sprite its style's background image names this frame, when
+    /// hasBackgroundImage: what the UI found it to be as it put the style on.
+    Sprite background;
     /// Where focus goes from here in each direction, overriding the nearest
     /// node there; null to take the nearest.
     std::array<NodeId, kNavDirectionCount> navOverride{};
-    Rect imageUv{.x = 0.f, .y = 0.f, .width = 1.f, .height = 1.f};
     Point scrollOffset; ///< UI pixels scrolled into the content, per axis
     /// Where the scrolling is headed, which the offset reaches at once unless
     /// the style asks it to take its time.
@@ -104,12 +109,12 @@ struct Node
     NodeId parent;
     NodeId firstChild;
     NodeId nextSibling;
-    TextureId image = kWhiteTexture;
     uint32_t behaviour = 0; ///< what a widget does with this node; zero for none
     uint32_t generation = 0;
     bool alive = false;
     bool visible = true;
     bool hasImage = false;
+    bool hasBackgroundImage = false;
     bool focusable = false;     ///< takes focus, hover and presses; stops the pointer
     bool enabled = true;        ///< a disabled focusable node still stops the pointer, and does nothing else
     bool blocksPointer = false; ///< stops the pointer without taking focus
@@ -168,8 +173,10 @@ class NodeTree
     /// first.
     void SetTheme(const ThemeView &theme);
     [[nodiscard]] const ThemeView &GetTheme() const { return _theme; }
-    /// @brief Draws @p texture over @p uv across the node, over its background.
-    void SetImage(NodeId id, TextureId texture, const Rect &uv);
+    /// @brief Shows @p sprite inside the node's padding, over its background,
+    /// fitted as its style says. A sprite of known size is what a node sized
+    /// to fit its content takes its size from, when it holds no text.
+    void SetImage(NodeId id, const Sprite &sprite);
     void ClearImage(NodeId id);
     void SetScrollOffset(NodeId id, Point offset);
     void SetBehaviour(NodeId id, uint32_t behaviour);
