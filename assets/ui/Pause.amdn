@@ -17,18 +17,22 @@
       <!-- Resume goes through an event, so the system that closes the menu
            also plays its click. -->
       <menu_button name="resume" on_click="Game::ResumeRequested" focus="true"
-                   background="#e63319">#pause:resume</menu_button>
+                   background="#e63319" hover:background="#ff6a4d"
+                   pressed:background="#a02010">#pause:resume</menu_button>
 
       <!-- Quit leaves the UI, so it goes through an event a system answers. -->
       <menu_button name="quit" on_click="Assisi::App::QuitRequested"
-                   border_width="2" border_color="#ffffff">#pause:quit</menu_button>
+                   border_width="2" border_color="#ffffff" hover:background="#ffffff26"
+                   pressed:background="#ffffff4d">#pause:quit</menu_button>
 
     </row>
   </column>
 
-  <!-- The look both buttons share. Each instance adds its own colour. -->
+  <!-- The look both buttons share. Each instance adds its own colours; the
+       outline the keys show is the same on both. -->
   <template name="menu_button">
     <button padding="28 10 28 10" text_size="28"
-            corner_radius="10" corner_style="rounded" />
+            corner_radius="10" corner_style="rounded"
+            focused:border_width="3" focused:border_color="#ffd23c" />
   </template>
 </screen>
