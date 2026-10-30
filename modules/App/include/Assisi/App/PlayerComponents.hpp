@@ -190,9 +190,9 @@ struct LocalPlayerGained
     ECS::Entity entity = ECS::NullEntity;
 };
 
-/// @brief A character has just stopped being this machine's player while
-/// still in the world. One destroyed while it was the player sends nothing,
-/// since nothing is left to tell anyone about.
+/// @brief A character has just stopped being this machine's player: control
+/// moved elsewhere, or it was destroyed. A destroyed character is already gone,
+/// components included, so @p entity only says which one it was.
 AEVENT()
 struct LocalPlayerLost
 {

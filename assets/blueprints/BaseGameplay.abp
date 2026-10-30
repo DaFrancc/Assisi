@@ -1,6 +1,7 @@
 {
   "systems": [
     "Hud",
+    "HudOrphans",
     "PauseMenuScreen",
     "SampleScreen",
     "SampleScreenToggle",

@@ -4,9 +4,6 @@
      shown here is the file's. -->
 <screen sort="hud" align="end end" padding="24">
 
-  <!-- A player whose character goes takes its HUD with it. -->
-  <context on_lost="hide()" />
-
   <!-- TuningSettings is on no entity, so these read it without the context.
        ui/Tuning.amdn is what changes it. -->
   <column name="readout" style="panel" padding="16" gap="4" align="end center"
