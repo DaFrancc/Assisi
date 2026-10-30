@@ -519,6 +519,21 @@ TEST_CASE("groundSpeed is the speed across what a character stands on, not its s
     CHECK(riding.groundSpeed < 0.05f); // standing still on it
 }
 
+TEST_CASE("A character standing still reads no velocity, though each step's gravity presses it into the ground")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+    const ECS::Entity character = SpawnArcade(scene, world, Physics::CharacterLocomotion{}, Physics::ArcadeMovement{});
+    Settle(scene, world, character);
+
+    const Physics::CharacterState standing = PhysicsTests::StateOf(scene, character);
+    REQUIRE(standing.ground == Physics::GroundState::OnGround);
+    CHECK(standing.velocity.x == doctest::Approx(0.f));
+    CHECK(standing.velocity.y == doctest::Approx(0.f));
+    CHECK(standing.velocity.z == doctest::Approx(0.f));
+}
+
 TEST_CASE("jumps and landings count every jump and every landing, and a rewind puts them back")
 {
     ECS::Scene scene;
