@@ -7,11 +7,14 @@
 /// A screen is owned by one world and destroyed with it, so the world it reads
 /// is always there while the screen is. The UI knows that world only through
 /// this interface: the core never names the engine's entities or scenes, which
-/// is what keeps it testable headless and usable outside a game.
+/// is what keeps it testable headless and usable outside a game. It reads a
+/// component through reflection, which needs neither.
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Reflect/ComponentMeta.hpp>
 
 #include <cstdint>
+#include <string_view>
 
 namespace Assisi::Mondrian
 {
@@ -53,6 +56,14 @@ class ScreenWorld
     /// @brief Whether @p entity is still in this world: false once it has been
     /// destroyed, even when another entity has taken its slot since.
     [[nodiscard]] virtual bool IsAlive(EntityId entity) const = 0;
+
+    /// @brief The component this world's entities can have that is called
+    /// @p name, or null when none is. Valid as long as the world is.
+    [[nodiscard]] virtual const Core::Reflect::ComponentMeta *FindComponent(std::string_view name) const = 0;
+
+    /// @brief @p entity's @p component, or null when it has none. Valid until
+    /// the world next runs a system.
+    [[nodiscard]] virtual const void *Read(const Core::Reflect::ComponentMeta &component, EntityId entity) const = 0;
 };
 
 } // namespace Assisi::Mondrian

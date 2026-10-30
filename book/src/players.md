@@ -77,6 +77,21 @@ same code reads every player's controls on the host.
 The `LocalPlayer` component marks this machine's player, for a system of your
 own that should only act on it, such as a heads-up display.
 
+When a character becomes this machine's player, the engine pushes a
+`LocalPlayerGained` event naming it, and `LocalPlayerLost` when it stops being
+one. Read them to make and remove things a player has one of, such as its HUD
+(see [Showing values from the world](ui-bindings.md)), rather than checking
+every frame whether a player has one yet:
+
+```cpp
+for (const Assisi::App::LocalPlayerGained &gained : ctx.events.Read<Assisi::App::LocalPlayerGained>())
+{
+    // gained.entity is the character
+}
+```
+
+A player's character destroyed outright sends no `LocalPlayerLost`.
+
 Turning is applied by the fixed step, 60 times a second, but your player's
 camera doesn't wait for it: each frame it is drawn turned as far as the mouse
 has moved so far, so aiming keeps up with the frame rate however fast that is.

@@ -229,7 +229,9 @@ std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const 
                    .targets = {},
                    .scopes = {},
                    .space = &file.visible,
-                   .file = file.file};
+                   .file = file.file,
+                   .focusClaimed = false,
+                   .checkingAlone = true};
         MarkupElement standIn;
         standIn.name = checked.name;
         standIn.line = declaration.line;

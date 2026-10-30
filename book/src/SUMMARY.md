@@ -31,6 +31,7 @@
     - [Themes](ui-themes.md)
     - [Images](ui-images.md)
     - [Screens at run time](ui-run-time.md)
+    - [Showing values from the world](ui-bindings.md)
     - [What the cook checks](ui-cook-checks.md)
 - [Physics](physics.md)
     - [Colliders on child entities](physics-child-colliders.md)

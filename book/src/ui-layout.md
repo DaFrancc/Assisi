@@ -150,7 +150,7 @@ and moves:
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `visible` | `true`, `false` | Whether the element is shown. A hidden element takes no space. |
+| `visible` | `true`, `false`, or a binding to a `bool` | Whether the element is shown. A hidden element takes no space. See [Showing values from the world](ui-bindings.md#showing-and-hiding). |
 | `enabled` | `true`, `false` | Whether a control responds to the player. |
 | `blocks_pointer` | `true`, `false` | Whether clicks on this element stop here instead of reaching the game. Use on a panel's background. |
 | `takes_keyboard` | `true`, `false` | Whether, while focused, it receives the keyboard even when the game would otherwise have it. |

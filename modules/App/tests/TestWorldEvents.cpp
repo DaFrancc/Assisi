@@ -16,6 +16,7 @@
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/EventScope.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Input.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
@@ -228,6 +229,57 @@ TEST_CASE("A screen's context is lost when its world destroys the entity, and on
     CHECK(worlds.firstHeard.pings == 1);
     CHECK(worlds.secondHeard.pings == 0);
     CHECK_FALSE(screen.GetContext("boss"));
+}
+
+TEST_CASE("A world gives each screen an id that finds it, and never gives that id again")
+{
+    TwoWorlds worlds;
+    Mondrian::Screen &first = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    const ScreenId firstId = IdOf(worlds.first, first);
+    REQUIRE(firstId);
+    CHECK(FindScreen(worlds.first, firstId) == &first);
+    CHECK_FALSE(IdOf(worlds.second, first)); // not that world's
+
+    RemoveScreen(worlds.first, first);
+    CHECK(FindScreen(worlds.first, firstId) == nullptr);
+
+    // The same file again is another screen: what kept the first id finds
+    // nothing rather than finding this one.
+    Mondrian::Screen &second = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    CHECK(IdOf(worlds.first, second) != firstId);
+    CHECK(FindScreen(worlds.first, firstId) == nullptr);
+}
+
+TEST_CASE("A screen's binding reads its context's component through its world's scene")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity crate = worlds.first.scene.Create();
+    (void)worlds.first.scene.Add(crate, Assisi::ECS::Transform{.position = {1.f, 2.f, 3.f}});
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    const Mondrian::NodeId text = screen.AddText(screen.Root(), Mondrian::Style{}, "");
+    REQUIRE(screen.BindText(text, "{Transform.position:.0f}").has_value());
+    screen.SetContext(ScreenEntity(crate));
+    screen.Show();
+
+    worlds.UiFrame({});
+    CHECK(screen.Tree().Get(text)->text == "1, 2, 3");
+
+    worlds.first.scene.GetMut<Assisi::ECS::Transform>(crate)->position.x = 7.f;
+    worlds.UiFrame({});
+    CHECK(screen.Tree().Get(text)->text == "7, 2, 3");
 }
 
 TEST_CASE("A world destroyed under a shown screen bound to its player takes the screen with it")

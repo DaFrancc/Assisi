@@ -114,6 +114,35 @@ std::expected<void, ScreenLoadError> ResolveContexts(const ScreenDocument &docum
     return {};
 }
 
+/// Whether every binding on @p node reads, and names a field of a component
+/// @p world has that its place can show.
+bool BindingsResolve(const ScreenDocument &document, const ScreenNode &node, const ScreenWorld &world)
+{
+    if (node.textIsBound)
+    {
+        const std::expected<std::vector<TextRun>, BindingError> runs = SplitBoundText(document.Text(node.text));
+        if (!runs)
+        {
+            return false;
+        }
+        for (const TextRun &run : *runs)
+        {
+            if (run.bound &&
+                !ResolveBinding(run.binding, world.FindComponent(run.binding.component), BindingUse::Text))
+            {
+                return false;
+            }
+        }
+    }
+    const std::string_view visible = document.Text(node.visibleBinding);
+    if (visible.empty())
+    {
+        return true;
+    }
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(visible);
+    return source && ResolveBinding(*source, world.FindComponent(source->component), BindingUse::Bool).has_value();
+}
+
 /// Whether every name in @p document resolves, and every node's contents suit
 /// where it sits — and the patterns, compiled, for the caller to apply.
 ///
@@ -124,7 +153,8 @@ std::expected<void, ScreenLoadError> ResolveContexts(const ScreenDocument &docum
 ///
 /// One slot per node, null wherever a node has no pattern.
 std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Resolve(const ScreenDocument &document,
-                                                                                    const Core::EventCatalog &catalog)
+                                                                                    const Core::EventCatalog &catalog,
+                                                                                    const ScreenWorld &world)
 {
     std::vector<std::shared_ptr<const Pattern>> patterns;
     patterns.resize(document.nodes.size());
@@ -162,6 +192,14 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
         if (node.action == ActionKind::Verb && !VerbFits(document, node))
         {
             return std::unexpected(ScreenLoadError::BadTarget);
+        }
+
+        // Only plain text and a button's label are shown as they come: a
+        // field's text is the player's.
+        const bool bindsText = node.widget == BuiltinWidget::None || node.widget == BuiltinWidget::Button;
+        if ((node.textIsBound && !bindsText) || !BindingsResolve(document, node, world))
+        {
+            return std::unexpected(ScreenLoadError::BadBinding);
         }
 
         const std::string_view pattern = document.Text(node.pattern);
@@ -287,6 +325,22 @@ void ApplyPicture(Ui &ui, NodeTree &tree, NodeId id, const ScreenNode &node)
     }
 }
 
+/// What @p node shows from the screen's contexts, after its flags: a bound
+/// visible hides the node until it has read.
+void ApplyBindings(Screen &screen, NodeId id, const ScreenDocument &document, const ScreenNode &node)
+{
+    if (node.textIsBound)
+    {
+        const std::expected<void, BindingError> bound = screen.BindText(id, document.Text(node.text));
+        ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
+    }
+    if (const std::string_view visible = document.Text(node.visibleBinding); !visible.empty())
+    {
+        const std::expected<void, BindingError> bound = screen.BindVisible(id, visible);
+        ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
+    }
+}
+
 /// Everything about a node that is neither its style nor its place.
 void ApplyFlags(NodeTree &tree, NodeId id, const ScreenNode &node)
 {
@@ -401,6 +455,8 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "gives a verb a target it cannot act on";
     case ScreenLoadError::BadContext:
         return "declares a context twice, or gives one a verb it cannot carry out";
+    case ScreenLoadError::BadBinding:
+        return "binds a field this build's components do not have";
     case ScreenLoadError::Count_:
         break;
     }
@@ -416,7 +472,8 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
         return std::unexpected(ScreenLoadError::BadDocument);
     }
 
-    std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> patterns = Resolve(document, catalog);
+    std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> patterns =
+        Resolve(document, catalog, world);
     if (!patterns)
     {
         return std::unexpected(patterns.error());
@@ -459,7 +516,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
             // A control took its text where it was created, from the label or
             // the starting contents its call takes. A keyed label is set again
             // through its key, so new string tables rewrite it.
-            if (node.widget == BuiltinWidget::None && !node.textIsKey)
+            if (node.widget == BuiltinWidget::None && !node.textIsKey && !node.textIsBound)
             {
                 tree.SetText(id, document.Text(node.text));
             }
@@ -481,6 +538,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
         const std::expected<void, NameError> named = tree.SetName(id, node.name.View());
         ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
+        ApplyBindings(screen, id, document, node);
         ApplyPicture(ui, tree, id, node);
         if (node.selectable)
         {

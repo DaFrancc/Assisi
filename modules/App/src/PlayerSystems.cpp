@@ -206,11 +206,13 @@ void LocalPlayerSystem(SystemContext &ctx)
         {
             (void)scene.Add<PlayerInput>(entity);
         }
+        ctx.events.Push(LocalPlayerGained{.entity = entity});
     }
     for (const ECS::Entity entity : lost)
     {
         (void)scene.Remove<LocalPlayer>(entity);
         (void)scene.Remove<PlayerInput>(entity);
+        ctx.events.Push(LocalPlayerLost{.entity = entity});
     }
 }
 

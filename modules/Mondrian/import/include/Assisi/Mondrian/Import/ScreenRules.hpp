@@ -18,6 +18,7 @@
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
 #include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 
+#include <Assisi/Mondrian/Binding.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 
@@ -66,6 +67,9 @@ struct ScreenRules
     /// What an image a screen names by its path is read through, to check it
     /// is one. Without one, naming an image that way is refused.
     SourceReader read;
+    /// What a binding's component is looked up in. Without one, every binding
+    /// is refused.
+    ComponentLookup components;
     LiteralText literals = LiteralText::Allowed;
 };
 
@@ -86,7 +90,8 @@ struct ScreenRules
 /// A listed file that cannot be read or compiled is an error naming it: a
 /// screen's keys and looks cannot be checked without it. Two listed tables, or
 /// two listed sheets, with one name are an error naming both, and so is a
-/// theme naming a sprite no listed sheet has.
+/// theme naming a sprite no listed sheet has. Bindings are checked against
+/// every component this program reflects.
 [[nodiscard]] std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read);
 
 } // namespace Assisi::Mondrian::Import
