@@ -278,6 +278,10 @@ class Ui
 
     /// Moves hover, presses and focus for @p input on @p screen.
     InputResult Interact(Screen &screen, const UiInput &input);
+    /// Answers what happened to every screen's contexts since the last input
+    /// step. Here rather than in Sync, which runs after the frame's systems:
+    /// an event pushed there would be dropped before any of them read it.
+    void AnnounceContexts();
     /// Pushes the events this frame's interaction calls for, from @p screen.
     void Announce(Screen *screen);
     /// Hands @p event to the control on @p id, if it is one, and remembers a

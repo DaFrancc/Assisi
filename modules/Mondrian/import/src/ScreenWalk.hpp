@@ -40,6 +40,10 @@ inline constexpr std::string_view kTemplateElement = "template";
 /// The element bringing a library's templates into a file.
 inline constexpr std::string_view kImportElement = "import";
 
+/// The element declaring one of a screen's contexts, which only the screen
+/// itself holds.
+inline constexpr std::string_view kContextElement = "context";
+
 /// What a template library's path ends in, and what a screen's does.
 inline constexpr std::string_view kLibraryExtension = ".amdt";
 inline constexpr std::string_view kScreenExtension = ".amdn";
@@ -231,6 +235,10 @@ struct Substituted
 
 /// Every target a verb named, looked up now that every node has been read.
 [[nodiscard]] std::expected<void, MarkupError> ResolveTargets(Walk &walk);
+
+/// Adds the context @p element declares to the document, with what it does at
+/// each moment, refusing a second context of one name.
+[[nodiscard]] std::expected<void, MarkupError> ApplyContext(Walk &walk, const MarkupElement &element);
 
 // ── ScreenTemplates.cpp ──────────────────────────────────────────────────────
 

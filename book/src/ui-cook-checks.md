@@ -19,6 +19,10 @@ Every one of these fails the cook with the file, line and column:
   without parentheses.
 - A `step` target that doesn't exist on the screen or isn't a slider, or a
   `step` of 0 moves.
+- A `<context>` anywhere but directly inside `<screen>`, holding text or
+  elements, or with an attribute it doesn't have. A context `name` that isn't
+  letters, digits and `_`, or two contexts with one name, or two unnamed. A
+  `step(...)` in a context's `on_set`, `on_switch`, `on_clear` or `on_lost`.
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.
 - An unnamed instance that would repeat names made by another.

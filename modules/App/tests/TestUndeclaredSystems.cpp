@@ -129,7 +129,7 @@ TEST_CASE("A screen asking for an undeclared system is reported the same way, na
     Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{kMissing};
     (void)AddScreen(world,
-                    std::make_unique<Assisi::Mondrian::Screen>(ui, world.events, Assisi::Mondrian::ScreenTraits{},
+                    std::make_unique<Assisi::Mondrian::Screen>(ui, world.screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                                Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                     needs);
 
@@ -259,7 +259,7 @@ TEST_CASE("What a file needs and this build lacks: its own names and its placed 
     Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{"ScreenMissing"};
     (void)AddScreen(edited,
-                    std::make_unique<Assisi::Mondrian::Screen>(ui, edited.events, Assisi::Mondrian::ScreenTraits{},
+                    std::make_unique<Assisi::Mondrian::Screen>(ui, edited.screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                                Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                     needs);
 

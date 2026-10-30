@@ -26,13 +26,13 @@
 namespace Assisi::Core
 {
 class EventCatalog;
-class EventQueue;
 } // namespace Assisi::Core
 
 namespace Assisi::Mondrian
 {
 
 class Screen;
+class ScreenWorld;
 class Ui;
 
 /// @brief Why a document did not become a screen.
@@ -68,6 +68,11 @@ enum class ScreenLoadError : uint8_t
     /// package or a document built by hand.
     BadTarget,
 
+    /// Two contexts carry one name, or a context answers a moment with a verb
+    /// that needs a node to act on. The cook refuses both, so this is a stale
+    /// package or a document built by hand.
+    BadContext,
+
     Count_
 };
 
@@ -85,7 +90,7 @@ struct LoadedScreen
 };
 
 /// @brief Builds @p document into a screen on @p ui called @p name, hidden,
-/// owned by the caller, pushing its world events into @p events.
+/// owned by the caller, belonging to @p world.
 ///
 /// @p name is the path the document was loaded from, which is what the screen
 /// is found by: a document does not name itself, so a renamed file cannot
@@ -93,7 +98,7 @@ struct LoadedScreen
 ///
 /// @p catalog is what an event name is resolved against — taken rather than
 /// reached for, so a caller can hand over exactly the events a case is about.
-[[nodiscard]] std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::EventQueue &events,
+[[nodiscard]] std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWorld &world,
                                                                              std::string_view name,
                                                                              const ScreenDocument &document,
                                                                              const Core::EventCatalog &catalog);

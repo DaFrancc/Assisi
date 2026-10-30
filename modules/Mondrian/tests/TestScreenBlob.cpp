@@ -146,6 +146,20 @@ ScreenDocument Everything()
     port.check = TextCheck::Refuse;
     document.nodes.push_back(port);
 
+    // One unnamed context and one named, answering every moment between them.
+    ScreenContext player;
+    player.actions[static_cast<std::size_t>(ContextMoment::Clear)] = {
+        .eventName = InternedString{"Game::PlayerLeft"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    player.actions[static_cast<std::size_t>(ContextMoment::Lost)] = {
+        .eventName = {}, .action = ActionKind::Verb, .verb = ScreenVerb::Hide};
+    ScreenContext boss;
+    boss.name = InternedString{"boss"};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Set)] = {
+        .eventName = InternedString{"Game::BossAppeared"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Switch)] = {
+        .eventName = InternedString{"Game::BossChanged"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    document.contexts = {player, boss};
+
     return document;
 }
 

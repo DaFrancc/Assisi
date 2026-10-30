@@ -66,6 +66,54 @@ bool VerbFits(const ScreenDocument &document, const ScreenNode &node)
     return !VerbTakesMoves(node.verb) || node.moves != 0;
 }
 
+/// Whether @p action is one a context can carry out: a verb that needs no
+/// node to act on, or an event @p catalog has.
+std::expected<void, ScreenLoadError> CheckContextAction(const ContextAction &action, const Core::EventCatalog &catalog)
+{
+    switch (action.action)
+    {
+    case ActionKind::None:
+        return {};
+    case ActionKind::Verb:
+        if (VerbTakesTarget(action.verb) || VerbTakesMoves(action.verb))
+        {
+            return std::unexpected(ScreenLoadError::BadContext);
+        }
+        return {};
+    case ActionKind::Event:
+        if (catalog.Find(action.eventName.View()) == nullptr)
+        {
+            return std::unexpected(ScreenLoadError::UnknownEvent);
+        }
+        return {};
+    case ActionKind::Count_:
+        break;
+    }
+    return std::unexpected(ScreenLoadError::BadContext);
+}
+
+/// Whether every context in @p document has a name of its own and actions it
+/// can carry out.
+std::expected<void, ScreenLoadError> ResolveContexts(const ScreenDocument &document, const Core::EventCatalog &catalog)
+{
+    std::unordered_set<Core::InternedString> names;
+    for (const ScreenContext &context : document.contexts)
+    {
+        if (!names.insert(context.name).second)
+        {
+            return std::unexpected(ScreenLoadError::BadContext);
+        }
+        for (const ContextAction &action : context.actions)
+        {
+            if (const std::expected<void, ScreenLoadError> checked = CheckContextAction(action, catalog); !checked)
+            {
+                return checked;
+            }
+        }
+    }
+    return {};
+}
+
 /// Whether every name in @p document resolves, and every node's contents suit
 /// where it sits — and the patterns, compiled, for the caller to apply.
 ///
@@ -126,6 +174,10 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
             }
             patterns[index] = *std::move(compiled);
         }
+    }
+    if (const std::expected<void, ScreenLoadError> contexts = ResolveContexts(document, catalog); !contexts)
+    {
+        return std::unexpected(contexts.error());
     }
     return patterns;
 }
@@ -283,6 +335,50 @@ void ApplyAction(Screen &screen, const std::vector<NodeId> &ids, std::size_t ind
     }
 }
 
+/// What the context called @p name does at @p moment, from @p action.
+void ApplyContextAction(Screen &screen, std::string_view name, ContextMoment moment, const ContextAction &action,
+                        const Core::EventCatalog &catalog)
+{
+    switch (action.action)
+    {
+    case ActionKind::None:
+    case ActionKind::Count_:
+        return;
+    case ActionKind::Verb:
+        switch (action.verb)
+        {
+        case ScreenVerb::Hide:
+            screen.OnContext(name, moment, [](Screen &self) { self.Hide(); });
+            return;
+        // Refused by ResolveContexts: a context has no slider of its own to move.
+        case ScreenVerb::Step:
+        case ScreenVerb::Count_:
+            return;
+        }
+        return;
+    case ActionKind::Event:
+        // Resolved in ResolveContexts, which ran before anything was built.
+        screen.SetOnContext(name, moment, catalog.Find(action.eventName.View())->push);
+        return;
+    }
+}
+
+/// Every context @p document declares, with what it does at each moment. Made
+/// whether or not it does anything, so each one the file declares is on the
+/// screen from the start.
+void ApplyContexts(Screen &screen, const ScreenDocument &document, const Core::EventCatalog &catalog)
+{
+    for (const ScreenContext &context : document.contexts)
+    {
+        screen.SetContext(context.name.View(), EntityId{});
+        for (std::size_t moment = 0; moment < kContextMomentCount; ++moment)
+        {
+            ApplyContextAction(screen, context.name.View(), static_cast<ContextMoment>(moment),
+                               context.actions[moment], catalog);
+        }
+    }
+}
+
 } // namespace
 
 std::string_view ToString(ScreenLoadError error) noexcept
@@ -303,14 +399,16 @@ std::string_view ToString(ScreenLoadError error) noexcept
         return "gives two nodes one name";
     case ScreenLoadError::BadTarget:
         return "gives a verb a target it cannot act on";
+    case ScreenLoadError::BadContext:
+        return "declares a context twice, or gives one a verb it cannot carry out";
     case ScreenLoadError::Count_:
         break;
     }
     return "unknown";
 }
 
-std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::EventQueue &events,
-                                                               std::string_view name, const ScreenDocument &document,
+std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWorld &world, std::string_view name,
+                                                               const ScreenDocument &document,
                                                                const Core::EventCatalog &catalog)
 {
     if (!IsWalkable(document))
@@ -325,7 +423,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
     }
 
     LoadedScreen loaded;
-    loaded.screen = std::make_unique<Screen>(ui, events, document.traits, document.sortKey, std::string{name});
+    loaded.screen = std::make_unique<Screen>(ui, world, document.traits, document.sortKey, std::string{name});
     for (const Core::InternedString &system : document.systems)
     {
         loaded.systems.emplace_back(system.View());
@@ -397,6 +495,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, Core::Eve
     {
         ApplyAction(screen, ids, index, document, catalog);
     }
+    ApplyContexts(screen, document, catalog);
 
     if (document.focus != kNoNode)
     {

@@ -41,6 +41,7 @@ add_executable(Assisi-MondrianImport-Tests
   TestCsv.cpp
   TestMarkup.cpp
   TestScreenCompiler.cpp
+  TestScreenContexts.cpp
   TestSpriteSheets.cpp
   TestStringTables.cpp
   TestTemplateLibraries.cpp
@@ -62,6 +63,8 @@ target_link_libraries(Assisi-MondrianImport-Tests
   PRIVATE
     Assisi::MondrianImport
     Assisi::TestSupport
+    # For its support headers: the test world a loaded screen is built for.
+    Assisi-Mondrian-TestStructs
 )
 
 # The screens the game ships, read in place rather than copied into a fixture.

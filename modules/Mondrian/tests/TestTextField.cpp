@@ -2,6 +2,7 @@
 #include "TestFontFixture.hpp"
 
 #include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Utf8.hpp>
@@ -56,6 +57,7 @@ struct Field
     Assisi::Mondrian::Font font = FixtureFont();
     std::string clipboard;
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     /// After the queues, so they outlive it.
     Ui ui{universal};
@@ -71,7 +73,7 @@ struct Field
         ui.SetClipboard(Clipboard{.read = [this] { return clipboard; },
                                   .write = [this](std::string_view text) { clipboard = text; }});
 
-        held = std::make_unique<Screen>(ui, events,
+        held = std::make_unique<Screen>(ui, world,
                                         ScreenTraits{.input = ScreenInput::ConsumeInput,
                                                      .beneath = ScreenBeneath::HidesBeneath,
                                                      .pause = ScreenPause::Pause},

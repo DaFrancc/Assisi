@@ -3,6 +3,7 @@
 
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventCatalog.hpp>
@@ -115,6 +116,7 @@ ScreenDocument Gallery()
 struct Stage
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Themes themes = FramedThemes();
     uint32_t loads = 0;
@@ -140,7 +142,7 @@ struct Stage
     std::unique_ptr<Screen> Load(const ScreenDocument &document)
     {
         std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, "ui/Gallery.amdn", document, Assisi::Core::EventCatalog{});
+            InstantiateScreen(ui, world, "ui/Gallery.amdn", document, Assisi::Core::EventCatalog{});
         REQUIRE(loaded.has_value());
         return std::move(loaded->screen);
     }

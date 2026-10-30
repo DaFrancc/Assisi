@@ -39,6 +39,9 @@ About `step`:
 
 An action must be written with its parentheses: `on_click="hide"` fails the cook.
 
+A screen's contexts answer their moments with the same actions and events, such
+as `on_lost="hide()"`. See [Contexts](ui-run-time.md#contexts).
+
 ## Events
 
 Anything that affects the game world — quitting, loading a level, respawning —

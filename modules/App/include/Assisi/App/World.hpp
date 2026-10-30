@@ -99,6 +99,40 @@ enum class IfUndeclared : std::uint8_t
     Count_
 };
 
+static_assert(ECS::InvalidEntityIndex == Mondrian::kNoEntityIndex,
+              "a null entity must cross to the UI and back as a null entity");
+
+/// @brief @p entity as a screen holds it.
+[[nodiscard]] constexpr Mondrian::EntityId ScreenEntity(ECS::Entity entity)
+{
+    return {.index = entity.index, .generation = entity.generation};
+}
+
+/// @brief The entity a screen holds as @p entity.
+[[nodiscard]] constexpr ECS::Entity SceneEntity(Mondrian::EntityId entity)
+{
+    return {.index = entity.index, .generation = entity.generation};
+}
+
+/// @brief A world as its screens see it: the queue they push its events into,
+/// and which of its entities are still alive.
+class SceneScreenWorld final : public Mondrian::ScreenWorld
+{
+public:
+    /// @p scene and @p events must outlive it, which a world's own members do.
+    SceneScreenWorld(const ECS::Scene &scene, Core::EventQueue &events) : _scene(scene), _events(events) {}
+
+    [[nodiscard]] Core::EventQueue &Events() override { return _events; }
+    [[nodiscard]] bool IsAlive(Mondrian::EntityId entity) const override
+    {
+        return _scene.IsAlive(SceneEntity(entity));
+    }
+
+private:
+    const ECS::Scene &_scene;
+    Core::EventQueue &_events;
+};
+
 /// @brief One resident level: its entities, its physics, and the bookkeeping
 /// that is per-level rather than per-app.
 ///
@@ -176,6 +210,12 @@ struct World
     /// without touching this list — those belong to the blueprint's file, not to
     /// the level's.
     std::vector<std::string> systemNames;
+
+    /// What this world's screens are built with to reach it. Declared after
+    /// `scene` and `events`, which it reads, and before `screenStack`, whose
+    /// screens hold it, so it is made after the one and destroyed after the
+    /// other.
+    SceneScreenWorld screenWorld{scene, events};
 
     /// A screen this world shows, and the systems it asked for when it was
     /// added.

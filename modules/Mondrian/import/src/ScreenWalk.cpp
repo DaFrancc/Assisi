@@ -976,6 +976,11 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         return std::unexpected(At(element, "an import sits directly inside the <" + std::string{kScreenElement} +
                                                "> or <" + std::string{kTemplatesElement} + ">, and nowhere else."));
     }
+    if (element.name == kContextElement)
+    {
+        return std::unexpected(At(element, "a context is declared directly inside the <" +
+                                               std::string{kScreenElement} + ">, and nowhere else."));
+    }
     if (element.name == kTemplatesElement)
     {
         return std::unexpected(

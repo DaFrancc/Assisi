@@ -1,6 +1,7 @@
-# Structs reflected only for the tests. Reflected on an INTERFACE lib rather than
-# on the executable so the generated OBJECT library inherits the include dir and
-# the Mondrian dependency its code needs.
+# Structs reflected only for the tests, and the test world screens are built
+# for. Reflected on an INTERFACE lib rather than on the executable so the
+# generated OBJECT library inherits the include dir and the Mondrian dependency
+# its code needs.
 add_library(Assisi-Mondrian-TestStructs INTERFACE)
 target_include_directories(Assisi-Mondrian-TestStructs INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/support/include"
@@ -15,6 +16,7 @@ assisi_reflect(
 add_executable(Assisi-Mondrian-Tests
   main.cpp
   TestReflectedStructs.cpp
+  TestContexts.cpp
   TestDraw.cpp
   TestDrawList.cpp
   TestFont.cpp

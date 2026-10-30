@@ -13,6 +13,7 @@
 #include <Assisi/Mondrian/Layout.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/ScreenWorld.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
@@ -20,6 +21,7 @@
 
 #include <array>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -28,6 +30,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -103,9 +106,26 @@ inline constexpr int32_t kSortMenu = kSortLayerSpacing;
 inline constexpr int32_t kSortPopup = 2 * kSortLayerSpacing;
 inline constexpr int32_t kSortOverlay = 3 * kSortLayerSpacing;
 
+/// @brief What happened to a screen's context since the UI last looked: the
+/// moments a screen can answer, as a button answers a click.
+enum class ContextMoment : uint8_t
+{
+    Set,    ///< it was given an entity when it had none
+    Switch, ///< it was given a different entity
+    Clear,  ///< code took its entity away
+    Lost,   ///< its entity was destroyed
+    Count_
+};
+
+inline constexpr std::size_t kContextMomentCount = static_cast<std::size_t>(ContextMoment::Count_);
+
 class Screen
 {
   public:
+    /// @brief What a screen does at one of its contexts' moments: pushes into
+    /// the route it is handed, or works the screen and ignores it.
+    using Reaction = std::function<void(const Core::EventRoute &)>;
+
     /// @brief An empty screen behaving as @p traits say, drawn at @p sortKey,
     /// called @p name, hidden until it is shown.
     ///
@@ -114,10 +134,12 @@ class Screen
     /// @p ui must outlive it, which a world's screens get for nothing: worlds
     /// are destroyed before the UI they were drawn in.
     ///
-    /// Its controls push into @p events, the queue of the world it belongs to,
-    /// except for a universal event, which goes to the UI's. Taken here for the
-    /// reason the UI takes its own: there is no moment it has nowhere to push.
-    Screen(Ui &ui, Core::EventQueue &events, ScreenTraits traits, int32_t sortKey, std::string name);
+    /// @p world is the world it belongs to, which must outlive it too. Its
+    /// controls push into that world's queue, except for a universal event,
+    /// which goes to the UI's, and its contexts are entities of that world.
+    /// Taken here for the reason the UI takes its queue: there is no moment it
+    /// has nowhere to push.
+    Screen(Ui &ui, ScreenWorld &world, ScreenTraits traits, int32_t sortKey, std::string name);
 
     Screen(const Screen &) = delete;
     Screen &operator=(const Screen &) = delete;
@@ -137,7 +159,40 @@ class Screen
     [[nodiscard]] bool IsShown() const { return _shown; }
 
     /// @brief The queue this screen's controls push every world event into.
-    [[nodiscard]] Core::EventQueue &Events() const { return _events; }
+    [[nodiscard]] Core::EventQueue &Events() const { return _world.Events(); }
+
+    /// @brief Makes @p entity what the context called @p name is about, or
+    /// takes its entity away with a null id. An empty name is the screen's
+    /// unnamed context.
+    ///
+    /// The UI answers what changed at its next input step, by comparing the
+    /// context with what it saw there last: a context given an entity and
+    /// cleared again in between answers nothing.
+    void SetContext(std::string_view name, EntityId entity);
+    void SetContext(EntityId entity) { SetContext({}, entity); }
+
+    /// @brief The entity the context called @p name is about: null when it
+    /// was never given one, was cleared, or was lost.
+    [[nodiscard]] EntityId GetContext(std::string_view name = {}) const;
+
+    /// @brief Makes the context called @p name push a copy of @p event at
+    /// @p moment, replacing whatever it did there before.
+    template <typename E>
+        requires(!std::invocable<E, Screen &>)
+    void OnContext(std::string_view name, ContextMoment moment, E event)
+    {
+        SetOnContext(name, moment, [event](const Core::EventRoute &events) { events.Push(event); });
+    }
+
+    /// @brief Makes the context called @p name run @p act on this screen at
+    /// @p moment, replacing whatever it did there before. Showing and hiding
+    /// from @p act are safe; destroying a screen is not, and asserts.
+    void OnContext(std::string_view name, ContextMoment moment, std::function<void(Screen &)> act);
+
+    /// @brief Makes the context called @p name answer @p moment with
+    /// @p reaction as it is: what a screen loaded from a file binds an event
+    /// it knows only by name with.
+    void SetOnContext(std::string_view name, ContextMoment moment, Reaction reaction);
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -383,6 +438,27 @@ class Screen
   private:
     friend class Ui;
 
+    /// One context: the entity code gave it, what the UI last saw it hold, and
+    /// what it does at each moment.
+    struct Context
+    {
+        std::array<Reaction, kContextMomentCount> reactions;
+        std::string name;
+        EntityId entity;
+        /// What the UI's last look saw: null after a clear or a loss, so the
+        /// next entity given is a set rather than a switch.
+        EntityId seen;
+    };
+
+    /// The context called @p name, made empty the first time it is asked for.
+    Context &ContextNamed(std::string_view name);
+
+    /// Compares every context with what the UI last saw it hold, and returns
+    /// what each change answers with, in the order the contexts were made.
+    /// Returned rather than run here, so a reaction that sets a context does
+    /// not change the list being walked.
+    [[nodiscard]] std::vector<Reaction> TakeMoments();
+
     /// What a control of type @p T holds, from the value it carries. A control
     /// only ever carries its own kind, so anything else is this UI's own bug.
     template <typename T> static T Held(const WidgetValue &value)
@@ -422,10 +498,12 @@ class Screen
     [[nodiscard]] const TextLayout *TextOf(const LayoutNode &placed) const;
 
     Ui &_ui;
-    Core::EventQueue &_events;
+    ScreenWorld &_world;
     NodeTree _tree;
     LayoutResult _layout;
     std::string _name;
+    /// Few to a screen, so a scan finds one by name.
+    std::vector<Context> _contexts;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;

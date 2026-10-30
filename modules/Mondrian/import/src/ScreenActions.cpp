@@ -6,8 +6,11 @@
 
 #include <Assisi/Core/EventCatalog.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace Assisi::Mondrian::Import
@@ -42,10 +45,17 @@ std::expected<std::optional<MarkupCall>, MarkupError> ParseCall(const MarkupAttr
     return *call;
 }
 
-/// A bare name: an event this build declares. A verb's name written bare is
-/// refused, so a verb has one spelling and it is a call.
-std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttribute &attribute,
-                                            const Core::EventCatalog &catalog)
+/// The attribute that says what a context does at each moment, in
+/// ContextMoment order.
+constexpr std::array<std::string_view, kContextMomentCount> kMomentAttributes{"on_set", "on_switch", "on_clear",
+                                                                               "on_lost"};
+
+/// The attribute naming a context.
+constexpr std::string_view kContextNameAttribute = "name";
+
+/// Whether a bare name is an event this build declares. A verb's name written
+/// bare is refused, so a verb has one spelling and it is a call.
+std::expected<void, MarkupError> CheckEvent(const MarkupAttribute &attribute, const Core::EventCatalog &catalog)
 {
     if (const std::optional<ScreenVerb> verb = LookUpVerb(attribute.value))
     {
@@ -60,9 +70,76 @@ std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttrib
                                                  "a verb is a call, one of: " +
                                                  KnownVerbs() + "."));
     }
+    return {};
+}
+
+/// A bare name: an event this build declares.
+std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttribute &attribute,
+                                            const Core::EventCatalog &catalog)
+{
+    if (const std::expected<void, MarkupError> checked = CheckEvent(attribute, catalog); !checked)
+    {
+        return checked;
+    }
     node.action = ActionKind::Event;
     node.eventName = Core::InternedString{attribute.value};
     return {};
+}
+
+/// What a context does at the moment @p attribute names: an event, or a verb
+/// that acts on the screen itself. A verb that acts on a control is refused,
+/// since a moment comes from no control.
+std::expected<ContextAction, MarkupError> ReadContextAction(const MarkupAttribute &attribute,
+                                                            const Core::EventCatalog &catalog)
+{
+    const std::expected<std::optional<MarkupCall>, MarkupError> call = ParseCall(attribute);
+    if (!call)
+    {
+        return std::unexpected(call.error());
+    }
+    if (!call->has_value())
+    {
+        if (const std::expected<void, MarkupError> checked = CheckEvent(attribute, catalog); !checked)
+        {
+            return std::unexpected(checked.error());
+        }
+        return ContextAction{
+            .eventName = Core::InternedString{attribute.value}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    }
+
+    const MarkupCall &written = **call;
+    const std::optional<ScreenVerb> verb = LookUpVerb(written.name);
+    if (!verb)
+    {
+        return std::unexpected(At(attribute, "'" + std::string{written.name} +
+                                                 "' is not a verb this markup has. It has: " + KnownVerbs() + "."));
+    }
+    if (VerbTakesTarget(*verb) || VerbTakesMoves(*verb))
+    {
+        return std::unexpected(At(attribute, Signature(*verb) + " acts on a control, and a context's moment comes "
+                                                                "from none. A moment takes an event, or a verb that "
+                                                                "acts on the screen itself, such as " +
+                                                 Signature(ScreenVerb::Hide) + "."));
+    }
+    if (!written.arguments.empty())
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' gives " + std::string{written.name} + " " +
+                                                 std::to_string(written.arguments.size()) +
+                                                 " arguments; it is written " + Signature(*verb) + "."));
+    }
+    return ContextAction{.eventName = {}, .action = ActionKind::Verb, .verb = *verb};
+}
+
+/// Every attribute a context has, for a message refusing one it does not.
+std::string KnownContextAttributes()
+{
+    std::string known{kContextNameAttribute};
+    for (const std::string_view attribute : kMomentAttributes)
+    {
+        known += ", ";
+        known += attribute;
+    }
+    return known;
 }
 
 /// A call: a verb, checked against what it takes. A target is kept by name
@@ -184,6 +261,57 @@ std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const M
         }
     }
     return ApplyVerb(walk, index, attribute, resolved);
+}
+
+std::expected<void, MarkupError> ApplyContext(Walk &walk, const MarkupElement &element)
+{
+    if (!element.text.empty() || !element.children.empty())
+    {
+        return std::unexpected(At(element, "a context holds neither text nor elements: <" +
+                                               std::string{kContextElement} + " name=\"...\" on_lost=\"...\" />."));
+    }
+
+    ScreenContext context;
+    for (const MarkupAttribute &attribute : element.attributes)
+    {
+        if (attribute.name == kContextNameAttribute)
+        {
+            if (!IsParameterName(attribute.value))
+            {
+                return std::unexpected(At(attribute, "'" + attribute.value +
+                                                         "' cannot name a context: a name is letters, digits and "
+                                                         "'_', and does not start with a digit. Leave the name off "
+                                                         "for the screen's unnamed context."));
+            }
+            context.name = Core::InternedString{attribute.value};
+            continue;
+        }
+        const std::array<std::string_view, kContextMomentCount>::const_iterator moment =
+            std::ranges::find(kMomentAttributes, attribute.name);
+        if (moment == kMomentAttributes.end())
+        {
+            return std::unexpected(At(attribute, "'" + attribute.name +
+                                                     "' is not an attribute a context has. It has: " +
+                                                     KnownContextAttributes() + "."));
+        }
+        std::expected<ContextAction, MarkupError> action = ReadContextAction(attribute, walk.catalog);
+        if (!action)
+        {
+            return std::unexpected(std::move(action.error()));
+        }
+        context.actions[static_cast<std::size_t>(moment - kMomentAttributes.begin())] = *action;
+    }
+
+    if (std::ranges::contains(walk.document.contexts, context.name, &ScreenContext::name))
+    {
+        return std::unexpected(At(element, context.name.Empty()
+                                               ? std::string{"the screen already has its unnamed context; give this "
+                                                             "one a name."}
+                                               : "'" + std::string{context.name.View()} +
+                                                     "' is already a context on this screen."));
+    }
+    walk.document.contexts.push_back(std::move(context));
+    return {};
 }
 
 std::expected<void, MarkupError> ResolveTargets(Walk &walk)

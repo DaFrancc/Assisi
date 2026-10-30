@@ -374,6 +374,10 @@ InputResult Ui::ProcessInput(const UiInput &input)
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingInput, "Ui::ProcessInput called twice without a Sync between");
     _nextStep = FrameStep::AwaitingSync;
 
+    // First, so a screen that hides when its context goes is gone before this
+    // frame's input could reach it.
+    AnnounceContexts();
+
     // The screen the frame belongs to, taken once: Back can change which screen
     // has the keys partway through, and everything below is about this one.
     Screen *const screen = _inputScreen;
@@ -419,6 +423,24 @@ InputResult Ui::ProcessInput(const UiInput &input)
         Back();
     }
     return result;
+}
+
+void Ui::AnnounceContexts()
+{
+    // Every screen, shown or not: a hidden boss bar still has to hear that a
+    // boss arrived. Walked as a copy, so a reaction that makes a screen does
+    // not move the list under the walk; destroying one asserts in Forget.
+    _announcing = true;
+    const std::vector<Screen *> screens = _screens;
+    for (Screen *const screen : screens)
+    {
+        const Core::EventRoute events{screen->Events(), _universal};
+        for (const Screen::Reaction &reaction : screen->TakeMoments())
+        {
+            reaction(events);
+        }
+    }
+    _announcing = false;
 }
 
 void Ui::Announce(Screen *screen)
