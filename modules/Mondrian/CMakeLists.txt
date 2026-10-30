@@ -28,6 +28,7 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/ScreenDocument.hpp"
     "include/Assisi/Mondrian/ScreenLoader.hpp"
     "include/Assisi/Mondrian/ScreenReader.hpp"
+    "include/Assisi/Mondrian/ScreenWorld.hpp"
     "include/Assisi/Mondrian/StringTable.hpp"
     "include/Assisi/Mondrian/StringTableReader.hpp"
     "include/Assisi/Mondrian/Style.hpp"

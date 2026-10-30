@@ -1,5 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <doctest/doctest.h>
@@ -46,6 +47,7 @@ constexpr ScreenTraits kLocked{
 struct Stage
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     std::vector<std::unique_ptr<Screen>> owned;
@@ -54,7 +56,7 @@ struct Stage
     /// @p color so its quads can be told from another's.
     Screen &Add(ScreenTraits traits, int32_t sortKey, std::string_view name, const Color &color)
     {
-        owned.push_back(std::make_unique<Screen>(ui, events, traits, sortKey, std::string{name}));
+        owned.push_back(std::make_unique<Screen>(ui, world, traits, sortKey, std::string{name}));
         Screen &screen = *owned.back();
 
         Style root;

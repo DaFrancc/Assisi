@@ -228,13 +228,13 @@ void BuildControls(Screen &screen, NodeId panel)
 
 } // namespace
 
-std::unique_ptr<Screen> AddSampleScreen(Ui &ui, Core::EventQueue &events, TextureId picture)
+std::unique_ptr<Screen> AddSampleScreen(Ui &ui, ScreenWorld &world, TextureId picture)
 {
     // A dialog rather than a menu: it is looked at beside whatever is up, so it
     // has no business hiding the rest of the UI to be seen, and the world it is
     // being looked at over goes on running.
     std::unique_ptr<Screen> screen = std::make_unique<Screen>(
-        ui, events,
+        ui, world,
         ScreenTraits{.input = ScreenInput::ConsumeInput, .beneath = ScreenBeneath::NoHide, .pause = ScreenPause::Run},
         kSortPopup, std::string{kSampleScreenName});
     const NodeId panel = BuildPanel(*screen, picture);

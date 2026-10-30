@@ -8,6 +8,7 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
@@ -1382,15 +1383,16 @@ TEST_CASE("ScreenCompiler: the controls file builds the screen the node API buil
     REQUIRE_MESSAGE(document.has_value(), Why(document));
 
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = OneEvent();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, "ui/Controls.amdn", *document, catalog);
+        InstantiateScreen(ui, world, "ui/Controls.amdn", *document, catalog);
     REQUIRE(loaded.has_value());
 
-    Screen twin{ui, events, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
+    Screen twin{ui, world, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortPopup, "Twin"};
     BuildTwin(twin);
 
     for (const std::string_view name : kComparedControls)

@@ -41,8 +41,8 @@ Style TextFieldStyle()
     return style;
 }
 
-Screen::Screen(Ui &ui, Core::EventQueue &events, ScreenTraits traits, int32_t sortKey, std::string name)
-    : _ui(ui), _events(events), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
+Screen::Screen(Ui &ui, ScreenWorld &world, ScreenTraits traits, int32_t sortKey, std::string name)
+    : _ui(ui), _world(world), _name(std::move(name)), _sortKey(sortKey), _traits(traits)
 {
     // Before anything is built on it, so the nodes it makes can name the
     // built-ins: a widget registry is per tree, and so per screen.
@@ -71,6 +71,79 @@ void Screen::OnActivate(NodeId node, std::function<void(Screen &)> act)
     // reaches nothing outside the UI, which is what lets it work in a level
     // that names no systems.
     _tree.SetOnActivate(node, [this, act = std::move(act)](const Core::EventRoute &) { act(*this); });
+}
+
+Screen::Context &Screen::ContextNamed(std::string_view name)
+{
+    const std::vector<Context>::iterator found = std::ranges::find(_contexts, name, &Context::name);
+    if (found != _contexts.end())
+    {
+        return *found;
+    }
+    return _contexts.emplace_back(Context{.reactions = {}, .name = std::string{name}, .entity = {}, .seen = {}});
+}
+
+void Screen::SetContext(std::string_view name, EntityId entity)
+{
+    ContextNamed(name).entity = entity;
+}
+
+EntityId Screen::GetContext(std::string_view name) const
+{
+    const std::vector<Context>::const_iterator found = std::ranges::find(_contexts, name, &Context::name);
+    return found != _contexts.end() ? found->entity : EntityId{};
+}
+
+void Screen::OnContext(std::string_view name, ContextMoment moment, std::function<void(Screen &)> act)
+{
+    // The route is ignored, as it is for a node's act: this works the UI and
+    // nothing outside it.
+    SetOnContext(name, moment, [this, act = std::move(act)](const Core::EventRoute &) { act(*this); });
+}
+
+void Screen::SetOnContext(std::string_view name, ContextMoment moment, Reaction reaction)
+{
+    ASSISI_ASSERT(moment != ContextMoment::Count_, "a context was given a reaction for no moment");
+    if (moment == ContextMoment::Count_)
+    {
+        return;
+    }
+    ContextNamed(name).reactions[static_cast<std::size_t>(moment)] = std::move(reaction);
+}
+
+std::vector<Screen::Reaction> Screen::TakeMoments()
+{
+    std::vector<Reaction> fired;
+    for (Context &context : _contexts)
+    {
+        // A lost context counts as empty, so the next entity it is given is
+        // announced as the first one was.
+        const bool lost = context.entity && !_world.IsAlive(context.entity);
+        if (lost)
+        {
+            context.entity = {};
+        }
+        const EntityId seen = std::exchange(context.seen, context.entity);
+        if (seen == context.entity)
+        {
+            continue;
+        }
+
+        ContextMoment moment = ContextMoment::Switch;
+        if (!seen)
+        {
+            moment = ContextMoment::Set;
+        }
+        else if (!context.entity)
+        {
+            moment = lost ? ContextMoment::Lost : ContextMoment::Clear;
+        }
+        if (const Reaction &reaction = context.reactions[static_cast<std::size_t>(moment)]; reaction)
+        {
+            fired.push_back(reaction);
+        }
+    }
+    return fired;
 }
 
 bool Screen::Held(NodeId id) const

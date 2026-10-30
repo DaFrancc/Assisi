@@ -277,7 +277,7 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     const std::array<std::string, 1> needs{"StartedLate"};
     Assisi::Mondrian::Screen &screen =
         AddScreen(*world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                   needs);
 
@@ -312,7 +312,7 @@ TEST_CASE("A world's screens are destroyed with it")
         WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
         World &world = worlds.Create("Doomed");
         AddScreen(world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world.events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world.screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"hud"}),
                   {});
         REQUIRE(FindScreen(world, "hud") != nullptr);
@@ -347,7 +347,7 @@ TEST_CASE("A world's one-shot systems can build its screens again after its mark
     const auto build = [&ui, world]
     {
         AddScreen(*world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                   {});
     };

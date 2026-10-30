@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Style.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
@@ -155,6 +156,7 @@ UiInput Pressed(UiAction action)
 struct Stage
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     /// After the Ui, so it is destroyed first: a screen may not outlive the UI
@@ -168,7 +170,7 @@ struct Stage
 
     explicit Stage(ScreenTraits traits = kMenu)
     {
-        screen = std::make_unique<Screen>(ui, events, traits, kSortMenu, "states");
+        screen = std::make_unique<Screen>(ui, world, traits, kSortMenu, "states");
         NodeTree &tree = screen->Tree();
 
         Style column;

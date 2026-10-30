@@ -100,6 +100,14 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
         {
             continue;
         }
+        if (child.name == kContextElement)
+        {
+            if (const std::expected<void, MarkupError> context = ApplyContext(walk, child); !context)
+            {
+                return std::unexpected(context.error());
+            }
+            continue;
+        }
         if (const std::expected<void, MarkupError> compiled = CompileElement(walk, child, 0); !compiled)
         {
             return std::unexpected(compiled.error());

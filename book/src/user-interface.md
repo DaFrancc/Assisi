@@ -17,7 +17,7 @@ it describe each part of the system in reference form:
 | [String tables](ui-string-tables.md) | Keeping a screen's words in `.csv` tables, ready to translate. |
 | [Themes](ui-themes.md) | Keeping colours and sizes in named styles and tokens, and switching them while the game runs. |
 | [Images](ui-images.md) | Icons and pictures from sprite sheets, background images, and frames that fit any size. |
-| [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, and sharing screens between levels. |
+| [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, the entity a screen is about, and sharing screens between levels. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 
 ## Overview
@@ -30,6 +30,7 @@ These are the terms the rest of the chapter uses:
 | **Node** | One box in a screen. A node can hold text, children, or be a control such as a button. |
 | **Screen file** | A `.amdn` file describing one screen, written in an XML-style markup. |
 | **Element** | One tag in a screen file, such as `<button>`. Each element becomes one node. |
+| **Context** | The entity a screen is about, such as the player or a boss, in the screen's own world. |
 | **Attribute** | A setting on an element, such as `width="grow"`. |
 | **Cooking** | The build step that compiles every screen file into a binary form. |
 

@@ -160,7 +160,7 @@ TEST_CASE("A button's world event reaches only its screen's world, and a univers
     TwoWorlds worlds;
     Mondrian::Screen &screen = AddScreen(
         worlds.first,
-        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.events,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
                                            Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput},
                                            Mondrian::kSortMenu, std::string{"menu"}),
         {});
@@ -185,15 +185,75 @@ TEST_CASE("A button's world event reaches only its screen's world, and a univers
 }
 
 #ifndef NDEBUG
-TEST_CASE("A world refuses a screen built to push into another world's events")
+TEST_CASE("A world refuses a screen built for another world")
 {
     // Its buttons would be heard by the other world's systems while it is shown
     // over this one.
     const Assisi::Testing::ThrowOnContractViolation guard;
     TwoWorlds worlds;
     std::unique_ptr<Mondrian::Screen> screen = std::make_unique<Mondrian::Screen>(
-        worlds.ui, worlds.second.events, Mondrian::ScreenTraits{}, Mondrian::kSortMenu, std::string{"menu"});
+        worlds.ui, worlds.second.screenWorld, Mondrian::ScreenTraits{}, Mondrian::kSortMenu, std::string{"menu"});
 
     CHECK_THROWS_AS(AddScreen(worlds.first, std::move(screen), {}), Core::ContractViolation);
 }
 #endif // !NDEBUG
+
+TEST_CASE("A screen's context is lost when its world destroys the entity, and only that world hears it")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity boss = worlds.first.scene.Create();
+    // The same id, alive in the other world: the context is the first world's.
+    REQUIRE(worlds.second.scene.Create() == boss);
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    screen.OnContext("boss", Mondrian::ContextMoment::Lost, Ping{.from = 1});
+    screen.SetContext("boss", ScreenEntity(boss));
+    screen.Show();
+    worlds.UiFrame({});
+    worlds.RunFrame();
+
+    // Alive until the flush, for the screen as for any system.
+    worlds.first.scene.Destroy(boss);
+    worlds.UiFrame({});
+    worlds.RunFrame();
+    CHECK(worlds.firstHeard.pings == 0);
+
+    worlds.first.scene.FlushDestroyed();
+    worlds.UiFrame({});
+    worlds.RunFrame();
+    CHECK(worlds.firstHeard.pings == 1);
+    CHECK(worlds.secondHeard.pings == 0);
+    CHECK_FALSE(screen.GetContext("boss"));
+}
+
+TEST_CASE("A world destroyed under a shown screen bound to its player takes the screen with it")
+{
+    // Travel's last step: the old level goes while its HUD is up and reading its
+    // player. Under the asan preset, the UI touching either afterwards fails.
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity player = worlds.first.scene.Create();
+    Mondrian::Screen &hud = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
+                                           Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    hud.OnContext({}, Mondrian::ContextMoment::Lost, Ping{.from = 1});
+    hud.SetContext(ScreenEntity(player));
+    hud.Show();
+    worlds.UiFrame({});
+    REQUIRE(worlds.ui.TakesInput());
+
+    worlds.worlds.SetActive(worlds.second);
+    const std::string travelledFrom = worlds.first.name;
+    REQUIRE(worlds.worlds.Destroy(travelledFrom));
+
+    worlds.UiFrame({});
+    worlds.UiFrame({});
+    CHECK_FALSE(worlds.ui.TakesInput());
+    CHECK(worlds.ui.GetDrawList().Instances().empty());
+}

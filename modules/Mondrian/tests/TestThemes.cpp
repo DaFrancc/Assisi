@@ -3,6 +3,7 @@
 
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/BitStream.hpp>
@@ -258,6 +259,7 @@ ScreenDocument Shop()
 struct Stage
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Themes themes = BothThemes();
     Ui ui{universal};
@@ -269,7 +271,7 @@ struct Stage
     {
         ui.SetThemes(&themes);
         std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, "ui/Shop.amdn", Shop(), Assisi::Core::EventCatalog{});
+            InstantiateScreen(ui, world, "ui/Shop.amdn", Shop(), Assisi::Core::EventCatalog{});
         REQUIRE(loaded.has_value());
         screen = std::move(loaded->screen);
         ui.Show(*screen);
@@ -578,12 +580,13 @@ TEST_CASE("Themes: a style set in code is all the node's own, so a style it name
 TEST_CASE("Themes: the UI puts the first theme on in its first mode, on screens made before and after")
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     const Themes themes = BothThemes();
     Ui ui{universal};
-    Screen before{ui, events, ScreenTraits{}, kSortHud, "before"};
+    Screen before{ui, world, ScreenTraits{}, kSortHud, "before"};
     ui.SetThemes(&themes);
-    Screen after{ui, events, ScreenTraits{}, kSortHud, "after"};
+    Screen after{ui, world, ScreenTraits{}, kSortHud, "after"};
 
     CHECK(ui.GetTheme() == kDarkPath);
     CHECK(ui.GetThemeMode() == "dark");

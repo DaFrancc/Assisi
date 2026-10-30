@@ -151,7 +151,7 @@ std::expected<void, MarkupError> CollectTemplates(TemplateFile &into, const Mark
                                                   "', which is how an instance qualifies the names inside it."));
         }
         if (FindElement(name) != nullptr || name == kScreenElement || name == kTemplateElement ||
-            name == kTemplatesElement || name == kImportElement)
+            name == kTemplatesElement || name == kImportElement || name == kContextElement)
         {
             return std::unexpected(At(*named, "'" + name +
                                                   "' is already an element this markup has, so a template "

@@ -70,10 +70,10 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
                             std::span<const std::string> systems)
 {
     ASSISI_ASSERT(screen != nullptr, "a world was given a screen that is not there");
-    // Its controls push into the queue it was built with, which only this
-    // world's systems read.
-    ASSISI_ASSERT(&screen->Events() == &world.events,
-                  "a world was given a screen built to push into another world's events");
+    // Its controls push into the queue of the world it was built for, which
+    // only that world's systems read, and its contexts are that world's
+    // entities.
+    ASSISI_ASSERT(&screen->Events() == &world.events, "a world was given a screen built for another world");
 
     // Named in the install error if one of them is undeclared: the screen that
     // asked is what a programmer has to go and fix.
@@ -101,7 +101,7 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, world.events, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.screenWorld, vpath, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
         Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,

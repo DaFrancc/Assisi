@@ -25,6 +25,7 @@
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/StringPool.hpp>
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -223,6 +224,36 @@ struct ScreenNode
     [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };
 
+/// @brief What a context does at one moment, as the file wrote it: nothing, a
+/// verb that needs no target, or an event pushed.
+ASTRUCT()
+struct ContextAction
+{
+    /// The event pushed, by catalog name. Set only for ActionKind::Event.
+    AFIELD() Core::InternedString eventName;
+
+    AFIELD() ActionKind action = ActionKind::None;
+
+    /// Meaningful only for ActionKind::Verb.
+    AFIELD() ScreenVerb verb = ScreenVerb::Hide;
+
+    [[nodiscard]] friend bool operator==(const ContextAction &, const ContextAction &) = default;
+};
+
+/// @brief A context a screen declares: the entity it is about, which code
+/// gives it, and what the screen does at each moment.
+ASTRUCT()
+struct ScreenContext
+{
+    /// One per ContextMoment, in its order.
+    AFIELD() std::array<ContextAction, kContextMomentCount> actions;
+
+    /// Empty for the screen's unnamed context.
+    AFIELD() Core::InternedString name;
+
+    [[nodiscard]] friend bool operator==(const ScreenContext &, const ScreenContext &) = default;
+};
+
 /// @brief A whole screen: its nodes, its traits, and what it needs installed.
 ASTRUCT()
 struct ScreenDocument
@@ -240,6 +271,9 @@ struct ScreenDocument
     /// loader for whoever owns the world to install; the UI cannot install
     /// anything and does not try.
     AFIELD() std::vector<Core::InternedString> systems;
+
+    /// The contexts the file declares, at most one per name.
+    AFIELD() std::vector<ScreenContext> contexts;
 
     /// Which node takes focus when the screen is shown, or kNoNode.
     AFIELD() uint32_t focus = kNoNode;

@@ -3,6 +3,7 @@
 
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 
 #include <Assisi/Core/EventCatalog.hpp>
@@ -300,6 +301,7 @@ void Click(Ui &ui, const Screen &screen, std::string_view name)
 struct SliderScreen
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     std::unique_ptr<Screen> screen;
@@ -309,7 +311,7 @@ struct SliderScreen
     explicit SliderScreen(const ScreenDocument &document)
     {
         std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, kScreenPath, document, TwoEvents());
+            InstantiateScreen(ui, world, kScreenPath, document, TwoEvents());
         REQUIRE(loaded.has_value());
         screen = std::move(loaded->screen);
         quality = {.node = screen->Find("quality")};
@@ -326,10 +328,11 @@ struct SliderScreen
 ScreenLoadError Refusal(const ScreenDocument &document)
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, TwoEvents());
+        InstantiateScreen(ui, world, kScreenPath, document, TwoEvents());
     REQUIRE_FALSE(loaded.has_value());
     // Nothing was built, so nothing is left behind taking input.
     CHECK(ui.InputScreen() == nullptr);
@@ -341,12 +344,13 @@ ScreenLoadError Refusal(const ScreenDocument &document)
 TEST_CASE("ScreenLoader: a document becomes the tree it describes")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, PauseMenu(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -381,12 +385,13 @@ TEST_CASE("ScreenLoader: a document becomes the tree it describes")
 TEST_CASE("ScreenLoader: a verb button acts on its own screen")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, PauseMenu(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -405,12 +410,13 @@ TEST_CASE("ScreenLoader: a verb button acts on its own screen")
 TEST_CASE("ScreenLoader: an event button pushes the event it names and no other")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, PauseMenu(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -433,10 +439,11 @@ TEST_CASE("ScreenLoader: an event button naming a universal event pushes it to t
     catalog.Register({.name = "Game::QuitRequested", .push = [](const EventRoute &route) { route.Push(Shutdown{}); }});
 
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, PauseMenu(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -452,12 +459,13 @@ TEST_CASE("ScreenLoader: an event button naming a universal event pushes it to t
 TEST_CASE("ScreenLoader: the document's focus is what has the keys")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, PauseMenu(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, PauseMenu(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -473,6 +481,7 @@ TEST_CASE("ScreenLoader: the document's focus is what has the keys")
 TEST_CASE("ScreenLoader: an unknown event leaves no screen behind")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -481,7 +490,7 @@ TEST_CASE("ScreenLoader: an unknown event leaves no screen behind")
     document.nodes[4].eventName = InternedString{"Game::Misspelt"};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::UnknownEvent);
 
@@ -496,6 +505,7 @@ TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
     // The cook refuses the same thing, so this is a stale package or a document
     // built by hand. Answered before anything is built, like every refusal.
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -504,7 +514,7 @@ TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
     document.nodes[4].name = InternedString{"resume"};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::DuplicateName);
     CHECK(ui.InputScreen() == nullptr);
@@ -514,6 +524,7 @@ TEST_CASE("ScreenLoader: a name two nodes carry leaves no screen behind")
 TEST_CASE("ScreenLoader: a button is found by its name, not its label")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -524,7 +535,7 @@ TEST_CASE("ScreenLoader: a button is found by its name, not its label")
     document.nodes[4].text = document.AddText("Resume");
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
     CHECK(loaded->screen->Find("resume"));
     CHECK(loaded->screen->Find("quit"));
@@ -536,6 +547,7 @@ TEST_CASE("ScreenLoader: the style a node names, the tokens it uses and what it 
     // What the theme makes of them is the theme's tests' to say; with none, the
     // node wears what it writes itself.
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -547,7 +559,7 @@ TEST_CASE("ScreenLoader: the style a node names, the tokens it uses and what it 
     panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::Background}};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
     const Node *node = loaded->screen->Tree().Get(loaded->screen->Find("panel"));
     REQUIRE(node != nullptr);
@@ -561,6 +573,7 @@ TEST_CASE("ScreenLoader: the style a node names, the tokens it uses and what it 
 TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -575,7 +588,7 @@ TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes"
     document.nodes[3].states = {ThemedPatch{.patch = hover, .tokens = {}}, ThemedPatch{.patch = off, .tokens = {}}};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE(loaded.has_value());
 
     const Node *resume = loaded->screen->Tree().Get(loaded->screen->Find("resume"));
@@ -590,6 +603,7 @@ TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes"
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -598,7 +612,7 @@ TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
     {
         const ScreenDocument empty;
         const std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, kScreenPath, empty, catalog);
+            InstantiateScreen(ui, world, kScreenPath, empty, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::BadDocument);
     }
@@ -611,7 +625,7 @@ TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
         document.nodes[1].parent = 1;
 
         const std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, kScreenPath, document, catalog);
+            InstantiateScreen(ui, world, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::BadDocument);
     }
@@ -622,6 +636,7 @@ TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
 TEST_CASE("ScreenLoader: a control or an action on the root is refused")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -633,7 +648,7 @@ TEST_CASE("ScreenLoader: a control or an action on the root is refused")
         document.nodes[0].widget = BuiltinWidget::Button;
 
         const std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, kScreenPath, document, catalog);
+            InstantiateScreen(ui, world, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::MisplacedNode);
     }
@@ -646,7 +661,7 @@ TEST_CASE("ScreenLoader: a control or an action on the root is refused")
         document.nodes[0].action = ActionKind::Verb;
 
         const std::expected<LoadedScreen, ScreenLoadError> loaded =
-            InstantiateScreen(ui, events, kScreenPath, document, catalog);
+            InstantiateScreen(ui, world, kScreenPath, document, catalog);
         REQUIRE_FALSE(loaded.has_value());
         CHECK(loaded.error() == ScreenLoadError::MisplacedNode);
     }
@@ -657,6 +672,7 @@ TEST_CASE("ScreenLoader: a widget this build does not have is named as such")
     // A stale package naming a control added after this build. Silently
     // becoming a plain box would be a screen that looks nearly right.
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -669,7 +685,7 @@ TEST_CASE("ScreenLoader: a widget this build does not have is named as such")
     document.nodes.push_back(unknown);
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::UnsupportedWidget);
 }
@@ -680,12 +696,13 @@ TEST_CASE("ScreenLoader: every control a document names is built as that control
     // built in C++ calls. A control built with its arguments dropped would look
     // right and read wrong.
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, EveryControl(), catalog);
+        InstantiateScreen(ui, world, kScreenPath, EveryControl(), catalog);
     REQUIRE(loaded.has_value());
 
     Screen &screen = *loaded->screen;
@@ -740,6 +757,7 @@ TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen be
     // the same reason an unknown event is refused here. Answered before
     // anything is built: a screen joins its Ui in its own constructor.
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const EventCatalog catalog = TwoEvents();
@@ -754,7 +772,7 @@ TEST_CASE("ScreenLoader: a pattern this build cannot compile leaves no screen be
     }
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, document, catalog);
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
     REQUIRE_FALSE(loaded.has_value());
     CHECK(loaded.error() == ScreenLoadError::BadPattern);
 
@@ -933,6 +951,7 @@ std::string_view TextOf(const Screen &screen, std::string_view name)
 TEST_CASE("ScreenLoader: a keyed node shows its table's words, and new tables change them")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     const StringTables english = PauseTables("en");
@@ -940,7 +959,7 @@ TEST_CASE("ScreenLoader: a keyed node shows its table's words, and new tables ch
     ui.SetStringTables(&english);
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, KeyedPauseMenu(), TwoEvents());
+        InstantiateScreen(ui, world, kScreenPath, KeyedPauseMenu(), TwoEvents());
     REQUIRE(loaded.has_value());
     Screen &screen = *loaded->screen;
 
@@ -964,11 +983,12 @@ TEST_CASE("ScreenLoader: a keyed node shows its table's words, and new tables ch
 TEST_CASE("ScreenLoader: a key with no table shows the key, until a table arrives")
 {
     EventQueue events;
+    TestWorld world{events};
     EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
 
     const std::expected<LoadedScreen, ScreenLoadError> loaded =
-        InstantiateScreen(ui, events, kScreenPath, KeyedPauseMenu(), TwoEvents());
+        InstantiateScreen(ui, world, kScreenPath, KeyedPauseMenu(), TwoEvents());
     REQUIRE(loaded.has_value());
     Screen &screen = *loaded->screen;
     CHECK(TextOf(screen, "title") == "#pause:title");
@@ -976,4 +996,78 @@ TEST_CASE("ScreenLoader: a key with no table shows the key, until a table arrive
     const StringTables english = PauseTables("en");
     ui.SetStringTables(&english);
     CHECK(TextOf(screen, "title") == "en title");
+}
+
+namespace
+{
+
+constexpr EntityId kBoss{.index = 3, .generation = 1};
+
+/// The pause menu with a boss context that pushes Quit when one arrives and
+/// hides the screen when it dies.
+ScreenDocument WithBoss()
+{
+    ScreenDocument document = PauseMenu();
+    ScreenContext boss;
+    boss.name = InternedString{"boss"};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Set)] = {
+        .eventName = InternedString{"Game::QuitRequested"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Lost)] = {
+        .eventName = {}, .action = ActionKind::Verb, .verb = ScreenVerb::Hide};
+    document.contexts.push_back(boss);
+    return document;
+}
+
+} // namespace
+
+TEST_CASE("ScreenLoader: a context does what its document says at each moment")
+{
+    EventQueue events;
+    TestWorld world{events};
+    world.alive = {kBoss};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, WithBoss(), TwoEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+    screen.Show();
+
+    screen.SetContext("boss", kBoss);
+    ui.ProcessInput({});
+    ui.Sync(kViewport);
+    CHECK(events.Read<QuitRequested>().size() == 1);
+    CHECK(events.Read<NeverWanted>().empty());
+    CHECK(screen.IsShown());
+
+    world.alive.clear();
+    ui.ProcessInput({});
+    ui.Sync(kViewport);
+    CHECK_FALSE(screen.IsShown());
+}
+
+TEST_CASE("ScreenLoader: a context its document cannot carry out is refused")
+{
+    ScreenDocument document = WithBoss();
+
+    SUBCASE("two contexts of one name")
+    {
+        document.contexts.push_back(document.contexts.front());
+        CHECK(Refusal(document) == ScreenLoadError::BadContext);
+    }
+
+    SUBCASE("a verb that needs a control to act on")
+    {
+        document.contexts.front().actions[static_cast<std::size_t>(ContextMoment::Clear)] = {
+            .eventName = {}, .action = ActionKind::Verb, .verb = ScreenVerb::Step};
+        CHECK(Refusal(document) == ScreenLoadError::BadContext);
+    }
+
+    SUBCASE("an event this build does not declare")
+    {
+        document.contexts.front().actions[static_cast<std::size_t>(ContextMoment::Switch)] = {
+            .eventName = InternedString{"Game::Nothing"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+        CHECK(Refusal(document) == ScreenLoadError::UnknownEvent);
+    }
 }
