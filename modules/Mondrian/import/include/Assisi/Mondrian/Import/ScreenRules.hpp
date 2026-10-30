@@ -68,8 +68,10 @@ struct ScreenRules
     /// is one. Without one, naming an image that way is refused.
     SourceReader read;
     /// What a binding's component is looked up in. Without one, every binding
-    /// is refused.
+    /// naming a component is refused.
     ComponentLookup components;
+    /// The same for the struct of a registered source.
+    StructLookup structs;
     LiteralText literals = LiteralText::Allowed;
 };
 
@@ -91,7 +93,7 @@ struct ScreenRules
 /// screen's keys and looks cannot be checked without it. Two listed tables, or
 /// two listed sheets, with one name are an error naming both, and so is a
 /// theme naming a sprite no listed sheet has. Bindings are checked against
-/// every component this program reflects.
+/// every component and struct this program reflects.
 [[nodiscard]] std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read);
 
 } // namespace Assisi::Mondrian::Import

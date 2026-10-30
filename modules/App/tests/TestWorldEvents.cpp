@@ -22,6 +22,7 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 #include <cstddef>
@@ -280,6 +281,50 @@ TEST_CASE("A screen's binding reads its context's component through its world's 
     worlds.first.scene.GetMut<Assisi::ECS::Transform>(crate)->position.x = 7.f;
     worlds.UiFrame({});
     CHECK(screen.Tree().Get(text)->text == "7, 2, 3");
+}
+
+TEST_CASE("A control bound two-way writes a replicated component through its world's scene, as GetMut does")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity crate = worlds.first.scene.Create();
+    Assisi::Physics::RigidBody body;
+    body.mass = 2.f;
+    (void)worlds.first.scene.Add(crate, body);
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
+                                                     Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput,
+                                                                            .beneath = Mondrian::ScreenBeneath::NoHide,
+                                                                            .pause = Mondrian::ScreenPause::Run},
+                                                     Mondrian::kSortMenu, std::string{"inspector"}),
+                  {});
+    const Mondrian::ContinuousSliderId mass = screen.AddContinuousSlider(
+        screen.Root(), Mondrian::SliderRange{.min = 0.f, .max = 10.f, .step = 1.f}, 0.f);
+    REQUIRE(screen.BindControl(mass.node, "{=RigidBody.mass}").has_value());
+    screen.SetContext(ScreenEntity(crate));
+    screen.Show();
+
+    worlds.UiFrame({});
+    CHECK(screen.GetValue(mass) == doctest::Approx(2.f));
+
+    const uint64_t before = worlds.first.scene.ChangeTick<Assisi::Physics::RigidBody>(crate);
+    worlds.ui.SetFocus(screen, mass.node);
+    Mondrian::UiInput right;
+    right.grant = Mondrian::InputGrant::Everything;
+    right.actionPressed[static_cast<std::size_t>(Mondrian::UiAction::Right)] = true;
+    right.actionDown[static_cast<std::size_t>(Mondrian::UiAction::Right)] = true;
+    worlds.UiFrame(right);
+
+    CHECK(worlds.first.scene.Get<Assisi::Physics::RigidBody>(crate)->mass == doctest::Approx(3.f));
+    CHECK(worlds.first.scene.ChangeTick<Assisi::Physics::RigidBody>(crate) > before);
+}
+
+TEST_CASE("A world finds the struct a registered source is by its name")
+{
+    TwoWorlds worlds;
+    CHECK(worlds.first.screenWorld.FindStruct("ScreenNode") != nullptr);
+    CHECK(worlds.first.screenWorld.FindStruct("NoSuchStruct") == nullptr);
 }
 
 TEST_CASE("A world destroyed under a shown screen bound to its player takes the screen with it")

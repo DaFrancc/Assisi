@@ -2361,6 +2361,15 @@ class StructFieldTest(unittest.TestCase):
         self.assertNotIn("ComponentRegistry", cpp)
         self.assertNotIn("AssetTypeRegistry", cpp)
 
+    def test_a_struct_can_be_found_by_the_name_a_file_writes(self):
+        cpp = self._generate(self._INNER + "}\n")
+        self.assertIn("Assisi/Core/Reflect/StructRegistry.hpp", cpp)
+        self.assertIn('"Inner", &Assisi::Core::Reflect::StructTraits<::N::Inner>::Spec', cpp)
+
+    def test_a_component_is_not_found_as_a_struct(self):
+        cpp = self._generate("namespace N {\nACOMP()\nstruct C { AFIELD() float weight = 0.f; };\n}\n")
+        self.assertNotIn("StructRegistry", cpp)
+
     def test_the_trait_is_declared_before_anything_uses_it(self):
         cpp = self._generate(self._INNER + "ACOMP()\nstruct C { AFIELD() Inner inner; };\n}\n")
         declared = cpp.index("ASSISI_REFLECTED_STRUCT(::N::Inner);")

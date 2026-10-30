@@ -236,6 +236,11 @@ struct Substituted
 /// it: a call is a verb, and a bare name is an event.
 [[nodiscard]] std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &written);
 
+/// The event @p node pushes when the player moves it, from its `on_change`,
+/// which must be able to take what the control holds.
+[[nodiscard]] std::expected<void, MarkupError> ApplyOnChange(const Walk &walk, ScreenNode &node,
+                                                             const MarkupAttribute &attribute);
+
 /// Every target a verb named, looked up now that every node has been read.
 [[nodiscard]] std::expected<void, MarkupError> ResolveTargets(Walk &walk);
 

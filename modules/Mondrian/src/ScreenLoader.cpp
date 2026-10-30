@@ -11,10 +11,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace Assisi::Mondrian
@@ -114,8 +117,16 @@ std::expected<void, ScreenLoadError> ResolveContexts(const ScreenDocument &docum
     return {};
 }
 
-/// Whether every binding on @p node reads, and names a field of a component
-/// @p world has that its place can show.
+/// Whether @p written is one binding naming a field of something @p world has
+/// that @p use can take.
+bool SoleBindingResolves(std::string_view written, BindingUse use, const ScreenWorld &world)
+{
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(written);
+    return source && ResolveBinding(*source, world.FindOwner(source->component), use).has_value();
+}
+
+/// Whether every binding on @p node reads, and names a field of something
+/// @p world has that its place can take.
 bool BindingsResolve(const ScreenDocument &document, const ScreenNode &node, const ScreenWorld &world)
 {
     if (node.textIsBound)
@@ -127,20 +138,43 @@ bool BindingsResolve(const ScreenDocument &document, const ScreenNode &node, con
         }
         for (const TextRun &run : *runs)
         {
-            if (run.bound &&
-                !ResolveBinding(run.binding, world.FindComponent(run.binding.component), BindingUse::Text))
+            if (run.bound && !ResolveBinding(run.binding, world.FindOwner(run.binding.component), BindingUse::Text))
             {
                 return false;
             }
         }
     }
     const std::string_view visible = document.Text(node.visibleBinding);
-    if (visible.empty())
+    if (!visible.empty() && !SoleBindingResolves(visible, BindingUse::Bool, world))
+    {
+        return false;
+    }
+    const std::string_view value = document.Text(node.valueBinding);
+    if (value.empty())
     {
         return true;
     }
-    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(visible);
-    return source && ResolveBinding(*source, world.FindComponent(source->component), BindingUse::Bool).has_value();
+    const std::optional<BindingUse> use = ControlUse(node.widget);
+    return use && SoleBindingResolves(value, *use, world);
+}
+
+/// Whether the event @p node pushes when it changes is one it can push.
+std::expected<void, ScreenLoadError> CheckChange(const ScreenNode &node, const Core::EventCatalog &catalog)
+{
+    if (node.changeEvent.Empty())
+    {
+        return {};
+    }
+    const Core::EventDefinition *const event = catalog.Find(node.changeEvent.View());
+    if (event == nullptr)
+    {
+        return std::unexpected(ScreenLoadError::UnknownEvent);
+    }
+    if (!ChangePushes(node.widget, event->valueKind))
+    {
+        return std::unexpected(ScreenLoadError::BadChange);
+    }
+    return {};
 }
 
 /// Whether every name in @p document resolves, and every node's contents suit
@@ -192,6 +226,11 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
         if (node.action == ActionKind::Verb && !VerbFits(document, node))
         {
             return std::unexpected(ScreenLoadError::BadTarget);
+        }
+
+        if (const std::expected<void, ScreenLoadError> change = CheckChange(node, catalog); !change)
+        {
+            return std::unexpected(change.error());
         }
 
         // Only plain text and a button's label are shown as they come: a
@@ -339,6 +378,47 @@ void ApplyBindings(Screen &screen, NodeId id, const ScreenDocument &document, co
         const std::expected<void, BindingError> bound = screen.BindVisible(id, visible);
         ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
     }
+    if (const std::string_view value = document.Text(node.valueBinding); !value.empty())
+    {
+        const std::expected<void, BindingError> bound = screen.BindControl(id, value);
+        ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
+    }
+}
+
+/// Pushes @p value, what a control holds, through @p push.
+void PushValue(const std::function<void(const Core::EventRoute &, const Core::EventValue &)> &push,
+               const Core::EventRoute &events, const WidgetValue &value)
+{
+    if (const bool *const on = std::get_if<bool>(&value))
+    {
+        push(events, *on);
+    }
+    else if (const float *const rests = std::get_if<float>(&value))
+    {
+        push(events, *rests);
+    }
+    else if (const int32_t *const step = std::get_if<int32_t>(&value))
+    {
+        push(events, *step);
+    }
+}
+
+/// What @p node pushes when the player moves it.
+void ApplyChange(NodeTree &tree, NodeId id, const ScreenNode &node, const Core::EventCatalog &catalog)
+{
+    if (node.changeEvent.Empty())
+    {
+        return;
+    }
+    // Resolved in Resolve, which ran before anything was built.
+    const Core::EventDefinition &event = *catalog.Find(node.changeEvent.View());
+    if (event.pushValue)
+    {
+        tree.SetOnChange(id, [push = event.pushValue](const Core::EventRoute &events, const Node &changed)
+                         { PushValue(push, events, changed.value); });
+        return;
+    }
+    tree.SetOnChange(id, [push = event.push](const Core::EventRoute &events, const Node &) { push(events); });
 }
 
 /// Everything about a node that is neither its style nor its place.
@@ -456,7 +536,9 @@ std::string_view ToString(ScreenLoadError error) noexcept
     case ScreenLoadError::BadContext:
         return "declares a context twice, or gives one a verb it cannot carry out";
     case ScreenLoadError::BadBinding:
-        return "binds a field this build's components do not have";
+        return "binds a field this build's components and structs do not have";
+    case ScreenLoadError::BadChange:
+        return "gives a control a change event it cannot hand its value to";
     case ScreenLoadError::Count_:
         break;
     }
@@ -539,6 +621,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
         ASSISI_ASSERT(named.has_value(), "a name Resolve passed was already taken on a screen it built");
         ApplyFlags(tree, id, node);
         ApplyBindings(screen, id, document, node);
+        ApplyChange(tree, id, node, catalog);
         ApplyPicture(ui, tree, id, node);
         if (node.selectable)
         {

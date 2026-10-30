@@ -28,6 +28,7 @@
 #include <Assisi/Mondrian/Theme.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 
 #include <array>
 #include <cstdint>
@@ -99,6 +100,42 @@ class Ui
 
     /// @brief Whether the player has hold of @p id on @p screen right now.
     [[nodiscard]] bool IsHeld(const Screen &screen, NodeId id) const;
+
+    // -------------------------------------------------------------------------
+    // Sources
+    // -------------------------------------------------------------------------
+
+    /// @brief Makes @p source, an ASTRUCT on no entity, what bindings naming
+    /// its struct read and write, on every screen, replacing any registered
+    /// before it. It must outlive the UI or be unregistered first.
+    ///
+    /// Looked up at each sync, so a screen may be made first, and a source
+    /// taken away leaves its bindings as they last were.
+    template <typename T> void RegisterSource(T &source)
+    {
+        static_assert(Core::Reflect::StructTraits<T>::reflected,
+                      "a source is a non-const ASTRUCT, and a file using it as one says so at global scope with "
+                      "ASSISI_REFLECTED_STRUCT(Type)");
+        RegisterSource(*Core::Reflect::StructTraits<T>::Spec(), &source);
+    }
+
+    /// @brief Takes away the source of struct @p T, if there is one.
+    template <typename T> void UnregisterSource()
+    {
+        static_assert(Core::Reflect::StructTraits<T>::reflected,
+                      "a source is an ASTRUCT, and a file using it as one says so at global scope with "
+                      "ASSISI_REFLECTED_STRUCT(Type)");
+        UnregisterSource(*Core::Reflect::StructTraits<T>::Spec());
+    }
+
+    /// @brief The same given the struct's table rather than its type.
+    void RegisterSource(const Core::Reflect::StructSpec &spec, void *data);
+    void UnregisterSource(const Core::Reflect::StructSpec &spec);
+
+    /// @brief What is registered as a @p spec, or null when nothing is. Found
+    /// by the table rather than its name, so a binding that looked up some
+    /// other struct of that name can never read this one as that.
+    [[nodiscard]] void *FindSource(const Core::Reflect::StructSpec &spec) const;
 
     // -------------------------------------------------------------------------
     // The frame
@@ -255,6 +292,13 @@ class Ui
         uint32_t clicks = 0;              ///< presses in the run the last one belongs to
     };
 
+    /// A struct on no entity that bindings can reach. Not owned.
+    struct Source
+    {
+        const Core::Reflect::StructSpec *spec = nullptr;
+        void *data = nullptr;
+    };
+
     /// Whether @p screen draws over @p other: by sort key, and within a key by
     /// which was shown later.
     [[nodiscard]] static bool Above(const Screen &screen, const Screen &other);
@@ -321,6 +365,8 @@ class Ui
     /// puts itself here and takes itself away, and whatever owns it outlives
     /// the entry.
     std::vector<Screen *> _screens;
+    /// Few, so a scan finds one.
+    std::vector<Source> _sources;
     Clipboard _clipboard;
     DrawList _drawList;
     /// Nodes on the input screen whose value moved this frame, announced once

@@ -145,6 +145,13 @@ class EventTest(unittest.TestCase):
             self.assertIn("Assisi/Core/EventCatalog.hpp", cpp)
             self.assertIn('"Game::QuitRequested"', cpp)
 
+    def test_the_entry_leaves_its_value_field_to_the_compiler(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(self.SOURCE, encoding="utf-8")
+            event = reflect_events.parse_header_events(path)[0]
+            self.assertIn(f"DefineEvent<{event.fqn}>", reflect_events.gen_event_registration(event))
+
 
 if __name__ == "__main__":
     unittest.main()

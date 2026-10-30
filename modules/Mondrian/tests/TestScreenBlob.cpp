@@ -131,6 +131,8 @@ ScreenDocument Everything()
     volume.name = InternedString{"volume"};
     volume.widget = BuiltinWidget::ContinuousSlider;
     volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
+    volume.valueBinding = document.AddText("{=Audio.volume}");
+    volume.changeEvent = InternedString{"Assisi::App::QuitRequested"};
     document.nodes.push_back(volume);
 
     ScreenNode port;
@@ -217,7 +219,20 @@ TEST_CASE("ScreenBlob: a text handle past the pool is refused")
     // blank label.
     ScreenDocument document;
     document.nodes.emplace_back();
-    document.nodes[0].text = Assisi::Core::PooledString{.offset = 0, .length = 4};
+    const Assisi::Core::PooledString past{.offset = 0, .length = 4};
+
+    SUBCASE("its text")
+    {
+        document.nodes[0].text = past;
+    }
+    SUBCASE("its visible binding")
+    {
+        document.nodes[0].visibleBinding = past;
+    }
+    SUBCASE("its value binding")
+    {
+        document.nodes[0].valueBinding = past;
+    }
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
     REQUIRE_FALSE(read.has_value());

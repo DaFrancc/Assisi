@@ -7,7 +7,9 @@
 #include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <utility>
+#include <variant>
 
 namespace Assisi::Mondrian
 {
@@ -166,12 +168,12 @@ std::expected<void, BindingError> Screen::BindText(NodeId node, std::string_view
             continue;
         }
         std::expected<FieldBinding, BindingError> binding =
-            ResolveBinding(run.binding, _world.FindComponent(run.binding.component), BindingUse::Text);
+            ResolveBinding(run.binding, _world.FindOwner(run.binding.component), BindingUse::Text);
         if (!binding)
         {
             return std::unexpected(binding.error());
         }
-        added.binding = *std::move(binding);
+        added.field.binding = *std::move(binding);
     }
     std::erase_if(_boundTexts, [node](const BoundText &held) { return held.node == node; });
     _boundTexts.push_back(std::move(bound));
@@ -186,27 +188,98 @@ std::expected<void, BindingError> Screen::BindVisible(NodeId node, std::string_v
         return std::unexpected(source.error());
     }
     std::expected<FieldBinding, BindingError> resolved =
-        ResolveBinding(*source, _world.FindComponent(source->component), BindingUse::Bool);
+        ResolveBinding(*source, _world.FindOwner(source->component), BindingUse::Bool);
     if (!resolved)
     {
         return std::unexpected(resolved.error());
     }
     std::erase_if(_boundVisibles, [node](const BoundVisible &held) { return held.node == node; });
-    _boundVisibles.push_back(BoundVisible{.binding = *std::move(resolved), .node = node});
+    _boundVisibles.push_back(
+        BoundVisible{.field = {.binding = *std::move(resolved), .warned = {}, .looked = false}, .node = node});
     // Hidden until the world says otherwise: showing what may not be true is
     // the worse of the two guesses.
     _tree.SetVisible(node, false);
     return {};
 }
 
-const void *Screen::ReadBound(const FieldBinding &binding) const
+std::expected<void, BindingError> Screen::BindControl(NodeId id, std::string_view binding)
 {
+    const Node *const node = _tree.Get(id);
+    const std::optional<BindingUse> use =
+        node != nullptr ? ControlUse(static_cast<BuiltinWidget>(node->behaviour)) : std::nullopt;
+    if (!use)
+    {
+        return std::unexpected(BindingError::NotAControl);
+    }
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(binding);
+    if (!source)
+    {
+        return std::unexpected(source.error());
+    }
+    std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(*source, _world.FindOwner(source->component), *use);
+    if (!resolved)
+    {
+        return std::unexpected(resolved.error());
+    }
+    if (const Core::Reflect::FieldMeta &field = *resolved->field; field.type == Core::Reflect::FieldType::Enum)
+    {
+        const int32_t steps = static_cast<int32_t>(field.enumConstants.size());
+        _tree.SetSteps(id, steps);
+        _tree.SetRange(id, SliderRange{.min = 0.f, .max = static_cast<float>(steps - 1), .step = 0.f});
+    }
+    std::erase_if(_boundControls, [id](const BoundControl &held) { return held.node == id; });
+    _boundControls.push_back(
+        BoundControl{.field = {.binding = *std::move(resolved), .warned = {}, .looked = false}, .node = id});
+    return {};
+}
+
+const void *Screen::ReadBound(BoundField &field)
+{
+    const FieldBinding &binding = field.binding;
+    if (binding.structure != nullptr)
+    {
+        const void *const source = _ui.FindSource(*binding.structure);
+        if (source == nullptr && !field.looked)
+        {
+            Core::Log::Error("Mondrian: the screen '{}' reads {}.{}, and nothing has registered a {}.", _name,
+                             binding.structure->name, binding.field->name, binding.structure->name);
+        }
+        field.looked = true;
+        return source;
+    }
+
     const EntityId entity = GetContext(binding.context);
     if (!entity || !_world.IsAlive(entity))
     {
         return nullptr;
     }
-    return _world.Read(*binding.component, entity);
+    const void *const component = _world.Read(*binding.component, entity);
+    if (component == nullptr && field.warned != entity)
+    {
+        // The entity is there and lacks the component: a mistake in the game
+        // rather than a moment in it, so it is said, once.
+        field.warned = entity;
+        Core::Log::Error("Mondrian: the screen '{}' reads {}.{}, and its context's entity has no {}.", _name,
+                         binding.component->name, binding.field->name, binding.component->name);
+    }
+    return component;
+}
+
+void Screen::ShowValue(NodeId id, const WidgetValue &value)
+{
+    if (const bool *const on = std::get_if<bool>(&value))
+    {
+        SetValue(ToggleId{.node = id}, *on);
+    }
+    else if (const float *const rests = std::get_if<float>(&value))
+    {
+        SetValue(ContinuousSliderId{.node = id}, *rests);
+    }
+    else if (const int32_t *const step = std::get_if<int32_t>(&value))
+    {
+        SetValue(SteppedSliderId{.node = id}, *step);
+    }
 }
 
 void Screen::RefreshBindings()
@@ -221,18 +294,9 @@ void Screen::RefreshBindings()
             {
                 continue;
             }
-            if (const void *const component = ReadBound(run.binding))
+            if (const void *const owner = ReadBound(run.field))
             {
-                run.shown = ShowField(run.binding, component);
-            }
-            else if (const EntityId entity = GetContext(run.binding.context);
-                     entity && _world.IsAlive(entity) && run.warned != entity)
-            {
-                // The entity is there and lacks the component: a mistake in
-                // the game rather than a moment in it, so it is said, once.
-                run.warned = entity;
-                Core::Log::Error("Mondrian: the screen '{}' shows {}.{}, and its context's entity has no {}.", _name,
-                                 run.binding.component->name, run.binding.field->name, run.binding.component->name);
+                run.shown = ShowField(run.field.binding, owner);
             }
             text += run.shown;
         }
@@ -241,12 +305,46 @@ void Screen::RefreshBindings()
             _tree.SetText(bound.node, text);
         }
     }
-    for (const BoundVisible &bound : _boundVisibles)
+    for (BoundVisible &bound : _boundVisibles)
     {
-        if (const void *const component = ReadBound(bound.binding))
+        if (const void *const owner = ReadBound(bound.field))
         {
-            _tree.SetVisible(bound.node, ReadBoolField(bound.binding, component));
+            _tree.SetVisible(bound.node, ReadBoolField(bound.field.binding, owner));
         }
+    }
+    for (BoundControl &bound : _boundControls)
+    {
+        const void *const owner = ReadBound(bound.field);
+        const std::optional<WidgetValue> value =
+            owner != nullptr ? ReadControlField(bound.field.binding, owner) : std::nullopt;
+        if (value)
+        {
+            ShowValue(bound.node, *value);
+        }
+    }
+}
+
+void Screen::WriteBound(NodeId id)
+{
+    const std::vector<BoundControl>::const_iterator bound = std::ranges::find(_boundControls, id, &BoundControl::node);
+    if (bound == _boundControls.end() || !bound->field.binding.twoWay)
+    {
+        return;
+    }
+    const FieldBinding &binding = bound->field.binding;
+    const Node *const node = _tree.Get(id);
+    void *owner = nullptr;
+    if (binding.structure != nullptr)
+    {
+        owner = _ui.FindSource(*binding.structure);
+    }
+    else if (const EntityId entity = GetContext(binding.context); entity &&_world.IsAlive(entity))
+    {
+        owner = _world.Write(*binding.component, entity);
+    }
+    if (node != nullptr && owner != nullptr)
+    {
+        WriteControlField(binding, owner, node->value);
     }
 }
 

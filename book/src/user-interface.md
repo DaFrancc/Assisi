@@ -18,7 +18,7 @@ it describe each part of the system in reference form:
 | [Themes](ui-themes.md) | Keeping colours and sizes in named styles and tokens, and switching them while the game runs. |
 | [Images](ui-images.md) | Icons and pictures from sprite sheets, background images, and frames that fit any size. |
 | [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, the entity a screen is about, and sharing screens between levels. |
-| [Showing values from the world](ui-bindings.md) | `{Component.field}` in a screen's text, and a bound `visible`, kept up to date with no code. |
+| [Showing values from the world](ui-bindings.md) | `{Component.field}` in a screen's text, a bound `visible`, and controls that write back, kept up to date with no code. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 
 ## Overview

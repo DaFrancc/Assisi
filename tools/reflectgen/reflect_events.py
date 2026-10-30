@@ -62,8 +62,9 @@ class EventInfo:
 def find_events(text: str, path: Path) -> list:
     """Every AEVENT() declaration in an already-comment-stripped header.
 
-    The fields are not read — an event's wire form is nobody's business here,
-    and markup builds one by naming its type and nothing else.
+    The fields are not read — an event's wire form is nobody's business here.
+    Markup builds one by naming its type, and whether it has a `value` field for
+    a control to fill is asked of the compiler by Core::DefineEvent.
     """
     events: list = []
     for match in _AEVENT_RE.finditer(text):
@@ -118,10 +119,8 @@ static const bool _reflectgen_event_{event.name} = []() -> bool
     // first file that names it.
     static_assert(std::is_default_constructible_v<{event.fqn}>,
                   "an AEVENT type is built by name from markup, so it must be default-constructible");
-{universal}    Assisi::Core::EventCatalog::Instance().Register({{
-        "{event.catalog_name}",
-        [](const Assisi::Core::EventRoute &events) {{ events.Push({event.fqn}{{}}); }},
-    }});
+{universal}    Assisi::Core::EventCatalog::Instance().Register(
+        Assisi::Core::DefineEvent<{event.fqn}>("{event.catalog_name}"));
     return true;
 }}();
 

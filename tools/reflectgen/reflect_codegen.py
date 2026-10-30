@@ -999,6 +999,20 @@ bool StructTraits<::{comp.fqn}>::FromJson(const nlohmann::json &j, void *out_ptr
     return '\nnamespace Assisi::Core::Reflect\n{\n\n' + '\n'.join(blocks) + '\n} // namespace Assisi::Core::Reflect\n'
 
 
+def _gen_struct_registration(info) -> str:
+    """One ASTRUCT's entry in the table a file looks it up in by name."""
+    return f"""\
+// ── {info.name} (struct) {'─' * max(0, 62 - len(info.name))}
+static const bool _reflectgen_struct_{info.name} = []() -> bool
+{{
+    Assisi::Core::Reflect::StructRegistry::Instance().Register(
+        "{info.name}", &Assisi::Core::Reflect::StructTraits<::{info.fqn}>::Spec);
+    return true;
+}}();
+
+"""
+
+
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
                  systems: Optional[list] = None, events: Optional[list] = None,
                  allow_c_arrays: bool = False) -> str:
@@ -1149,6 +1163,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     if referenced:
         includes.append('#include <Assisi/Core/Reflect/StructMeta.hpp>')
     if struct_infos:
+        includes.append('#include <Assisi/Core/Reflect/StructRegistry.hpp>')
         # A struct's table is built with offsetof.
         includes.append('#include <cstddef>')
     if has_enums:
@@ -1318,6 +1333,9 @@ static const bool {var_name} = []() -> bool
 
     for event in events:
         blocks.append('\n' + reflect_events.gen_event_registration(event))
+
+    for info in struct_infos:
+        blocks.append('\n' + _gen_struct_registration(info))
 
     blocks.append(offsetof_pop)
 

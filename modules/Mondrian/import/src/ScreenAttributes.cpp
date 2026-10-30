@@ -249,6 +249,7 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     Handled("pattern", HandledAttribute::Pattern, BuiltinWidget::TextField),
 
     Handled("on_click", HandledAttribute::Action),
+    Handled("on_change", HandledAttribute::Change),
     Handled("name", HandledAttribute::Name),
     Handled("focus", HandledAttribute::Focus),
     ForColor("background", HandledAttribute::Background, StyleProperty::Background),
@@ -517,6 +518,7 @@ std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colou
         return {};
     case HandledAttribute::None:
     case HandledAttribute::Action:
+    case HandledAttribute::Change:
     case HandledAttribute::Name:
     case HandledAttribute::Focus:
     case HandledAttribute::Pattern:

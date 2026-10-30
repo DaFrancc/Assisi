@@ -7,11 +7,14 @@
 /// A screen is owned by one world and destroyed with it, so the world it reads
 /// is always there while the screen is. The UI knows that world only through
 /// this interface: the core never names the engine's entities or scenes, which
-/// is what keeps it testable headless and usable outside a game. It reads a
+/// is what keeps it testable headless and usable outside a game. It reaches a
 /// component through reflection, which needs neither.
+
+#include <Assisi/Mondrian/Binding.hpp>
 
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 
 #include <cstdint>
 #include <string_view>
@@ -61,9 +64,23 @@ class ScreenWorld
     /// @p name, or null when none is. Valid as long as the world is.
     [[nodiscard]] virtual const Core::Reflect::ComponentMeta *FindComponent(std::string_view name) const = 0;
 
+    /// @brief The struct called @p name that a registered source can be, or
+    /// null when none is. Valid as long as the world is.
+    [[nodiscard]] virtual const Core::Reflect::StructSpec *FindStruct(std::string_view name) const = 0;
+
     /// @brief @p entity's @p component, or null when it has none. Valid until
     /// the world next runs a system.
     [[nodiscard]] virtual const void *Read(const Core::Reflect::ComponentMeta &component, EntityId entity) const = 0;
+
+    /// @brief The same to write to, which counts as changing it, exactly as
+    /// fetching it for writing in game code does.
+    [[nodiscard]] virtual void *Write(const Core::Reflect::ComponentMeta &component, EntityId entity) = 0;
+
+    /// @brief What a binding naming @p name looks at.
+    [[nodiscard]] BindingOwner FindOwner(std::string_view name) const
+    {
+        return {.component = FindComponent(name), .structure = FindStruct(name)};
+    }
 };
 
 } // namespace Assisi::Mondrian

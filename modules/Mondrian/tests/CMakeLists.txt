@@ -18,6 +18,7 @@ add_executable(Assisi-Mondrian-Tests
   TestReflectedStructs.cpp
   TestBindings.cpp
   TestContexts.cpp
+  TestControlBindings.cpp
   TestDraw.cpp
   TestDrawList.cpp
   TestFont.cpp

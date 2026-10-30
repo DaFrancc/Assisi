@@ -31,8 +31,7 @@ struct QuitRequested
 inline Assisi::Core::EventCatalog OneEvent()
 {
     Assisi::Core::EventCatalog catalog;
-    catalog.Register({.name = "Game::QuitRequested",
-                      .push = [](const Assisi::Core::EventRoute &events) { events.Push(QuitRequested{}); }});
+    catalog.Register(Assisi::Core::DefineEvent<QuitRequested>("Game::QuitRequested"));
     return catalog;
 }
 

@@ -1068,12 +1068,9 @@ TEST_CASE("ScreenCompiler: the pause menu the game ships compiles, and under its
     {
     };
     EventCatalog catalog;
-    catalog.Register(
-        {.name = "Assisi::App::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
-    catalog.Register(
-        {.name = "Game::ResumeRequested", .push = [](const EventRoute &events) { events.Push(ResumeStandIn{}); }});
-    catalog.Register(
-        {.name = "Game::ContrastToggled", .push = [](const EventRoute &events) { events.Push(ContrastStandIn{}); }});
+    catalog.Register(Assisi::Core::DefineEvent<QuitRequested>("Assisi::App::QuitRequested"));
+    catalog.Register(Assisi::Core::DefineEvent<ResumeStandIn>("Game::ResumeRequested"));
+    catalog.Register(Assisi::Core::DefineEvent<ContrastStandIn>("Game::ContrastToggled"));
 
     // The project's own rules, read in place as the cook reads them: the table
     // the file's keys name, the theme it wears and the sheets its pictures

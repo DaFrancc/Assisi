@@ -105,7 +105,7 @@ bool IsConsistent(const ScreenDocument &document)
             return false;
         }
 
-        const std::array texts{node.text, node.placeholder, node.pattern, node.visibleBinding};
+        const std::array texts{node.text, node.placeholder, node.pattern, node.visibleBinding, node.valueBinding};
         for (const Core::PooledString &text : texts)
         {
             if (!InPool(document.pool, text))

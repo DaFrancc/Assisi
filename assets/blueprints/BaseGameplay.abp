@@ -5,7 +5,9 @@
     "SampleScreen",
     "SampleScreenToggle",
     "ControlsScreen",
-    "ControlsScreenToggle"
+    "ControlsScreenToggle",
+    "TuningScreen",
+    "TuningScreenToggle"
   ],
   "entities": [
     {

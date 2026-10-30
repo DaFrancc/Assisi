@@ -123,6 +123,10 @@ enum class TextIs : uint8_t
 std::string Written(const BindingSource &source)
 {
     std::string written{kBindingOpen};
+    if (source.twoWay)
+    {
+        written += kTwoWayMark;
+    }
     if (!source.context.empty())
     {
         written += source.context + kBindingSeparator;
@@ -135,8 +139,15 @@ std::string Written(const BindingSource &source)
     return written + kBindingClose;
 }
 
-/// Whether @p source names a field of a component this program has that
-/// @p use can take, from a context the screen declares.
+/// What @p name is among the types this program reflects.
+BindingOwner OwnerOf(const ScreenRules &rules, std::string_view name)
+{
+    return {.component = rules.components ? rules.components(name) : nullptr,
+            .structure = rules.structs ? rules.structs(name) : nullptr};
+}
+
+/// Whether @p source names a field of a component or struct this program has
+/// that @p use can take, from a context the screen declares.
 std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSource &source, BindingUse use)
 {
     if (!source.context.empty() && !walk.checkingAlone &&
@@ -146,9 +157,8 @@ std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSou
                                "', which this screen does not declare. Declare it with <context name=\"" +
                                source.context + "\" />.");
     }
-    const Core::Reflect::ComponentMeta *const component =
-        walk.rules.components ? walk.rules.components(source.component) : nullptr;
-    const std::expected<FieldBinding, BindingError> resolved = ResolveBinding(source, component, use);
+    const std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(source, OwnerOf(walk.rules, source.component), use);
     if (resolved)
     {
         return {};
@@ -157,7 +167,7 @@ std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSou
     {
     case BindingError::UnknownComponent:
         return std::unexpected("'" + Written(source) + "' names '" + source.component +
-                               "', which is not a component this build reflects.");
+                               "', which is not a component or struct this build reflects.");
     case BindingError::UnknownField:
         return std::unexpected("'" + Written(source) + "' names '" + source.field + "', which " + source.component +
                                " does not have.");
@@ -279,8 +289,19 @@ std::expected<TextIs, MarkupError> ResolveText(const Walk &walk, std::string &te
 /// The attribute a bool binding can drive.
 constexpr std::string_view kVisibleAttribute = "visible";
 
-/// `visible="{Component.field}"`: shown while that bool holds.
-std::expected<void, MarkupError> ApplyVisibleBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+/// The attribute holding what a toggle shows, and what a slider does.
+constexpr std::string_view kToggleValueAttribute = "on";
+constexpr std::string_view kSliderValueAttribute = "value";
+
+/// Whether @p name is the attribute saying what @p widget holds.
+bool IsValueAttribute(BuiltinWidget widget, std::string_view name)
+{
+    return ControlUse(widget).has_value() &&
+           name == (widget == BuiltinWidget::Toggle ? kToggleValueAttribute : kSliderValueAttribute);
+}
+
+/// @p attribute's value, which is one binding @p use can take, kept as written.
+std::expected<Core::PooledString, MarkupError> KeepBinding(Walk &walk, const MarkupAttribute &attribute, BindingUse use)
 {
     const std::expected<BindingSource, BindingError> source = ReadSoleBinding(attribute.value);
     if (!source)
@@ -288,11 +309,79 @@ std::expected<void, MarkupError> ApplyVisibleBinding(Walk &walk, ScreenNode &nod
         return std::unexpected(
             At(attribute, "'" + attribute.value + "' " + std::string{ToString(source.error())} + "."));
     }
-    if (const std::expected<void, std::string> checked = CheckBinding(walk, *source, BindingUse::Bool); !checked)
+    if (const std::expected<void, std::string> checked = CheckBinding(walk, *source, use); !checked)
     {
         return std::unexpected(At(attribute, checked.error()));
     }
-    node.visibleBinding = walk.document.AddText(attribute.value);
+    return walk.document.AddText(attribute.value);
+}
+
+/// `visible="{Component.field}"`: shown while that bool holds.
+std::expected<void, MarkupError> ApplyVisibleBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::expected<Core::PooledString, MarkupError> kept = KeepBinding(walk, attribute, BindingUse::Bool);
+    if (!kept)
+    {
+        return std::unexpected(kept.error());
+    }
+    node.visibleBinding = *kept;
+    return {};
+}
+
+/// `value="{=Component.field}"`: what the control holds follows that field.
+std::expected<void, MarkupError> ApplyValueBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    // Whether this attribute holds the node's value was asked before coming here.
+    const std::expected<Core::PooledString, MarkupError> kept =
+        KeepBinding(walk, attribute, ControlUse(node.widget).value_or(BindingUse::Count_));
+    if (!kept)
+    {
+        return std::unexpected(kept.error());
+    }
+    node.valueBinding = *kept;
+    return {};
+}
+
+/// Whether what a stepped slider says about its steps suits the field it is
+/// bound to: an enum decides them, and a whole number leaves them to the file.
+/// Asked once everything the node writes has settled, so it does not matter
+/// which of a template and its instance wrote them.
+std::expected<void, MarkupError> CheckBoundSteps(const Walk &walk, const MarkupElement &element, const ScreenNode &node)
+{
+    const std::string_view written = walk.document.Text(node.valueBinding);
+    if (node.widget != BuiltinWidget::SteppedSlider || written.empty())
+    {
+        return {};
+    }
+    // A binding that does not read was refused when it was kept.
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(written);
+    if (!source)
+    {
+        return {};
+    }
+    const std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(*source, OwnerOf(walk.rules, source->component), BindingUse::Stepped);
+    if (!resolved)
+    {
+        return {};
+    }
+    const ScreenNode unwritten;
+    if (resolved->field->type == Core::Reflect::FieldType::Enum)
+    {
+        if (node.steps != unwritten.steps || node.range != unwritten.range)
+        {
+            return std::unexpected(At(element, "a stepped slider bound to an enum has a step for each enumerator, so "
+                                      "it writes no steps, min or max."));
+        }
+        return {};
+    }
+    // A template checked alone may leave them to a parameter it has no value
+    // for yet.
+    if (node.steps <= unwritten.steps && !walk.checkingAlone)
+    {
+        return std::unexpected(At(element, "a stepped slider bound to a whole number says how many positions it has, "
+                                  "with steps."));
+    }
     return {};
 }
 
@@ -682,6 +771,8 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::TextColor:
     case HandledAttribute::Tint:
         return ApplyColor(node.style, handled, attribute);
+    case HandledAttribute::Change:
+        return ApplyOnChange(walk, node, attribute);
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
     case HandledAttribute::None:
@@ -936,6 +1027,14 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             }
             continue;
         }
+        if (IsValueAttribute(node.widget, attribute.name) && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (const std::expected<void, MarkupError> bound = ApplyValueBinding(walk, node, attribute); !bound)
+            {
+                return bound;
+            }
+            continue;
+        }
         // Checked here, where the project's sheets are in hand, whether it is
         // the node's own look or a state's.
         if (spec->property == StyleProperty::BackgroundImage && !attribute.value.empty() &&
@@ -1101,6 +1200,11 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     {
         return std::unexpected(required.error());
     }
+    if (const std::expected<void, MarkupError> steps = CheckBoundSteps(walk, instance, walk.document.nodes[index]);
+        !steps)
+    {
+        return std::unexpected(steps.error());
+    }
     // Once the template's text and the instance's have settled which wins, and
     // pointing at whichever wrote it.
     const MarkupElement &textFrom = instance.text.empty() ? root : instance;
@@ -1192,6 +1296,11 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         !required)
     {
         return std::unexpected(required.error());
+    }
+    if (const std::expected<void, MarkupError> steps = CheckBoundSteps(walk, element, walk.document.nodes[index]);
+        !steps)
+    {
+        return std::unexpected(steps.error());
     }
     if (const std::expected<void, MarkupError> resolved = ResolveNodeText(walk, index, element, element); !resolved)
     {
