@@ -69,8 +69,8 @@ name without its namespace, and the member's name.
 |---|---|---|
 | `float`, `double` | A number | `.1f` for one decimal place |
 | Whole numbers | A number | `+` to always show the sign, `03` to pad with zeros |
-| `bool` | `true` or `false` | |
-| An `AENUM` enum | The enumerator's name | `>8` to right-align in 8 characters |
+| `bool` | `true` or `false`, or words from a [string table](#words-from-a-string-table) | |
+| An `AENUM` enum | The enumerator's name, or words from a [string table](#words-from-a-string-table) | `>8` to right-align in 8 characters |
 | `ShortString`, `InternedString` | The text | |
 | `glm::vec2`, `vec3`, `vec4` | `x, y, z`, each with the format | `.1f` |
 
@@ -80,6 +80,48 @@ The format is what comes after the `:` in C++'s `std::format`, such as `.2f` or
 
 Other field types, such as entities, matrices and lists, can't be shown, and
 fail the cook.
+
+## Words from a string table
+
+An enumerator's name comes from the code, so a player sees `Hard` however the
+game is translated, and a `bool` reads `true` or `false`. A key after the `:`
+shows them through a [string table](ui-string-tables.md) instead:
+
+```xml
+<text>Difficulty: {TuningSettings.difficulty:#tuning:difficulty}</text>
+<text>{TuningSettings.showHud:#tuning:switch}</text>
+```
+
+`#tuning:difficulty` means the table `tuning`, and entries starting with
+`difficulty`. The value picks the entry: the key, a `.`, then the enumerator's
+name, or `true` or `false`. The sandbox's `ui/tuning.csv` holds them:
+
+```
+key,en
+difficulty.Easy,Gentle
+difficulty.Normal,Steady
+difficulty.Hard,Brutal
+switch.true,On
+switch.false,Off
+```
+
+So when `difficulty` holds `Hard`, the binding shows the entry `difficulty.Hard`,
+which is `Brutal`.
+
+- Entries go by name, so reordering an enum keeps its words, and renaming an
+  enumerator fails the cook until its entry is renamed too.
+- The table must have an entry for every enumerator, or for both `true` and
+  `false`, or the cook fails. An enumerator added to the enum needs its words
+  before the game can cook.
+- Two screens can word one enum differently: each binding names its own key.
+- An enum value with no enumerator shows as its number.
+- On a number, `#` is `std::format`'s: `{Gauge.count:#x}` shows `0xff`. A key on
+  any other type fails the cook.
+- [Replacing the string tables](ui-string-tables.md#replacing-the-tables) reaches
+  this text at the next sync.
+
+This is how a `stepped_slider` over an enum gets a translated label: bind the
+same field in a text beside it, with a key.
 
 ## Showing and hiding
 
@@ -140,7 +182,7 @@ the enum declares them, so it writes no `steps`, `min` or `max`. To show which
 one is chosen, bind the same field in a text beside it:
 
 ```xml
-<text>Difficulty: {TuningSettings.difficulty}</text>
+<text>Difficulty: {TuningSettings.difficulty:#tuning:difficulty}</text>
 <stepped_slider value="{=TuningSettings.difficulty}" />
 ```
 
@@ -259,3 +301,7 @@ Put the words in a text of their own, with a key:
   <text>#hud:hit_points</text>
 </row>
 ```
+
+An enum or a `bool` bound with no key fails the cook too, because its word comes
+from the code. Give it [a key](#words-from-a-string-table). Numbers and strings
+pass.

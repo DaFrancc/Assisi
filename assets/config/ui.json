@@ -1,7 +1,7 @@
 {
   "version": 1,
   "type": "UiConfig",
-  "stringTables": ["ui/pause.csv"],
+  "stringTables": ["ui/pause.csv", "ui/tuning.csv"],
   "themes": ["ui/Default.amth"],
   "spriteSheets": ["ui/frames.amsp", "ui/icons.amsp"],
   "requireStringKeys": false,

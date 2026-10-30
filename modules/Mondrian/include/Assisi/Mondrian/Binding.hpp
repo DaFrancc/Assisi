@@ -44,6 +44,14 @@ inline constexpr char kFieldSeparator = '.';
 /// @brief What starts a binding a control also writes: `{=Light.intensity}`.
 inline constexpr char kTwoWayMark = '=';
 
+/// @brief What joins a binding's key to the value it labels: the key
+/// `options:quality` shows the enumerator High as the entry `quality.High`.
+inline constexpr char kLabelSeparator = '.';
+
+/// @brief What labels each value of a bool, after that separator.
+inline constexpr std::string_view kTrueLabel = "true";
+inline constexpr std::string_view kFalseLabel = "false";
+
 /// @brief One binding as a file writes it.
 struct BindingSource
 {
@@ -53,7 +61,8 @@ struct BindingSource
     std::string component;
     std::string field;
     /// A std::format specification, without its colon; empty for the field's
-    /// own way of showing.
+    /// own way of showing. On an enum or a bool, a `#` starts a string table's
+    /// key instead.
     std::string format;
     /// Whether it was written `{=...}`, for a control to write as well as show.
     bool twoWay = false;
@@ -80,6 +89,7 @@ enum class BindingError : uint8_t
     UnknownField,     ///< the component or struct has no field of that name
     Unshowable,       ///< text cannot show a field of its type
     BadFormat,        ///< the format does not suit the field's type or its place
+    BadKey,           ///< an enum's or a bool's key that is not `#table:key`
     NotBool,          ///< `visible` bound to a field that is not a bool
     TwoWayElsewhere,  ///< `{=...}` anywhere but a control
     NotAControl,      ///< a control's binding on a node that holds no value
@@ -127,6 +137,9 @@ struct FieldBinding
     std::string context;
     /// The whole std::format string a value is shown with, braces and all.
     std::string format;
+    /// The `table:key` this field's values are labelled from, or empty when
+    /// they show as themselves.
+    std::string labelKey;
     /// Exactly one of these two. Each is owned by whatever it was looked up in,
     /// which outlives every screen, as is field.
     const Core::Reflect::ComponentMeta *component = nullptr;
@@ -152,6 +165,19 @@ using StructLookup = std::function<const Core::Reflect::StructSpec *(std::string
 
 /// @brief The field @p binding names, in @p owner, as text.
 [[nodiscard]] std::string ShowField(const FieldBinding &binding, const void *owner);
+
+/// @brief The `table:key` holding the words for what the field @p binding names
+/// holds in @p owner. Nothing when it has no key, or for an enum holding a value
+/// with no enumerator, which ShowField shows as a number.
+[[nodiscard]] std::optional<std::string> LabelOf(const FieldBinding &binding, const void *owner);
+
+/// @brief Every `table:key` the field @p binding names can be labelled from:
+/// what a table has to hold for it, one per enumerator or both of a bool's.
+[[nodiscard]] std::vector<std::string> LabelsOf(const FieldBinding &binding);
+
+/// @brief Whether text showing @p binding shows a word from the program: an enum
+/// or a bool with no key, which no table can translate.
+[[nodiscard]] bool ShowsProgramWords(const FieldBinding &binding);
 
 /// @brief The bool field @p binding names, in @p owner.
 [[nodiscard]] bool ReadBoolField(const FieldBinding &binding, const void *owner);

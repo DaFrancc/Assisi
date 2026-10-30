@@ -146,6 +146,42 @@ BindingOwner OwnerOf(const ScreenRules &rules, std::string_view name)
             .structure = rules.structs ? rules.structs(name) : nullptr};
 }
 
+/// Whether the words @p binding shows can reach a player: the table it names
+/// has an entry for every value, and a project requiring keys is given one.
+std::expected<void, std::string> CheckWords(const Walk &walk, const BindingSource &source, const FieldBinding &binding)
+{
+    if (binding.use == BindingUse::Text && ShowsProgramWords(binding) &&
+        walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly)
+    {
+        return std::unexpected("'" + Written(source) +
+                               "' shows a word from the code, and this project requires text a player reads to come "
+                               "from a string table. Give it a key, such as {" +
+                               source.component + kFieldSeparator + source.field + ":#table:key}.");
+    }
+    for (const std::string &label : LabelsOf(binding))
+    {
+        // Each is the binding's key, which ResolveBinding split, and a name.
+        const std::optional<TableKey> split = SplitKey(label);
+        if (!split)
+        {
+            continue;
+        }
+        const std::unordered_map<std::string, StringTable>::const_iterator table =
+            walk.rules.tables.byName.find(std::string{split->table});
+        if (table == walk.rules.tables.byName.end())
+        {
+            return std::unexpected("'" + Written(source) + "' names the string table '" + std::string{split->table} +
+                                   "', and there is none. List its file in " + std::string{kUiConfigPath} + ".");
+        }
+        if (!table->second.entries.contains(std::string{split->key}))
+        {
+            return std::unexpected("'" + Written(source) + "' needs the entry '" + std::string{split->key} +
+                                   "' in the string table '" + std::string{split->table} + "', and it has none.");
+        }
+    }
+    return {};
+}
+
 /// Whether @p source names a field of a component or struct this program has
 /// that @p use can take, from a context the screen declares.
 std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSource &source, BindingUse use)
@@ -161,7 +197,7 @@ std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSou
         ResolveBinding(source, OwnerOf(walk.rules, source.component), use);
     if (resolved)
     {
-        return {};
+        return CheckWords(walk, source, *resolved);
     }
     switch (resolved.error())
     {

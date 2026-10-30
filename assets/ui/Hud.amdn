@@ -17,7 +17,7 @@
     <!-- Shown only while the player sprints. -->
     <text name="sprinting" text_size="18" visible="{CharacterState.sprinting}">Sprinting</text>
 
-    <text name="difficulty" text_size="18">{TuningSettings.difficulty}</text>
+    <text name="difficulty" text_size="18">{TuningSettings.difficulty:#tuning:difficulty}</text>
   </column>
 
 </screen>
