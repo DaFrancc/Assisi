@@ -66,6 +66,16 @@ Network &WorldNetwork(World &world)
     return world.net;
 }
 
+const void *SceneScreenWorld::Read(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity) const
+{
+    // A tag registered for its id alone has nothing to read.
+    if (!component.getByEntity)
+    {
+        return nullptr;
+    }
+    return component.getByEntity(&_scene, entity.index, entity.generation);
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {
@@ -79,7 +89,8 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
     // asked is what a programmer has to go and fix.
     const std::string context(screen->Name());
     world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
-                                              .screen = std::move(screen)});
+                                              .screen = std::move(screen),
+                                              .id = ScreenId{++world.lastScreenId}});
     if (!world.screenStack.back().systems.empty())
     {
         QueueSystemInstall(world, world.screenStack.back().systems, context);
@@ -123,6 +134,19 @@ Mondrian::Screen *FindScreen(World &world, std::string_view name)
         std::ranges::find_if(world.screenStack, [name](const World::Screen &held)
                              { return held.screen != nullptr && held.screen->Name() == name; });
     return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
+Mondrian::Screen *FindScreen(World &world, ScreenId id)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
+ScreenId IdOf(const World &world, const Mondrian::Screen &screen)
+{
+    const std::vector<World::Screen>::const_iterator at = std::ranges::find_if(
+        world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+    return at == world.screenStack.end() ? ScreenId{} : at->id;
 }
 
 World &WorldManager::Create(std::string_view label)

@@ -94,10 +94,13 @@ ScreenDocument Everything()
         ThemedPatch{.patch = StylePatch::Changes(StyleState::Disabled, Style{}, disabled), .tokens = {}});
     document.nodes.push_back(panel);
 
+    // A label bound to a field, shown only while another holds.
     ScreenNode resume;
     resume.parent = 1;
     resume.name = InternedString{"resume"};
-    resume.text = document.AddText("Resume");
+    resume.text = document.AddText("Resume {Save.slot}");
+    resume.textIsBound = true;
+    resume.visibleBinding = document.AddText("{Save.exists}");
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;

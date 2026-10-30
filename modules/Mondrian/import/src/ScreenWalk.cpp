@@ -110,15 +110,125 @@ MarkupError At(const TextPlace &where, std::string message)
     return MarkupError{.message = std::move(message), .line = where.line, .column = where.column};
 }
 
-/// Reads @p text as a key or as literal text, leaving it as the key without its
-/// mark or as the text it stands for. True when it is a key.
-std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text, const TextPlace &where)
+/// What a node's text turned out to be.
+enum class TextIs : uint8_t
+{
+    Written, ///< shown as it is
+    Key,     ///< a key into a string table
+    Bound,   ///< holding bindings, kept as written for the loader
+    Count_
+};
+
+/// @p source as a file writes it, for a message.
+std::string Written(const BindingSource &source)
+{
+    std::string written{kBindingOpen};
+    if (!source.context.empty())
+    {
+        written += source.context + kBindingSeparator;
+    }
+    written += source.component + kFieldSeparator + source.field;
+    if (!source.format.empty())
+    {
+        written += kBindingSeparator + source.format;
+    }
+    return written + kBindingClose;
+}
+
+/// Whether @p source names a field of a component this program has that
+/// @p use can take, from a context the screen declares.
+std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSource &source, BindingUse use)
+{
+    if (!source.context.empty() && !walk.checkingAlone &&
+        !std::ranges::contains(walk.document.contexts, Core::InternedString{source.context}, &ScreenContext::name))
+    {
+        return std::unexpected("'" + Written(source) + "' reads the context '" + source.context +
+                               "', which this screen does not declare. Declare it with <context name=\"" +
+                               source.context + "\" />.");
+    }
+    const Core::Reflect::ComponentMeta *const component =
+        walk.rules.components ? walk.rules.components(source.component) : nullptr;
+    const std::expected<FieldBinding, BindingError> resolved = ResolveBinding(source, component, use);
+    if (resolved)
+    {
+        return {};
+    }
+    switch (resolved.error())
+    {
+    case BindingError::UnknownComponent:
+        return std::unexpected("'" + Written(source) + "' names '" + source.component +
+                               "', which is not a component this build reflects.");
+    case BindingError::UnknownField:
+        return std::unexpected("'" + Written(source) + "' names '" + source.field + "', which " + source.component +
+                               " does not have.");
+    default:
+        return std::unexpected("'" + Written(source) + "' " + std::string{ToString(resolved.error())} + ".");
+    }
+}
+
+/// Whether @p words, outside every binding, say nothing a player reads.
+bool IsBlank(std::string_view words)
+{
+    return std::ranges::all_of(words, [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; });
+}
+
+/// The braces in @p text: its bindings checked when it holds any, and each
+/// `{{` and `}}` made one brace when it holds none. A binding is refused where
+/// @p bindable is false, which is everywhere but a text's or a button's words.
+std::expected<TextIs, MarkupError> ResolveBraces(const Walk &walk, std::string &text, const TextPlace &where,
+                                                 bool bindable)
+{
+    const std::expected<std::vector<TextRun>, BindingError> runs = SplitBoundText(text);
+    if (!runs)
+    {
+        return std::unexpected(At(where, "the " + std::string{where.slot} + " '" + text + "' " +
+                                             std::string{ToString(runs.error())} + "."));
+    }
+    if (std::ranges::none_of(*runs, &TextRun::bound))
+    {
+        text = runs->front().words;
+        return TextIs::Written;
+    }
+    if (!bindable)
+    {
+        return std::unexpected(At(where, "the " + std::string{where.slot} + " '" + text +
+                                             "' holds a binding, and only a text's words and a button's label are "
+                                             "filled from the world. A { shown as it is is written {{."));
+    }
+    const bool keysRequired = walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly;
+    for (const TextRun &run : *runs)
+    {
+        if (keysRequired && !IsBlank(run.words))
+        {
+            return std::unexpected(At(where, "the text '" + text +
+                                                 "' has words around its bindings, and this project requires text "
+                                                 "a player reads to come from a string table. Give the words a text "
+                                                 "of their own with a key."));
+        }
+        if (!run.bound)
+        {
+            continue;
+        }
+        if (const std::expected<void, std::string> checked = CheckBinding(walk, run.binding, BindingUse::Text);
+            !checked)
+        {
+            return std::unexpected(At(where, checked.error()));
+        }
+    }
+    return TextIs::Bound;
+}
+
+/// Reads @p text as a key, as bound text, or as literal text, leaving it as
+/// the key without its mark, as written, or as the text it stands for.
+/// @p bindable is whether a binding may be in it.
+std::expected<TextIs, MarkupError> ResolveText(const Walk &walk, std::string &text, const TextPlace &where,
+                                               bool bindable)
 {
     // Nothing written is nothing to translate, and a template checked on its
     // own leaves a parameter's text empty until an instance gives it one.
     if (text.empty())
     {
-        return false;
+        return TextIs::Written;
     }
     if (text.size() > 1 && text[0] == kKeyMark && text[1] == kKeyMark)
     {
@@ -146,7 +256,15 @@ std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text
                                                  std::string{split->key} + "'."));
         }
         text = std::move(qualified);
-        return true;
+        return TextIs::Key;
+    }
+    if (text.find(kBindingOpen) != std::string::npos || text.find(kBindingClose) != std::string::npos)
+    {
+        const std::expected<TextIs, MarkupError> braced = ResolveBraces(walk, text, where, bindable);
+        if (!braced || *braced == TextIs::Bound)
+        {
+            return braced;
+        }
     }
     if (walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly)
     {
@@ -155,7 +273,27 @@ std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text
                                              "to come from a string table. Write a key such as #pause:title, or mark "
                                              "the screen debug_only=\"true\" if players never see it."));
     }
-    return false;
+    return TextIs::Written;
+}
+
+/// The attribute a bool binding can drive.
+constexpr std::string_view kVisibleAttribute = "visible";
+
+/// `visible="{Component.field}"`: shown while that bool holds.
+std::expected<void, MarkupError> ApplyVisibleBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(attribute.value);
+    if (!source)
+    {
+        return std::unexpected(
+            At(attribute, "'" + attribute.value + "' " + std::string{ToString(source.error())} + "."));
+    }
+    if (const std::expected<void, std::string> checked = CheckBinding(walk, *source, BindingUse::Bool); !checked)
+    {
+        return std::unexpected(At(attribute, checked.error()));
+    }
+    node.visibleBinding = walk.document.AddText(attribute.value);
+    return {};
 }
 
 /// Resolves node @p index's text and placeholder, each once, now that every
@@ -167,14 +305,18 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
 {
     ScreenNode &node = walk.document.nodes[index];
     std::string words{walk.document.Text(node.text)};
-    const std::expected<bool, MarkupError> text =
-        ResolveText(walk, words, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column});
+    // A field's text is the player's, so only plain text and a label are
+    // filled from the world.
+    const bool bindable = node.widget == BuiltinWidget::None || node.widget == BuiltinWidget::Button;
+    const std::expected<TextIs, MarkupError> text = ResolveText(
+        walk, words, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column}, bindable);
     if (!text)
     {
         return std::unexpected(text.error());
     }
     node.text = walk.document.AddText(words);
-    node.textIsKey = *text;
+    node.textIsKey = *text == TextIs::Key;
+    node.textIsBound = *text == TextIs::Bound;
 
     // At the attribute where one was written, and at the element otherwise.
     TextPlace placeAt{.slot = "placeholder", .line = placeholderFrom.line, .column = placeholderFrom.column};
@@ -184,13 +326,13 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
         placeAt.column = written->column;
     }
     std::string shown{walk.document.Text(node.placeholder)};
-    const std::expected<bool, MarkupError> placeholder = ResolveText(walk, shown, placeAt);
+    const std::expected<TextIs, MarkupError> placeholder = ResolveText(walk, shown, placeAt, false);
     if (!placeholder)
     {
         return std::unexpected(placeholder.error());
     }
     node.placeholder = walk.document.AddText(shown);
-    node.placeholderIsKey = *placeholder;
+    node.placeholderIsKey = *placeholder == TextIs::Key;
     return {};
 }
 
@@ -785,6 +927,14 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        if (attribute.name == kVisibleAttribute && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (const std::expected<void, MarkupError> bound = ApplyVisibleBinding(walk, node, attribute); !bound)
+            {
+                return bound;
+            }
+            continue;
         }
         // Checked here, where the project's sheets are in hand, whether it is
         // the node's own look or a state's.

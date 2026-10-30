@@ -181,6 +181,24 @@ struct LocalPlayer
 {
 };
 
+/// @brief A character has just become this machine's player: what anything
+/// made per player, such as a HUD, is made on. Pushed by the step that tags
+/// it LocalPlayer.
+AEVENT()
+struct LocalPlayerGained
+{
+    ECS::Entity entity = ECS::NullEntity;
+};
+
+/// @brief A character has just stopped being this machine's player while
+/// still in the world. One destroyed while it was the player sends nothing,
+/// since nothing is left to tell anyone about.
+AEVENT()
+struct LocalPlayerLost
+{
+    ECS::Entity entity = ECS::NullEntity;
+};
+
 /// @brief Where a player's character is made when one joins a networked game,
 /// and from which blueprint.
 ///

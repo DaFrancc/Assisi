@@ -7,6 +7,7 @@ Assisi_apply_defaults(Assisi-Mondrian)
 
 target_sources(Assisi-Mondrian
   PUBLIC
+    "include/Assisi/Mondrian/Binding.hpp"
     "include/Assisi/Mondrian/Clipboard.hpp"
     "include/Assisi/Mondrian/Draw.hpp"
     "include/Assisi/Mondrian/DrawList.hpp"
@@ -41,6 +42,7 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Utf8.hpp"
     "include/Assisi/Mondrian/Widget.hpp"
   PRIVATE
+    "src/Binding.cpp"
     "src/Draw.cpp"
     "src/DrawList.cpp"
     "src/Font.cpp"

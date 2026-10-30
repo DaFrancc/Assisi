@@ -1071,3 +1071,118 @@ TEST_CASE("ScreenLoader: a context its document cannot carry out is refused")
         CHECK(Refusal(document) == ScreenLoadError::UnknownEvent);
     }
 }
+
+namespace
+{
+
+/// What the bound pause menu reads.
+struct Lives
+{
+    int32_t left = 0;
+    bool shown = false;
+};
+
+Assisi::Core::Reflect::ComponentMeta LivesMeta()
+{
+    Assisi::Core::Reflect::FieldMeta left;
+    left.name = "left";
+    left.type = Assisi::Core::Reflect::FieldType::Int32;
+    left.offset = offsetof(Lives, left);
+    Assisi::Core::Reflect::FieldMeta shown;
+    shown.name = "shown";
+    shown.type = Assisi::Core::Reflect::FieldType::Bool;
+    shown.offset = offsetof(Lives, shown);
+    return Assisi::Core::Reflect::ComponentMeta{.name = "Lives", .fields = {left, shown}, .typeIndex = typeid(Lives)};
+}
+
+constexpr std::size_t kTitle = 2;
+constexpr std::size_t kQuit = 4;
+
+/// The pause menu with its title bound to a field, and Quit shown while
+/// another holds.
+ScreenDocument BoundPauseMenu()
+{
+    ScreenDocument document = PauseMenu();
+    document.nodes[kTitle].text = document.AddText("{Lives.left} left");
+    document.nodes[kTitle].textIsBound = true;
+    document.nodes[kQuit].visibleBinding = document.AddText("{Lives.shown}");
+    return document;
+}
+
+/// The load error @p document gives in a world with Lives, which the case
+/// expects it to give.
+ScreenLoadError BoundRefusal(const ScreenDocument &document)
+{
+    EventQueue events;
+    TestWorld world{events};
+    world.components = {LivesMeta()};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, TwoEvents());
+    REQUIRE_FALSE(loaded.has_value());
+    return loaded.error();
+}
+
+} // namespace
+
+TEST_CASE("ScreenLoader: a document's bindings read the screen's context")
+{
+    EventQueue events;
+    TestWorld world{events};
+    constexpr EntityId kPlayer{.index = 0, .generation = 1};
+    Lives lives{.left = 3, .shown = true};
+    world.components = {LivesMeta()};
+    world.alive = {kPlayer};
+    world.held = {{.component = "Lives", .data = &lives, .entity = kPlayer}};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, BoundPauseMenu(), TwoEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+    const Node &title = *screen.Tree().Get(screen.Find("title"));
+    const Node &quit = *screen.Tree().Get(screen.Find("quit"));
+
+    // Bound visible starts hidden, and bound text shows only its words.
+    CHECK_FALSE(quit.visible);
+
+    screen.SetContext(kPlayer);
+    screen.Show();
+    ui.ProcessInput({});
+    ui.Sync(kViewport);
+    CHECK(title.text == "3 left");
+    CHECK(quit.visible);
+}
+
+TEST_CASE("ScreenLoader: a binding the screen's world cannot resolve is refused")
+{
+    SUBCASE("a component it does not have")
+    {
+        ScreenDocument document = BoundPauseMenu();
+        document.nodes[kTitle].text = document.AddText("{Health.current}");
+        CHECK(BoundRefusal(document) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("a visible bound to a field that is not a bool")
+    {
+        ScreenDocument document = BoundPauseMenu();
+        document.nodes[kQuit].visibleBinding = document.AddText("{Lives.left}");
+        CHECK(BoundRefusal(document) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("bound text on a control whose text is the player's")
+    {
+        ScreenDocument document = EveryControl();
+        for (ScreenNode &node : document.nodes)
+        {
+            if (node.widget == BuiltinWidget::TextField)
+            {
+                node.text = document.AddText("{Lives.left}");
+                node.textIsBound = true;
+            }
+        }
+        CHECK(BoundRefusal(document) == ScreenLoadError::BadBinding);
+    }
+}

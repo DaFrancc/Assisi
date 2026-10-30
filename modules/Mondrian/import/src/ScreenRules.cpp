@@ -3,6 +3,7 @@
 #include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -246,6 +247,9 @@ std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read
 
     ScreenRules rules;
     rules.read = read;
+    // The components this program reflects, which in the cook and the editor
+    // are every component the game has.
+    rules.components = [](std::string_view name) { return Core::Reflect::ComponentRegistry::Instance().Find(name); };
     rules.literals = config->requireStringKeys ? LiteralText::RequiresKey : LiteralText::Allowed;
     if (const std::expected<void, MarkupError> tables = LoadTables(*config, read, rules); !tables)
     {

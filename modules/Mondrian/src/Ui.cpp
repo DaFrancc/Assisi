@@ -904,6 +904,9 @@ void Ui::Sync(Extent viewport)
     {
         for (Screen *screen : DrawOrder())
         {
+            // First, so what the world holds now is what is laid out, and a
+            // node a binding hides takes no room.
+            screen->RefreshBindings();
             // Before layout, so a look that changes a size is placed in the
             // frame it takes hold. Hover, presses and focus are only the input
             // screen's, for the reason drawing gives below.

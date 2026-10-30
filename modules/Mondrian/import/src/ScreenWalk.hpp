@@ -180,6 +180,9 @@ struct Walk
     /// Whether some node has already claimed focus, so a second can be refused
     /// rather than quietly winning.
     bool focusClaimed = false;
+    /// Whether this walk checks templates on their own, where the contexts of
+    /// whatever screen uses them cannot be seen.
+    bool checkingAlone = false;
 };
 
 /// Text with every parameter it uses replaced by its value.

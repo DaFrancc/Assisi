@@ -274,6 +274,37 @@ TEST_CASE("In a session, the player this machine controls is its player")
     CHECK(world.scene.Get<PlayerInput>(mine) == nullptr);
 }
 
+TEST_CASE("A character becoming this machine's player, and stopping, is announced once each")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    constexpr uint32_t kMine = 2;
+    constexpr uint32_t kTheirs = 3;
+    world.resources.Get<LocalClient>() = LocalClient{.id = kMine, .networked = true};
+    const Assisi::ECS::Entity mine = SpawnCharacter(world, /*player=*/ true);
+    (void)world.scene.Add<Assisi::NetSync::ControlledBy>(mine, Assisi::NetSync::ControlledBy{kMine, true});
+
+    LocalPlayerSystem(ctx);
+    REQUIRE(world.events.Read<LocalPlayerGained>().size() == 1);
+    CHECK(world.events.Read<LocalPlayerGained>()[0].entity == mine);
+    CHECK(world.events.Read<LocalPlayerLost>().empty());
+
+    // Still this machine's: nothing more to say.
+    world.events.Flush();
+    LocalPlayerSystem(ctx);
+    CHECK(world.events.Read<LocalPlayerGained>().empty());
+
+    world.events.Flush();
+    world.scene.GetMut<Assisi::NetSync::ControlledBy>(mine)->client = kTheirs;
+    LocalPlayerSystem(ctx);
+    REQUIRE(world.events.Read<LocalPlayerLost>().size() == 1);
+    CHECK(world.events.Read<LocalPlayerLost>()[0].entity == mine);
+    CHECK(world.events.Read<LocalPlayerGained>().empty());
+}
+
 TEST_CASE("A session that has not said who this machine is drives nothing")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};

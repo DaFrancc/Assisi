@@ -23,6 +23,14 @@ Every one of these fails the cook with the file, line and column:
   elements, or with an attribute it doesn't have. A context `name` that isn't
   letters, digits and `_`, or two contexts with one name, or two unnamed. A
   `step(...)` in a context's `on_set`, `on_switch`, `on_clear` or `on_lost`.
+- A binding that isn't `{Component.field}`, `{context:Component.field}` or
+  either with `:format`, a `{` nothing closes, or a `}` that closes nothing.
+  A component no reflected type has, a field it doesn't have, a field type
+  text can't show, or a format the type doesn't take. A context the screen
+  doesn't declare.
+- A binding in a text field's text or a placeholder. A `visible` holding
+  anything but one binding, or bound to a field that isn't a `bool`.
+- With `requireStringKeys` on, words around a binding.
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.
 - An unnamed instance that would repeat names made by another.
@@ -97,4 +105,5 @@ or doesn't compile, fail the cook of every screen.
 
 ## What's next
 
-Data bindings, for showing values from the world, are planned next.
+Bindings that change other attributes, such as a colour or an image, are
+planned next.

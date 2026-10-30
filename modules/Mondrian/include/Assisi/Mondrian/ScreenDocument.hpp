@@ -147,6 +147,10 @@ struct ScreenNode
     /// to look one up in.
     AFIELD() Core::PooledString pattern;
 
+    /// The binding that decides whether the node is visible, as written, such
+    /// as `{CharacterState.sprinting}`; empty when visible decides alone.
+    AFIELD() Core::PooledString visibleBinding;
+
     /// What Screen::Find looks this node up by. Empty for an unnamed node.
     AFIELD() Core::InternedString name;
 
@@ -220,6 +224,10 @@ struct ScreenNode
     /// where the screen is built and again whenever the tables change.
     AFIELD() bool textIsKey = false;
     AFIELD() bool placeholderIsKey = false;
+
+    /// Whether text holds bindings, kept as written for the loader to read,
+    /// braces and all. Text that holds none is stored as it is shown.
+    AFIELD() bool textIsBound = false;
 
     [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
 };

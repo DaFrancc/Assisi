@@ -1,0 +1,18 @@
+<!-- The heads-up display: a player's speed and velocity in the bottom right,
+     read from the player's CharacterState every frame with no code. The Hud
+     system gives each player one, with that player as its context; everything
+     shown here is the file's. -->
+<screen sort="hud" align="end end" padding="24">
+
+  <!-- A player whose character goes takes its HUD with it. -->
+  <context on_lost="hide()" />
+
+  <column name="readout" style="panel" padding="16" gap="4" align="end center">
+    <text name="speed" text_size="28">{CharacterState.groundSpeed:.1f} m/s</text>
+    <text name="velocity" text_size="18">{CharacterState.velocity:.1f}</text>
+
+    <!-- Shown only while the player sprints. -->
+    <text name="sprinting" text_size="18" visible="{CharacterState.sprinting}">Sprinting</text>
+  </column>
+
+</screen>

@@ -19,9 +19,9 @@ namespace
 {
 
 /// Rebuilds the pool from what the nodes point at, in node order: text, then
-/// placeholder, then pattern. The walk adds text as it settles it, and a text
-/// resolved twice leaves its first spelling behind; this drops those, so a
-/// screen cooks to the same bytes however the walk got there.
+/// placeholder, then pattern, then visible's binding. The walk adds text as it
+/// settles it, and a text resolved twice leaves its first spelling behind; this
+/// drops those, so a screen cooks to the same bytes however the walk got there.
 void PackText(ScreenDocument &document)
 {
     Core::StringPool packed;
@@ -30,6 +30,7 @@ void PackText(ScreenDocument &document)
         node.text = packed.Add(document.Text(node.text));
         node.placeholder = packed.Add(document.Text(node.placeholder));
         node.pattern = packed.Add(document.Text(node.pattern));
+        node.visibleBinding = packed.Add(document.Text(node.visibleBinding));
     }
     document.pool = std::move(packed);
 }
@@ -93,19 +94,24 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     {
         return std::unexpected(checked.error());
     }
+    // Before any node, so a binding can name a context declared below it.
     for (const MarkupElement &child : root.children)
     {
-        // Declarations and imports make nothing themselves; instances do.
-        if (child.name == kTemplateElement || child.name == kImportElement)
+        if (child.name != kContextElement)
         {
             continue;
         }
-        if (child.name == kContextElement)
+        if (const std::expected<void, MarkupError> context = ApplyContext(walk, child); !context)
         {
-            if (const std::expected<void, MarkupError> context = ApplyContext(walk, child); !context)
-            {
-                return std::unexpected(context.error());
-            }
+            return std::unexpected(context.error());
+        }
+    }
+    for (const MarkupElement &child : root.children)
+    {
+        // Declarations, imports and contexts make no node themselves;
+        // instances do.
+        if (child.name == kTemplateElement || child.name == kImportElement || child.name == kContextElement)
+        {
             continue;
         }
         if (const std::expected<void, MarkupError> compiled = CompileElement(walk, child, 0); !compiled)

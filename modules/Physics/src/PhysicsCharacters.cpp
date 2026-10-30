@@ -1740,14 +1740,27 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
     // still to it; the state reports both in the world.
     const JPH::Vec3 baseVelocity = BaseVelocityAt(record);
 
-    const JPH::Vec3 velocity = virtualCharacter.GetLinearVelocity() + baseVelocity;
-    state.velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
-
     const JPH::Vec3 normal = virtualCharacter.GetGroundNormal();
     state.groundNormal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ());
 
     const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity() + baseVelocity;
     state.groundVelocity = glm::vec3(groundVelocity.GetX(), groundVelocity.GetY(), groundVelocity.GetZ());
+
+    // What the step asked for. Standing, part of that is the step's gravity
+    // pressed into the ground, which the ground stopped: left in, a character
+    // standing still reads as sinking. What heads into the surface, measured
+    // against the surface's own motion, is taken off, which also turns a walk
+    // into a slope into the walk along it that the step made.
+    JPH::Vec3 velocity = virtualCharacter.GetLinearVelocity() + baseVelocity;
+    if (virtualCharacter.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround)
+    {
+        const float into = (velocity - groundVelocity).Dot(normal);
+        if (into < 0.f)
+        {
+            velocity -= normal * into;
+        }
+    }
+    state.velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
 
     state.groundEntity = OwnerOf(EntityFor(virtualCharacter.GetGroundBodyID()));
     state.baseEntity = record.base;

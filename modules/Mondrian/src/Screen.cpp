@@ -4,6 +4,8 @@
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Utf8.hpp>
 
+#include <Assisi/Core/Logger.hpp>
+
 #include <algorithm>
 #include <utility>
 
@@ -144,6 +146,108 @@ std::vector<Screen::Reaction> Screen::TakeMoments()
         }
     }
     return fired;
+}
+
+std::expected<void, BindingError> Screen::BindText(NodeId node, std::string_view text)
+{
+    const std::expected<std::vector<TextRun>, BindingError> runs = SplitBoundText(text);
+    if (!runs)
+    {
+        return std::unexpected(runs.error());
+    }
+    BoundText bound{.runs = {}, .node = node};
+    for (const TextRun &run : *runs)
+    {
+        BoundRun &added = bound.runs.emplace_back();
+        added.words = run.words;
+        added.bound = run.bound;
+        if (!run.bound)
+        {
+            continue;
+        }
+        std::expected<FieldBinding, BindingError> binding =
+            ResolveBinding(run.binding, _world.FindComponent(run.binding.component), BindingUse::Text);
+        if (!binding)
+        {
+            return std::unexpected(binding.error());
+        }
+        added.binding = *std::move(binding);
+    }
+    std::erase_if(_boundTexts, [node](const BoundText &held) { return held.node == node; });
+    _boundTexts.push_back(std::move(bound));
+    return {};
+}
+
+std::expected<void, BindingError> Screen::BindVisible(NodeId node, std::string_view binding)
+{
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(binding);
+    if (!source)
+    {
+        return std::unexpected(source.error());
+    }
+    std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(*source, _world.FindComponent(source->component), BindingUse::Bool);
+    if (!resolved)
+    {
+        return std::unexpected(resolved.error());
+    }
+    std::erase_if(_boundVisibles, [node](const BoundVisible &held) { return held.node == node; });
+    _boundVisibles.push_back(BoundVisible{.binding = *std::move(resolved), .node = node});
+    // Hidden until the world says otherwise: showing what may not be true is
+    // the worse of the two guesses.
+    _tree.SetVisible(node, false);
+    return {};
+}
+
+const void *Screen::ReadBound(const FieldBinding &binding) const
+{
+    const EntityId entity = GetContext(binding.context);
+    if (!entity || !_world.IsAlive(entity))
+    {
+        return nullptr;
+    }
+    return _world.Read(*binding.component, entity);
+}
+
+void Screen::RefreshBindings()
+{
+    for (BoundText &bound : _boundTexts)
+    {
+        std::string text;
+        for (BoundRun &run : bound.runs)
+        {
+            text += run.words;
+            if (!run.bound)
+            {
+                continue;
+            }
+            if (const void *const component = ReadBound(run.binding))
+            {
+                run.shown = ShowField(run.binding, component);
+            }
+            else if (const EntityId entity = GetContext(run.binding.context);
+                     entity && _world.IsAlive(entity) && run.warned != entity)
+            {
+                // The entity is there and lacks the component: a mistake in
+                // the game rather than a moment in it, so it is said, once.
+                run.warned = entity;
+                Core::Log::Error("Mondrian: the screen '{}' shows {}.{}, and its context's entity has no {}.", _name,
+                                 run.binding.component->name, run.binding.field->name, run.binding.component->name);
+            }
+            text += run.shown;
+        }
+        if (const Node *const node = _tree.Get(bound.node); node != nullptr && node->text != text)
+        {
+            _tree.SetText(bound.node, text);
+        }
+    }
+    for (const BoundVisible &bound : _boundVisibles)
+    {
+        if (const void *const component = ReadBound(bound.binding))
+        {
+            _tree.SetVisible(bound.node, ReadBoolField(bound.binding, component));
+        }
+    }
 }
 
 bool Screen::Held(NodeId id) const

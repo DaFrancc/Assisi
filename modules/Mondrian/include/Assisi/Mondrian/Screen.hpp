@@ -10,6 +10,7 @@
 /// id names a slot in one screen's tree and means nothing in another's — which
 /// is why no call takes a node from one screen and a tree from another.
 
+#include <Assisi/Mondrian/Binding.hpp>
 #include <Assisi/Mondrian/Layout.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Pattern.hpp>
@@ -193,6 +194,21 @@ class Screen
     /// @p reaction as it is: what a screen loaded from a file binds an event
     /// it knows only by name with.
     void SetOnContext(std::string_view name, ContextMoment moment, Reaction reaction);
+
+    /// @brief Makes @p node show @p text with each binding in it, such as
+    /// `{CharacterState.groundSpeed:.1f}`, filled from this screen's contexts
+    /// at every sync, replacing whatever it showed.
+    ///
+    /// A binding whose context has no entity, or whose entity has gone, keeps
+    /// what it last showed, and shows nothing until it has read once. Refused,
+    /// with the node left alone, when the text does not read or names a field
+    /// this screen's world does not have.
+    std::expected<void, BindingError> BindText(NodeId node, std::string_view text);
+
+    /// @brief Makes @p node visible while the bool @p binding names holds,
+    /// such as `{CharacterState.sprinting}`. Hidden until it has read once, and
+    /// as it last was while there is nothing to read.
+    std::expected<void, BindingError> BindVisible(NodeId node, std::string_view binding);
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -450,8 +466,41 @@ class Screen
         EntityId seen;
     };
 
+    /// One stretch of a bound text: its words, then its binding and what that
+    /// last showed.
+    struct BoundRun
+    {
+        FieldBinding binding;
+        std::string words;
+        std::string shown;
+        /// The entity whose missing component was last logged, so a read
+        /// that keeps failing says so once.
+        EntityId warned;
+        bool bound = false;
+    };
+
+    struct BoundText
+    {
+        std::vector<BoundRun> runs;
+        NodeId node;
+    };
+
+    struct BoundVisible
+    {
+        FieldBinding binding;
+        NodeId node;
+    };
+
     /// The context called @p name, made empty the first time it is asked for.
     Context &ContextNamed(std::string_view name);
+
+    /// The component @p binding reads, from the entity its context holds, or
+    /// null when there is nothing to read.
+    [[nodiscard]] const void *ReadBound(const FieldBinding &binding) const;
+
+    /// Fills every binding on this screen from what its contexts hold now.
+    /// Called by the UI before it lays the screen out.
+    void RefreshBindings();
 
     /// Compares every context with what the UI last saw it hold, and returns
     /// what each change answers with, in the order the contexts were made.
@@ -504,6 +553,8 @@ class Screen
     std::string _name;
     /// Few to a screen, so a scan finds one by name.
     std::vector<Context> _contexts;
+    std::vector<BoundText> _boundTexts;
+    std::vector<BoundVisible> _boundVisibles;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;

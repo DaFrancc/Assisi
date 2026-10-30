@@ -584,7 +584,8 @@ struct CharacterState
 {
     /// Velocity after the step, so an animation graph reads what the character
     /// actually did rather than what it asked for. World space, including the
-    /// ground's own motion when riding a platform or a base.
+    /// ground's own motion when riding a platform or a base. Standing, it holds
+    /// nothing heading into the ground, so standing still reads as zero.
     AFIELD() glm::vec3 velocity{0.f};
 
     /// Unit normal of the surface below, pointing up out of it. Zero when

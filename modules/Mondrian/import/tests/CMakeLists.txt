@@ -40,6 +40,7 @@ add_executable(Assisi-MondrianImport-Tests
   ScreenTesting.hpp
   TestCsv.cpp
   TestMarkup.cpp
+  TestScreenBindings.cpp
   TestScreenCompiler.cpp
   TestScreenContexts.cpp
   TestSpriteSheets.cpp

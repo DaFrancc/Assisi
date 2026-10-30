@@ -23,6 +23,32 @@ constructor instead.
 Systems can't keep pointers between frames, so calling `FindScreen` every frame
 is normal. A world has only a few screens, so the lookup is cheap.
 
+`FindScreen` is for a screen a world has one of, such as its pause menu. With
+two screens loaded from one file, it finds the first.
+
+## Screens an entity owns
+
+A screen that belongs to an entity, such as a player's HUD or an enemy's health
+bar, is kept by the entity: a component on it holds the screen's `ScreenId`.
+There can be one of these screens per entity, all loaded from one file.
+
+```cpp
+ACOMP(transient)
+struct PlayerHud
+{
+    Assisi::App::ScreenId screen;
+};
+```
+
+| Call | What it does |
+|---|---|
+| `Assisi::App::IdOf(world, screen)` | The id the world holds a screen by, to keep in the component. |
+| `Assisi::App::FindScreen(world, id)` | The screen again, or `nullptr` once it has been removed. |
+
+A world never gives an id out twice, so an id kept after its screen was removed
+finds nothing rather than another screen. [Showing values from the
+world](ui-bindings.md#a-hud) has the sandbox's HUD as an example.
+
 `Screen::Find` returns a node by its name. It searches every node on the
 screen, so call it once while setting up and keep the result rather than
 calling it every frame.
