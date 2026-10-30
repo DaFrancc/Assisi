@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,9 +30,12 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventScope.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
@@ -317,6 +321,45 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
         falling.physics.Update(kStep);
     }
     CHECK(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y < fell);
+}
+
+TEST_CASE("Travel takes down the screens of the edited world it leaves dormant")
+{
+    // A HUD left up in the level being edited would draw over the one it
+    // travelled to, and a menu left up would keep the keys and pause it.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-world-travel-screens-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+    Assisi::ECS::Scene empty;
+    REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(empty, root / "levels" / "B.alvl"));
+
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &authored = worlds.Create("Main");
+    worlds.SetActive(authored);
+    worlds.SetEdited(authored);
+    authored.state = WorldState::Active;
+
+    const Assisi::Mondrian::ScreenTraits traits{.input = Assisi::Mondrian::ScreenInput::ConsumeInput,
+                                                .pause = Assisi::Mondrian::ScreenPause::Pause};
+    Assisi::Mondrian::Screen &hud = AddScreen(authored,
+                                              std::make_unique<Assisi::Mondrian::Screen>(
+                                                  ui, authored.screenWorld, traits, Assisi::Mondrian::kSortHud,
+                                                  std::string{"hud"}),
+                                              {});
+    hud.Show();
+    REQUIRE(ui.TakesInput());
+
+    REQUIRE(worlds.LoadLevel("levels/B.alvl") != nullptr);
+    REQUIRE(authored.state == WorldState::Dormant);
+    CHECK_FALSE(hud.IsShown());
+    CHECK_FALSE(ui.TakesInput());
+    CHECK_FALSE(ui.PausesWorld());
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("Travel swaps the active world and keeps the edited one dormant")

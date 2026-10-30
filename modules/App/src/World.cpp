@@ -304,8 +304,15 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
         if (outgoing == _edited)
         {
-            // The authored level stays resident so Stop can restore it.
+            // The authored level stays resident so Stop can restore it, but none
+            // of its screens stays up: a world nobody is playing shows no HUD,
+            // takes no keys and pauses nothing. Stop throws them away, so
+            // nothing needs them shown again.
             outgoing->state = WorldState::Dormant;
+            for (const World::Screen &held : outgoing->screenStack)
+            {
+                held.screen->Hide();
+            }
         }
         else
         {
