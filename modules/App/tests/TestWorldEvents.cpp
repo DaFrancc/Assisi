@@ -48,6 +48,12 @@ struct Ping
     int32_t from = 0;
 };
 
+/// What a screen an entity owned sends when the entity is destroyed.
+struct OwnerDestroyed
+{
+    ScreenId screen;
+};
+
 /// What one world's systems read in the frames so far.
 struct Heard
 {
@@ -325,6 +331,36 @@ TEST_CASE("A world finds the struct a registered source is by its name")
     TwoWorlds worlds;
     CHECK(worlds.first.screenWorld.FindStruct("ScreenNode") != nullptr);
     CHECK(worlds.first.screenWorld.FindStruct("NoSuchStruct") == nullptr);
+}
+
+TEST_CASE("A screen an entity owned can be removed by what it sends when the entity is destroyed")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity owner = worlds.first.scene.Create();
+
+    Mondrian::Screen &hud =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    const ScreenId id = IdOf(worlds.first, hud);
+    hud.OnContext({}, Mondrian::ContextMoment::Lost, OwnerDestroyed{.screen = id});
+    hud.SetContext(ScreenEntity(owner));
+    hud.Show();
+    worlds.UiFrame({});
+    CHECK(worlds.first.events.Read<OwnerDestroyed>().empty());
+
+    worlds.first.scene.Destroy(owner);
+    worlds.first.scene.FlushDestroyed();
+
+    // Heard at the UI's input step, before a system reads anything this frame.
+    worlds.UiFrame({});
+    REQUIRE(worlds.first.events.Read<OwnerDestroyed>().size() == 1);
+    Mondrian::Screen *const found = FindScreen(worlds.first, worlds.first.events.Read<OwnerDestroyed>()[0].screen);
+    REQUIRE(found == &hud);
+
+    RemoveScreen(worlds.first, *found);
+    CHECK(FindScreen(worlds.first, id) == nullptr);
 }
 
 TEST_CASE("A world destroyed under a shown screen bound to its player takes the screen with it")

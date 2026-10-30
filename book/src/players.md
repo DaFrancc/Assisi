@@ -78,10 +78,11 @@ The `LocalPlayer` component marks this machine's player, for a system of your
 own that should only act on it, such as a heads-up display.
 
 When a character becomes this machine's player, the engine pushes a
-`LocalPlayerGained` event naming it, and `LocalPlayerLost` when it stops being
-one. Read them to make and remove things a player has one of, such as its HUD
-(see [Showing values from the world](ui-bindings.md)), rather than checking
-every frame whether a player has one yet:
+`LocalPlayerGained` event naming it. When it stops being one, because control
+moved elsewhere or it was destroyed, the engine pushes `LocalPlayerLost`. Read
+them to make and remove things a player has one of, such as its HUD (see
+[Showing values from the world](ui-bindings.md)), rather than checking every
+frame whether a player has one yet:
 
 ```cpp
 for (const Assisi::App::LocalPlayerGained &gained : ctx.events.Read<Assisi::App::LocalPlayerGained>())
@@ -90,7 +91,11 @@ for (const Assisi::App::LocalPlayerGained &gained : ctx.events.Read<Assisi::App:
 }
 ```
 
-A player's character destroyed outright sends no `LocalPlayerLost`.
+When the character was destroyed, the entity the event names is already gone,
+and so are its components. `Scene::IsAlive` tells the two cases apart. A screen
+the character owned can't be found from it any more, so have the screen say
+which one it is (see
+[Screens an entity owns](ui-run-time.md#screens-an-entity-owns)).
 
 Turning is applied by the fixed step, 60 times a second, but your player's
 camera doesn't wait for it: each frame it is drawn turned as far as the mouse

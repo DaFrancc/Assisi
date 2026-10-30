@@ -18,8 +18,6 @@ in the bottom-right corner, and "Sprinting" while the player sprints:
 
 ```xml
 <screen sort="hud" align="end end" padding="24">
-  <context on_lost="hide()" />
-
   <column style="panel" padding="16" gap="4" align="end center">
     <text text_size="28">{CharacterState.groundSpeed:.1f} m/s</text>
     <text text_size="18">{CharacterState.velocity:.1f}</text>
@@ -39,14 +37,18 @@ for (const Assisi::App::LocalPlayerGained &gained : ctx.events.Read<Assisi::App:
     {
         continue;
     }
+    const Assisi::App::ScreenId id = Assisi::App::IdOf(ctx.world, *hud);
     hud->SetContext(Assisi::App::ScreenEntity(gained.entity));
+    hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, HudOrphaned{.screen = id});
     hud->Show();
-    (void)ctx.world.scene.Add(gained.entity, PlayerHud{.screen = Assisi::App::IdOf(ctx.world, *hud)});
+    (void)ctx.world.scene.Add(gained.entity, PlayerHud{.screen = id});
 }
 ```
 
 `PlayerHud` is the game's own component, holding the HUD's `ScreenId`, so the
-character keeps a reference to its HUD (see
+character keeps a reference to its HUD. `HudOrphaned` is the game's own event,
+which the HUD pushes if the character is destroyed, so a second system can
+remove the screen (see
 [Screens an entity owns](ui-run-time.md#screens-an-entity-owns)).
 
 ## Writing a binding

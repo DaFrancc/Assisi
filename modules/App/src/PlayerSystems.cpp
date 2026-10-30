@@ -35,6 +35,13 @@ constexpr std::string_view kPlayerActionEnumType = "Assisi::App::PlayerAction";
 /// Radians of turn per pixel of mouse movement.
 const float kLookRadiansPerPixel = glm::radians(kLookDegreesPerPixel);
 
+/// How far a world's removals of LocalPlayer have been read, so each is
+/// announced once.
+struct LocalPlayerCursor
+{
+    uint64_t tick = 0;
+};
+
 /// Whether @p entity is this machine's player, by the world's LocalClient.
 bool IsLocalPlayer(const ECS::Scene &scene, ECS::Entity entity, const LocalClient &local)
 {
@@ -180,6 +187,21 @@ void LocalPlayerSystem(SystemContext &ctx)
     const LocalClient *found = ctx.world.resources.Find<LocalClient>();
     const LocalClient local = found != nullptr ? *found : LocalClient{};
 
+    // A destroyed player leaves no Player to walk below, so the scene's log of
+    // removals is what tells of it. A log that no longer reaches this far back
+    // has lost a removal only after thousands of them in one step, or a cleared
+    // scene, and nothing is left to ask either way.
+    uint64_t &seen = ctx.world.resources.Get<LocalPlayerCursor>().tick;
+    std::vector<ECS::Entity> removed;
+    (void)scene.RemovedSince<LocalPlayer>(seen, removed);
+    for (const ECS::Entity entity : removed)
+    {
+        if (!scene.IsAlive(entity))
+        {
+            ctx.events.Push(LocalPlayerLost{.entity = entity});
+        }
+    }
+
     // Collected first: adding and removing components while a query walks them
     // can move what it is walking.
     std::vector<ECS::Entity> gained;
@@ -214,6 +236,8 @@ void LocalPlayerSystem(SystemContext &ctx)
         (void)scene.Remove<PlayerInput>(entity);
         ctx.events.Push(LocalPlayerLost{.entity = entity});
     }
+    // After the removals above, which have been announced already.
+    seen = scene.CurrentChangeTick();
 }
 
 void PlayerGatherSystem(SystemContext &ctx)

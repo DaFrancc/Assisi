@@ -49,6 +49,18 @@ A world never gives an id out twice, so an id kept after its screen was removed
 finds nothing rather than another screen. [Showing values from the
 world](ui-bindings.md#a-hud) has the sandbox's HUD as an example.
 
+Destroying the entity destroys the component too, so nothing can read the id
+from it afterwards. Have the screen send the id itself, in an event pushed when
+its context is [lost](#contexts):
+
+```cpp
+hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, Game::HudOrphaned{.screen = id});
+```
+
+Remove the screen in a `PreUpdate` system that reads the event. A paused world
+runs `PreUpdate` but not `Update`, and its events end with the frame, so an
+`Update` system would miss one pushed during a pause.
+
 `Screen::Find` returns a node by its name. It searches every node on the
 screen, so call it once while setting up and keep the result rather than
 calling it every frame.

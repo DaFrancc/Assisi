@@ -305,6 +305,81 @@ TEST_CASE("A character becoming this machine's player, and stopping, is announce
     CHECK(world.events.Read<LocalPlayerGained>().empty());
 }
 
+TEST_CASE("A destroyed player is announced as lost once, when it has gone")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    const Assisi::ECS::Entity mine = SpawnCharacter(world, /*player=*/ true);
+    LocalPlayerSystem(ctx);
+    world.events.Flush();
+
+    // Destroying is deferred: until the flush it is still the player.
+    world.scene.Destroy(mine);
+    LocalPlayerSystem(ctx);
+    CHECK(world.events.Read<LocalPlayerLost>().empty());
+
+    world.events.Flush();
+    world.scene.FlushDestroyed();
+    LocalPlayerSystem(ctx);
+    REQUIRE(world.events.Read<LocalPlayerLost>().size() == 1);
+    CHECK(world.events.Read<LocalPlayerLost>()[0].entity == mine);
+
+    world.events.Flush();
+    LocalPlayerSystem(ctx);
+    CHECK(world.events.Read<LocalPlayerLost>().empty());
+}
+
+TEST_CASE("A player that was lost and then destroyed is announced once")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    constexpr uint32_t kMine = 2;
+    constexpr uint32_t kTheirs = 3;
+    world.resources.Get<LocalClient>() = LocalClient{.id = kMine, .networked = true};
+    const Assisi::ECS::Entity mine = SpawnCharacter(world, /*player=*/ true);
+    (void)world.scene.Add<Assisi::NetSync::ControlledBy>(mine, Assisi::NetSync::ControlledBy{kMine, true});
+    LocalPlayerSystem(ctx);
+    world.events.Flush();
+
+    world.scene.GetMut<Assisi::NetSync::ControlledBy>(mine)->client = kTheirs;
+    LocalPlayerSystem(ctx);
+    CHECK(world.events.Read<LocalPlayerLost>().size() == 1);
+
+    world.events.Flush();
+    world.scene.Destroy(mine);
+    world.scene.FlushDestroyed();
+    LocalPlayerSystem(ctx);
+    CHECK(world.events.Read<LocalPlayerLost>().empty());
+}
+
+TEST_CASE("A player's replacement is gained as the old one is lost")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    const Assisi::ECS::Entity first = SpawnCharacter(world, /*player=*/ true);
+    LocalPlayerSystem(ctx);
+    world.events.Flush();
+
+    world.scene.Destroy(first);
+    world.scene.FlushDestroyed();
+    const Assisi::ECS::Entity second = SpawnCharacter(world, /*player=*/ true);
+    LocalPlayerSystem(ctx);
+
+    REQUIRE(world.events.Read<LocalPlayerLost>().size() == 1);
+    CHECK(world.events.Read<LocalPlayerLost>()[0].entity == first);
+    REQUIRE(world.events.Read<LocalPlayerGained>().size() == 1);
+    CHECK(world.events.Read<LocalPlayerGained>()[0].entity == second);
+}
+
 TEST_CASE("A session that has not said who this machine is drives nothing")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};

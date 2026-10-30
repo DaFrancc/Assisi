@@ -28,10 +28,24 @@ struct PlayerHud
     Assisi::App::ScreenId screen;
 };
 
+/// Pushed by a HUD whose character was destroyed. PlayerHud went with the
+/// character, so the screen says which one it is.
+AEVENT()
+struct HudOrphaned
+{
+    Assisi::App::ScreenId screen;
+};
+
 /// Gives a character a HUD of its own, shown and about it, when it becomes
-/// this machine's player, and takes it away when it stops being one. Does
+/// this machine's player, and takes it away when control moves elsewhere. Does
 /// nothing in a frame where neither happened.
 ASYSTEM(Update, name = "Hud")
 void HudSystem(Assisi::App::SystemContext &ctx);
+
+/// Removes each HUD whose character was destroyed. In PreUpdate because a
+/// paused world still runs it: its Update does not run, and its events end with
+/// the frame.
+ASYSTEM(PreUpdate, name = "HudOrphans")
+void HudOrphanSystem(Assisi::App::SystemContext &ctx);
 
 } // namespace Game

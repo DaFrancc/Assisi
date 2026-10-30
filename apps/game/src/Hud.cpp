@@ -22,13 +22,16 @@ void HudSystem(Assisi::App::SystemContext &ctx)
         {
             continue; // logged by LoadScreen
         }
+        const Assisi::App::ScreenId id = Assisi::App::IdOf(ctx.world, *hud);
         hud->SetContext(Assisi::App::ScreenEntity(gained.entity));
+        hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, HudOrphaned{.screen = id});
         hud->Show();
-        (void)scene.Add(gained.entity, PlayerHud{.screen = Assisi::App::IdOf(ctx.world, *hud)});
+        (void)scene.Add(gained.entity, PlayerHud{.screen = id});
     }
 
     for (const Assisi::App::LocalPlayerLost &lost : ctx.events.Read<Assisi::App::LocalPlayerLost>())
     {
+        // A destroyed character has none: HudOrphanSystem has its screen.
         const PlayerHud *const owned = scene.Get<PlayerHud>(lost.entity);
         if (owned == nullptr)
         {
@@ -39,6 +42,17 @@ void HudSystem(Assisi::App::SystemContext &ctx)
             Assisi::App::RemoveScreen(ctx.world, *hud);
         }
         (void)scene.Remove<PlayerHud>(lost.entity);
+    }
+}
+
+void HudOrphanSystem(Assisi::App::SystemContext &ctx)
+{
+    for (const HudOrphaned &orphaned : ctx.events.Read<HudOrphaned>())
+    {
+        if (Assisi::Mondrian::Screen *const hud = Assisi::App::FindScreen(ctx.world, orphaned.screen))
+        {
+            Assisi::App::RemoveScreen(ctx.world, *hud);
+        }
     }
 }
 
