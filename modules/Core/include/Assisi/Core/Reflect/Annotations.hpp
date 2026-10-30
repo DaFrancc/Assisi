@@ -125,9 +125,9 @@
 
 /// ASTRUCT() — marks a struct as a reflected value struct: a field of an ACOMP,
 /// AASSET, AMSG or another ASTRUCT may hold one inline, alone or in a container,
-/// and every codec walks its AFIELDs in place. It registers nothing of its own
-/// that a scene or a file names; a cooked format that is one struct reaches its
-/// table through Core::Reflect::FindStruct<T>().
+/// and every codec walks its AFIELDs in place. Code reaches its table through
+/// Core::Reflect::StructTraits<T>, and a file naming it, such as a screen
+/// binding a registered source, through Core::Reflect::StructRegistry.
 ///
 /// Takes no arguments. Inside one, AFIELD(norep) and entity or instance
 /// references are refused — the struct has no wire or scene of its own — and a

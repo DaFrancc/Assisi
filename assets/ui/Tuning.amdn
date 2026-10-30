@@ -1,0 +1,32 @@
+<!-- Controls bound to fields. F9 shows it.
+
+     The slider with {=...} writes the Camera of the entity this screen's context
+     holds. The toggle and the stepped slider write TuningSettings, a struct on
+     no entity, which ui/Hud.amdn reads too: moving them changes the HUD behind
+     this screen. -->
+<screen input="consume" sort="popup" align="center center">
+
+  <column name="panel" style="panel" width="480" padding="32" gap="20" align="center start">
+
+    <text name="title" width="grow" text_size="40">Tuning</text>
+
+    <row name="field_of_view" width="grow" gap="20" align="start center">
+      <text width="grow" text_size="24">Field of view {Camera.fovDegrees:.0f}</text>
+      <slider name="fov" value="{=Camera.fovDegrees}" min="40" max="120" step="5" />
+    </row>
+
+    <row name="hud" width="grow" gap="20" align="start center">
+      <text width="grow" text_size="24">Show the HUD</text>
+      <toggle name="show_hud" on="{=TuningSettings.showHud}" />
+    </row>
+
+    <!-- An enum decides this slider's steps. The event carries the step, and a
+         system logs it. -->
+    <row name="difficulty" width="grow" gap="20" align="start center">
+      <text width="grow" text_size="24">Difficulty: {TuningSettings.difficulty}</text>
+      <stepped_slider name="difficulty_slider" value="{=TuningSettings.difficulty}"
+                      on_change="Game::DifficultyChanged" />
+    </row>
+
+  </column>
+</screen>

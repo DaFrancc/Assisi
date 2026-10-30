@@ -60,10 +60,8 @@ struct Shutdown
 EventCatalog TwoEvents()
 {
     EventCatalog catalog;
-    catalog.Register(
-        {.name = "Game::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
-    catalog.Register(
-        {.name = "Game::NeverWanted", .push = [](const EventRoute &events) { events.Push(NeverWanted{}); }});
+    catalog.Register(Assisi::Core::DefineEvent<QuitRequested>("Game::QuitRequested"));
+    catalog.Register(Assisi::Core::DefineEvent<NeverWanted>("Game::NeverWanted"));
     return catalog;
 }
 
@@ -436,7 +434,7 @@ TEST_CASE("ScreenLoader: an event button naming a universal event pushes it to t
     // event's declaration, so a menu in any world can quit the program.
     Assisi::Core::DeclareUniversal(typeid(Shutdown));
     EventCatalog catalog;
-    catalog.Register({.name = "Game::QuitRequested", .push = [](const EventRoute &route) { route.Push(Shutdown{}); }});
+    catalog.Register(Assisi::Core::DefineEvent<Shutdown>("Game::QuitRequested"));
 
     EventQueue events;
     TestWorld world{events};
@@ -1154,6 +1152,190 @@ TEST_CASE("ScreenLoader: a document's bindings read the screen's context")
     ui.Sync(kViewport);
     CHECK(title.text == "3 left");
     CHECK(quit.visible);
+}
+
+namespace
+{
+
+constexpr uint32_t kRoot = 0;
+constexpr std::size_t kSlider = 1;
+
+/// What a slider below pushes as it moves.
+struct LeftChanged
+{
+    float value = 0.f;
+};
+
+/// What a toggle cannot hand its value to.
+struct SwitchChanged
+{
+    bool value = false;
+};
+
+struct Touched
+{
+};
+
+EventCatalog ChangeEvents()
+{
+    EventCatalog catalog;
+    catalog.Register(Assisi::Core::DefineEvent<LeftChanged>("Game::LeftChanged"));
+    catalog.Register(Assisi::Core::DefineEvent<SwitchChanged>("Game::SwitchChanged"));
+    catalog.Register(Assisi::Core::DefineEvent<Touched>("Game::Touched"));
+    return catalog;
+}
+
+/// A menu holding one slider, bound to @p binding.
+ScreenDocument SliderMenu(std::string_view binding)
+{
+    ScreenDocument document;
+    document.traits.input = ScreenInput::ConsumeInput;
+
+    ScreenNode root;
+    document.nodes.push_back(root);
+
+    ScreenNode slider;
+    slider.parent = kRoot;
+    slider.name = InternedString{"slider"};
+    slider.widget = BuiltinWidget::ContinuousSlider;
+    slider.range = {.min = 0.f, .max = 9.f, .step = 1.f};
+    slider.valueBinding = document.AddText(binding);
+    document.nodes.push_back(slider);
+    return document;
+}
+
+/// One press of @p action on the only slider @p loaded holds.
+void PressOnSlider(Ui &ui, Screen &screen, UiAction action)
+{
+    UiInput input;
+    input.grant = InputGrant::Everything;
+    input.actionPressed[static_cast<std::size_t>(action)] = true;
+    input.actionDown[static_cast<std::size_t>(action)] = true;
+    ui.SetFocus(screen, screen.Find("slider"));
+    ui.ProcessInput(input);
+    ui.Sync(kViewport);
+}
+
+/// The load error @p document gives in a world with Lives, which the case
+/// expects it to give.
+ScreenLoadError ChangeRefusal(const ScreenDocument &document)
+{
+    EventQueue events;
+    TestWorld world{events};
+    world.components = {LivesMeta()};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, ChangeEvents());
+    REQUIRE_FALSE(loaded.has_value());
+    return loaded.error();
+}
+
+} // namespace
+
+TEST_CASE("ScreenLoader: a document's control follows its field, writes it, and hands its event the value")
+{
+    EventQueue events;
+    TestWorld world{events};
+    constexpr EntityId kPlayer{.index = 0, .generation = 1};
+    Lives lives{.left = 3, .shown = true};
+    world.components = {LivesMeta()};
+    world.alive = {kPlayer};
+    world.held = {{.component = "Lives", .data = &lives, .entity = kPlayer}};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+
+    ScreenDocument document = SliderMenu("{=Lives.left}");
+    document.nodes[kSlider].changeEvent = InternedString{"Game::LeftChanged"};
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, ChangeEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+    screen.SetContext(kPlayer);
+    screen.Show();
+    ui.ProcessInput({});
+    ui.Sync(kViewport);
+
+    const Node &slider = *screen.Tree().Get(screen.Find("slider"));
+    CHECK(std::get<float>(slider.value) == doctest::Approx(3.f));
+
+    PressOnSlider(ui, screen, UiAction::Right);
+    CHECK(lives.left == 4);
+    REQUIRE(events.Read<LeftChanged>().size() == 1);
+    CHECK(events.Read<LeftChanged>()[0].value == doctest::Approx(4.f));
+}
+
+TEST_CASE("ScreenLoader: a change event with no value field is pushed as it is")
+{
+    EventQueue events;
+    TestWorld world{events};
+    world.components = {LivesMeta()};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+
+    ScreenDocument document = SliderMenu("{Lives.left}");
+    document.nodes[kSlider].changeEvent = InternedString{"Game::Touched"};
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, ChangeEvents());
+    REQUIRE(loaded.has_value());
+    Screen &screen = *loaded->screen;
+    screen.Show();
+    ui.ProcessInput({});
+    ui.Sync(kViewport);
+
+    PressOnSlider(ui, screen, UiAction::Right);
+    CHECK(events.Read<Touched>().size() == 1);
+}
+
+TEST_CASE("ScreenLoader: a control's binding or change event it cannot use is refused")
+{
+    SUBCASE("a binding on a node with no value")
+    {
+        ScreenDocument document = SliderMenu("{Lives.left}");
+        document.nodes[kSlider].widget = BuiltinWidget::Button;
+        CHECK(ChangeRefusal(document) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("a field of a type the control cannot hold")
+    {
+        CHECK(ChangeRefusal(SliderMenu("{Lives.shown}")) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("a field that is not there")
+    {
+        CHECK(ChangeRefusal(SliderMenu("{=Lives.missing}")) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("a two-way binding in text")
+    {
+        ScreenDocument document = SliderMenu("{Lives.left}");
+        document.nodes[kRoot].text = document.AddText("{=Lives.left}");
+        document.nodes[kRoot].textIsBound = true;
+        CHECK(ChangeRefusal(document) == ScreenLoadError::BadBinding);
+    }
+
+    SUBCASE("an event this build does not have")
+    {
+        ScreenDocument document = SliderMenu("{Lives.left}");
+        document.nodes[kSlider].changeEvent = InternedString{"Game::Missing"};
+        CHECK(ChangeRefusal(document) == ScreenLoadError::UnknownEvent);
+    }
+
+    SUBCASE("an event whose value is of another type")
+    {
+        ScreenDocument document = SliderMenu("{Lives.left}");
+        document.nodes[kSlider].changeEvent = InternedString{"Game::SwitchChanged"};
+        CHECK(ChangeRefusal(document) == ScreenLoadError::BadChange);
+    }
+
+    SUBCASE("a change event on a node with no value")
+    {
+        ScreenDocument document = SliderMenu("{Lives.left}");
+        document.nodes[kSlider].valueBinding = {};
+        document.nodes[kSlider].widget = BuiltinWidget::Button;
+        document.nodes[kSlider].changeEvent = InternedString{"Game::Touched"};
+        CHECK(ChangeRefusal(document) == ScreenLoadError::BadChange);
+    }
 }
 
 TEST_CASE("ScreenLoader: a binding the screen's world cannot resolve is refused")

@@ -16,6 +16,7 @@
 #include <Assisi/App/ResourceStore.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Core/Reflect/StructRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 // Complete, not forward-declared: a World holds its screens by unique_ptr, so
 // its destructor needs to know how to destroy one. The edge runs App to
@@ -145,12 +146,15 @@ public:
     {
         return Core::Reflect::ComponentRegistry::Instance().Find(name);
     }
+    [[nodiscard]] const Core::Reflect::StructSpec *FindStruct(std::string_view name) const override
+    {
+        return Core::Reflect::StructRegistry::Instance().Find(name);
+    }
     [[nodiscard]] const void *Read(const Core::Reflect::ComponentMeta &component,
                                    Mondrian::EntityId entity) const override;
+    [[nodiscard]] void *Write(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity) override;
 
 private:
-    /// Not const: reflection reaches a component through a scene it is handed
-    /// as void *, read or write. Reading is all this does with it.
     ECS::Scene &_scene;
     Core::EventQueue &_events;
 };

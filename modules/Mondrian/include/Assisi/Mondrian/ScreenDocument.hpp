@@ -21,6 +21,7 @@
 #include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
+#include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/StringPool.hpp>
@@ -111,6 +112,36 @@ enum class ScreenVerb : uint8_t
     return false;
 }
 
+/// @brief What a @p widget hands the event its change pushes, or None for a node
+/// that has no value to hand.
+[[nodiscard]] constexpr Core::EventValueKind ChangeValueKind(BuiltinWidget widget)
+{
+    switch (widget)
+    {
+    case BuiltinWidget::Toggle:
+        return Core::EventValueKind::Bool;
+    case BuiltinWidget::ContinuousSlider:
+        return Core::EventValueKind::Float;
+    case BuiltinWidget::SteppedSlider:
+        return Core::EventValueKind::Int32;
+    case BuiltinWidget::None:
+    case BuiltinWidget::Button:
+    case BuiltinWidget::Scroll:
+    case BuiltinWidget::TextField:
+    case BuiltinWidget::Count_:
+        break;
+    }
+    return Core::EventValueKind::None;
+}
+
+/// @brief Whether a @p widget can push @p event when it changes: it has a value,
+/// and the event takes that kind or takes none.
+[[nodiscard]] constexpr bool ChangePushes(BuiltinWidget widget, Core::EventValueKind event)
+{
+    const Core::EventValueKind held = ChangeValueKind(widget);
+    return held != Core::EventValueKind::None && (event == held || event == Core::EventValueKind::None);
+}
+
 /// @brief One node of a screen, as the file described it.
 ///
 /// Its text lives in the document's pool, so a node alone names its words but
@@ -151,6 +182,10 @@ struct ScreenNode
     /// as `{CharacterState.sprinting}`; empty when visible decides alone.
     AFIELD() Core::PooledString visibleBinding;
 
+    /// The binding a control's value follows, as written, such as
+    /// `{=OptionsView.volume}`; empty for a control that holds its own.
+    AFIELD() Core::PooledString valueBinding;
+
     /// What Screen::Find looks this node up by. Empty for an unnamed node.
     AFIELD() Core::InternedString name;
 
@@ -159,6 +194,10 @@ struct ScreenNode
 
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;
+
+    /// The event a control pushes when the player moves it, by catalog name, or
+    /// empty for none.
+    AFIELD() Core::InternedString changeEvent;
 
     /// The picture the node shows: a sprite as `sheet:name`, or the asset path
     /// of an image shown whole. At most one of the two; both empty for none.

@@ -31,6 +31,7 @@ void PackText(ScreenDocument &document)
         node.placeholder = packed.Add(document.Text(node.placeholder));
         node.pattern = packed.Add(document.Text(node.pattern));
         node.visibleBinding = packed.Add(document.Text(node.visibleBinding));
+        node.valueBinding = packed.Add(document.Text(node.valueBinding));
     }
     document.pool = std::move(packed);
 }

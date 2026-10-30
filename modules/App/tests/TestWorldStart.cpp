@@ -266,6 +266,8 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, universal);
 
@@ -273,7 +275,6 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     REQUIRE(world != nullptr);
     REQUIRE_FALSE(world->systems.Has("StartedLate"));
 
-    Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{"StartedLate"};
     Assisi::Mondrian::Screen &screen =
         AddScreen(*world,
@@ -337,13 +338,14 @@ TEST_CASE("A world's one-shot systems can build its screens again after its mark
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, universal);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
     REQUIRE(world != nullptr);
 
-    Assisi::Mondrian::Ui ui{universal};
     const auto build = [&ui, world]
     {
         AddScreen(*world,

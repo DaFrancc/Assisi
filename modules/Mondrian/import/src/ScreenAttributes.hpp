@@ -61,6 +61,7 @@ enum class HandledAttribute : uint8_t
 {
     None,        ///< read through the entry's own function
     Action,      ///< `on_click`: reads the file's templates and names
+    Change,      ///< `on_change`: an event that must take what the control holds
     Name,        ///< `name`: qualified by the instance it is in, and unique
     Focus,       ///< `focus`: at most one node on a screen
     Pattern,     ///< `pattern`: a failed compile has a message of its own

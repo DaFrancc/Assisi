@@ -76,6 +76,16 @@ const void *SceneScreenWorld::Read(const Core::Reflect::ComponentMeta &component
     return component.getByEntity(&_scene, entity.index, entity.generation);
 }
 
+void *SceneScreenWorld::Write(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity)
+{
+    // As for reading: a tag has nothing to write.
+    if (!component.getMutable)
+    {
+        return nullptr;
+    }
+    return component.getMutable(&_scene, entity.index, entity.generation);
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {

@@ -73,10 +73,15 @@ enum class ScreenLoadError : uint8_t
     /// package or a document built by hand.
     BadContext,
 
-    /// A binding does not read, or names a component or field the screen's
-    /// world does not have, or one its place cannot show. The cook refuses
-    /// each, so this is a package cooked against other components.
+    /// A binding does not read, or names a component, struct or field the
+    /// screen's world does not have, or one its place cannot take. The cook
+    /// refuses each, so this is a package cooked against other types.
     BadBinding,
+
+    /// A node pushes an event when it changes that it cannot: it has no value,
+    /// or the event's `value` field is of another type. The cook refuses both,
+    /// so this is a package cooked against other events.
+    BadChange,
 
     Count_
 };

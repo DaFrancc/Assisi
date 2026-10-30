@@ -89,7 +89,7 @@ FieldBinding Bound(const ComponentMeta &gauge, std::string_view written, Binding
 {
     const std::expected<BindingSource, BindingError> source = ReadSoleBinding(written);
     REQUIRE(source.has_value());
-    std::expected<FieldBinding, BindingError> binding = ResolveBinding(*source, &gauge, use);
+    std::expected<FieldBinding, BindingError> binding = ResolveBinding(*source, {.component = &gauge}, use);
     REQUIRE(binding.has_value());
     return *std::move(binding);
 }
@@ -100,7 +100,7 @@ BindingError Refusal(const ComponentMeta &gauge, std::string_view written, Bindi
     const std::expected<BindingSource, BindingError> source = ReadSoleBinding(written);
     REQUIRE(source.has_value());
     const ComponentMeta *const component = source->component == gauge.name ? &gauge : nullptr;
-    const std::expected<FieldBinding, BindingError> binding = ResolveBinding(*source, component, use);
+    const std::expected<FieldBinding, BindingError> binding = ResolveBinding(*source, {.component = component}, use);
     REQUIRE_FALSE(binding.has_value());
     return binding.error();
 }

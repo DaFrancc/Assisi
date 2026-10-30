@@ -95,9 +95,10 @@ fail the cook.
 
 - Inside a `<text>`, and in a `<button>`'s label.
 - In `visible`.
+- In a toggle's `on`, and in the `value` of a slider or a stepped slider.
 
 A text field's text is the player's, so it can't hold a binding, and neither can
-a placeholder.
+a placeholder. `{=...}` goes only on a control.
 
 ## When values change
 
@@ -111,6 +112,140 @@ is drawn is what the world holds that frame.
   until something hides it, for example `<context name="boss" on_lost="hide()" />`.
 - When the entity has no such component, the binding keeps what it showed and an
   error is logged once.
+
+## Controls
+
+A toggle, a slider or a stepped slider can follow a field too. Write the binding
+where the control's value goes: `on` on a toggle, and `value` on a slider or a
+stepped slider.
+
+```xml
+<slider value="{=Camera.fovDegrees}" min="40" max="120" step="5" />
+```
+
+`{=...}` is a **two-way** binding: the control shows the field, and moving the
+control writes the field. `{...}` without the `=` is **one-way**: the control
+shows the field and writes nothing.
+
+| Control | Field types it holds |
+|---|---|
+| `toggle` | `bool` |
+| `slider` | Numbers. A whole number is rounded. |
+| `stepped_slider` | Whole numbers, which hold the position counted from 0, and `AENUM` enums. |
+
+A control's binding takes no format, since it shows no text.
+
+A `stepped_slider` bound to an enum has one position per enumerator, in the order
+the enum declares them, so it writes no `steps`, `min` or `max`. To show which
+one is chosen, bind the same field in a text beside it:
+
+```xml
+<text>Difficulty: {TuningSettings.difficulty}</text>
+<stepped_slider value="{=TuningSettings.difficulty}" />
+```
+
+Bound to a whole number, a `stepped_slider` still says how many positions it has
+with `steps`.
+
+### When a control reads and writes
+
+- A control reads its field every frame, just before the screen is laid out, the
+  same as any other binding.
+- It writes only when the player moves it. Showing a field never writes it, even
+  when the field holds more than the control's range can show.
+- While the player drags a control, it shows what the player is doing, not the
+  field. If a system changes the field during the drag, the drag isn't
+  interrupted. When the player lets go, the control shows the field again.
+- With no entity, no component or no source to write to, the move is dropped.
+
+### Telling the game about a change
+
+`on_change` names an event to push each time the player moves the control:
+
+```xml
+<toggle on="{=OptionsView.vsync}" on_change="Game::OptionsChanged" />
+```
+
+A field changing on its own does nothing else, so this is how a game saves
+settings or rebuilds what depends on them. The event is pushed after the field
+has been written, so a system reading it sees the new value.
+
+If the event has a field called `value`, it receives what the control holds: a
+`bool` from a toggle, a `float` from a slider, and an `int32_t` position from a
+stepped slider.
+
+```cpp
+AEVENT()
+struct DifficultyChanged
+{
+    int32_t value = 0;
+};
+```
+
+An event with no `value` field is pushed as it is. One whose `value` is any other
+type fails the cook.
+
+### Controls in a multiplayer game
+
+A two-way binding writes a component exactly as `GetMut` does in a system, so it
+behaves the same in a networked game:
+
+- On a host, in single-player and in the editor, the write sticks, and a host
+  replicates it like any other change.
+- On a client, a write to a component the server owns is replaced by the next
+  snapshot, and a write to a predicted component is lost at the next rollback.
+  The slider jumps back.
+
+For data the server has to approve, use a one-way binding and `on_change`, and
+have a system ask the server:
+
+```xml
+<slider value="{Turret.aim}" min="-90" max="90" step="1"
+        on_change="Game::AimRequested" />
+```
+
+The control shows what the world holds, and only the system changes it. If
+nothing applies the change, the control returns to the field's value.
+
+## Fields on no entity
+
+Some values belong to no entity, such as the settings in an options menu. A
+reflected struct can be registered with the UI as a **source**, and bound the same
+way as a component:
+
+```cpp
+ASTRUCT()
+struct TuningSettings
+{
+    AFIELD() Difficulty difficulty = Difficulty::Normal;
+    AFIELD() bool showHud = true;
+};
+```
+
+```cpp
+ASSISI_REFLECTED_STRUCT(Game::TuningSettings); // at global scope, before it is used
+
+ctx.ui->RegisterSource(settings);
+```
+
+```xml
+<toggle on="{=TuningSettings.showHud}" />
+<column visible="{TuningSettings.showHud}">...</column>
+```
+
+The name in a binding is the struct's name without its namespace. A source needs
+no context, and giving it one fails the cook.
+
+- Every screen sees a source, whichever world it belongs to, so two screens
+  binding one struct share it. In the sandbox, F9 shows `ui/Tuning.amdn`, whose
+  toggle and slider change what `ui/Hud.amdn` shows behind it.
+- The UI keeps a pointer to what you register, so it must outlive the UI or be
+  taken away first with `ui.UnregisterSource<TuningSettings>()`.
+- There is one source per struct type. Registering another replaces the first.
+- A screen can be made before its source is registered. If nothing has been
+  registered by the time the screen is first drawn, an error is logged once.
+- After a source is unregistered, its bindings keep what they last showed and
+  moves are dropped, the same as a context with no entity.
 
 ## Bindings and string tables
 

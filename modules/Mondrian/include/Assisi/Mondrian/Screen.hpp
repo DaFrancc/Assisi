@@ -210,6 +210,16 @@ class Screen
     /// as it last was while there is nothing to read.
     std::expected<void, BindingError> BindVisible(NodeId node, std::string_view binding);
 
+    /// @brief Makes the toggle or slider @p node show the field @p binding
+    /// names at every sync, and, written `{=Component.field}`, write it each
+    /// time the player moves the control, before the control's OnChange fires.
+    ///
+    /// While the player has hold of it the control shows what they are doing,
+    /// and shows the field again once they let go. With nothing to read it
+    /// stays as it is, and with nothing to write to the move is dropped. A
+    /// stepped slider bound to an enum takes one step per enumerator.
+    std::expected<void, BindingError> BindControl(NodeId node, std::string_view binding);
+
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
     [[nodiscard]] NodeId Root() const { return _tree.Root(); }
@@ -466,16 +476,25 @@ class Screen
         EntityId seen;
     };
 
+    /// A binding, and what it remembers so that a read that keeps failing says
+    /// so once.
+    struct BoundField
+    {
+        FieldBinding binding;
+        /// The entity whose missing component was last logged.
+        EntityId warned;
+        /// Whether a source's binding has looked for it yet: one found since,
+        /// and gone, was unregistered rather than forgotten.
+        bool looked = false;
+    };
+
     /// One stretch of a bound text: its words, then its binding and what that
     /// last showed.
     struct BoundRun
     {
-        FieldBinding binding;
+        BoundField field;
         std::string words;
         std::string shown;
-        /// The entity whose missing component was last logged, so a read
-        /// that keeps failing says so once.
-        EntityId warned;
         bool bound = false;
     };
 
@@ -487,20 +506,34 @@ class Screen
 
     struct BoundVisible
     {
-        FieldBinding binding;
+        BoundField field;
+        NodeId node;
+    };
+
+    struct BoundControl
+    {
+        BoundField field;
         NodeId node;
     };
 
     /// The context called @p name, made empty the first time it is asked for.
     Context &ContextNamed(std::string_view name);
 
-    /// The component @p binding reads, from the entity its context holds, or
-    /// null when there is nothing to read.
-    [[nodiscard]] const void *ReadBound(const FieldBinding &binding) const;
+    /// What @p field reads: the registered source it names, or the component on
+    /// the entity its context holds. Null when there is nothing to read.
+    [[nodiscard]] const void *ReadBound(BoundField &field);
+
+    /// Makes the control @p id show @p value, as code setting it would.
+    void ShowValue(NodeId id, const WidgetValue &value);
 
     /// Fills every binding on this screen from what its contexts hold now.
     /// Called by the UI before it lays the screen out.
     void RefreshBindings();
+
+    /// Puts what the control @p id holds into the field it is bound to, when it
+    /// writes one and there is something to write to. Called by the UI when the
+    /// player has moved it, before the move is announced.
+    void WriteBound(NodeId id);
 
     /// Compares every context with what the UI last saw it hold, and returns
     /// what each change answers with, in the order the contexts were made.
@@ -555,6 +588,7 @@ class Screen
     std::vector<Context> _contexts;
     std::vector<BoundText> _boundTexts;
     std::vector<BoundVisible> _boundVisibles;
+    std::vector<BoundControl> _boundControls;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;

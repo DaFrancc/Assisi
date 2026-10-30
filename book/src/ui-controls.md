@@ -3,6 +3,10 @@
 Controls take all the attributes in [Layout and appearance](ui-layout.md). This
 page lists the extra attributes each control is created with.
 
+A toggle's `on` and a slider's `value` can hold a binding instead of a starting
+value, and those three controls can push an event when the player moves them
+with `on_change`. See [Controls](ui-bindings.md#controls) on the bindings page.
+
 ## Toggle
 
 ```xml
@@ -11,7 +15,8 @@ page lists the extra attributes each control is created with.
 
 | Attribute | Meaning |
 |---|---|
-| `on` | Whether it starts on. |
+| `on` | Whether it starts on, or a binding it follows. |
+| `on_change` | The event it pushes when the player flips it. |
 
 ## Slider and stepped slider
 
@@ -25,7 +30,8 @@ page lists the extra attributes each control is created with.
 | `min`, `max` | The values at each end. | The values at each end. |
 | `step` | How far one arrow-key press moves it. **Required**, and cannot be 0. | Not accepted. |
 | `steps` | Not accepted. | How many positions it has. |
-| `value` | The starting value. | The starting position, counted from 0. |
+| `value` | The starting value, or a binding it follows. | The starting position, counted from 0, or a binding it follows. |
+| `on_change` | The event it pushes when the player moves it. | The same. |
 
 `slider` requires `step` because no default suits every range: a step of 0.1 is
 reasonable on a 0–1 slider but would take a thousand presses on a 0–100 one.

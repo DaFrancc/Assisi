@@ -14,6 +14,8 @@ Every one of these fails the cook with the file, line and column:
 - Two nodes with the same name, or a name containing `.`.
 - More than one element with `focus="true"`.
 - An `on_click` on anything other than a button.
+- An `on_change` on anything but a toggle, a slider or a stepped slider, or
+  naming an event whose `value` field isn't the type that control holds.
 - An event that no header under `apps/game/src/` declares.
 - An action that doesn't exist, has the wrong number of arguments, or is written
   without parentheses.
@@ -25,11 +27,17 @@ Every one of these fails the cook with the file, line and column:
   `step(...)` in a context's `on_set`, `on_switch`, `on_clear` or `on_lost`.
 - A binding that isn't `{Component.field}`, `{context:Component.field}` or
   either with `:format`, a `{` nothing closes, or a `}` that closes nothing.
-  A component no reflected type has, a field it doesn't have, a field type
-  text can't show, or a format the type doesn't take. A context the screen
-  doesn't declare.
+  A name that is no reflected component or struct, a field it doesn't have, a
+  field type text can't show, or a format the type doesn't take. A context the
+  screen doesn't declare, or any context on a registered source. A name that is
+  both a component and a struct.
 - A binding in a text field's text or a placeholder. A `visible` holding
   anything but one binding, or bound to a field that isn't a `bool`.
+- A `{=...}` anywhere but a toggle's `on` or a slider's or stepped slider's
+  `value`. A control's binding holding anything but one binding, naming a field
+  type the control can't hold, or giving a format.
+- `steps`, `min` or `max` on a stepped slider bound to an enum, or no `steps` on
+  one bound to a whole number.
 - With `requireStringKeys` on, words around a binding.
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.

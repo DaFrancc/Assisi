@@ -365,6 +365,23 @@ bool Ui::IsHeld(const Screen &screen, NodeId id) const
     return _inputScreen == &screen && _session.interaction.pressed == id;
 }
 
+void Ui::RegisterSource(const Core::Reflect::StructSpec &spec, void *data)
+{
+    UnregisterSource(spec);
+    _sources.push_back(Source{.spec = &spec, .data = data});
+}
+
+void Ui::UnregisterSource(const Core::Reflect::StructSpec &spec)
+{
+    std::erase_if(_sources, [&spec](const Source &held) { return held.spec == &spec; });
+}
+
+void *Ui::FindSource(const Core::Reflect::StructSpec &spec) const
+{
+    const std::vector<Source>::const_iterator found = std::ranges::find(_sources, &spec, &Source::spec);
+    return found != _sources.end() ? found->data : nullptr;
+}
+
 // -----------------------------------------------------------------------------
 // The frame
 // -----------------------------------------------------------------------------
@@ -483,6 +500,8 @@ void Ui::Announce(Screen *screen)
     }
     for (const NodeId id : changed)
     {
+        // First, so whatever hears of the move finds the field already moved.
+        screen->WriteBound(id);
         if (const Node *node = tree.Get(id); node != nullptr && node->onChange)
         {
             node->onChange(events, *node);

@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/StructRegistry.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -247,9 +248,10 @@ std::expected<ScreenRules, MarkupError> LoadScreenRules(const SourceReader &read
 
     ScreenRules rules;
     rules.read = read;
-    // The components this program reflects, which in the cook and the editor
-    // are every component the game has.
+    // The types this program reflects, which in the cook and the editor are
+    // every one the game has.
     rules.components = [](std::string_view name) { return Core::Reflect::ComponentRegistry::Instance().Find(name); };
+    rules.structs = [](std::string_view name) { return Core::Reflect::StructRegistry::Instance().Find(name); };
     rules.literals = config->requireStringKeys ? LiteralText::RequiresKey : LiteralText::Allowed;
     if (const std::expected<void, MarkupError> tables = LoadTables(*config, read, rules); !tables)
     {

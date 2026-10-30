@@ -122,11 +122,12 @@ TEST_CASE("A spawn asking for an undeclared system is reported with what asked, 
 TEST_CASE("A screen asking for an undeclared system is reported the same way, named by the screen")
 {
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Shown");
     REQUIRE(worlds.ApplySystems(world, {}, "levels/Empty.alvl"));
 
-    Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{kMissing};
     (void)AddScreen(world,
                     std::make_unique<Assisi::Mondrian::Screen>(ui, world.screenWorld, Assisi::Mondrian::ScreenTraits{},
@@ -248,6 +249,8 @@ TEST_CASE("What a file needs and this build lacks: its own names and its placed 
 {
     const std::filesystem::path root = WriteYard({"Follower", "AlsoMissing", kMissing});
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
 
     World &edited = worlds.Create("Edited");
@@ -256,7 +259,6 @@ TEST_CASE("What a file needs and this build lacks: its own names and its placed 
     edited.systemNames = header.systems;
 
     // A screen is shown at run time and is no part of the file.
-    Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{"ScreenMissing"};
     (void)AddScreen(edited,
                     std::make_unique<Assisi::Mondrian::Screen>(ui, edited.screenWorld, Assisi::Mondrian::ScreenTraits{},

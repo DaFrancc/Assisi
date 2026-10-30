@@ -73,6 +73,25 @@ std::expected<void, MarkupError> CheckEvent(const MarkupAttribute &attribute, co
     return {};
 }
 
+/// The name of the kind of value @p widget hands its change event, for a message.
+std::string_view ValueWord(BuiltinWidget widget)
+{
+    switch (ChangeValueKind(widget))
+    {
+    case Core::EventValueKind::Bool:
+        return "bool";
+    case Core::EventValueKind::Float:
+        return "float";
+    case Core::EventValueKind::Int32:
+        return "int32_t";
+    case Core::EventValueKind::None:
+    case Core::EventValueKind::Other:
+    case Core::EventValueKind::Count_:
+        break;
+    }
+    return "nothing";
+}
+
 /// A bare name: an event this build declares.
 std::expected<void, MarkupError> ApplyEvent(ScreenNode &node, const MarkupAttribute &attribute,
                                             const Core::EventCatalog &catalog)
@@ -261,6 +280,27 @@ std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const M
         }
     }
     return ApplyVerb(walk, index, attribute, resolved);
+}
+
+std::expected<void, MarkupError> ApplyOnChange(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    if (ChangeValueKind(node.widget) == Core::EventValueKind::None)
+    {
+        return std::unexpected(
+            At(attribute, "only a toggle, a slider and a stepped slider have a value that changes."));
+    }
+    if (const std::expected<void, MarkupError> checked = CheckEvent(attribute, walk.catalog); !checked)
+    {
+        return checked;
+    }
+    if (!ChangePushes(node.widget, walk.catalog.Find(attribute.value)->valueKind))
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' has a value field this control cannot fill. "
+                                  "It hands its change event a " +
+                                  std::string{ValueWord(node.widget)} + "."));
+    }
+    node.changeEvent = Core::InternedString{attribute.value};
+    return {};
 }
 
 std::expected<void, MarkupError> ApplyContext(Walk &walk, const MarkupElement &element)
