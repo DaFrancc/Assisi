@@ -296,7 +296,8 @@ void Screen::RefreshBindings()
             }
             if (const void *const owner = ReadBound(run.field))
             {
-                run.shown = ShowField(run.field.binding, owner);
+                const std::optional<std::string> label = LabelOf(run.field.binding, owner);
+                run.shown = label ? _ui.StringFor(*label) : ShowField(run.field.binding, owner);
             }
             text += run.shown;
         }

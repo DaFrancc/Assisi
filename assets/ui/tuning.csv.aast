@@ -1,0 +1,10 @@
+{
+  "guid": "bc44b3a5-fa15-4a86-88d4-fa7c25915cb9",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "string table"
+    }
+  ],
+  "version": 1
+}

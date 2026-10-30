@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Mondrian/Binding.hpp>
 
+#include <Assisi/Mondrian/StringTable.hpp>
+
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/ShortString.hpp>
 
@@ -254,14 +256,37 @@ void PutEnum(const FieldMeta &field, std::byte *at, int64_t value)
     }
 }
 
+/// The enumerator @p field holds at @p at, or null when the enum names none for
+/// its value.
+const Core::Reflect::EnumConstant *EnumeratorAt(const FieldMeta &field, const std::byte *at)
+{
+    const std::vector<Core::Reflect::EnumConstant>::const_iterator named =
+        std::ranges::find(field.enumConstants, EnumAt(field, at), &Core::Reflect::EnumConstant::value);
+    return named != field.enumConstants.end() ? &*named : nullptr;
+}
+
 /// The enumerator @p field holds at @p at, by name, or its number when the
 /// enum names none for it.
 std::string EnumName(const FieldMeta &field, const std::byte *at)
 {
-    const int64_t value = EnumAt(field, at);
-    const std::vector<Core::Reflect::EnumConstant>::const_iterator named =
-        std::ranges::find(field.enumConstants, value, &Core::Reflect::EnumConstant::value);
-    return named != field.enumConstants.end() ? named->name : std::to_string(value);
+    const Core::Reflect::EnumConstant *const named = EnumeratorAt(field, at);
+    return named != nullptr ? named->name : std::to_string(EnumAt(field, at));
+}
+
+/// Whether a `#` in @p field's format starts a key. On anything else it is
+/// std::format's, or a format that type does not take.
+bool TakesKey(const FieldMeta &field)
+{
+    return field.type == FieldType::Enum || field.type == FieldType::Bool;
+}
+
+/// The `table:key` of the value called @p name, under @p key.
+std::string JoinLabel(std::string_view key, std::string_view name)
+{
+    std::string joined{key};
+    joined += kLabelSeparator;
+    joined += name;
+    return joined;
 }
 
 /// The words a Words field holds at @p at.
@@ -526,6 +551,8 @@ std::string_view ToString(BindingError error) noexcept
         return "names a field text cannot show: numbers, bools, enums, strings and vectors can be";
     case BindingError::BadFormat:
         return "gives a format its field's type or its place does not take";
+    case BindingError::BadKey:
+        return "gives an enum or a bool a key that names no table, such as #options:quality";
     case BindingError::NotBool:
         return "binds a field that is not a bool";
     case BindingError::TwoWayElsewhere:
@@ -631,6 +658,7 @@ std::expected<FieldBinding, BindingError> ResolveBinding(const BindingSource &so
 
     FieldBinding binding{.context = source.context,
                          .format = "{:" + source.format + "}",
+                         .labelKey = {},
                          .component = owner.component,
                          .structure = owner.structure,
                          .field = &*field,
@@ -669,6 +697,17 @@ std::expected<FieldBinding, BindingError> ResolveBinding(const BindingSource &so
     {
         return std::unexpected(BindingError::Unshowable);
     }
+    if (TakesKey(*field) && source.format.starts_with(kKeyMark))
+    {
+        const std::string_view key = std::string_view{source.format}.substr(1);
+        if (!SplitKey(key))
+        {
+            return std::unexpected(BindingError::BadKey);
+        }
+        binding.labelKey = key;
+        binding.format = "{}";
+        return binding;
+    }
     if (!FormatSuits(binding.format, kind))
     {
         return std::unexpected(BindingError::BadFormat);
@@ -700,6 +739,51 @@ std::string ShowField(const FieldBinding &binding, const void *owner)
         break;
     }
     return {};
+}
+
+std::optional<std::string> LabelOf(const FieldBinding &binding, const void *owner)
+{
+    if (binding.labelKey.empty())
+    {
+        return std::nullopt;
+    }
+    const FieldMeta &field = *binding.field;
+    const std::byte *const at = static_cast<const std::byte *>(owner) + field.offset;
+    if (field.type == FieldType::Bool)
+    {
+        return JoinLabel(binding.labelKey, ReadAt<bool>(at) ? kTrueLabel : kFalseLabel);
+    }
+    const Core::Reflect::EnumConstant *const named = EnumeratorAt(field, at);
+    if (named == nullptr)
+    {
+        return std::nullopt;
+    }
+    return JoinLabel(binding.labelKey, named->name);
+}
+
+std::vector<std::string> LabelsOf(const FieldBinding &binding)
+{
+    std::vector<std::string> labels;
+    if (binding.labelKey.empty())
+    {
+        return labels;
+    }
+    if (binding.field->type == FieldType::Bool)
+    {
+        labels.push_back(JoinLabel(binding.labelKey, kTrueLabel));
+        labels.push_back(JoinLabel(binding.labelKey, kFalseLabel));
+        return labels;
+    }
+    for (const Core::Reflect::EnumConstant &constant : binding.field->enumConstants)
+    {
+        labels.push_back(JoinLabel(binding.labelKey, constant.name));
+    }
+    return labels;
+}
+
+bool ShowsProgramWords(const FieldBinding &binding)
+{
+    return TakesKey(*binding.field) && binding.labelKey.empty();
 }
 
 bool ReadBoolField(const FieldBinding &binding, const void *owner)

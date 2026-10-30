@@ -30,6 +30,7 @@ struct Health
 {
     uint64_t owner = 0;
     float current = 0.f;
+    uint8_t stance = 0;
     bool alive = false;
 };
 
@@ -42,12 +43,20 @@ FieldMeta Field(std::string name, FieldType type, std::size_t offset)
     return field;
 }
 
+FieldMeta StanceField()
+{
+    FieldMeta stance = Field("stance", FieldType::Enum, offsetof(Health, stance));
+    stance.enumSize = sizeof(uint8_t);
+    stance.enumConstants = {{.name = "Standing", .value = 0}, {.name = "Crouching", .value = 1}};
+    return stance;
+}
+
 const std::vector<ComponentMeta> &Components()
 {
     static const std::vector<ComponentMeta> components{
         ComponentMeta{.name = "Health",
                       .fields = {Field("owner", FieldType::EntityRef, offsetof(Health, owner)),
-                                 Field("current", FieldType::Float, offsetof(Health, current)),
+                                 Field("current", FieldType::Float, offsetof(Health, current)), StanceField(),
                                  Field("alive", FieldType::Bool, offsetof(Health, alive))},
                       .typeIndex = typeid(Health)}};
     return components;
@@ -71,6 +80,12 @@ ScreenRules WithHealth(LiteralText literals = LiteralText::Allowed)
     ScreenRules rules;
     rules.literals = literals;
     rules.components = FindComponent;
+    rules.tables.byName["hud"].entries = {{"stance.Standing", "Up"},
+                                          {"stance.Crouching", "Down"},
+                                          {"flag.true", "Yes"},
+                                          {"flag.false", "No"},
+                                          {"half.Standing", "Up"},
+                                          {"half.true", "Yes"}};
     return rules;
 }
 
@@ -205,6 +220,71 @@ TEST_CASE("ScreenBindings: where text must come from a table, only the words aro
 
     CHECK(Says(RefusedInside(R"amdn(<text>HP {Health.current}</text>)amdn", LiteralText::RequiresKey),
                "string table"));
+}
+
+TEST_CASE("ScreenBindings: a key on an enum or a bool is kept as written, for the loader to read")
+{
+    const ScreenDocument document = Bound(R"amdn(<screen>
+    <text name="t">{Health.stance:#hud:stance} {Health.alive:#hud:flag}</text>
+</screen>)amdn");
+    const ScreenNode &text = NodeNamed(document, "t");
+    CHECK(text.textIsBound);
+    CHECK(document.Text(text.text) == "{Health.stance:#hud:stance} {Health.alive:#hud:flag}");
+}
+
+TEST_CASE("ScreenBindings: a key is refused unless its table labels every value")
+{
+    SUBCASE("an enumerator with no entry")
+    {
+        const std::string message = RefusedInside(R"amdn(<text>{Health.stance:#hud:half}</text>)amdn");
+        CHECK(Says(message, "half.Crouching"));
+        CHECK(Says(message, "'hud'"));
+    }
+
+    SUBCASE("a bool's other value with no entry")
+    {
+        CHECK(Says(RefusedInside(R"amdn(<text>{Health.alive:#hud:half}</text>)amdn"), "half.false"));
+    }
+
+    SUBCASE("a table the project does not list")
+    {
+        const std::string message = RefusedInside(R"amdn(<text>{Health.stance:#nowhere:stance}</text>)amdn");
+        CHECK(Says(message, "'nowhere'"));
+        CHECK(Says(message, "config/ui.json"));
+    }
+
+    SUBCASE("a key naming no table")
+    {
+        CHECK(Says(RefusedInside(R"amdn(<text>{Health.stance:#stance}</text>)amdn"), "names no table"));
+    }
+
+    SUBCASE("a key on a field that is neither an enum nor a bool")
+    {
+        CHECK(Says(RefusedInside(R"amdn(<text>{Health.current:#hud:stance}</text>)amdn"), "format"));
+    }
+}
+
+TEST_CASE("ScreenBindings: where text must come from a table, an enum or a bool needs a key")
+{
+    CHECK(Says(RefusedInside(R"amdn(<text>{Health.stance}</text>)amdn", LiteralText::RequiresKey), "from the code"));
+    CHECK(Says(RefusedInside(R"amdn(<text>{Health.alive}</text>)amdn", LiteralText::RequiresKey), "from the code"));
+    CHECK(Says(RefusedInside(R"amdn(<button>{Health.alive}</button>)amdn", LiteralText::RequiresKey), "from the code"));
+
+    const ScreenRules rules = WithHealth(LiteralText::RequiresKey);
+    CHECK(NodeNamed(Compiled(R"amdn(<screen><text name="t">{Health.stance:#hud:stance}</text></screen>)amdn", {}, rules),
+                    "t")
+              .textIsBound);
+
+    // A bool deciding what shows puts no word of its own on screen.
+    const ScreenDocument visible =
+        Compiled(R"amdn(<screen><text name="t" visible="{Health.alive}">#hud:flag.true</text></screen>)amdn", {}, rules);
+    CHECK(visible.Text(NodeNamed(visible, "t").visibleBinding) == "{Health.alive}");
+
+    // A screen players never see is exempt, as its other text is.
+    CHECK(NodeNamed(Compiled(R"amdn(<screen debug_only="true"><text name="t">{Health.alive}</text></screen>)amdn", {},
+                             rules),
+                    "t")
+              .textIsBound);
 }
 
 TEST_CASE("ScreenBindings: a template checked alone may name a context the screen using it declares")

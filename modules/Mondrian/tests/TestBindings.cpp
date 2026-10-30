@@ -232,6 +232,93 @@ TEST_CASE("Bindings: every kind of field shows as text, through its format")
     CHECK(ReadBoolField(Bound(gauge, "{Gauge.alive}", BindingUse::Bool), &value));
 }
 
+TEST_CASE("Bindings: a key labels each value of an enum or a bool from a table")
+{
+    const ComponentMeta gauge = GaugeMeta();
+    Gauge value;
+    value.mood = Mood::Angry;
+    value.alive = true;
+
+    const FieldBinding mood = Bound(gauge, "{Gauge.mood:#hud:mood}");
+    CHECK(LabelOf(mood, &value) == "hud:mood.Angry");
+    value.mood = Mood::Calm;
+    CHECK(LabelOf(mood, &value) == "hud:mood.Calm");
+    CHECK(LabelsOf(mood) == std::vector<std::string>{"hud:mood.Calm", "hud:mood.Angry"});
+
+    const FieldBinding alive = Bound(gauge, "{Gauge.alive:#hud:flag}");
+    CHECK(LabelOf(alive, &value) == "hud:flag.true");
+    value.alive = false;
+    CHECK(LabelOf(alive, &value) == "hud:flag.false");
+    CHECK(LabelsOf(alive) == std::vector<std::string>{"hud:flag.true", "hud:flag.false"});
+
+    // A value no enumerator names has no entry, and shows as its number.
+    value.mood = Mood::Count_;
+    CHECK_FALSE(LabelOf(mood, &value).has_value());
+    CHECK(ShowField(mood, &value) == "2");
+}
+
+TEST_CASE("Bindings: only an enum or a bool with no key shows words from the program")
+{
+    const ComponentMeta gauge = GaugeMeta();
+    const FieldBinding plain = Bound(gauge, "{Gauge.mood}");
+    Gauge value;
+
+    CHECK(ShowsProgramWords(plain));
+    CHECK(ShowsProgramWords(Bound(gauge, "{Gauge.alive}")));
+    CHECK_FALSE(ShowsProgramWords(Bound(gauge, "{Gauge.mood:#hud:mood}")));
+    CHECK_FALSE(ShowsProgramWords(Bound(gauge, "{Gauge.speed}")));
+    CHECK_FALSE(ShowsProgramWords(Bound(gauge, "{Gauge.title}")));
+
+    CHECK_FALSE(LabelOf(plain, &value).has_value());
+    CHECK(LabelsOf(plain).empty());
+}
+
+TEST_CASE("Bindings: a # on a number is std::format's, and a key anywhere else is refused")
+{
+    const ComponentMeta gauge = GaugeMeta();
+    Gauge value;
+    value.count = 255;
+    CHECK(ShowField(Bound(gauge, "{Gauge.count:#x}"), &value) == "0xff");
+
+    CHECK(Refusal(gauge, "{Gauge.count:#hud:mood}") == BindingError::BadFormat);
+    CHECK(Refusal(gauge, "{Gauge.title:#hud:mood}") == BindingError::BadFormat);
+    CHECK(Refusal(gauge, "{Gauge.velocity:#hud:mood}") == BindingError::BadFormat);
+
+    CHECK(Refusal(gauge, "{Gauge.mood:#mood}") == BindingError::BadKey);
+    CHECK(Refusal(gauge, "{Gauge.alive:#x}") == BindingError::BadKey);
+    CHECK(Refusal(gauge, "{Gauge.mood:#:mood}") == BindingError::BadKey);
+    CHECK(Refusal(gauge, "{Gauge.alive:#hud:flag}", BindingUse::Bool) == BindingError::BadFormat);
+}
+
+TEST_CASE("Bindings: text bound with a key shows what the UI's tables hold, and follows them")
+{
+    Hud hud;
+    StringTables english;
+    english.byName["hud"].entries = {{"mood.Calm", "Calm"}, {"mood.Angry", "Furious"}};
+    StringTables french;
+    french.byName["hud"].entries = {{"mood.Calm", "Paisible"}};
+    hud.ui.SetStringTables(&english);
+
+    REQUIRE(hud.screen.BindText(hud.text, "Mood: {Gauge.mood:#hud:mood}").has_value());
+    hud.player.mood = Mood::Angry;
+    hud.screen.SetContext(kPlayer);
+    hud.Frame();
+    CHECK(hud.Shown() == "Mood: Furious");
+
+    hud.player.mood = Mood::Calm;
+    hud.Frame();
+    CHECK(hud.Shown() == "Mood: Calm");
+
+    hud.ui.SetStringTables(&french);
+    hud.Frame();
+    CHECK(hud.Shown() == "Mood: Paisible");
+
+    // No entry in a stale package shows the key, as a key set from code does.
+    hud.player.mood = Mood::Angry;
+    hud.Frame();
+    CHECK(hud.Shown() == "Mood: #hud:mood.Angry");
+}
+
 TEST_CASE("Bindings: an enum value no enumerator names shows as its number")
 {
     const ComponentMeta gauge = GaugeMeta();

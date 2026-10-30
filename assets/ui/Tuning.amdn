@@ -16,14 +16,14 @@
     </row>
 
     <row name="hud" width="grow" gap="20" align="start center">
-      <text width="grow" text_size="24">Show the HUD</text>
+      <text width="grow" text_size="24">Show the HUD: {TuningSettings.showHud:#tuning:switch}</text>
       <toggle name="show_hud" on="{=TuningSettings.showHud}" />
     </row>
 
-    <!-- An enum decides this slider's steps. The event carries the step, and a
-         system logs it. -->
+    <!-- An enum decides this slider's steps, and the table ui/tuning.csv holds
+         the word for each. The event carries the step, and a system logs it. -->
     <row name="difficulty" width="grow" gap="20" align="start center">
-      <text width="grow" text_size="24">Difficulty: {TuningSettings.difficulty}</text>
+      <text width="grow" text_size="24">Difficulty: {TuningSettings.difficulty:#tuning:difficulty}</text>
       <stepped_slider name="difficulty_slider" value="{=TuningSettings.difficulty}"
                       on_change="Game::DifficultyChanged" />
     </row>

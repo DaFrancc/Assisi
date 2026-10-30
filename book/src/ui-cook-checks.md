@@ -38,7 +38,11 @@ Every one of these fails the cook with the file, line and column:
   type the control can't hold, or giving a format.
 - `steps`, `min` or `max` on a stepped slider bound to an enum, or no `steps` on
   one bound to a whole number.
-- With `requireStringKeys` on, words around a binding.
+- A key on a binding that names no table, a table `config/ui.json` doesn't list,
+  a table with no entry for one of the enum's enumerators or for `true` or
+  `false`, or a key on a field that is neither an enum nor a `bool`.
+- With `requireStringKeys` on, words around a binding, or an enum or `bool`
+  bound in text with no key.
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.
 - An unnamed instance that would repeat names made by another.
