@@ -223,7 +223,10 @@ enum class RejectReason : std::uint8_t
 ///  - 13 → 14: an instance record's placement position is three doubles, so a
 ///    blueprint instance far from the world's origin is placed exactly. A v13
 ///    peer reads the record twelve bytes short.
-inline constexpr std::uint32_t kNetProtocolVersion = 14;
+///  - 14 → 15: a body record's position is its world cell, as a change from
+///    the record before it, and its place inside the cell, so it reaches
+///    anywhere in the world rather than a box around the origin.
+inline constexpr std::uint32_t kNetProtocolVersion = 15;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

@@ -85,7 +85,8 @@ struct Transform
 `float` gets coarser the further a number is from zero: 100 km from the center
 of the world it can only say where something is to the nearest 8 mm, and a
 character walking there would stutter. A `double` stays exact to far below a
-millimeter across the whole world.
+millimeter across the whole world. In multiplayer, a moving body's position is
+sent to the nearest 2 mm, and that's the same anywhere in the world.
 
 The rule for your own code: **a place in the world is a `glm::dvec3`; a
 direction, a velocity or an offset from something nearby is a `glm::vec3`.**

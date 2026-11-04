@@ -193,6 +193,7 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
     }
 
     const auto prefixEnd = record.written.begin() + static_cast<std::ptrdiff_t>(writtenFromComponents);
+    CellReference reference;
 
     // The effective set, not the live one. This is an independent walk with its
     // own acked-based gate, and acked does *not* imply relevant: an entity that
@@ -228,7 +229,7 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
         }
 
         writer.WriteBool(true);
-        WriteBodyState(found->second.state, writer);
+        WriteBodyState(found->second.state, reference, writer);
 
         // Record the delivery. This entity may already have an entry from the
         // component pass; if not, componentTick stays 0 and the ack's max()

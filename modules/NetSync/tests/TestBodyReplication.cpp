@@ -185,6 +185,20 @@ glm::vec3 RenderedPosition(ECS::Scene &scene, ECS::Entity entity)
     return offset != nullptr ? position + offset->position : position;
 }
 
+/// Writes @p state as the only record in its run.
+void WriteAlone(const BodyState &state, Core::BitWriter &writer)
+{
+    CellReference reference;
+    WriteBodyState(state, reference, writer);
+}
+
+/// Reads a record written by WriteAlone.
+bool ReadAlone(Core::BitReader &reader, BodyState &outState)
+{
+    CellReference reference;
+    return ReadBodyState(reader, reference, outState);
+}
+
 } // namespace
 
 TEST_CASE("a pile settles on the server, and the client's own bodies settle to the same arrangement")
@@ -254,10 +268,10 @@ TEST_CASE("a settled world stops costing bandwidth, with physics running")
 TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value one")
 {
     // Measured against a whole-value encoding: a varint id, the at-rest bit, and
-    // then every value as a raw 32-bit float — three for the position, *four*
-    // for the quaternion, and six more for the velocities when awake.
+    // then every value as it is held — three doubles for the position, *four*
+    // floats for the quaternion, and six more for the velocities when awake.
     const auto wholeValueBits = [](bool asleep, std::size_t netIdBits)
-                                { return netIdBits + 1 + 32 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
+                                { return netIdBits + 1 + 64 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
 
     BodyState awake;
     awake.netId           = NetId{7}; // one varint byte, same on both sides of the ratio
@@ -267,7 +281,7 @@ TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value
     awake.angularVelocity = {1.5f, -0.25f, 3.f};
 
     Core::BitWriter awakeWriter;
-    WriteBodyState(awake, awakeWriter);
+    WriteAlone(awake, awakeWriter);
     const double awakeRatio =
         static_cast<double>(wholeValueBits(false, 8)) / static_cast<double>(awakeWriter.BitsWritten());
     CAPTURE(awakeWriter.BitsWritten());
@@ -276,7 +290,7 @@ TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value
     BodyState resting = awake;
     resting.asleep    = true;
     Core::BitWriter restingWriter;
-    WriteBodyState(resting, restingWriter);
+    WriteAlone(resting, restingWriter);
     const double restingRatio =
         static_cast<double>(wholeValueBits(true, 8)) / static_cast<double>(restingWriter.BitsWritten());
     CAPTURE(restingWriter.BitsWritten());
@@ -346,17 +360,16 @@ TEST_CASE("quantized body state round-trips within a quantum")
     source.asleep          = false;
 
     Core::BitWriter writer;
-    WriteBodyState(source, writer);
+    WriteAlone(source, writer);
 
     BodyState decoded;
     Core::BitReader reader(writer.Data());
-    REQUIRE(ReadBodyState(reader, decoded));
+    REQUIRE(ReadAlone(reader, decoded));
 
     CHECK(decoded.netId == source.netId);
     CHECK_FALSE(decoded.asleep);
 
-    const float positionQuantum = (2.f * q.positionExtent) / static_cast<float>(1u << q.positionBits);
-    CHECK(glm::length(decoded.position - source.position) < positionQuantum * 2.f);
+    CHECK(glm::length(decoded.position - source.position) < static_cast<double>(q.PositionStep()));
 
     // Smallest-three drops the largest component and reconstructs it from the
     // unit-length constraint, so the comparison is on the rotation, not the
@@ -370,7 +383,7 @@ TEST_CASE("quantized body state round-trips within a quantum")
     BodyState resting = source;
     resting.asleep    = true;
     Core::BitWriter restingWriter;
-    WriteBodyState(resting, restingWriter);
+    WriteAlone(resting, restingWriter);
     CHECK(restingWriter.BitsWritten() < writer.BitsWritten());
 }
 
@@ -384,10 +397,10 @@ TEST_CASE("a character's body record carries its stance and what it stands on, a
     crouched.ground = Physics::GroundState::OnSteepGround;
 
     Core::BitWriter writer;
-    WriteBodyState(crouched, writer);
+    WriteAlone(crouched, writer);
     BodyState decoded;
     Core::BitReader reader(writer.Data());
-    REQUIRE(ReadBodyState(reader, decoded));
+    REQUIRE(ReadAlone(reader, decoded));
     CHECK(decoded.character);
     CHECK(decoded.stance == Physics::Stance::Crouching);
     CHECK(decoded.ground == Physics::GroundState::OnSteepGround);
@@ -395,10 +408,10 @@ TEST_CASE("a character's body record carries its stance and what it stands on, a
     BodyState crate = crouched;
     crate.character = false;
     Core::BitWriter crateWriter;
-    WriteBodyState(crate, crateWriter);
+    WriteAlone(crate, crateWriter);
     BodyState crateDecoded;
     Core::BitReader crateReader(crateWriter.Data());
-    REQUIRE(ReadBodyState(crateReader, crateDecoded));
+    REQUIRE(ReadAlone(crateReader, crateDecoded));
     CHECK_FALSE(crateDecoded.character);
     CHECK(crateWriter.BitsWritten() < writer.BitsWritten());
 }
@@ -428,16 +441,16 @@ TEST_CASE("a character on the host reaches the client's confirmed copy with its 
 TEST_CASE("two builds that quantize differently refuse to pair, and the summary says which field")
 {
     // The failure a handshake exists to prevent: identical component tables,
-    // identical framing, and every position silently decoded into the wrong
-    // number because one side thought the world was twice as wide.
+    // identical framing, and every velocity silently decoded into the wrong
+    // number because one side thought bodies could move twice as fast.
     const BodyQuantization defaults = Quantization();
     const std::uint64_t baseline = NetProtocolHash();
 
-    BodyQuantization wider  = defaults;
-    wider.positionExtent    = defaults.positionExtent * 2.f;
-    SetQuantization(wider);
-    const std::uint64_t widerHash    = NetProtocolHash();
-    const std::string widerSummary = NetProtocolSummary();
+    BodyQuantization faster  = defaults;
+    faster.linearVelocityMax = defaults.linearVelocityMax * 2.f;
+    SetQuantization(faster);
+    const std::uint64_t fasterHash    = NetProtocolHash();
+    const std::string fasterSummary = NetProtocolSummary();
 
     BodyQuantization coarser    = defaults;
     coarser.positionBits        = defaults.positionBits - 1;
@@ -446,15 +459,15 @@ TEST_CASE("two builds that quantize differently refuse to pair, and the summary 
 
     SetQuantization(defaults);
 
-    CHECK(widerHash != baseline);
+    CHECK(fasterHash != baseline);
     CHECK(coarserHash != baseline);
-    CHECK(widerHash != coarserHash);
+    CHECK(fasterHash != coarserHash);
     CHECK(NetProtocolHash() == baseline);
 
     // Diffing two summaries has to name the offending field; a 64-bit mismatch
     // never could.
-    CHECK(widerSummary.find("positionExtent=512") != std::string::npos);
-    CHECK(widerSummary.find("positionBits=") != std::string::npos);
+    CHECK(fasterSummary.find("linearMax=256") != std::string::npos);
+    CHECK(fasterSummary.find("cell=512") != std::string::npos);
 }
 
 TEST_CASE("a client body woken by something the server never saw is put back to sleep")

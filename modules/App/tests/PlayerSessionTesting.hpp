@@ -24,6 +24,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/CollisionSource.hpp>
 
@@ -148,8 +149,12 @@ struct Session
 /// Hosts @p play on the first free port of a small range; 0 when none was.
 std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role = App::HostRole::Player);
 
-/// A host and @p client on a floor, a start each for the host to make their
-/// characters at, @p client joined and settled.
-void JoinOnFloor(Session &session, Machine &host, Machine &client);
+/// A floor on every machine in @p session, its top centred on @p centre, as a
+/// level puts one there.
+void AddFloors(Session &session, const glm::dvec3 &centre);
+
+/// A host and @p client on a floor around @p origin, a start each for the host
+/// to make their characters at, @p client joined and settled.
+void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dvec3 &origin = glm::dvec3{0.0});
 
 } // namespace Assisi::App::Testing

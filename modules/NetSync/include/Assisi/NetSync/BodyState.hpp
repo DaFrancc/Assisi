@@ -19,7 +19,9 @@
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
+#include <Assisi/NetSync/WorldPosition.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
@@ -40,19 +42,16 @@ namespace Assisi::NetSync
 /// builds quantizing the same position over different ranges corrupt each other
 /// *silently*, which is the one failure mode a handshake exists to prevent.
 ///
-/// The defaults are the published state-synchronization shape fitted to a
-/// level-sized world: ~2 mm of position resolution over a ±256 m box, a
-/// smallest-three quaternion at 2+9+9+9 bits, and linear velocity at ~62 mm/s.
-/// The usual caution applies — state-sync extrapolation wants *finer* position
-/// quantization than snapshot interpolation does — so these are a starting point
-/// to be moved against measured divergence, not a settled answer.
+/// The defaults are the published state-synchronization shape: ~2 mm of
+/// position resolution anywhere in the world, a smallest-three quaternion at
+/// 2+9+9+9 bits, and linear velocity at ~62 mm/s. The usual caution applies —
+/// state-sync extrapolation wants *finer* position quantization than snapshot
+/// interpolation does — so these are a starting point to be moved against
+/// measured divergence, not a settled answer.
 struct BodyQuantization
 {
-    /// Symmetric world half-extent, in metres. A body outside it is clamped to
-    /// the boundary rather than wrapped: a clamped correction is visibly wrong
-    /// in the right direction, where a wrapped one teleports across the map.
-    float positionExtent = 256.f;
-    /// Bits per position component. 18 over a 512 m span is ~1.95 mm.
+    /// Bits per position component inside its world cell (WorldPosition.hpp).
+    /// 18 over a 512 m cell is 2^-9 m, ~1.95 mm.
     std::uint32_t positionBits = 18;
 
     /// Symmetric bound on a linear velocity component, m/s.
@@ -77,8 +76,7 @@ struct BodyQuantization
     /// component (m): a received position is the true one to within half of it.
     [[nodiscard]] float PositionStep() const
     {
-        const std::uint64_t levels = (std::uint64_t{1} << positionBits) - 1u;
-        return 2.f * positionExtent / static_cast<float>(levels);
+        return static_cast<float>(Math::kWorldCellSize / static_cast<double>(std::uint64_t{1} << positionBits));
     }
 };
 
@@ -200,12 +198,13 @@ struct BodyState
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when
 /// awake — the velocities, all at the resolutions Quantization() names; then,
-/// for a character, its stance and ground state.
-void WriteBodyState(const BodyState &state, Core::BitWriter &writer);
+/// for a character, its stance and ground state. The position is written
+/// against @p reference, which every record in the same run shares.
+void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer);
 
 /// @brief Inverse of WriteBodyState. Returns false on a truncated or malformed
 /// record, having invalidated the reader.
-bool ReadBodyState(Core::BitReader &reader, BodyState &outState);
+bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState &outState);
 
 /// @brief "quantity: mine vs host's" for the first way a predicted body @p mine
 /// is further from @p host than @p smoothing tolerates, or empty when it is

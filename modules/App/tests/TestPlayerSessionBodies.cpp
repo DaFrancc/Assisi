@@ -6,7 +6,9 @@
 ///        is not corrected while it pushes, a step stepped again meets the
 ///        crate where it was, a second player who takes over the pushing
 ///        takes the crate over once, and a crate three players push at once
-///        is the host's and predicted by each client.
+///        is the host's and predicted by each client. Far from the origin, a
+///        crate pushed across a world cell's edge 50 km out and one teleported
+///        300 km away end up in the same place on every machine.
 
 #include <doctest/doctest.h>
 
@@ -22,11 +24,13 @@
 
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Physics/PhysicsWorld.hpp>
 
 using namespace Assisi;
 using namespace Assisi::App::Testing;
@@ -60,12 +64,12 @@ constexpr glm::vec3 kHostStart{20.f, 0.f, 0.f};
 constexpr glm::vec3 kFirstClientStart{0.f, 0.f, 0.f};
 
 /// A crate on the host, @p ahead of where a player at @p from faces.
-ECS::Entity AddCrate(Machine &host, glm::vec3 from)
+ECS::Entity AddCrate(Machine &host, const glm::dvec3 &from)
 {
     ECS::Scene &scene = host.world.scene;
     const ECS::Entity crate = scene.Create();
-    (void)scene.Add<ECS::Transform>(crate,
-                                    ECS::Transform{.position = glm::dvec3(from + glm::vec3{0.f, kCrateHalf, -kCrateAhead})});
+    (void)scene.Add<ECS::Transform>(
+        crate, ECS::Transform{.position = from + glm::dvec3(glm::vec3{0.f, kCrateHalf, -kCrateAhead})});
     Physics::Collider collider;
     collider.shape = Physics::ColliderShape::Box;
     collider.halfExtents = glm::vec3{kCrateHalf};
@@ -128,16 +132,16 @@ struct Pushing
     ECS::Entity crateMirror{ECS::NullEntity};
     ECS::Entity player{ECS::NullEntity};
 
-    Pushing()
+    explicit Pushing(const glm::dvec3 &origin = glm::dvec3{0.0})
     {
         const std::filesystem::path root = FreshRoot("assisi_players_bodies");
         WritePlayerBlueprint(root);
         host = &session.Add();
         client = &session.Add();
-        JoinOnFloor(session, *host, *client);
+        JoinOnFloor(session, *host, *client, origin);
         player = LocalPlayerOf(client->world.scene);
         REQUIRE(player != ECS::NullEntity);
-        crate = AddCrate(*host, glm::vec3(client->world.scene.Get<ECS::Transform>(player)->position));
+        crate = AddCrate(*host, client->world.scene.Get<ECS::Transform>(player)->position);
         session.Run(kCatchUpFrames);
         crateMirror = client->play.Session().Client()->EntityOf(host->play.Session().Server()->NetIdOf(crate));
         REQUIRE(crateMirror != ECS::NullEntity);
@@ -146,25 +150,16 @@ struct Pushing
     [[nodiscard]] NetSync::ClientId ClientId() const { return client->play.Session().LocalClientId(); }
 };
 
-/// @p first and @p second joined to @p host, each machine on a floor, with
-/// the players spread over @p starts in the order the host spreads them.
-void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::vec3> starts)
+/// @p first and @p second joined to @p host, with the players spread over
+/// @p starts in the order the host spreads them.
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts)
 {
-    for (const std::unique_ptr<Machine> &machine : session.machines)
-    {
-        const ECS::Entity floor = machine->world.scene.Create();
-        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
-        Physics::Collider collider;
-        collider.shape = Physics::ColliderShape::Box;
-        collider.halfExtents = {50.f, 1.f, 50.f};
-        (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
-    }
     App::PlayerStart startAt;
     startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
-    for (const glm::vec3 at : starts)
+    for (const glm::dvec3 &at : starts)
     {
         const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = glm::dvec3(at)});
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
         (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
     }
     const std::uint16_t port = HostOnFreePort(host.play);
@@ -231,7 +226,9 @@ TEST_CASE("A crate a second player takes over pushing while the first stands by 
     Machine &host = session.Add();
     Machine &first = session.Add();
     Machine &second = session.Add();
-    const std::array<glm::vec3, 3> starts{kSecondClientStart, kHostStart, kFirstClientStart};
+    const std::array<glm::dvec3, 3> starts{glm::dvec3(kSecondClientStart), glm::dvec3(kHostStart),
+                                           glm::dvec3(kFirstClientStart)};
+    AddFloors(session, glm::dvec3{0.0});
     JoinTwo(session, host, first, second, starts);
 
     const ECS::Entity firstPlayer = LocalPlayerOf(first.world.scene);
@@ -240,7 +237,7 @@ TEST_CASE("A crate a second player takes over pushing while the first stands by 
     REQUIRE(secondPlayer != ECS::NullEntity);
     const NetSync::ClientId firstId = first.play.Session().LocalClientId();
     const NetSync::ClientId secondId = second.play.Session().LocalClientId();
-    const ECS::Entity crate = AddCrate(host, kFirstClientStart);
+    const ECS::Entity crate = AddCrate(host, glm::dvec3(kFirstClientStart));
     NetSync::ReplicationServer &server = *host.play.Session().Server();
 
     Simulators simulators;
@@ -281,7 +278,9 @@ TEST_CASE("A crate three players push at once is the host's to simulate, and eac
     Machine &host = session.Add();
     Machine &first = session.Add();
     Machine &second = session.Add();
-    const std::array<glm::vec3, 3> starts{kLeftOfCrate, kRightOfCrate, kBehindCrate};
+    const std::array<glm::dvec3, 3> starts{glm::dvec3(kLeftOfCrate), glm::dvec3(kRightOfCrate),
+                                           glm::dvec3(kBehindCrate)};
+    AddFloors(session, glm::dvec3{0.0});
     JoinTwo(session, host, first, second, starts);
 
     const ECS::Entity hostPlayer = LocalPlayerOf(host.world.scene);
@@ -290,7 +289,7 @@ TEST_CASE("A crate three players push at once is the host's to simulate, and eac
     REQUIRE(hostPlayer != ECS::NullEntity);
     REQUIRE(firstPlayer != ECS::NullEntity);
     REQUIRE(secondPlayer != ECS::NullEntity);
-    const ECS::Entity crate = AddCrate(host, kBehindCrate);
+    const ECS::Entity crate = AddCrate(host, glm::dvec3(kBehindCrate));
     session.Run(kCatchUpFrames);
     NetSync::ReplicationServer &server = *host.play.Session().Server();
     NetSync::ReplicationClient &firstReplication = *first.play.Session().Client();
@@ -317,4 +316,134 @@ TEST_CASE("A crate three players push at once is the host's to simulate, and eac
     });
     // Longer than a brush: until it squeezes out from between them.
     CHECK(together > static_cast<std::int32_t>(NetSync::ReplicationConfig{}.ownership.touchDwellTicks));
+}
+
+namespace
+{
+
+/// The edge between world cells 97 and 98 on an axis (m), 49.92 km out.
+constexpr double kCellEdge = 97.5 * Math::kWorldCellSize;
+
+/// How far on the far side of that edge a crate starts (m): less than a push
+/// moves it.
+constexpr double kCratePastEdge = 1.0;
+
+/// Where the far cases are played: 50 km out on x, and on z where a crate in
+/// front of a player starts kCratePastEdge from the edge, so a push takes it
+/// across.
+constexpr glm::dvec3 kFar{50000.0, 0.0, kCellEdge + kCratePastEdge + static_cast<double>(kCrateAhead)};
+
+/// How far apart the players' starts in the far case are (m): out of the way
+/// of the crate one of them pushes.
+constexpr double kFarStartsApart = 10.0;
+
+/// Where a crate is teleported to (m): hundreds of kilometres out, on both
+/// sides of the origin.
+constexpr glm::dvec3 kFarAway{300000.0, 0.0, -300000.0};
+
+/// Where a crate to be teleported is put: far enough from both players that
+/// the host keeps it.
+constexpr glm::dvec3 kAwayFromPlayers{0.0, 0.0, 30.0};
+
+/// Frames for a crate that was pushed or teleported to come to rest, and for
+/// every machine to be told where.
+constexpr std::int32_t kSettleFrames = 90;
+
+/// How far another machine's copy of a crate at rest may be from the host's
+/// (m): the 2 mm a position is rounded to on the wire, ten times over.
+constexpr double kSamePlace = 0.02;
+
+} // namespace
+
+TEST_CASE("A client's player pushing a crate 50 km out, across a cell edge, simulates it and is not corrected")
+{
+    Pushing rig(kFar);
+    NetSync::ReplicationServer &server = *rig.host->play.Session().Server();
+    NetSync::ReplicationClient &replication = *rig.client->play.Session().Client();
+    const NetSync::NetId own = replication.NetIdOf(rig.player);
+    const glm::dvec3 start = rig.host->world.scene.Get<ECS::Transform>(rig.crate)->position;
+    const std::uint64_t correctionsBefore = replication.PredictionCountsOf(own)->physics.corrections;
+
+    rig.session.Run(kPushFrames, [&] { Walk(rig.client->world.scene, rig.player); });
+
+    const glm::dvec3 end = rig.host->world.scene.Get<ECS::Transform>(rig.crate)->position;
+    const NetSync::ConnectionDiagnostics *diagnostics = server.Diagnostics(server.ConnectionOf(rig.ClientId()));
+    REQUIRE(diagnostics != nullptr);
+    REQUIRE(end.z < start.z - static_cast<double>(kPushedFar));
+    CHECK(Math::WorldCellOf(end).z == Math::WorldCellOf(start).z - 1);
+    CHECK(server.SimulatorOf(rig.crate) == rig.ClientId());
+    CHECK(diagnostics->reportsAccepted > 0u);
+    CHECK(diagnostics->reportsRefused == 0u);
+    CHECK(replication.PredictionCountsOf(own)->physics.corrections == correctionsBefore);
+}
+
+TEST_CASE("With the sync test on, a client pushing a crate 50 km out steps each tick again as it did live")
+{
+    Pushing rig(kFar);
+    NetSync::ReplicationClient &replication = *rig.client->play.Session().Client();
+    replication.SetSyncTest(true);
+
+    rig.session.Run(kPushFrames, [&] { Walk(rig.client->world.scene, rig.player); });
+
+    REQUIRE(replication.Simulates(rig.crateMirror));
+    CHECK(replication.SyncTestResults().replays > 0u);
+    CHECK(replication.SyncTestResults().differences == 0u);
+}
+
+TEST_CASE("A crate one client pushes across a cell edge 50 km out comes to rest for the other where the host has it")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_bodies_far");
+    WritePlayerBlueprint(root);
+    Session session;
+    Machine &host = session.Add();
+    Machine &first = session.Add();
+    Machine &second = session.Add();
+    const std::array<glm::dvec3, 3> starts{kFar, kFar + glm::dvec3{kFarStartsApart, 0.0, 0.0},
+                                           kFar + glm::dvec3{2.0 * kFarStartsApart, 0.0, 0.0}};
+    AddFloors(session, kFar);
+    JoinTwo(session, host, first, second, starts);
+
+    const ECS::Entity firstPlayer = LocalPlayerOf(first.world.scene);
+    REQUIRE(firstPlayer != ECS::NullEntity);
+    const ECS::Entity crate = AddCrate(host, first.world.scene.Get<ECS::Transform>(firstPlayer)->position);
+    session.Run(kCatchUpFrames);
+    NetSync::ReplicationServer &server = *host.play.Session().Server();
+    NetSync::ReplicationClient &secondReplication = *second.play.Session().Client();
+    const ECS::Entity secondCrate = secondReplication.EntityOf(server.NetIdOf(crate));
+    REQUIRE(secondCrate != ECS::NullEntity);
+    const glm::dvec3 start = host.world.scene.Get<ECS::Transform>(crate)->position;
+
+    session.Run(kPushFrames, [&] { Walk(first.world.scene, firstPlayer); });
+    session.Run(kSettleFrames, [&] { Walk(first.world.scene, firstPlayer, /*walking=*/ false); });
+
+    const glm::dvec3 end = host.world.scene.Get<ECS::Transform>(crate)->position;
+    REQUIRE(end.z < start.z - static_cast<double>(kPushedFar));
+    REQUIRE(Math::WorldCellOf(end).z != Math::WorldCellOf(start).z);
+    CHECK(glm::length(second.world.scene.Get<ECS::Transform>(secondCrate)->position - end) < kSamePlace);
+}
+
+TEST_CASE("A crate the host teleports 300 km away arrives there on the client")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_bodies_teleport");
+    WritePlayerBlueprint(root);
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+    AddFloors(session, kFarAway);
+    const ECS::Entity crate = AddCrate(host, kAwayFromPlayers);
+    session.Run(kCatchUpFrames);
+    NetSync::ReplicationServer &server = *host.play.Session().Server();
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    const ECS::Entity mirror = replication.EntityOf(server.NetIdOf(crate));
+    REQUIRE(mirror != ECS::NullEntity);
+
+    Physics::Pose destination;
+    destination.position = kFarAway + glm::dvec3{0.0, static_cast<double>(kCrateHalf), 0.0};
+    host.world.physics.Teleport(crate, destination);
+    session.Run(kSettleFrames);
+
+    const glm::dvec3 there = host.world.scene.Get<ECS::Transform>(crate)->position;
+    REQUIRE(glm::length(there - destination.position) < static_cast<double>(kCrateHalf));
+    CHECK(glm::length(client.world.scene.Get<ECS::Transform>(mirror)->position - there) < kSamePlace);
 }
