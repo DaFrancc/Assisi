@@ -519,12 +519,14 @@ def write_scene(name, entities, systems):
     # The sidecar carries the level's stable guid. Minted once and preserved on
     # regeneration: a new guid every run would repoint every reference to this
     # level at something the database has never seen.
+    # The cook refuses a sidecar that names no kind.
     sidecar_path = LEVELS / f"{name}.alvl.aast"
     if sidecar_path.exists():
         guid = json.loads(sidecar_path.read_text())["guid"]
     else:
         guid = str(uuid.uuid4())
-    sidecar_path.write_text(json.dumps({"guid": guid, "type": "AssetSidecar", "version": 1}, indent=2))
+    sidecar = {"guid": guid, "type": "AssetSidecar", "uses": [{"kind": "scene"}], "version": 1}
+    sidecar_path.write_text(json.dumps(sidecar, indent=2))
     return level_path
 
 
