@@ -14,6 +14,8 @@
 /// - `GLM_FORCE_EXPLICIT_CTOR`    — a conversion between vector types is
 ///   written out, so a dvec3 never narrows to a vec3 unseen. Defined on glm's
 ///   CMake target rather than here, so it holds whatever is included first.
+///   Assignment cannot be made explicit; cmake/patches/glm-no-narrowing-assignment.patch
+///   makes a narrowing `=` or `+=` fail to build instead.
 
 /* These must be defined before any GLM header is included anywhere. */
 #define GLM_FORCE_RADIANS
