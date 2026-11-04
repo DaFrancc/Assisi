@@ -911,6 +911,14 @@ set(CPP_EXCEPTIONS_ENABLED            ON  CACHE BOOL "" FORCE)
 # old for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT to reach it. Off here, and given
 # /Z7 below like everything else.
 set(GENERATE_DEBUG_SYMBOLS            OFF CACHE BOOL "" FORCE)
+# Positions stay exact far from the origin; Jolt keeps everything else in
+# floats. Jolt makes it a PUBLIC definition, and every machine in a session must
+# match: saved physics state and determinism do not carry between the builds.
+# A plain variable, which Jolt's option() defers to, rather than a cache entry:
+# a cached ON outlives this file, so a build directory reused for code written
+# against float Jolt would keep building doubles and fail to compile.
+unset(DOUBLE_PRECISION CACHE)
+set(DOUBLE_PRECISION ON)
 FetchContent_Declare(JoltPhysics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
     GIT_TAG        v5.2.0
