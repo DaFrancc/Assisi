@@ -27,4 +27,10 @@ inline constexpr double kWorldCellSize = 512.0;
     return glm::ivec3(glm::floor(position / kWorldCellSize + 0.5));
 }
 
+/// @brief The centre of @p cell, exactly.
+[[nodiscard]] inline glm::dvec3 WorldCellCentre(const glm::ivec3 &cell)
+{
+    return glm::dvec3(cell) * kWorldCellSize;
+}
+
 } // namespace Assisi::Math

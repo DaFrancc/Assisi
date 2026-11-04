@@ -354,7 +354,12 @@ public:
     /// single buffer describes every shadow view of the frame however many
     /// kinds of shadow map produced them — and a shader that samples one of
     /// them indexes the same table whichever kind it was.
-    void BeginFrame();
+    ///
+    /// Shadow maps are drawn measured from one point and sampled by a pass
+    /// measured from another: @p sampledFrom is where the sampling pass's origin
+    /// is in the frame the maps are drawn in, and each row is written so a
+    /// position measured from it lands where it should.
+    void BeginFrame(const glm::vec3 &sampledFrom);
 
     /// @brief The frame's view table, or null before anything has been drawn
     /// into it.
@@ -440,6 +445,9 @@ private:
     mutable Buffer _viewTable;
 
     mutable ShadowDrawList _drawList;
+
+    // See BeginFrame.
+    glm::vec3 _sampledFrom{0.f};
 };
 
 } // namespace Assisi::Render

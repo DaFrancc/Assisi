@@ -687,7 +687,7 @@ TEST_CASE("A crate solved again is drawn where the solve left it, not slid there
             kSolvedTolerance);
     ECS::SetBlendAlpha(test.scene, kPartWay);
     tick = ECS::PropagateTransforms(test.scene, tick);
-    const glm::vec3 drawn = Math::TranslationOf(test.scene.Get<ECS::WorldMatrix>(run.crateEntity)->matrix);
+    const glm::vec3 drawn(ECS::WorldPositionOf(*test.scene.Get<ECS::WorldMatrix>(run.crateEntity)));
     CHECK(glm::length(glm::dvec3(drawn) - test.world.GetBodyPose(run.crateEntity).position) <
           static_cast<double>(kReplayTolerance));
 }

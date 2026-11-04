@@ -23,8 +23,8 @@ namespace Assisi::App
 /// @brief A camera and the pose it looks from, as a pair that travels together.
 struct SceneView
 {
-    /// Where the camera is, as propagated; what Runtime::ViewMatrix takes.
-    glm::mat4 world{1.f};
+    /// Where the camera is, as propagated: what SceneRenderer::Render takes.
+    ECS::WorldMatrix world;
 
     /// The camera's own Transform, which is relative to its parent if it has one.
     Runtime::Transform pose;

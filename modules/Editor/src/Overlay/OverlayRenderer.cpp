@@ -113,12 +113,12 @@ void OverlayRenderer::SetIconSuppressedEntities(std::span<const ECS::Entity> ent
     _iconSuppressed.assign(entities.begin(), entities.end());
 }
 
-void OverlayRenderer::SubmitEditorIcons(std::span<const glm::vec3> positions)
+void OverlayRenderer::SubmitEditorIcons(std::span<const glm::dvec3> positions)
 {
     _submittedIcons.insert(_submittedIcons.end(), positions.begin(), positions.end());
 }
 
-void OverlayRenderer::SubmitIconOutline(const glm::vec3 &position)
+void OverlayRenderer::SubmitIconOutline(const glm::dvec3 &position)
 {
     _submittedIconOutlines.push_back(position);
 }
@@ -150,20 +150,22 @@ bool OverlayRenderer::IsIconSuppressed(ECS::Entity entity) const
     return std::find(_iconSuppressed.begin(), _iconSuppressed.end(), entity) != _iconSuppressed.end();
 }
 
-void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
+void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                              const Camera &camera, const Runtime::SceneRenderer &sceneRenderer)
 {
     // Recomputed rather than carried over from the scene draw: both are two
     // matrix builds from state neither of them changes, and a cached pair is one
-    // more thing that can go stale between the two calls.
+    // more thing that can go stale between the two calls. Measured from the
+    // camera, as the scene is, so the camera itself is at zero.
+    _origin = ECS::WorldPositionOf(cameraWorld);
     const glm::mat4 projection = Runtime::ProjectionMatrix(
         camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
-    const glm::mat4 view = Runtime::ViewMatrix(cameraWorld);
+    const glm::mat4 view = Runtime::ViewMatrix(ECS::MatrixFrom(cameraWorld, _origin));
     const glm::mat4 viewProjection = projection * view;
 
     {
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "editor-icons");
-        DrawEditorIcons(frame, viewProjection, view, Math::TranslationOf(cameraWorld), scene);
+        DrawEditorIcons(frame, viewProjection, view, scene);
     }
 
     // Submitted silhouette outlines (the selected object's collider + mesh). Each
@@ -203,7 +205,7 @@ void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene
 }
 
 void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                                      const glm::mat4 &view, const glm::vec3 &cameraPosition, ECS::Scene &scene)
+                                      const glm::mat4 &view, ECS::Scene &scene)
 {
     if (!_iconPass.IsValid())
     {
@@ -228,9 +230,9 @@ void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const gl
             {
                 continue;
             }
-            const glm::vec3 position = Math::TranslationOf(world.matrix);
-            const glm::vec3 offset = position - cameraPosition;
-            if (glm::dot(offset, offset) <= maxDistanceSq)
+            // From the camera, which is at zero.
+            const glm::vec3 position = Math::TranslationOf(ECS::MatrixFrom(world, _origin));
+            if (glm::dot(position, position) <= maxDistanceSq)
             {
                 _iconPositions.push_back(position);
             }
@@ -243,7 +245,10 @@ void OverlayRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const gl
     // mark an instance has is worse than drawing one far away.
     if (_editorIconsVisible)
     {
-        _iconPositions.insert(_iconPositions.end(), _submittedIcons.begin(), _submittedIcons.end());
+        for (const glm::dvec3 &icon : _submittedIcons)
+        {
+            _iconPositions.push_back(glm::vec3(icon - _origin));
+        }
     }
     _submittedIcons.clear();
 
@@ -278,8 +283,9 @@ void OverlayRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, con
     {
         const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
-        for (const glm::vec3 &center : _submittedIconOutlines)
+        for (const glm::dvec3 &placed : _submittedIconOutlines)
         {
+            const glm::vec3 center(placed - _origin);
             // Always the active colour: a submitted outline is only ever asked for
             // by a selection of exactly one thing (an instance), and that thing is
             // what the inspector is showing.
@@ -305,7 +311,7 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
     {
         return; // no placement — nothing to outline
     }
-    const glm::mat4 &world = placement->matrix;
+    const glm::mat4 world = ECS::MatrixFrom(*placement, _origin);
     const MeshRenderer *renderer = scene.Get<MeshRenderer>(entity);
 
     // A placement-only entity shows a billboard only while icons are on. A
@@ -326,7 +332,7 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
         // border traced around a finer silhouette than the one on screen reads as
         // a halo.
         _outlinePass.Draw(frame, viewProjection,
-                          OutlinePass::OutlineItem{mesh, world, sceneRenderer.DrawnLodLevel(entity, *mesh, world)},
+                          OutlinePass::OutlineItem{mesh, world, sceneRenderer.DrawnLodLevel(entity, *mesh, *placement)},
                           color);
     }
     else if (placementIcon)

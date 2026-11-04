@@ -104,7 +104,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     Upload(commandList, view);
 }
 
-void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial)
+void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial, const LightFrame &frame)
 {
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();
@@ -117,8 +117,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     _shadowPoints.clear();
 
     // World position comes from the propagated world matrix, not transform.position:
-    // a parented light's local position is relative to its parent. For a root,
-    // the matrix's translation equals position.
+    // a parented light's local position is relative to its parent. The row the
+    // lit pass reads is measured from the camera, and the shadow pass's copy from
+    // the shadow origin, so the two never mix.
     //
     // A spot light's aim comes off the same matrix — it shines down its own local
     // -Y — so a headlight or a held torch points where its parent faces, and an
@@ -131,7 +132,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
 
         for (auto [entity, world, light] : scene.Query<ECS::WorldMatrix, PointLight>())
         {
-            const glm::vec3 position = Math::TranslationOf(world.matrix);
+            const glm::vec3 position = Math::TranslationOf(ECS::MatrixFrom(world, frame.view));
             // Every light starts holding no tile. The shadow pass stamps the
             // winners between here and Upload, so a light it never reaches is
             // unshadowed by default rather than by last frame's answer.
@@ -146,7 +147,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
                 _shadowPoints.push_back(LocalLight{
                         .index = static_cast<uint32_t>(_pointLights.size() - 1u),
                         .entity = entity,
-                        .position = position,
+                        .position = Math::TranslationOf(ECS::MatrixFrom(world, frame.shadow)),
                         .range = light.radius,
                         .intensity = light.intensity,
                         .shadowPriority = light.shadowPriority,
@@ -158,7 +159,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
         {
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
-            const glm::mat4 &world = worldMatrix.matrix;
+            const glm::mat4 world = ECS::MatrixFrom(worldMatrix, frame.view);
             const glm::vec3 position = Math::TranslationOf(world);
             const glm::vec3 direction = SpotWorldDirection(world);
             _spotLights.push_back({
@@ -174,7 +175,7 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
                 _shadowSpots.push_back(LocalLight{
                         .index = static_cast<uint32_t>(_spotLights.size() - 1u),
                         .entity = entity,
-                        .position = position,
+                        .position = Math::TranslationOf(ECS::MatrixFrom(worldMatrix, frame.shadow)),
                         .direction = direction,
                         .range = light.radius,
                         .intensity = light.intensity,

@@ -260,7 +260,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
-void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
+void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                            const Camera &camera, uint64_t &propagationTick)
 {
     if (!_meshPass.IsValid())
@@ -281,9 +281,16 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // read the posed vertices.
     SkinPosedInstances(frame, scene);
 
+    PlaceOrigins(cameraWorld);
+    // The camera at the lit pass's origin is its rotation alone, and so is the
+    // view: nothing the lit pass reads holds the camera's distance from the
+    // world's origin.
+    const glm::mat4 cameraInView = ECS::MatrixFrom(cameraWorld, _viewOrigin);
+    const glm::mat4 cameraInShadow = ECS::MatrixFrom(cameraWorld, _shadowOrigin);
+
     const glm::mat4 projection =
         ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
-    const glm::mat4 view = ViewMatrix(cameraWorld);
+    const glm::mat4 view = ViewMatrix(cameraInView);
 
     // Keep the froxel grid aligned with the render projection; a drift (window
     // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
@@ -313,7 +320,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Gathered but not yet uploaded: the local-light atlas decides which lights
     // hold tiles and stamps each winner's view index into the light record, and
     // that stamp has to happen before the lights reach the GPU.
-    _lighting.Gather(scene, &sky.light);
+    _lighting.Gather(scene, &sky.light, LightFrame{.view = _viewOrigin, .shadow = _shadowOrigin});
 
     // Before either half draws, because both are invalidated against it and the
     // change ticks may only be consumed once a frame.
@@ -324,10 +331,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // all three passes measure with the one view set here. The GPU cull holds no
     // dead band, so while it draws the gathers hold none either.
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
-    _lodSelector.BeginFrame(CameraLodView(cameraWorld, camera));
+    _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
-    Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, view);
-    RenderLocalShadows(frame, scene, camera, cameraWorld, shadows);
+    Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
+    RenderLocalShadows(frame, scene, camera, cameraInShadow, shadows);
     // After both, because it reports on both — and outside them, because every
     // early return either of them takes is still a frame with an answer.
     BuildShadowDiagnostics();
@@ -361,6 +368,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                   .frame = frame,
                                   .view = view,
                                   .projection = projection,
+                                  .origin = _viewOrigin,
                                   .nearZ = camera.nearZ,
                                   .farZ = camera.farZ,
                                   .frustumCulling = _frustumCulling,
@@ -395,7 +403,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // own world and a light that moves takes the sky with it.
     if (sky.status == SkyStatus::Ready)
     {
-        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraWorld), sky.sun, sky.moon,
+        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), sky.sun, sky.moon,
                       sky.settings);
     }
     // Said once, because silently dropping the sky sends someone reading shader
@@ -612,8 +620,9 @@ LodView SceneRenderer::CameraLodView(const glm::mat4 &cameraWorld, const Camera 
 }
 
 Runtime::LodReport SceneRenderer::LodReportFor(ECS::Entity entity, const Render::MeshBuffer &mesh,
-                                               const glm::mat4 &worldMatrix) const
+                                               const ECS::WorldMatrix &worldMatrix) const
 {
+    const glm::mat4 drawn = ECS::MatrixFrom(worldMatrix, _viewOrigin);
     // Whichever way this instance's level was named, the report has to read as
     // named: a pin is the entity's own and never reaches the shared settings.
     Runtime::LodSettings settings = _lodSelector.Settings();
@@ -626,12 +635,12 @@ Runtime::LodReport SceneRenderer::LodReportFor(ECS::Entity entity, const Render:
 
     // The drawn level rather than a fresh selection: this says what was drawn,
     // and the whole-mesh bounds are what selection measured, at every level.
-    return DescribeLodSelection(mesh.Lods(), Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix),
+    return DescribeLodSelection(mesh.Lods(), Geometry::TransformedBoundingSphere(mesh.LocalBounds(), drawn),
                                 DrawnLodLevel(entity, mesh, worldMatrix), _lodSelector.View(), settings);
 }
 
 uint32_t SceneRenderer::DrawnLodLevel(ECS::Entity entity, const Render::MeshBuffer &mesh,
-                                      const glm::mat4 &worldMatrix) const
+                                      const ECS::WorldMatrix &worldMatrix) const
 {
     if (!GpuCullDraws())
     {
@@ -640,8 +649,9 @@ uint32_t SceneRenderer::DrawnLodLevel(ECS::Entity entity, const Render::MeshBuff
     // Only a caster the shadow gathers reached was selected on the CPU this
     // frame; everything else the GPU measured unseen. With the dead band
     // released, a preview is that same measurement.
-    return _lodSelector.Preview(entity, mesh.Lods(),
-                                Geometry::TransformedBoundingSphere(mesh.LocalBounds(), worldMatrix));
+    return _lodSelector.Preview(
+        entity, mesh.Lods(),
+        Geometry::TransformedBoundingSphere(mesh.LocalBounds(), ECS::MatrixFrom(worldMatrix, _viewOrigin)));
 }
 
 } // namespace Assisi::Runtime

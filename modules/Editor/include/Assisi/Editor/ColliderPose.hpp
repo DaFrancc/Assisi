@@ -25,6 +25,9 @@ namespace Assisi::Editor
 /// Reads the *parent's* propagated world matrix, so propagation must
 /// have run this frame. Not the entity's own world matrix, whose scale a
 /// non-uniformly scaled parent would shear into the rotation.
-[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local);
+///
+/// Measured from @p origin, as the overlay it is drawn in is: the camera.
+[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local,
+                                          const glm::dvec3 &origin);
 
 } // namespace Assisi::Editor

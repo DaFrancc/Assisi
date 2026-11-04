@@ -69,8 +69,11 @@ struct DrawSceneParams
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
     const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
 
-    glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix).
+    glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix), measured from @ref origin.
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
+    /// The point everything is drawn measured from: the camera, so what is near
+    /// it is in small numbers wherever in the world it stands.
+    glm::dvec3 origin{0.0};
     float nearZ = 0.f;         ///< Camera near plane, for the sort key's depth quantization.
     float farZ = 0.f;          ///< Camera far plane.
 

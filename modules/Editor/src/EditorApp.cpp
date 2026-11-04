@@ -226,7 +226,7 @@ void EditorApp::EndCursorLoan()
     _cursorLoan = {};
 }
 
-void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
+void EditorApp::ViewCamera(Assisi::ECS::WorldMatrix &world, Assisi::Runtime::Camera &camera) const
 {
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
@@ -239,6 +239,14 @@ void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) co
     }
     world = _cameraWorld;
     camera = _camera;
+}
+
+glm::dvec3 EditorApp::ViewOrigin() const
+{
+    Assisi::ECS::WorldMatrix world;
+    Assisi::Runtime::Camera camera;
+    ViewCamera(world, camera);
+    return Assisi::ECS::WorldPositionOf(world);
 }
 
 std::optional<Assisi::App::SceneView> EditorApp::PlayView() const
@@ -404,8 +412,8 @@ void EditorApp::OnStart()
         const Assisi::App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
         if (capture.hasCameraPose)
         {
-            AimCamera(glm::vec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
-                      glm::vec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
+            AimCamera(glm::dvec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
+                      glm::dvec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
         }
     }
 

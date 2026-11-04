@@ -174,6 +174,11 @@ public:
     {
         /// This frame's fitted cascades. Not retained past the call.
         const CascadeFit *fit = nullptr;
+        /// Where the lit pass's origin, the camera, is in the frame the cascades
+        /// were fitted in. Each cascade's matrix is handed to the shader moved by
+        /// it, so a position the lit pass measures from the camera finds its
+        /// texel.
+        glm::vec3 sampledFrom{0.f};
         /// The knobs the fit was made with; the filter, blend band and biases
         /// ride into the shader from here.
         SunShadowSettings settings;

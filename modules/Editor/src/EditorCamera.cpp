@@ -142,7 +142,7 @@ void EditorApp::UpdateCamera(float dt)
             _cameraFocusElapsed += dt;
             const float u = glm::clamp(_cameraFocusElapsed / kCameraFocusDuration, 0.f, 1.f);
             const float s = u * u * (3.f - (2.f * u)); // smoothstep: ease in and out
-            _cameraTransform.position = glm::mix(_cameraFocusStartPos, _cameraFocusEndPos, s);
+            _cameraTransform.position = glm::mix(_cameraFocusStartPos, _cameraFocusEndPos, static_cast<double>(s));
             _cameraTransform.rotation = glm::slerp(_cameraFocusStartRot, _cameraFocusEndRot, s);
             if (u >= 1.f)
             {
@@ -257,10 +257,10 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
 }
 } // namespace
 
-void EditorApp::AimCamera(const glm::vec3 &eye, const glm::vec3 &target)
+void EditorApp::AimCamera(const glm::dvec3 &eye, const glm::dvec3 &target)
 {
     _cameraTransform.position = eye;
-    _cameraTransform.rotation = LookRotation(target - eye);
+    _cameraTransform.rotation = LookRotation(glm::vec3(target - eye));
     SyncYawPitchFromRotation();
     RefreshCameraMatrix();
 }
@@ -278,23 +278,27 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     }
 
     // What to frame: a mesh's local sphere through the world matrix, or a small
-    // sphere at the origin for a mesh-less entity.
+    // sphere at the origin for a mesh-less entity. Measured from where the
+    // camera stands, so the framing is in small numbers however far out it is.
+    RefreshCameraMatrix();
+    const glm::dvec3 from = _cameraTransform.position;
+    const glm::mat4 placed = Assisi::ECS::MatrixFrom(*placement, from);
     Assisi::Geometry::BoundingSphere world;
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     const Assisi::Render::MeshBuffer *mesh =
         mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedMesh>(entity)) : nullptr;
     if (mesh != nullptr && mesh->LocalBounds().radius > 0.f)
     {
-        world = Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), placement->matrix);
+        world = Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), placed);
     }
     else
     {
         using Assisi::Math::ColumnOf;
         using Assisi::Math::MatrixColumn;
-        world.center = Assisi::Math::TranslationOf(placement->matrix);
-        const float scaleX = glm::length(ColumnOf(placement->matrix, MatrixColumn::Right));
-        const float scaleY = glm::length(ColumnOf(placement->matrix, MatrixColumn::Up));
-        const float scaleZ = glm::length(ColumnOf(placement->matrix, MatrixColumn::Back));
+        world.center = Assisi::Math::TranslationOf(placed);
+        const float scaleX = glm::length(ColumnOf(placed, MatrixColumn::Right));
+        const float scaleY = glm::length(ColumnOf(placed, MatrixColumn::Up));
+        const float scaleZ = glm::length(ColumnOf(placed, MatrixColumn::Back));
         world.radius = 0.5f * glm::max(scaleX, glm::max(scaleY, scaleZ));
     }
     if (world.radius <= 0.f)
@@ -302,8 +306,7 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
         world.radius = 0.5f;
     }
 
-    RefreshCameraMatrix();
-    const glm::vec3 camPos = glm::vec3(_cameraTransform.position);
+    const glm::vec3 camPos(0.f);
     const glm::vec3 toCam = camPos - world.center;
     const float dist = glm::length(toCam);
 
@@ -324,8 +327,8 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
         targetPos = world.center + (dirToCam * framingDist);
     }
 
-    _cameraFocusStartPos = camPos;
-    _cameraFocusEndPos = targetPos;
+    _cameraFocusStartPos = from;
+    _cameraFocusEndPos = from + glm::dvec3(targetPos);
     _cameraFocusStartRot = _cameraTransform.rotation;
     _cameraFocusEndRot = LookRotation(world.center - targetPos);
     _cameraFocusElapsed = 0.f;
@@ -345,11 +348,14 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     // Whichever camera the viewport is actually drawn from. While a play session
     // looks through a scene camera, a ray built from the editor's own would select
     // whatever sits under the cursor *in a view nobody is looking at*.
-    glm::mat4 viewWorld{1.f};
+    Assisi::ECS::WorldMatrix viewWorld;
     Assisi::Runtime::Camera viewCamera;
     ViewCamera(viewWorld, viewCamera);
+    // Measured from that camera, as the scene is drawn: the ray starts at zero.
+    ray.measuredFrom = Assisi::ECS::WorldPositionOf(viewWorld);
+    const glm::mat4 viewInView = Assisi::ECS::MatrixFrom(viewWorld, ray.measuredFrom);
 
-    const glm::mat4 view = Assisi::Runtime::ViewMatrix(viewWorld);
+    const glm::mat4 view = Assisi::Runtime::ViewMatrix(viewInView);
     const auto fbSize = GetWindow().GetFramebufferSize();
     const float w = static_cast<float>(fbSize.Width);
     const float h = static_cast<float>(fbSize.Height);
@@ -364,7 +370,7 @@ PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     viewDir.w = 0.f;
 
     ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    ray.origin = Assisi::Math::TranslationOf(viewWorld);
+    ray.origin = Assisi::Math::TranslationOf(viewInView);
     // The camera's world basis, read out of the view matrix's rows. The billboards
     // are built from the same two axes, so a picked icon quad is exactly the drawn
     // one.
@@ -403,9 +409,8 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     for (const auto &[id, row] : _world->instances.All())
     {
         float t = 0.f;
-        if (RayBillboardIntersect(ray.origin, ray.direction, glm::vec3(row->transform.position), ray.cameraRight,
-                                  ray.cameraUp,
-                                  iconHalf, t) &&
+        if (RayBillboardIntersect(ray.origin, ray.direction, glm::vec3(row->transform.position - ray.measuredFrom),
+                                  ray.cameraRight, ray.cameraUp, iconHalf, t) &&
             t < tOut)
         {
             tOut = t;

@@ -29,12 +29,13 @@ namespace Assisi::Runtime
 namespace
 {
 
-/// Where @p light's shadow is drawn from: where it is drawn, or, with
-/// @p followSteps, where its Transform chain holds it. That pose changes only
-/// when a fixed step or a direct write moves the light, not as the light is
-/// drawn between steps, so a tile kept against it is redrawn at the tick rate.
+/// Where @p light's shadow is drawn from, measured from @p origin as the
+/// gathered light is: where it is drawn, or, with @p followSteps, where its
+/// Transform chain holds it. That pose changes only when a fixed step or a
+/// direct write moves the light, not as the light is drawn between steps, so a
+/// tile kept against it is redrawn at the tick rate.
 Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const LightingSystem::LocalLight &light,
-                                          Render::LocalLightKind kind, bool followSteps)
+                                          Render::LocalLightKind kind, bool followSteps, const glm::dvec3 &origin)
 {
     Render::LocalShadowLightPose pose{.position = light.position,
                                       .direction = light.direction,
@@ -45,7 +46,7 @@ Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const Lightin
         return pose;
     }
     const ECS::Transform world = ECS::WorldTransformOf(scene, light.entity);
-    pose.position = glm::vec3(world.position);
+    pose.position = glm::vec3(world.position - origin);
     if (kind == Render::LocalLightKind::Spot)
     {
         pose.direction = SpotWorldDirection(glm::mat4_cast(world.rotation) * glm::scale(glm::mat4(1.f), world.scale));
@@ -54,6 +55,17 @@ Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const Lightin
 }
 
 } // namespace
+
+void SceneRenderer::PlaceOrigins(const ECS::WorldMatrix &cameraWorld)
+{
+    _viewOrigin = ECS::WorldPositionOf(cameraWorld);
+    _shadowOrigin = Math::WorldCellCentre(cameraWorld.cell);
+    if (_shadowCell != cameraWorld.cell)
+    {
+        _shadowCell = cameraWorld.cell;
+        ForgetKeptShadows();
+    }
+}
 
 void SceneRenderer::ForgetKeptShadows()
 {
@@ -132,7 +144,7 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
                                });
     }
 
-    GatherShadowMovers(scene, _movedEntities, _movedCasters);
+    GatherShadowMovers(scene, _movedEntities, _shadowOrigin, _movedCasters);
 
     // Which casters move and which changed sides, decided once for both halves
     // of the shadow system: the sun's cascades and the local atlas each keep a
@@ -147,9 +159,10 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
 }
 
 Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
-                                                                  const Camera &camera, const glm::mat4 &view)
+                                                                  const Camera &camera, const glm::mat4 &cameraInShadow)
 {
     Render::MeshPass::ShadowFrameData shadows;
+    shadows.sampledFrom = Math::TranslationOf(cameraInShadow);
     _lastShadowStats = Render::ShadowPass::Stats{};
     _cascadeFit = Render::CascadeFit{};
 
@@ -178,10 +191,13 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
 
     // Opens the frame's shadow view table. Every kind of shadow map appends to
     // one table, so this belongs here rather than inside any one of them.
-    _shadowDepthRenderer.BeginFrame();
+    _shadowDepthRenderer.BeginFrame(shadows.sampledFrom);
 
+    // Fitted, snapped and kept in the shadow origin's frame, which holds still
+    // while the camera moves: a cascade fitted from the camera would slide its
+    // texels with every step and never be kept.
     Render::CascadeFitParams fitParams;
-    fitParams.cameraView = view;
+    fitParams.cameraView = ViewMatrix(cameraInShadow);
     fitParams.tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
     fitParams.aspectRatio = AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
     fitParams.nearZ = camera.nearZ;
@@ -268,6 +284,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
             }
         }
         _lodSelector.SetShadowViews(std::span<const float>(viewExtents.data(), views));
+        _shadowCasters.SetFrame(ShadowGatherFrame{.origin = _shadowOrigin, .camera = shadows.sampledFrom});
         _shadowCasters.SetViews(std::span<const Geometry::BoundingSphere>(viewVolumes.data(), views),
                                 static_cast<std::uint32_t>(redraw.size()), sun->direction);
         _shadowCasters.Gather(scene, _casterMobility, &_lodSelector);
@@ -306,8 +323,11 @@ float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float r
 }
 
 void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                                       const glm::mat4 &cameraWorld, Render::MeshPass::ShadowFrameData &shadows)
+                                       const glm::mat4 &cameraInShadow, Render::MeshPass::ShadowFrameData &shadows)
 {
+    // The lights and their tiles are measured from the shadow origin, so the
+    // camera they are scored against is too.
+    const glm::vec3 cameraPosition = Math::TranslationOf(cameraInShadow);
     _lastLocalShadowStats = Render::LocalShadowPass::Stats{};
     _lastSelection.Clear();
     // Emptied here rather than where they are refilled, because every early
@@ -348,10 +368,9 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     // has, and the local views would append to last frame's.
     if (!_shadowPass.IsActive())
     {
-        _shadowDepthRenderer.BeginFrame();
+        _shadowDepthRenderer.BeginFrame(cameraPosition);
     }
 
-    const glm::vec3 cameraPosition = Math::TranslationOf(cameraWorld);
     const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
 
     _localCandidates.reserve(spots.size() + points.size());
@@ -407,8 +426,8 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         {
             continue;
         }
-        const Render::LocalShadowLightPose pose =
-            ShadowPoseOf(scene, *light, winner.kind, !_shadowSettings.local.cache.redrawMovingLightsEveryFrame);
+        const Render::LocalShadowLightPose pose = ShadowPoseOf(
+            scene, *light, winner.kind, !_shadowSettings.local.cache.redrawMovingLightsEveryFrame, _shadowOrigin);
         _localRequests.push_back(Render::LocalShadowRequest{
                 .kind = winner.kind, .lightIndex = light->index, .pose = pose, .sizeClass = winner.sizeClass});
         // The light's whole reach, whatever shape it lights within it. A spot's
@@ -436,6 +455,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     // happens to dirty it again.
     if (_localShadowPass.PlanFrame(shadowFrame))
     {
+        _localShadowCasters.SetFrame(ShadowGatherFrame{.origin = _shadowOrigin, .camera = cameraPosition});
         _localShadowCasters.Gather(scene, _localLightVolumes, _localShadowPass.StillCasterRequests(), _casterMobility,
                                    &_lodSelector);
         _localShadowCasters.BuildIndex();

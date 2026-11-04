@@ -326,20 +326,20 @@ void EditorApp::SubmitInstanceIcons()
     // a row, not an entity. Rebuilt per frame rather than cached — instances are
     // placed and deleted by the same gestures that would have to invalidate a cache,
     // and there are tens of them, not thousands.
-    std::vector<glm::vec3> positions;
+    std::vector<glm::dvec3> positions;
     const auto rows = _world->instances.All();
     positions.reserve(rows.size());
     for (const auto &[id, row] : rows)
     {
         (void)id;
-        positions.push_back(glm::vec3(row->transform.position));
+        positions.push_back(row->transform.position);
     }
     _overlays.SubmitEditorIcons(positions);
 
     if (_selectedInstance.IsValid())
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance))
-            _overlays.SubmitIconOutline(glm::vec3(row->transform.position));
+            _overlays.SubmitIconOutline(row->transform.position);
     }
 }
 

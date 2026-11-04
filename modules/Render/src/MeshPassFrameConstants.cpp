@@ -80,6 +80,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
         constants.shadowCascade[i] = glm::vec4(0.f);
         constants.shadowViewProjection[i] = glm::mat4(1.f);
     }
+    const glm::mat4 fromSampler = glm::translate(glm::mat4(1.f), shadows.sampledFrom);
     for (uint32_t i = 0; i < cascadeCount && i < kMaxShadowCascades; ++i)
     {
         const ShadowCascade &cascade = shadows.fit->cascades[i];
@@ -89,7 +90,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
                                                CascadeDepthBiasNdc(cascade, shadows.settings),
                                                CascadeNormalOffsetWorld(cascade, shadows.settings),
                                                cascade.depthRange);
-        constants.shadowViewProjection[i] = cascade.viewProjection;
+        constants.shadowViewProjection[i] = cascade.viewProjection * fromSampler;
     }
     // z is the penumbra cap divided by the filter's radius, so the shader can
     // turn it into a tap step with one divide by the cascade's own depth range —

@@ -45,6 +45,16 @@ enum class ShadowCaster : uint8_t
 /// this only ever holds a pointer to.
 struct CelestialLight;
 
+/// @brief The two points a frame's lights are measured from.
+struct LightFrame
+{
+    /// The camera, which the lit pass measures everything from.
+    glm::dvec3 view{0.0};
+    /// What the shadow maps are measured from, which holds still while the
+    /// camera moves.
+    glm::dvec3 shadow{0.0};
+};
+
 class LightingSystem
 {
 public:
@@ -75,7 +85,11 @@ public:
     /// between them all arrive. Every other directional light is gathered exactly
     /// as authored. Null gathers all of them as authored, which is what a caller
     /// with no sky resolution has.
-    void Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial = nullptr);
+    ///
+    /// The rows the lit pass shades with are measured from @p frame's view
+    /// origin; the shadow-casting lights, which the shadow maps are built from,
+    /// from its shadow origin.
+    void Gather(Assisi::ECS::Scene &scene, const CelestialLight *celestial = nullptr, const LightFrame &frame = {});
 
     /// @brief Send the gathered lights to the GPU and run the cull pass.
     ///
@@ -111,6 +125,7 @@ public:
         /// became of the selected light has only an entity to start from, and
         /// the row it maps to is not recoverable from the scene.
         Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
+        /// Measured from the shadow origin of the Gather that found it.
         glm::vec3 position{0.f};
         /// World-space aim. Straight down for a point light, which has none.
         glm::vec3 direction{0.f, -1.f, 0.f};

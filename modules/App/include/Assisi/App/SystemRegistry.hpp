@@ -196,12 +196,16 @@ struct SystemContext
 };
 
 /// @brief Passed to render systems (Render phase only).
+///
+/// The view is measured from @ref origin, the camera, as the scene is drawn: an
+/// entity's matrix in the same space is ECS::MatrixFrom(world, origin).
 struct RenderContext
 {
     ECS::Scene &scene;
     float dt;
     glm::mat4 view;
     glm::mat4 projection;
+    glm::dvec3 origin{0.0};
 };
 
 /// @brief Execution phase that determines when a system runs and which context it receives.

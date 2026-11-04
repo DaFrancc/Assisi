@@ -48,6 +48,8 @@ void EditorApp::SubmitSkeletons()
         return;
     }
 
+    // Measured from the camera, as the overlay draws them.
+    const glm::dvec3 origin = ViewOrigin();
     for (auto [entity, skinned, renderer, world] :
          _scene->Query<Assisi::Runtime::SkinnedMesh, Assisi::Runtime::MeshRenderer, Assisi::ECS::WorldMatrix>())
     {
@@ -59,7 +61,8 @@ void EditorApp::SubmitSkeletons()
         const glm::vec4 color = !selected                  ? kBoneColor
                                 : entity == _selectedEntity ? kActiveSelectedBoneColor
                                                             : kSelectedBoneColor;
-        AppendSkeletonLines(_skeletonLines, renderer.meshBuffer->Skeleton(), skinned.jointModel, world.matrix, color);
+        AppendSkeletonLines(_skeletonLines, renderer.meshBuffer->Skeleton(), skinned.jointModel,
+                            Assisi::ECS::MatrixFrom(world, origin), color);
     }
     _overlays.SubmitOverlayLines(_skeletonLines, /*onTop=*/ true);
 }
@@ -88,7 +91,8 @@ void EditorApp::DrawSkeletonJointTooltip()
             continue;
         }
         float pixels = 0.f;
-        const int32_t joint = JointUnderCursor(ray, cursor, skinned.jointModel, world.matrix, pixels);
+        const int32_t joint = JointUnderCursor(ray, cursor, skinned.jointModel,
+                                               Assisi::ECS::MatrixFrom(world, ray.measuredFrom), pixels);
         if (joint != Assisi::Geometry::kNoJoint && pixels < nearestPixels)
         {
             nearestPixels = pixels;

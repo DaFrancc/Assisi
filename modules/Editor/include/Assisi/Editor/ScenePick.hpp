@@ -23,6 +23,10 @@ namespace Assisi::Editor
 /// billboards are oriented by — so what is clickable is exactly what is drawn.
 struct PickRay
 {
+    /// Where the ray, and everything tested against it, is measured from: the
+    /// camera it was cast from. ECS::MatrixFrom(world, measuredFrom) puts an
+    /// entity in the ray's space.
+    glm::dvec3 measuredFrom{0.0};
     glm::vec3 origin{0.f};
     glm::vec3 direction{0.f, 0.f, -1.f};
     glm::vec3 cameraRight{1.f, 0.f, 0.f};

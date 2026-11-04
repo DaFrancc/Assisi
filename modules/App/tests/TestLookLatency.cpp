@@ -116,7 +116,7 @@ struct Looker
         world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
         const std::optional<App::SceneView> view = App::ActiveSceneCamera(world.scene);
         REQUIRE(view.has_value());
-        return view->world;
+        return view->world.inCell;
     }
 };
 
@@ -193,6 +193,6 @@ TEST_CASE("A camera that is not this machine's player's is drawn where the blend
 
     looker.Turn(0.5f, 0.f);
     const glm::mat4 drawn = looker.Frame(clock, static_cast<double>(kStep) / 2.0);
-    CHECK(YawOf(drawn) == doctest::Approx(YawOf(scene.Get<ECS::WorldMatrix>(looker.eye)->matrix)));
+    CHECK(YawOf(drawn) == doctest::Approx(YawOf(scene.Get<ECS::WorldMatrix>(looker.eye)->inCell)));
     CHECK(YawOf(drawn) == doctest::Approx(0.0));
 }

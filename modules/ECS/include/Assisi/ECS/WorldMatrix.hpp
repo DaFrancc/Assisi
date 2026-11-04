@@ -6,11 +6,19 @@
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 
 namespace Assisi::ECS
 {
 
-/// @brief Where an entity is drawn, in world space.
+/// @brief Where an entity is drawn, in world space: the world cell it is in,
+/// and a float matrix measured from that cell's centre.
+///
+/// Measured from the cell rather than from the world's origin, so no float in
+/// it holds a large number however far out the entity is, and it changes only
+/// when the entity moves on screen, never when the camera does. Turn it into a
+/// matrix measured from anywhere with MatrixFrom, or read where it is with
+/// WorldPositionOf.
 ///
 /// Every Transform brings one. PropagateTransforms writes it: the local pose
 /// composed with the parents', blended between fixed steps, with any
@@ -28,7 +36,39 @@ namespace Assisi::ECS
 ACOMP(transient, tracked)
 struct WorldMatrix
 {
-    glm::mat4 matrix{1.f};
+    /// Measured from the centre of @ref cell; its translation is within half a
+    /// cell of it on each axis.
+    glm::mat4 inCell{1.f};
+    glm::ivec3 cell{0};
+
+    bool operator==(const WorldMatrix &) const = default;
 };
+
+/// @brief Where @p world is, exactly.
+[[nodiscard]] inline glm::dvec3 WorldPositionOf(const WorldMatrix &world)
+{
+    return Math::WorldCellCentre(world.cell) + glm::dvec3(glm::vec3(world.inCell[3]));
+}
+
+/// @brief @p world as a float matrix measured from @p origin. Exact to a float
+/// of the distance between them, so small near @p origin wherever both are.
+[[nodiscard]] inline glm::mat4 MatrixFrom(const WorldMatrix &world, const glm::dvec3 &origin)
+{
+    glm::mat4 matrix = world.inCell;
+    const glm::dvec3 translation =
+        (Math::WorldCellCentre(world.cell) - origin) + glm::dvec3(glm::vec3(world.inCell[3]));
+    matrix[3] = glm::vec4(glm::vec3(translation), 1.f);
+    return matrix;
+}
+
+/// @brief @p matrix, measured from @p origin, as a WorldMatrix: the reverse of
+/// MatrixFrom.
+[[nodiscard]] inline WorldMatrix WorldMatrixAt(const glm::mat4 &matrix, const glm::dvec3 &origin)
+{
+    const glm::dvec3 position = origin + glm::dvec3(glm::vec3(matrix[3]));
+    WorldMatrix world{.inCell = matrix, .cell = Math::WorldCellOf(position)};
+    world.inCell[3] = glm::vec4(glm::vec3(position - Math::WorldCellCentre(world.cell)), 1.f);
+    return world;
+}
 
 } // namespace Assisi::ECS

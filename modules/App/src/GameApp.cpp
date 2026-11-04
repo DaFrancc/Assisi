@@ -526,8 +526,8 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // A benchmark flies its route from the scene camera's lens: the route says
     // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const glm::mat4 benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : glm::mat4(1.f);
-    const glm::mat4 &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
+    const ECS::WorldMatrix benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : ECS::WorldMatrix{};
+    const ECS::WorldMatrix &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
     const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
 
     // The game's own render systems, through the world's registry. After
@@ -537,8 +537,10 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     {
         const float aspectRatio =
             Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
-        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(cameraWorld),
-                                Runtime::ProjectionMatrix(camera, aspectRatio)};
+        const glm::dvec3 origin = ECS::WorldPositionOf(cameraWorld);
+        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(),
+                                Runtime::ViewMatrix(ECS::MatrixFrom(cameraWorld, origin)),
+                                Runtime::ProjectionMatrix(camera, aspectRatio), origin};
         _world->systems.RunRender(renderCtx);
     }
 

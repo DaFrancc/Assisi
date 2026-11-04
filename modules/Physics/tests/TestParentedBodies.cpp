@@ -69,7 +69,7 @@ glm::mat4 ParentUnder(ECS::Scene &scene, ECS::Entity child)
     REQUIRE(scene.Add(parent, kParentPose) != nullptr);
     REQUIRE(scene.Add(child, ECS::Parent{.parent = parent}) != nullptr);
     (void)ECS::PropagateTransforms(scene, 0);
-    return scene.Get<ECS::WorldMatrix>(parent)->matrix;
+    return ECS::MatrixFrom(*scene.Get<ECS::WorldMatrix>(parent), glm::dvec3(0.0));
 }
 
 /// Gives @p entity a static ball collider, built by the next reconcile.
