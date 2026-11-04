@@ -510,7 +510,7 @@ void PhysicsWorld::Impl::RestoreCharacter(CharacterRecord &record, const Charact
     const JPH::RVec3 restoredFeet = record.character->GetPosition();
     // The state is where the frame was taken; a frame since moved or set going
     // another way is placed there instead, and finds its ground again.
-    const bool taken = glm::vec3(restoredFeet.GetX(), restoredFeet.GetY(), restoredFeet.GetZ()) == frame.position &&
+    const bool taken = ToGlm(restoredFeet) == frame.position &&
                        ToGlm(restoredVelocity) == frame.velocity;
     if (reader.IsFailed() || !reader.IsEOF() || !taken)
     {
@@ -520,14 +520,14 @@ void PhysicsWorld::Impl::RestoreCharacter(CharacterRecord &record, const Charact
     const JPH::RVec3 feet = record.character->GetPosition();
     physicsSystem.GetBodyInterface().SetPosition(SlotFor(record.entity)->body, feet, JPH::EActivation::Activate);
     WritePose(record.entity,
-              Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+              Pose{glm::quat(1.f, 0.f, 0.f, 0.f), ToGlm(feet)},
               /*writeRotation=*/ false);
     ECS::SnapTransform(scene, record.entity);
 }
 
-void PhysicsWorld::Impl::PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity)
+void PhysicsWorld::Impl::PlaceCharacter(CharacterRecord &record, const glm::dvec3 &feet, glm::vec3 velocity)
 {
-    const JPH::RVec3 position(feet.x, feet.y, feet.z);
+    const JPH::RVec3 position = ToJolt(feet);
     record.character->SetPosition(position);
     record.character->SetLinearVelocity(JPH::Vec3(velocity.x, velocity.y, velocity.z));
     physicsSystem.GetBodyInterface().SetPosition(SlotFor(record.entity)->body, position,
@@ -560,9 +560,9 @@ CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const
     StateWriter writer(physicsState);
     record->character->SaveState(writer);
     return CharacterFrame{.physicsState = std::move(physicsState),
+                          .position = ToGlm(position),
                           .intent = record->lastIntent,
                           .baseRotation = ToGlm(record->baseRotation),
-                          .position = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
                           .velocity = ToGlm(record->character->GetLinearVelocity()),
                           .worldVelocity = state.velocity,
                           .facing = record->facing,
@@ -587,7 +587,7 @@ FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
     if (const Impl::CharacterRecord *record = _impl->FindCharacter(entity); record != nullptr)
     {
         const JPH::RVec3 feet = record->character->GetPosition();
-        return FollowerFrame{.pose = Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+        return FollowerFrame{.pose = Pose{glm::quat(1.f, 0.f, 0.f, 0.f), ToGlm(feet)},
                              .linearVelocity = ToGlm(record->character->GetLinearVelocity())};
     }
     const Impl::BodySlot *slot = _impl->SlotFor(entity);
@@ -598,7 +598,7 @@ FollowerFrame PhysicsWorld::CaptureFollower(ECS::Entity entity) const
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::RVec3 position = bodies.GetPosition(slot->body);
     return FollowerFrame{.pose = Pose{ToGlm(bodies.GetRotation(slot->body)),
-                                      glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
+                                      ToGlm(position)},
                          .linearVelocity = ToGlm(bodies.GetLinearVelocity(slot->body)),
                          .angularVelocity = ToGlm(bodies.GetAngularVelocity(slot->body)),
                          .asleep = slot->motion == BodyMotion::Dynamic && !bodies.IsActive(slot->body)};
@@ -803,7 +803,7 @@ void PhysicsWorld::Impl::SolveAgain(std::span<const ECS::Entity> bodies, float d
         const JPH::RVec3 position = bodyInterface.GetPosition(slot->body);
         WritePose(entity,
                   Pose{ToGlm(bodyInterface.GetRotation(slot->body)),
-                       glm::vec3(position.GetX(), position.GetY(), position.GetZ())},
+                       ToGlm(position)},
                   /*writeRotation=*/ true);
         WriteBodyState(entity, BodyState{.linearVelocity = ToGlm(bodyInterface.GetLinearVelocity(slot->body)),
                                          .angularVelocity = ToGlm(bodyInterface.GetAngularVelocity(slot->body)),
@@ -932,7 +932,7 @@ void PhysicsWorld::StepCharacters(std::span<const ECS::Entity> entities, std::sp
     {
         const JPH::RVec3 feet = record->character->GetPosition();
         _impl->WritePose(record->entity,
-                         Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                         Pose{glm::quat(1.f, 0.f, 0.f, 0.f), ToGlm(feet)},
                          /*writeRotation=*/ false);
         ECS::SnapTransform(_impl->scene, record->entity);
         _impl->WriteCharacterState(record->entity, _impl->BuildCharacterState(*record));
@@ -1262,7 +1262,7 @@ void PhysicsWorld::Impl::CarryRider(CharacterRecord &record)
     {
         const glm::quat yaw = YawOf(turned, kCharacterUp);
         WritePose(record.entity,
-                  Pose{glm::normalize(yaw * transform->rotation), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+                  Pose{glm::normalize(yaw * transform->rotation), ToGlm(feet)},
                   /*writeRotation=*/ true);
     }
 
@@ -1424,7 +1424,7 @@ void PhysicsWorld::Impl::CreateCharacter(ECS::Entity entity, const Character &tu
     // A character is placed in world space, and a parented Transform is an
     // offset from its parent.
     Pose pose{transform.rotation, transform.position};
-    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    if (const std::optional<ECS::Transform> parent = SimulationParentPose(scene, entity); parent.has_value())
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         pose = Pose{world.rotation, world.position};
@@ -1494,7 +1494,7 @@ void PhysicsWorld::Impl::EditCharacter(ECS::Entity entity, const Character &tuni
         const JPH::RVec3 position = character.GetPosition();
         const JPH::Quat rotation = character.GetRotation();
         const Pose pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-                        glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
+                        ToGlm(position)};
         const Stance stance = record.stance;
 
         // The old inner body goes with the old capsule, and its pairs with it.
@@ -1576,7 +1576,7 @@ bool PhysicsWorld::Impl::ApplyStance(CharacterRecord &record, Stance stance)
     if (feetShift != 0.f)
     {
         const JPH::RVec3 feet = record.character->GetPosition();
-        WritePose(record.entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(feet.GetX(), feet.GetY(), feet.GetZ())},
+        WritePose(record.entity, Pose{glm::quat(1.f, 0.f, 0.f, 0.f), ToGlm(feet)},
                          /*writeRotation=*/ false);
     }
     return true;
@@ -1593,13 +1593,13 @@ CharacterState PhysicsWorld::Impl::BuildCharacterState(const CharacterRecord &re
     const JPH::Vec3 baseVelocity = BaseVelocityAt(record);
 
     const JPH::Vec3 velocity = virtualCharacter.GetLinearVelocity() + baseVelocity;
-    state.velocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
+    state.velocity = ToGlm(velocity);
 
     const JPH::Vec3 normal = virtualCharacter.GetGroundNormal();
-    state.groundNormal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ());
+    state.groundNormal = ToGlm(normal);
 
     const JPH::Vec3 groundVelocity = virtualCharacter.GetGroundVelocity() + baseVelocity;
-    state.groundVelocity = glm::vec3(groundVelocity.GetX(), groundVelocity.GetY(), groundVelocity.GetZ());
+    state.groundVelocity = ToGlm(groundVelocity);
 
     state.groundEntity = OwnerOf(EntityFor(virtualCharacter.GetGroundBodyID()));
     state.baseEntity = record.base;

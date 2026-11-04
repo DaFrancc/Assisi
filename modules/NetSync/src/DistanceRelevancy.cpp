@@ -50,11 +50,11 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
 
     // Squared throughout: a square root per pair per tick buys nothing, since
     // every comparison here is against a constant that can be squared once.
-    const float enterSq = _config.radius * _config.radius;
-    const float exitSq  = _config.exitRadius * _config.exitRadius;
+    const double enterSq = static_cast<double>(_config.radius) * static_cast<double>(_config.radius);
+    const double exitSq  = static_cast<double>(_config.exitRadius) * static_cast<double>(_config.exitRadius);
 
     // Anchor positions, resolved once rather than per candidate entity.
-    std::vector<glm::vec3> origins;
+    std::vector<glm::dvec3> origins;
     origins.reserve(query.anchors.size());
     for (const ECS::Entity anchor : query.anchors)
     {
@@ -88,10 +88,10 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
             continue;
         }
 
-        float nearestSq = std::numeric_limits<float>::max();
-        for (const glm::vec3 &origin : origins)
+        double nearestSq = std::numeric_limits<double>::max();
+        for (const glm::dvec3 &origin : origins)
         {
-            const glm::vec3 delta = transform->position - origin;
+            const glm::dvec3 delta = transform->position - origin;
             nearestSq             = std::min(nearestSq, glm::dot(delta, delta));
         }
 

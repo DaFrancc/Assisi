@@ -30,11 +30,11 @@ namespace
 /// received one is only rounding: a body at rest on the floor would be pulled a
 /// millimetre into it every snapshot and stood back up between them, a tremble
 /// with nothing behind it.
-glm::vec3 WithinRoundingKept(glm::vec3 received, glm::vec3 local, float step)
+glm::dvec3 WithinRoundingKept(glm::dvec3 received, const glm::dvec3 &local, float step)
 {
     for (glm::length_t axis = 0; axis < 3; ++axis)
     {
-        if (std::abs(received[axis] - local[axis]) <= step)
+        if (std::abs(received[axis] - local[axis]) <= static_cast<double>(step))
         {
             received[axis] = local[axis];
         }
@@ -110,7 +110,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // gap as an error to smooth away, drawn as a bob.
     const bool character = _scene.Has<Physics::Character>(entity);
     const Physics::Pose simulated = _physics->GetBodyPose(entity);
-    const glm::vec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
+    const glm::dvec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
 
     // A character's capsule never turns: where it faces is its Transform, which
     // its controls turn. The one this machine controls keeps the facing its own
@@ -144,7 +144,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         return;
     }
 
-    const float divergence = glm::length(simulatedPosition - state.position);
+    const float divergence = static_cast<float>(glm::length(simulatedPosition - state.position));
     _corrections.divergenceSum += static_cast<double>(divergence);
     _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
 
@@ -152,12 +152,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // snapped and the offset absorbs the whole difference, so nothing happens on
     // screen this instant. Successive corrections accumulate into the same
     // offset, which keeps a stream of small ones smooth.
-    const Physics::Pose rendered{record.rotationError * simulatedRotation, simulatedPosition + record.positionError};
+    const Physics::Pose rendered{record.rotationError * simulatedRotation,
+                                 simulatedPosition + glm::dvec3(record.positionError)};
 
     // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
     // physics state, and a half-applied correction is not one. Hiding the jump
     // belongs to the view.
-    const glm::vec3 correctedPosition =
+    const glm::dvec3 correctedPosition =
         WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
     _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
                               Physics::BodyState{.linearVelocity = state.linearVelocity,
@@ -179,7 +180,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
 void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered,
                                          const Physics::Pose &corrected)
 {
-    record.positionError = rendered.position - corrected.position;
+    record.positionError = glm::vec3(rendered.position - corrected.position);
     record.rotationError = glm::normalize(rendered.rotation * glm::inverse(corrected.rotation));
 
     const ViewSmoothing &smoothing = Smoothing();
@@ -241,8 +242,8 @@ BodyState ReplicationClient::CaptureBody(NetId netId, ECS::Entity entity) const
 {
     const Physics::Pose pose = _physics->GetBodyPose(entity);
     const Physics::BodyState motion = _physics->GetBodyState(entity);
-    return BodyState{.netId = netId,
-                     .position = pose.position,
+    return BodyState{.position = pose.position,
+                     .netId = netId,
                      .rotation = pose.rotation,
                      .linearVelocity = motion.linearVelocity,
                      .angularVelocity = motion.angularVelocity,

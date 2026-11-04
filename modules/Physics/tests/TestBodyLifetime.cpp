@@ -30,12 +30,12 @@ namespace
 {
 
 /// Whether a ray straight down onto @p point finds anything.
-bool SomethingAt(const Physics::PhysicsWorld &world, glm::vec3 point)
+bool SomethingAt(const Physics::PhysicsWorld &world, const glm::dvec3 &point)
 {
     constexpr float kAbove = 5.f;
     constexpr float kReach = 10.f;
     const std::optional<Physics::QueryHit> hit =
-        world.CastRay(point + glm::vec3(0.f, kAbove, 0.f), {0.f, -kReach, 0.f}, Physics::CollisionFilter{},
+        world.CastRay(point + glm::dvec3(0.0, kAbove, 0.0), {0.f, -kReach, 0.f}, Physics::CollisionFilter{},
                       ECS::NullEntity);
     return hit.has_value();
 }
@@ -49,7 +49,7 @@ constexpr int32_t kLogOverflow = 5000;
 TEST_CASE("An entity with a Collider and a Transform has a body after a reconcile")
 {
     TestScene test;
-    const glm::vec3 spot{3.f, 0.f, 0.f};
+    const glm::dvec3 spot{3.f, 0.f, 0.f};
     const ECS::Entity box = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
 
     CHECK_FALSE(test.world.HasBody(box));
@@ -64,7 +64,7 @@ TEST_CASE("Asking about an entity with no body answers with nothing")
     const ECS::Entity bare = test.scene.Create();
 
     CHECK_FALSE(test.world.HasBody(bare));
-    CHECK(test.world.GetBodyPose(bare).position == glm::vec3(0.f));
+    CHECK(test.world.GetBodyPose(bare).position == glm::dvec3(0.0));
     CHECK(test.world.GetBodyState(bare).linearVelocity == glm::vec3(0.f));
     CHECK_FALSE(test.world.IsBodyActive(bare));
     test.world.Teleport(bare, Physics::Pose{});
@@ -73,7 +73,7 @@ TEST_CASE("Asking about an entity with no body answers with nothing")
 TEST_CASE("Destroying an entity destroys its body")
 {
     TestScene test;
-    const glm::vec3 spot{3.f, 0.f, 0.f};
+    const glm::dvec3 spot{3.f, 0.f, 0.f};
     const ECS::Entity box = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
     REQUIRE(SomethingAt(test.world, spot));
@@ -89,24 +89,24 @@ TEST_CASE("Destroying an entity destroys its body")
 TEST_CASE("Destroying an entity destroys its character")
 {
     TestScene test;
-    const glm::vec3 feet{-4.f, 0.f, 0.f};
+    const glm::dvec3 feet{-4.f, 0.f, 0.f};
     const ECS::Entity character = AddCharacter(test.scene, feet);
     test.world.Reconcile();
     REQUIRE(test.world.HasBody(character));
-    REQUIRE(SomethingAt(test.world, feet + glm::vec3(0.f, 0.5f, 0.f)));
+    REQUIRE(SomethingAt(test.world, feet + glm::dvec3(0.0, 0.5, 0.0)));
 
     test.scene.Destroy(character);
     test.scene.FlushDestroyed();
     Step(test.world);
 
     CHECK_FALSE(test.world.HasBody(character));
-    CHECK_FALSE(SomethingAt(test.world, feet + glm::vec3(0.f, 0.5f, 0.f)));
+    CHECK_FALSE(SomethingAt(test.world, feet + glm::dvec3(0.0, 0.5, 0.0)));
 }
 
 TEST_CASE("Removing the Collider destroys the body, and adding it back builds a new one")
 {
     TestScene test;
-    const glm::vec3 spot{0.f, 0.f, 2.f};
+    const glm::dvec3 spot{0.f, 0.f, 2.f};
     const ECS::Entity box = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
 
@@ -124,7 +124,7 @@ TEST_CASE("Removing the Collider destroys the body, and adding it back builds a 
 TEST_CASE("A body is destroyed even when the removal log no longer reaches back to it")
 {
     TestScene test;
-    const glm::vec3 spot{5.f, 0.f, 5.f};
+    const glm::dvec3 spot{5.f, 0.f, 5.f};
     const ECS::Entity box = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
 
@@ -151,13 +151,13 @@ TEST_CASE("A body is destroyed even when the removal log no longer reaches back 
 TEST_CASE("A body for a destroyed entity does not survive into the next life of its index")
 {
     TestScene test;
-    const glm::vec3 oldSpot{6.f, 0.f, 0.f};
+    const glm::dvec3 oldSpot{6.f, 0.f, 0.f};
     const ECS::Entity first = AddBody(test.scene, oldSpot, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
 
     test.scene.Destroy(first);
     test.scene.FlushDestroyed();
-    const glm::vec3 newSpot{-6.f, 0.f, 0.f};
+    const glm::dvec3 newSpot{-6.f, 0.f, 0.f};
     const ECS::Entity second = AddBody(test.scene, newSpot, Box({0.5f, 0.5f, 0.5f}, true));
     REQUIRE(second.index == first.index);
     REQUIRE(second.generation != first.generation);
@@ -179,7 +179,7 @@ TEST_CASE("After a scene is cleared, a reused entity gets a new body rather than
 
     // A level load: the scene starts over, and the first entity is {0, 0} again.
     test.scene.Clear();
-    const glm::vec3 spot{0.f, 0.f, 8.f};
+    const glm::dvec3 spot{0.f, 0.f, 8.f};
     const ECS::Entity reused = AddBody(test.scene, spot, Box({0.5f, 0.5f, 0.5f}, true));
     REQUIRE(reused == ECS::Entity{0, 0});
 
@@ -196,7 +196,7 @@ TEST_CASE("An entity destroyed and revived at its own handle starts over")
     // same handle, so only the removal says it is a new life.
     TestScene test;
     AddFloor(test.scene);
-    const glm::vec3 spawn{0.f, 20.f, 0.f};
+    const glm::dvec3 spawn{0.f, 20.f, 0.f};
     const ECS::Entity faller = AddBody(test.scene, spawn, Ball(0.5f, false));
     const ECS::Entity walker = AddCharacter(test.scene, {5.f, 0.f, 0.f});
     for (int32_t i = 0; i < 30; ++i)
@@ -230,7 +230,7 @@ TEST_CASE("Rebuild starts every body and character over from the scene")
 {
     TestScene test;
     AddFloor(test.scene);
-    const glm::vec3 spawn{0.f, 20.f, 0.f};
+    const glm::dvec3 spawn{0.f, 20.f, 0.f};
     const ECS::Entity faller = AddBody(test.scene, spawn, Ball(0.5f, false));
     const ECS::Entity walker = AddCharacter(test.scene, {5.f, 0.f, 0.f});
     for (int32_t i = 0; i < 30; ++i)

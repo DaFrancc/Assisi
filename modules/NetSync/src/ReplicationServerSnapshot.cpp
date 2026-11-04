@@ -380,9 +380,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         // member's transform from this one, so a rounding difference here is a
         // permanent difference in every member's pose — on members that never
         // change and are therefore never corrected.
-        writer.WriteFloat(block.info.placement.position.x);
-        writer.WriteFloat(block.info.placement.position.y);
-        writer.WriteFloat(block.info.placement.position.z);
+        writer.WriteDouble(block.info.placement.position.x);
+        writer.WriteDouble(block.info.placement.position.y);
+        writer.WriteDouble(block.info.placement.position.z);
         writer.WriteFloat(block.info.placement.rotation.w);
         writer.WriteFloat(block.info.placement.rotation.x);
         writer.WriteFloat(block.info.placement.rotation.y);

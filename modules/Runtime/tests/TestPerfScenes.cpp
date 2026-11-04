@@ -188,7 +188,7 @@ TEST_CASE("Perf scene cameras start level and face the scene")
             // ...and it must actually look at the origin, which is where every
             // scene is built around. -Z is forward in view space.
             const glm::vec3 forward = transform->rotation * glm::vec3{0.f, 0.f, -1.f};
-            const glm::vec3 toOrigin = glm::normalize(-transform->position);
+            const glm::vec3 toOrigin = glm::normalize(-glm::vec3(transform->position));
             CHECK(glm::dot(forward, toOrigin) > 0.99f);
         }
         CHECK(activeCameras == 1);

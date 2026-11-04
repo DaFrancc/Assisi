@@ -45,7 +45,7 @@ App::SystemContext ContextFor(App::World &world, Core::EventQueue &universal, bo
 ECS::Entity AddWalker(App::World &world, glm::vec3 feet)
 {
     const ECS::Entity entity = world.scene.Create();
-    (void)world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = feet});
+    (void)world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = glm::dvec3(feet)});
     (void)world.scene.Add<Physics::Character>(entity);
     return entity;
 }
@@ -188,14 +188,14 @@ TEST_CASE("A replayed step moves only the characters it is given")
     {
         world.scene.GetMut<Physics::CharacterIntent>(walker)->move = {1.f, 0.f, 0.f};
     }
-    const glm::vec3 replayedBefore = world.scene.Get<ECS::Transform>(replayed)->position;
-    const glm::vec3 frozenBefore = world.scene.Get<ECS::Transform>(frozen)->position;
+    const glm::vec3 replayedBefore = glm::vec3(world.scene.Get<ECS::Transform>(replayed)->position);
+    const glm::vec3 frozenBefore = glm::vec3(world.scene.Get<ECS::Transform>(frozen)->position);
 
     const std::array<ECS::Entity, 1> only{replayed};
     App::StepWorld(ContextFor(world, universal, /*replaying=*/ true), only);
 
-    CHECK(glm::length(world.scene.Get<ECS::Transform>(replayed)->position - replayedBefore) > kMoved);
-    CHECK(world.scene.Get<ECS::Transform>(frozen)->position == frozenBefore);
+    CHECK(glm::length(glm::vec3(world.scene.Get<ECS::Transform>(replayed)->position) - replayedBefore) > kMoved);
+    CHECK(glm::vec3(world.scene.Get<ECS::Transform>(frozen)->position) == frozenBefore);
 }
 
 TEST_CASE("A replay steps only what it replays, and a system still reads the rest where it stands")
@@ -206,9 +206,9 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
     const ECS::Entity predicted = AddWalker(world, {0.f, 0.f, 0.f});
     const ECS::Entity remote = AddWalker(world, {5.f, 0.f, 0.f});
     const ECS::Entity mover = world.scene.Create();
-    (void)world.scene.Add<ECS::Transform>(mover, ECS::Transform{.position = kMoverOrigin});
+    (void)world.scene.Add<ECS::Transform>(mover, ECS::Transform{.position = glm::dvec3(kMoverOrigin)});
     (void)world.scene.Add<Runtime::Oscillator>(
-        mover, Runtime::Oscillator{.origin = kMoverOrigin, .axis = {1.f, 0.f, 0.f}, .amplitude = kMoverAmplitude});
+        mover, Runtime::Oscillator{.origin = glm::dvec3(kMoverOrigin), .axis = {1.f, 0.f, 0.f}, .amplitude = kMoverAmplitude});
     world.systems.Register(App::SystemPhase::FixedUpdate, "Oscillate",
                            [](App::SystemContext &ctx) { App::OscillateSystem(ctx); });
 
@@ -225,9 +225,9 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
     {
         world.scene.GetMut<Physics::CharacterIntent>(walker)->move = {0.f, 0.f, 1.f};
     }
-    const glm::vec3 predictedBefore = world.scene.Get<ECS::Transform>(predicted)->position;
-    const glm::vec3 remoteBefore = world.scene.Get<ECS::Transform>(remote)->position;
-    const glm::vec3 moverBefore = world.scene.Get<ECS::Transform>(mover)->position;
+    const glm::vec3 predictedBefore = glm::vec3(world.scene.Get<ECS::Transform>(predicted)->position);
+    const glm::vec3 remoteBefore = glm::vec3(world.scene.Get<ECS::Transform>(remote)->position);
+    const glm::vec3 moverBefore = glm::vec3(world.scene.Get<ECS::Transform>(mover)->position);
     watch = RemoteWatch{.remote = remote};
 
     const std::array<ECS::Entity, 1> replayed{predicted};
@@ -240,9 +240,9 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
     }
     world.scene.EndReplay();
 
-    CHECK(glm::length(world.scene.Get<ECS::Transform>(predicted)->position - predictedBefore) > kMoved);
-    CHECK(world.scene.Get<ECS::Transform>(remote)->position == remoteBefore);
-    CHECK(world.scene.Get<ECS::Transform>(mover)->position == moverBefore);
+    CHECK(glm::length(glm::vec3(world.scene.Get<ECS::Transform>(predicted)->position) - predictedBefore) > kMoved);
+    CHECK(glm::vec3(world.scene.Get<ECS::Transform>(remote)->position) == remoteBefore);
+    CHECK(glm::vec3(world.scene.Get<ECS::Transform>(mover)->position) == moverBefore);
     CHECK(watch.remoteSeen == static_cast<std::int32_t>(kReplayedSteps));
     CHECK(watch.charactersSeen == static_cast<std::int32_t>(2u * kReplayedSteps));
 }
@@ -275,7 +275,7 @@ TEST_CASE("What a replayed step's sweep touched is not taken for the next live s
 
     // Clear of the floor for the live step: nothing it sweeps touches the floor,
     // so the pair ends there.
-    world.physics.Teleport(walker, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), kLiftedTo});
+    world.physics.Teleport(walker, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(kLiftedTo)});
     App::StepWorld(ContextFor(world, universal, /*replaying=*/ false));
 
     CHECK(Reported(world, walker, Physics::ContactPhase::Exit));

@@ -872,7 +872,7 @@ void EditorApp::DrawNetworkWindow()
             // failure class the keyframe sweep exists for.
             const Assisi::Physics::Pose pose = _physics->GetBodyPose(_selectedEntity);
             _physics->ApplyCorrection(_selectedEntity,
-                                      Assisi::Physics::Pose{pose.rotation, pose.position + glm::vec3{0.f, 3.f, 1.5f}},
+                                      Assisi::Physics::Pose{pose.rotation, pose.position + glm::dvec3{0.0, 3.0, 1.5}},
                                       Assisi::Physics::BodyState{.asleep = true});
         }
         ImGui::EndDisabled();

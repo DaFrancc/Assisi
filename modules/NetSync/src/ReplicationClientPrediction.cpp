@@ -92,8 +92,8 @@ void ReplicationClient::RecordReports(std::uint64_t tick)
         }
         const Physics::Pose pose = _physics->GetBodyPose(entity);
         const Physics::BodyState motion = _physics->GetBodyState(entity);
-        report.bodies.push_back(BodyState{.netId = netId,
-                                          .position = pose.position,
+        report.bodies.push_back(BodyState{.position = pose.position,
+                                          .netId = netId,
                                           .rotation = pose.rotation,
                                           .linearVelocity = motion.linearVelocity,
                                           .angularVelocity = motion.angularVelocity,
@@ -354,7 +354,7 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
     if (confirmed.physicsTick == serverTick && record.hasCharacter && confirmed.body.character)
     {
         ++counts.physics.compares;
-        const float divergence = glm::length(record.character.position - confirmed.body.position);
+        const float divergence = static_cast<float>(glm::length(record.character.position - confirmed.body.position));
         _corrections.divergenceSum += static_cast<double>(divergence);
         _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
         if (std::string difference = PhysicsDifference(confirmed.body, record); !difference.empty())
@@ -425,7 +425,7 @@ std::string ReplicationClient::PhysicsDifference(const BodyState &host, const Pr
 {
     const ViewSmoothing &smoothing = Smoothing();
     const Physics::CharacterFrame &mine = record.character;
-    if (glm::length(mine.position - host.position) > smoothing.predictionTolerance)
+    if (glm::length(mine.position - host.position) > static_cast<double>(smoothing.predictionTolerance))
     {
         return Difference("position", mine.position, host.position);
     }
@@ -746,7 +746,7 @@ std::optional<ReplicationClient::Replay> ReplicationClient::RollBackTo(std::uint
                     .pose = body == _bodies.end()
                             ? simulated
                             : Physics::Pose{body->second.rotationError * simulated.rotation,
-                                            simulated.position + body->second.positionError},
+                                            simulated.position + glm::dvec3(body->second.positionError)},
                     .netId = netId});
         }
         if (record.hasCharacter)

@@ -45,7 +45,7 @@ Render::LocalShadowLightPose ShadowPoseOf(const ECS::Scene &scene, const Lightin
         return pose;
     }
     const ECS::Transform world = ECS::WorldTransformOf(scene, light.entity);
-    pose.position = world.position;
+    pose.position = glm::vec3(world.position);
     if (kind == Render::LocalLightKind::Spot)
     {
         pose.direction = SpotWorldDirection(glm::mat4_cast(world.rotation) * glm::scale(glm::mat4(1.f), world.scale));

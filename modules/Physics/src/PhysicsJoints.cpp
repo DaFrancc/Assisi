@@ -95,20 +95,20 @@ bool KindHasAxis(JointKind kind)
 }
 
 /// @p frame placed by a body at @p position turned by @p rotation.
-JointFrame Placed(const JointFrame &frame, glm::vec3 position,
+JointFrame Placed(const JointFrame &frame, const glm::dvec3 &position,
                   glm::quat rotation)
 {
-    return JointFrame{position + rotation * frame.point, rotation *frame.axis,
+    return JointFrame{position + glm::dquat(rotation) * frame.point, rotation *frame.axis,
                       rotation *frame.normal};
 }
 
 /// @p frame, in the world, as seen by a body at @p position turned by
 /// @p rotation.
-JointFrame Unplaced(const JointFrame &frame, glm::vec3 position,
+JointFrame Unplaced(const JointFrame &frame, const glm::dvec3 &position,
                     glm::quat rotation)
 {
     const glm::quat inverse = glm::inverse(rotation);
-    return JointFrame{inverse *(frame.point - position), inverse *frame.axis,
+    return JointFrame{glm::dquat(inverse) * (frame.point - position), inverse *frame.axis,
                       inverse *frame.normal};
 }
 
@@ -571,17 +571,17 @@ void PhysicsWorld::Impl::BuildJoint(JointRecord &record, const JointSpec &spec)
 
     // The owner's end, from the component, scaled with the entity as a
     // collider's offset is.
-    const glm::vec3 ownerPosition = ToGlm(JPH::Vec3(bodies.GetPosition(body2)));
+    const glm::dvec3 ownerPosition = ToGlm(bodies.GetPosition(body2));
     const glm::quat ownerRotation = ToGlm(bodies.GetRotation(body2));
     const glm::vec3 axis = KindHasAxis(record.kind) ? glm::normalize(spec.axis) : glm::vec3(0.f, 1.f, 0.f);
-    const JointFrame ownerLocal{spec.anchor * own.worldScale, axis, PerpendicularTo(axis)};
+    const JointFrame ownerLocal{glm::dvec3(spec.anchor * own.worldScale), axis, PerpendicularTo(axis)};
     const JointFrame ownerEnd = Placed(ownerLocal, ownerPosition, ownerRotation);
 
-    glm::vec3 otherPosition{0.f};
+    glm::dvec3 otherPosition{0.0};
     glm::quat otherRotation{1.f, 0.f, 0.f, 0.f};
     if (!body1.IsInvalid())
     {
-        otherPosition = ToGlm(JPH::Vec3(bodies.GetPosition(body1)));
+        otherPosition = ToGlm(bodies.GetPosition(body1));
         otherRotation = ToGlm(bodies.GetRotation(body1));
     }
     if (!record.captured)
@@ -591,7 +591,8 @@ void PhysicsWorld::Impl::BuildJoint(JointRecord &record, const JointSpec &spec)
         JointFrame otherEnd = ownerEnd;
         if (record.kind == JointKind::Distance)
         {
-            otherEnd.point = ownerPosition + ownerRotation * (spec.otherAnchor * own.worldScale);
+            otherEnd.point =
+                ownerPosition + glm::dquat(ownerRotation) * glm::dvec3(spec.otherAnchor * own.worldScale);
         }
         record.otherFrame = Unplaced(otherEnd, otherPosition, otherRotation);
         record.capturedAnchor = spec.anchor;

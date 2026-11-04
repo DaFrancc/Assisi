@@ -754,9 +754,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 entry.memberPresent[member] = reader.ReadBool() ? 1u : 0u;
         }
 
-        entry.placement.position.x = reader.ReadFloat();
-        entry.placement.position.y = reader.ReadFloat();
-        entry.placement.position.z = reader.ReadFloat();
+        entry.placement.position.x = reader.ReadDouble();
+        entry.placement.position.y = reader.ReadDouble();
+        entry.placement.position.z = reader.ReadDouble();
         entry.placement.rotation.w = reader.ReadFloat();
         entry.placement.rotation.x = reader.ReadFloat();
         entry.placement.rotation.y = reader.ReadFloat();

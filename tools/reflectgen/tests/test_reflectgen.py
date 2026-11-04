@@ -916,8 +916,14 @@ class PredictedComponentTest(unittest.TestCase):
         # What only the compiler can check: no member the table does not list,
         # and nothing a byte copy would break.
         self.assertIn("std::is_trivially_copyable_v<N::Cooldown>", cpp)
-        self.assertIn("sizeof(N::Cooldown) == sizeof(decltype(N::Cooldown::remaining)) + "
+        # Each field where the one before ends, padding allowed, and the type
+        # ending where its alignment puts the last field.
+        self.assertIn("offsetof(N::Cooldown, remaining) == 0", cpp)
+        self.assertIn("offsetof(N::Cooldown, charges) == (offsetof(N::Cooldown, remaining) + "
+                      "sizeof(decltype(N::Cooldown::remaining))", cpp)
+        self.assertIn("sizeof(N::Cooldown) == (offsetof(N::Cooldown, charges) + "
                       "sizeof(decltype(N::Cooldown::charges))", cpp)
+        self.assertIn("#include <cstddef>", cpp)
 
     def test_an_accepted_component_names_its_first_differing_field(self):
         src = ("namespace N {\nASTRUCT()\nstruct Timer { AFIELD() float left = 0.f; };\n"

@@ -59,7 +59,7 @@ std::string RagdollFromBook()
 
 glm::vec3 PositionOf(const App::World &world, ECS::Entity entity)
 {
-    return world.scene.Get<ECS::Transform>(entity)->position;
+    return glm::vec3(world.scene.Get<ECS::Transform>(entity)->position);
 }
 
 } // namespace

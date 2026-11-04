@@ -737,7 +737,7 @@ private:
     [[nodiscard]] std::vector<BodyGroup> BodyGroups() const;
 
     /// Where each of @p client's characters stands now.
-    void FeetOf(std::uint32_t client, std::vector<glm::vec3> &out) const;
+    void FeetOf(std::uint32_t client, std::vector<glm::dvec3> &out) const;
 
     /// The host takes @p entity's body back at @p tick and simulates it.
     void TakeBack(NetId netId, ECS::Entity entity, std::uint64_t tick);

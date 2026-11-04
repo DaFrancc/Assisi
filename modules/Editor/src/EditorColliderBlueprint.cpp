@@ -218,7 +218,8 @@ void EditorApp::WriteColliderBlueprint(const std::string &modelPath)
     for (const ColliderPart &part : parts)
     {
         const Assisi::ECS::Entity child = scratch.Create();
-        (void)scratch.Add(child, Assisi::ECS::Transform{.position = part.position, .rotation = part.rotation});
+        (void)scratch.Add(child,
+                          Assisi::ECS::Transform{.position = glm::dvec3(part.position), .rotation = part.rotation});
         (void)scratch.Add(child, Assisi::ECS::Parent{.parent = root});
         (void)scratch.Add(child, part.collider);
         (void)Assisi::Runtime::GiveEntityName(scratch, child, part.name);

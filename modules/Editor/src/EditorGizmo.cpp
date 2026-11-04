@@ -74,7 +74,7 @@ namespace
 /// @brief A TRS as a matrix, composed in the order everything else here uses.
 glm::mat4 TransformMatrix(const Rt::Transform &transform)
 {
-    return glm::translate(glm::mat4(1.f), transform.position) * glm::mat4_cast(transform.rotation) *
+    return glm::translate(glm::mat4(1.f), glm::vec3(transform.position)) * glm::mat4_cast(transform.rotation) *
            glm::scale(glm::mat4(1.f), transform.scale);
 }
 

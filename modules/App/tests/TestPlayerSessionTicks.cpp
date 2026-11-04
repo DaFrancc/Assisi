@@ -64,7 +64,7 @@ TEST_CASE("A client's systems step at the host's tick, so a system of the tick a
         std::map<std::uint64_t, float> &recorded = *heights[i];
         ECS::Scene &scene = machine.world.scene;
         machine.afterStep = [&recorded, &scene, bob](std::uint64_t tick)
-                            { recorded[tick] = scene.Get<ECS::Transform>(bob)->position.y; };
+                            { recorded[tick] = static_cast<float>(scene.Get<ECS::Transform>(bob)->position.y); };
     }
 
     for (std::int32_t i = 0; i < kHostHeadStart; ++i)

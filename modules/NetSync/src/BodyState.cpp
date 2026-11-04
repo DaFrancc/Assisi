@@ -113,9 +113,14 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
     writer.WriteVarId(state.netId); // wire write
     writer.WriteBool(state.asleep);
 
-    writer.WriteFloatQuantized(state.position.x, -q.positionExtent, q.positionExtent, q.positionBits);
-    writer.WriteFloatQuantized(state.position.y, -q.positionExtent, q.positionExtent, q.positionBits);
-    writer.WriteFloatQuantized(state.position.z, -q.positionExtent, q.positionExtent, q.positionBits);
+    // Packed into the extent around the world's origin, and clamped to it, so a
+    // float holds every value that survives the packing.
+    writer.WriteFloatQuantized(static_cast<float>(state.position.x), -q.positionExtent, q.positionExtent,
+                               q.positionBits);
+    writer.WriteFloatQuantized(static_cast<float>(state.position.y), -q.positionExtent, q.positionExtent,
+                               q.positionBits);
+    writer.WriteFloatQuantized(static_cast<float>(state.position.z), -q.positionExtent, q.positionExtent,
+                               q.positionBits);
 
     WriteQuaternion(state.rotation, writer);
 
@@ -154,9 +159,12 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     state.netId  = reader.ReadVarId<NetId>(); // wire read
     state.asleep = reader.ReadBool();
 
-    state.position.x = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
-    state.position.y = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
-    state.position.z = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
+    state.position.x =
+        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
+    state.position.y =
+        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
+    state.position.z =
+        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
 
     state.rotation = ReadQuaternion(reader);
 
@@ -221,7 +229,7 @@ template <typename T> std::string Difference(std::string_view name, const T &min
 
 std::string PredictedBodyDifference(const BodyState &mine, const BodyState &host, const ViewSmoothing &smoothing)
 {
-    if (glm::length(mine.position - host.position) > smoothing.predictionTolerance)
+    if (glm::length(mine.position - host.position) > static_cast<double>(smoothing.predictionTolerance))
     {
         return Difference("position", mine.position, host.position);
     }

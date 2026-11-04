@@ -608,6 +608,40 @@ FetchContent_Declare(glm
     SYSTEM
 )
 FetchContent_MakeAvailable(glm)
+# Every conversion between vector types is written out: a dvec3 narrowed to a
+# vec3 without a word is a position losing its precision unseen. Set on glm's
+# own target, so it also reaches a file that includes GLM's headers directly.
+target_compile_definitions(glm INTERFACE GLM_FORCE_EXPLICIT_CTOR)
+
+# glm-no-narrowing-assignment.patch: GLM_FORCE_EXPLICIT_CTOR covers
+# construction, but an assignment operator cannot be explicit, and GLM's
+# cross-type operator= and compound operators (+=, *= and the rest, on vectors
+# and quaternions) narrow with a static_cast inside. The patch adds a
+# static_assert to each that refuses a wider type than the vector's own, so
+# `vec3 = dvec3` fails to build as `vec3 v = dvec3` already does. Widening is
+# untouched: `dvec3 += vec3` still compiles.
+#
+# Applied as the fastgltf patch below is, and for the same reason.
+find_package(Git REQUIRED)
+set(_glm_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glm-no-narrowing-assignment.patch")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_glm_patch}"
+    WORKING_DIRECTORY "${glm_SOURCE_DIR}"
+    RESULT_VARIABLE _glm_patched
+    OUTPUT_QUIET ERROR_QUIET
+)
+if (NOT _glm_patched EQUAL 0)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply "${_glm_patch}"
+        WORKING_DIRECTORY "${glm_SOURCE_DIR}"
+        RESULT_VARIABLE _glm_patch_rc
+    )
+    if (NOT _glm_patch_rc EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${_glm_patch} to ${glm_SOURCE_DIR}. "
+                            "Refresh the patch against the pinned glm tag.")
+    endif()
+    message(STATUS "glm: applied glm-no-narrowing-assignment.patch")
+endif()
 
 # --- stb (header-only; no CMake build)
 # Pinned to a bare commit, so NO GIT_SHALLOW: a depth-1 fetch can only grab a

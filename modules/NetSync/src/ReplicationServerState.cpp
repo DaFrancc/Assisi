@@ -243,8 +243,8 @@ void ReplicationServer::CaptureBodyStates()
         // so a client can carry it on between updates.
         if (const Physics::CharacterState *character = _scene.Get<Physics::CharacterState>(entity))
         {
-            record.state = BodyState{.netId = netId,
-                                     .position = transform.position,
+            record.state = BodyState{.position = transform.position,
+                                     .netId = netId,
                                      .rotation = transform.rotation,
                                      .linearVelocity = character->velocity,
                                      .angularVelocity = glm::vec3{0.f},
@@ -259,7 +259,7 @@ void ReplicationServer::CaptureBodyStates()
         if (std::find(_activeBodies.begin(), _activeBodies.end(), entity) != _activeBodies.end())
         {
             const Physics::BodyState &state = *_scene.Get<Physics::BodyState>(entity);
-            record.state = BodyState{netId,  transform.position,    transform.rotation,
+            record.state = BodyState{transform.position, netId, transform.rotation,
                                      state.linearVelocity, state.angularVelocity, /*asleep=*/ false};
             record.tick  = _bodyStateTick;
             continue;
@@ -284,7 +284,7 @@ void ReplicationServer::CaptureBodyStates()
         // A body asleep and unmoved records nothing, which is where the
         // idle-bandwidth property comes from.
         {
-            const glm::vec3 position = transform.position;
+            const glm::dvec3 position = transform.position;
             const glm::quat rotation = transform.rotation;
 
             const bool firstSighting = record.tick == 0;
@@ -295,14 +295,14 @@ void ReplicationServer::CaptureBodyStates()
             // trigger a send either.
             const bool movedAtRest =
                 !firstSighting && record.state.asleep &&
-                (glm::distance(record.state.position, position) > 1e-5f ||
+                (glm::distance(record.state.position, position) > 1e-5 ||
                  std::abs(glm::dot(record.state.rotation, rotation)) < 1.f - 1e-6f);
 
             if (!firstSighting && !justSlept && !movedAtRest)
                 continue;
 
             const bool transition = justSlept;
-            record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/ true};
+            record.state = BodyState{position, netId, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/ true};
             record.tick  = _bodyStateTick;
 
             // Every other update is superseded by the next one; a delayed final

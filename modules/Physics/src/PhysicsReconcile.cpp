@@ -38,7 +38,7 @@ namespace
 /// and a parented Transform is an offset from its parent.
 Pose WorldPoseOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform)
 {
-    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    if (const std::optional<ECS::Transform> parent = SimulationParentPose(scene, entity); parent.has_value())
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         return Pose{world.rotation, world.position};
@@ -47,17 +47,13 @@ Pose WorldPoseOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transfo
 }
 
 /// @p transform's scale composed with every parent's, which is the size the
-/// collider is built at.
+/// collider is built at. A size, so a mirroring negative scale counts as its
+/// magnitude.
 glm::vec3 WorldScaleOf(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform)
 {
-    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    if (const std::optional<ECS::Transform> parent = SimulationParentPose(scene, entity); parent.has_value())
     {
-        using Math::ColumnOf;
-        using Math::MatrixColumn;
-        const glm::vec3 parentScale{glm::length(ColumnOf(*parent, MatrixColumn::Right)),
-                                    glm::length(ColumnOf(*parent, MatrixColumn::Up)),
-                                    glm::length(ColumnOf(*parent, MatrixColumn::Back))};
-        return transform.scale * parentScale;
+        return transform.scale * glm::abs(parent->scale);
     }
     return transform.scale;
 }
@@ -594,8 +590,8 @@ void PhysicsWorld::Impl::PushBodyState(ECS::Entity entity)
                         entity.index, entity.generation);
         const JPH::Vec3 linear = bodies.GetLinearVelocity(slot->body);
         const JPH::Vec3 angular = bodies.GetAngularVelocity(slot->body);
-        WriteBodyState(entity, BodyState{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-                                         .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+        WriteBodyState(entity, BodyState{.linearVelocity = ToGlm(linear),
+                                         .angularVelocity = ToGlm(angular),
                                          .asleep = !bodies.IsActive(slot->body)});
         return;
     }
@@ -806,9 +802,10 @@ void PhysicsWorld::Impl::StampTransform(ECS::Entity entity)
     {
         return;
     }
-    slot->stamp =
-        TransformStamp{transform->rotation, transform->position, transform->scale,
-                       scene.ChangeTick<ECS::Transform>(entity)};
+    slot->stamp = TransformStamp{.position = transform->position,
+                                 .tick = scene.ChangeTick<ECS::Transform>(entity),
+                                 .rotation = transform->rotation,
+                                 .scale = transform->scale};
 }
 
 void PhysicsWorld::Impl::DestroySlot(std::uint32_t index)

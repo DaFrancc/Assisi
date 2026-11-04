@@ -14,6 +14,7 @@ add_executable(Assisi-Physics-Tests
   TestCollisionChannels.cpp
   TestCompoundBodies.cpp
   TestContactEvents.cpp
+  TestFarFromOrigin.cpp
   TestFollowers.cpp
   TestGameplayRequests.cpp
   TestJoints.cpp

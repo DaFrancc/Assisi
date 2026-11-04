@@ -38,7 +38,7 @@ glm::vec3 Drawn(const ECS::Scene &scene, ECS::Entity entity)
 ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 position)
 {
     const ECS::Entity entity = scene.Create();
-    REQUIRE(scene.Add(entity, Transform{.position = position}) != nullptr);
+    REQUIRE(scene.Add(entity, Transform{.position = glm::dvec3(position)}) != nullptr);
     return entity;
 }
 

@@ -41,7 +41,7 @@ glm::vec3 UpDirection(const glm::mat4 &world)
 
 glm::mat4 CameraWorldMatrix(const Transform &transform)
 {
-    return glm::translate(glm::mat4(1.f), transform.position) * glm::mat4_cast(transform.rotation) *
+    return glm::translate(glm::mat4(1.f), glm::vec3(transform.position)) * glm::mat4_cast(transform.rotation) *
            glm::scale(glm::mat4(1.f), transform.scale);
 }
 

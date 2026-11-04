@@ -172,15 +172,15 @@ float PoseError(PhysicsHarness &harness, ECS::Entity entity)
     if (!harness.serverPhysics.HasBody(entity) || !harness.clientPhysics.HasBody(mirror))
         return std::numeric_limits<float>::infinity();
 
-    return glm::length(harness.serverPhysics.GetBodyPose(entity).position -
-                       harness.clientPhysics.GetBodyPose(mirror).position);
+    return static_cast<float>(glm::length(harness.serverPhysics.GetBodyPose(entity).position -
+                                          harness.clientPhysics.GetBodyPose(mirror).position));
 }
 
 /// Where @p entity is drawn: its Transform, which is the simulation pose, plus
 /// the view offset smoothing lays over it. Unparented, so the two simply add.
 glm::vec3 RenderedPosition(ECS::Scene &scene, ECS::Entity entity)
 {
-    const glm::vec3 position = scene.Get<ECS::Transform>(entity)->position;
+    const glm::vec3 position = glm::vec3(scene.Get<ECS::Transform>(entity)->position);
     const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
     return offset != nullptr ? position + offset->position : position;
 }
@@ -476,7 +476,7 @@ TEST_CASE("a client body woken by something the server never saw is put back to 
     REQUIRE(harness.clientPhysics.HasBody(mirror));
     REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(mirror));
 
-    const glm::vec3 restPosition = harness.clientPhysics.GetBodyPose(mirror).position;
+    const glm::vec3 restPosition = glm::vec3(harness.clientPhysics.GetBodyPose(mirror).position);
 
     // Shove it, locally, the way a spurious contact would.
     harness.clientScene.GetMut<Physics::BodyState>(mirror)->linearVelocity = {5.f, 5.f, 0.f};
@@ -486,7 +486,7 @@ TEST_CASE("a client body woken by something the server never saw is put back to 
     harness.Step(1);
 
     CHECK_FALSE(harness.clientPhysics.IsBodyActive(mirror));
-    const glm::vec3 afterPosition = harness.clientPhysics.GetBodyPose(mirror).position;
+    const glm::vec3 afterPosition = glm::vec3(harness.clientPhysics.GetBodyPose(mirror).position);
     CHECK(glm::length(afterPosition - restPosition) < 1e-3f);
 }
 
@@ -510,7 +510,7 @@ TEST_CASE("a sleeping body dragged by its Transform reaches clients")
     REQUIRE(PoseError(harness, entity) < 0.05f);
 
     // --- the drag ---------------------------------------------------------
-    const glm::vec3 startPosition = harness.serverScene.Get<ECS::Transform>(entity)->position;
+    const glm::vec3 startPosition = glm::vec3(harness.serverScene.Get<ECS::Transform>(entity)->position);
     for (int32_t step = 1; step <= 20; ++step)
     {
         harness.serverScene.GetMut<ECS::Transform>(entity)->position =
@@ -747,8 +747,8 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
         REQUIRE(serverPhysics.HasBody(entity));
         REQUIRE(clientPhysics.HasBody(mirror));
 
-        const glm::vec3 truth = serverPhysics.GetBodyPose(entity).position;
-        const glm::vec3 shown = clientPhysics.GetBodyPose(mirror).position;
+        const glm::vec3 truth = glm::vec3(serverPhysics.GetBodyPose(entity).position);
+        const glm::vec3 shown = glm::vec3(clientPhysics.GetBodyPose(mirror).position);
         CHECK(glm::length(truth - shown) < 0.2f);
     }
 }
@@ -774,16 +774,16 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(mirror));
 
     const Physics::Pose rest = harness.clientPhysics.GetBodyPose(mirror);
-    const glm::vec3 restPosition = rest.position;
+    const glm::vec3 restPosition = glm::vec3(rest.position);
 
     // Client-side damage: shove the mirror a metre off and leave it asleep, so
     // sleep enforcement has nothing to notice and the delta path has nothing to
     // say. Exactly what the editor's "corrupt selected mirror" poke does.
     const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
-    harness.clientPhysics.ApplyCorrection(mirror, Physics::Pose{rest.rotation, displaced},
+    harness.clientPhysics.ApplyCorrection(mirror, Physics::Pose{rest.rotation, glm::dvec3(displaced)},
                                           Physics::BodyState{.asleep = true});
     harness.client.SmoothView(0.0, kFixedStep);
-    REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
+    REQUIRE(glm::length(glm::vec3(harness.clientScene.Get<ECS::Transform>(mirror)->position) - displaced) < 1e-3f);
 
     // Ask for a re-anchor rather than waiting out the sweep.
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
@@ -793,7 +793,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     REQUIRE(harness.client.Corrections().applied > correctionsBefore);
 
     // The simulation is back where the server said, immediately...
-    const glm::vec3 correctedPosition = harness.clientPhysics.GetBodyPose(mirror).position;
+    const glm::vec3 correctedPosition = glm::vec3(harness.clientPhysics.GetBodyPose(mirror).position);
     CHECK(glm::length(correctedPosition - restPosition) < 1e-3f);
 
     // ...and the picture did not follow it there. What continuity means with a
@@ -864,7 +864,7 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
                          {
                              const auto bounce = [](ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity body)
                                                  {
-                                                     if (world.GetBodyPose(body).position.y < 0.7f)
+                                                     if (world.GetBodyPose(body).position.y < 0.7)
                                                          scene.GetMut<Physics::BodyState>(body)->linearVelocity =
                                                              glm::vec3{0.f, 7.f, 0.f};
                                                  };
@@ -877,7 +877,7 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
 
                              // The rendered pose against the client's own simulated one: their
                              // difference *is* the visual offset.
-                             const glm::vec3 simulated = harness.clientPhysics.GetBodyPose(mirror).position;
+                             const glm::vec3 simulated = glm::vec3(harness.clientPhysics.GetBodyPose(mirror).position);
                              const glm::vec3 rendered = RenderedPosition(harness.clientScene, mirror);
                              const float lag      = glm::length(rendered - simulated);
                              result.worstLag          = std::max(result.worstLag, lag);
@@ -949,11 +949,11 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     const ECS::Entity mirror  = MirrorOf(harness, entity);
     REQUIRE(harness.clientPhysics.HasBody(mirror));
     const Physics::Pose rest = harness.clientPhysics.GetBodyPose(mirror);
-    const glm::vec3 restPosition = rest.position;
+    const glm::vec3 restPosition = glm::vec3(rest.position);
 
     // Well past the 2.5 m bound.
     harness.clientPhysics.ApplyCorrection(mirror,
-                                          Physics::Pose{rest.rotation, restPosition + glm::vec3{0.f, 0.f, 8.f}},
+                                          Physics::Pose{rest.rotation, glm::dvec3(restPosition + glm::vec3{0.f, 0.f, 8.f})},
                                           Physics::BodyState{.asleep = true});
 
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
@@ -963,7 +963,7 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     REQUIRE(harness.client.Corrections().applied > correctionsBefore);
 
     // No decay period: the rendered pose is already the corrected one.
-    CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.01f);
+    CHECK(glm::length(glm::vec3(harness.clientScene.Get<ECS::Transform>(mirror)->position) - restPosition) < 0.01f);
 }
 
 // ── Per-entity policy and the body channel ───────────────────────────────────
@@ -1265,7 +1265,7 @@ ECS::Entity SpawnStanding(PhysicsHarness &harness, glm::vec3 feet = glm::vec3{0.
 {
     SpawnSharedFloor(harness);
     const ECS::Entity character = harness.serverScene.Create();
-    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{.position = feet});
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{.position = glm::dvec3(feet)});
     (void)harness.serverScene.Add<Physics::Character>(character, Physics::Character{});
     (void)harness.serverScene.Add<Replicated>(character, Replicated{});
     harness.Step(30);
@@ -1489,7 +1489,7 @@ struct PredictionRig
         if (level.other.has_value())
         {
             otherPlayer = harness.serverScene.Create();
-            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = *level.other});
+            (void)harness.serverScene.Add<ECS::Transform>(otherPlayer, ECS::Transform{.position = glm::dvec3(*level.other)});
             (void)harness.serverScene.Add<Physics::Character>(otherPlayer, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(otherPlayer, Replicated{});
         }
@@ -1510,7 +1510,7 @@ struct PredictionRig
         if (level.secondAt.has_value())
         {
             second = harness.serverScene.Create();
-            (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = *level.secondAt});
+            (void)harness.serverScene.Add<ECS::Transform>(second, ECS::Transform{.position = glm::dvec3(*level.secondAt)});
             (void)harness.serverScene.Add<Physics::Character>(second, Physics::Character{});
             (void)harness.serverScene.Add<Replicated>(second, Replicated{});
             harness.server.SetControl(second, client);
@@ -1682,7 +1682,7 @@ struct PredictionRig
 
     [[nodiscard]] glm::vec3 ClientPosition() const
     {
-        return harness.clientScene.Get<ECS::Transform>(mirror)->position;
+        return glm::vec3(harness.clientScene.Get<ECS::Transform>(mirror)->position);
     }
 };
 
@@ -1724,7 +1724,7 @@ TEST_CASE("a correction the client got wrong is replayed from the host's state, 
     const glm::vec3 shove{0.f, 0.f, kHostShove};
     const Physics::Pose hostPose = rig.harness.serverPhysics.GetBodyPose(rig.character);
     rig.harness.serverPhysics.ApplyCorrection(
-        rig.character, Physics::Pose{hostPose.rotation, hostPose.position + shove},
+        rig.character, Physics::Pose{hostPose.rotation, hostPose.position + glm::dvec3(shove)},
         Physics::BodyState{.linearVelocity = rig.harness.serverPhysics.GetBodyState(rig.character).linearVelocity});
 
     // Corrected to where the host has it now, plus the steps the client has
@@ -1791,7 +1791,7 @@ void ShoveOnHost(PredictionRig &rig, ECS::Entity entity, glm::vec3 shove)
 {
     const Physics::Pose pose = rig.harness.serverPhysics.GetBodyPose(entity);
     rig.harness.serverPhysics.ApplyCorrection(
-        entity, Physics::Pose{pose.rotation, pose.position + shove},
+        entity, Physics::Pose{pose.rotation, pose.position + glm::dvec3(shove)},
         Physics::BodyState{.linearVelocity = rig.harness.serverPhysics.GetBodyState(entity).linearVelocity});
 }
 
@@ -1849,12 +1849,12 @@ TEST_CASE("a rollback for one predicted character leaves the other where its own
     for (std::uint32_t i = 0; i < kAgreeingTicks && rig.replays == 0; ++i)
     {
         rig.StepBoth();
-        secondBefore = rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position;
+        secondBefore = glm::vec3(rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position);
         rig.Deliver();
         rig.ReplayPending();
     }
     REQUIRE(rig.replays == 1);
-    CHECK(glm::length(rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position - secondBefore) <
+    CHECK(glm::length(glm::vec3(rig.harness.clientScene.Get<ECS::Transform>(rig.secondMirror)->position) - secondBefore) <
           kMatchedUnmoved);
 }
 
@@ -1941,7 +1941,7 @@ TEST_CASE("an answer from before every tick the client kept snaps the character 
     CHECK(rig.harness.client.Corrections().hardSnaps == 1);
     const ReplicationClient::Confirmed *host = rig.harness.client.ConfirmedOf(rig.harness.server.NetIdOf(rig.character));
     REQUIRE(host != nullptr);
-    CHECK(glm::length(rig.ClientPosition() - host->body.position) < kMatchedUnmoved);
+    CHECK(glm::length(rig.ClientPosition() - glm::vec3(host->body.position)) < kMatchedUnmoved);
 }
 
 TEST_CASE("a predicted component is not stepped again, and keeps what the live steps made it")
@@ -2193,14 +2193,14 @@ TEST_CASE("a client walking its character into another player is stopped by it, 
         rig.Deliver();
         const glm::vec3 now = rig.ClientPosition();
         mostBack = std::max(mostBack, last.x - now.x);
-        const float onClient = rig.harness.clientScene.Get<ECS::Transform>(otherMirror)->position.x;
-        const float onHost = rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x;
+        const float onClient = static_cast<float>(rig.harness.clientScene.Get<ECS::Transform>(otherMirror)->position.x);
+        const float onHost = static_cast<float>(rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x);
         mostAheadOfHost = std::max(mostAheadOfHost, onClient - onHost);
         last = now;
     }
 
     // It walked up to the other player and was stopped there, on the host too.
-    const float otherOnHost = rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x;
+    const float otherOnHost = static_cast<float>(rig.harness.serverScene.Get<ECS::Transform>(rig.otherPlayer)->position.x);
     CHECK(std::abs(otherOnHost - kOtherPlayerAhead.x) < kNotPushed);
     const float touching = kOtherPlayerAhead.x - 2.f * Physics::Character{}.radius;
     REQUIRE(rig.ClientPosition().x > touching - kTouchSlack);
@@ -2334,7 +2334,7 @@ TEST_CASE("a crate its client pushes is never put back by the host on that clien
     PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
     REQUIRE(WalkUntilGiven(rig));
     const ECS::Entity crate = rig.crateMirrors[0];
-    const float start = rig.harness.clientPhysics.GetBodyPose(crate).position.x;
+    const float start = static_cast<float>(rig.harness.clientPhysics.GetBodyPose(crate).position.x);
 
     std::uint32_t moved = 0;
     float largestOffset = 0.f;
@@ -2363,7 +2363,7 @@ TEST_CASE("a client's character pushing the crate it simulates is not corrected 
     PredictionRig rig(RigLevel{.crates = {kCrateAhead}});
     REQUIRE(WalkUntilGiven(rig));
     const ECS::Entity crate = rig.crates[0];
-    const float start = rig.harness.serverPhysics.GetBodyPose(crate).position.x;
+    const float start = static_cast<float>(rig.harness.serverPhysics.GetBodyPose(crate).position.x);
     const NetId own = rig.harness.client.NetIdOf(rig.mirror);
     const std::uint64_t correctionsBefore = rig.harness.client.PredictionCountsOf(own)->physics.corrections;
 
@@ -2461,7 +2461,7 @@ TEST_CASE("a report the host does not believe is refused, and the client is show
         const ECS::Entity crate = rig.crateMirrors[0];
         rig.move = glm::vec3{0.f};
         Physics::Pose far = rig.harness.clientPhysics.GetBodyPose(crate);
-        far.position.z += kCheatJump;
+        far.position.z += static_cast<double>(kCheatJump);
         rig.harness.clientPhysics.ApplyCorrection(crate, far, Physics::BodyState{});
         CHECK(TickUntilTakenBack(rig, rig.crates[0]));
         CHECK(rig.harness.server.Diagnostics(rig.harness.serverSide())->reportsRefused > 0u);
@@ -2507,7 +2507,7 @@ TEST_CASE("a kick the host's own game gives a crate a client simulates takes it 
     for (std::uint32_t i = 0; i < kRoundTripTicks * 2u; ++i)
     {
         Tick(rig);
-        highest = std::max(highest, rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.y);
+        highest = std::max(highest, static_cast<float>(rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.y));
     }
     CHECK(highest > kCrateHalf + 0.5f);
 }
@@ -2542,7 +2542,7 @@ TEST_CASE("a crate asleep on the host before the client reaches it moves the tic
 
     rig.move = glm::vec3{1.f, 0.f, 0.f};
     REQUIRE(WalkUntilGiven(rig));
-    const float start = rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.x;
+    const float start = static_cast<float>(rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position.x);
     for (std::uint32_t i = 0; i < kLongPushTicks; ++i)
     {
         Tick(rig);
@@ -2585,7 +2585,7 @@ ECS::Entity AddStranger(PredictionRig &rig, glm::vec3 at)
 {
     ECS::Scene &scene = rig.harness.serverScene;
     const ECS::Entity stranger = scene.Create();
-    (void)scene.Add<ECS::Transform>(stranger, ECS::Transform{.position = at});
+    (void)scene.Add<ECS::Transform>(stranger, ECS::Transform{.position = glm::dvec3(at)});
     (void)scene.Add<Physics::Character>(stranger, Physics::Character{});
     (void)scene.Add<Replicated>(stranger, Replicated{});
     rig.harness.server.SetControl(stranger, kStranger);
@@ -2752,13 +2752,13 @@ TEST_CASE("a crate given to the client to predict moves ahead of its character o
 
     rig.move = glm::vec3{1.f, 0.f, 0.f};
     const ECS::Entity crate = rig.crateMirrors[0];
-    const glm::vec3 start = rig.harness.clientScene.Get<ECS::Transform>(crate)->position;
+    const glm::vec3 start = glm::vec3(rig.harness.clientScene.Get<ECS::Transform>(crate)->position);
     glm::vec3 last = start;
     float mostBack = 0.f;
     for (std::uint32_t i = 0; i < kPushTicks; ++i)
     {
         Tick(rig);
-        const glm::vec3 now = rig.harness.clientScene.Get<ECS::Transform>(crate)->position;
+        const glm::vec3 now = glm::vec3(rig.harness.clientScene.Get<ECS::Transform>(crate)->position);
         mostBack = std::max(mostBack, last.x - now.x);
         last = now;
     }
@@ -2791,14 +2791,14 @@ TEST_CASE("a predicted crate the host moves where the client did not is put wher
     const glm::vec3 shove{0.f, 0.f, kHostShove};
     const Physics::Pose hostPose = rig.harness.serverPhysics.GetBodyPose(rig.crates[0]);
     rig.harness.serverPhysics.ApplyCorrection(rig.crates[0],
-                                              Physics::Pose{hostPose.rotation, hostPose.position + shove},
+                                              Physics::Pose{hostPose.rotation, hostPose.position + glm::dvec3(shove)},
                                               Physics::BodyState{});
     const std::uint32_t replaysBefore = rig.replays;
     glm::vec3 before{0.f};
     for (std::uint32_t i = 0; i < kAgreeingTicks && rig.replays == replaysBefore; ++i)
     {
         rig.StepBoth();
-        before = rig.harness.clientScene.Get<ECS::Transform>(rig.crateMirrors[0])->position;
+        before = glm::vec3(rig.harness.clientScene.Get<ECS::Transform>(rig.crateMirrors[0])->position);
         rig.Deliver();
         rig.ReplayPending();
     }
@@ -2845,7 +2845,7 @@ TEST_CASE("a rollback of the client's character leaves a predicted crate the hos
     const glm::vec3 shove{0.f, 0.f, kHostShove};
     const Physics::Pose hostPose = rig.harness.serverPhysics.GetBodyPose(rig.character);
     rig.harness.serverPhysics.ApplyCorrection(rig.character,
-                                              Physics::Pose{hostPose.rotation, hostPose.position + shove},
+                                              Physics::Pose{hostPose.rotation, hostPose.position + glm::dvec3(shove)},
                                               Physics::BodyState{});
     const std::uint32_t replaysBefore = rig.replays;
     glm::vec3 before{0.f};
@@ -2854,9 +2854,9 @@ TEST_CASE("a rollback of the client's character leaves a predicted crate the hos
     {
         rig.StepBoth();
         rig.Deliver();
-        before = rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position;
+        before = glm::vec3(rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position);
         rig.ReplayPending();
-        after = rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position;
+        after = glm::vec3(rig.harness.clientPhysics.GetBodyPose(rig.crateMirrors[0]).position);
     }
     REQUIRE(rig.replays == replaysBefore + 1u);
     REQUIRE(rig.harness.client.PredictionCountsOf(crateId)->physics.corrections == correctionsBefore);

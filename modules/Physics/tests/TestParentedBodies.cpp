@@ -40,9 +40,9 @@ constexpr float kEpsilon = 1e-4f;
 const ECS::Transform kParentPose{.position = {10.f, 2.f, -3.f},
                                  .rotation = glm::angleAxis(glm::radians(90.f), glm::vec3(0.f, 1.f, 0.f))};
 
-bool NearlyEqual(glm::vec3 a, glm::vec3 b, float epsilon = kEpsilon)
+bool NearlyEqual(const glm::dvec3 &a, const glm::dvec3 &b, float epsilon = kEpsilon)
 {
-    return glm::all(glm::lessThan(glm::abs(a - b), glm::vec3(epsilon)));
+    return glm::all(glm::lessThan(glm::abs(a - b), glm::dvec3(epsilon)));
 }
 
 /// |dot| folds the q/-q double cover: two quaternions naming the same orientation
@@ -96,7 +96,7 @@ TEST_CASE("A parented body is created at its composed world pose")
     AddBall(scene, world, entity);
 
     const Physics::Pose pose = world.GetBodyPose(entity);
-    CHECK(NearlyEqual(pose.position, glm::vec3(parent * glm::vec4(local.position, 1.f))));
+    CHECK(NearlyEqual(pose.position, glm::dvec3(parent * glm::vec4(glm::vec3(local.position), 1.f))));
     CHECK(NearlyEqual(pose.rotation, glm::quat_cast(glm::mat3(parent)) * local.rotation));
 }
 

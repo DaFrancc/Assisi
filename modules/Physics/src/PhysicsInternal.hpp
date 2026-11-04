@@ -442,7 +442,7 @@ inline bool IsFinite(const Pose &pose)
     return IsFinite(pose.position) && IsFinite(pose.rotation);
 }
 
-inline JPH::RVec3 ToJolt(glm::vec3 position)
+inline JPH::RVec3 ToJolt(const glm::dvec3 &position)
 {
     return JPH::RVec3(position.x, position.y, position.z);
 }
@@ -464,11 +464,9 @@ inline glm::vec3 ToGlm(JPH::Vec3Arg vector)
     return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
 }
 
-/// Narrowed to float, which is what a Transform holds.
-inline glm::vec3 ToGlm(JPH::RVec3Arg position)
+inline glm::dvec3 ToGlm(JPH::RVec3Arg position)
 {
-    return glm::vec3(static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
-                     static_cast<float>(position.GetZ()));
+    return glm::dvec3(position.GetX(), position.GetY(), position.GetZ());
 }
 
 inline glm::quat ToGlm(JPH::QuatArg rotation)
@@ -504,10 +502,10 @@ inline bool IsModelShape(ColliderShape shape)
     return shape == ColliderShape::Convex || shape == ColliderShape::Mesh;
 }
 
-/// The world matrix @p entity's Transform is relative to, composed from the
-/// local poses up its Parent chain: the simulation pose, not the drawn one the
-/// propagated world matrices hold. Null for a root.
-std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
+/// The world pose @p entity's Transform is relative to, composed from the local
+/// poses up its Parent chain: the simulation pose, not the drawn one the
+/// propagated world matrices hold, and with its position exact. Null for a root.
+std::optional<ECS::Transform> SimulationParentPose(const ECS::Scene &scene, ECS::Entity entity);
 
 /// Builds the Jolt collision shape for a Collider's primitive, unscaled and
 /// without its offset, at the collider's density and carrying @p entity in its
@@ -556,10 +554,11 @@ struct CookedShapeKeyHash
     std::size_t operator()(const CookedShapeKey &key) const noexcept;
 };
 
-/// A point and two perpendicular directions: one end of a joint.
+/// A point and two perpendicular directions: one end of a joint. The point is a
+/// double because a placed frame's is in world space.
 struct JointFrame
 {
-    glm::vec3 point{0.f};
+    glm::dvec3 point{0.0};
     glm::vec3 axis{0.f, 1.f, 0.f};
     glm::vec3 normal{1.f, 0.f, 0.f};
 };
@@ -698,10 +697,10 @@ struct PhysicsWorld::Impl
     /// position changed, since the look systems turn it every frame.
     struct TransformStamp
     {
-        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 position{0.f};
-        glm::vec3 scale{1.f};
+        glm::dvec3 position{0.0};
         uint64_t tick = 0;
+        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 scale{1.f};
     };
 
     /// What an entity's slot holds.
@@ -1132,8 +1131,8 @@ private:
     /// by the kinds applied at a point.
     struct BodyRequest
     {
+        glm::dvec3 point{0.0};
         glm::vec3 value{0.f};
-        glm::vec3 point{0.f};
         ECS::Entity entity{ECS::NullEntity};
         RequestKind kind = RequestKind::Force;
     };
@@ -1275,8 +1274,8 @@ private:
     /// what touched; `pairs` turns that into phases once the step is over.
     struct TouchRecord
     {
+        glm::dvec3 point{0.0};    ///< The middle of the contact, in world space.
         glm::vec3 normal{0.f};    ///< Away from body1's surface, as Jolt reports it.
-        glm::vec3 point{0.f};     ///< The middle of the contact, in world space.
         glm::vec3 velocity1{0.f}; ///< Pre-solve, so an impact's speed survives the solver.
         glm::vec3 velocity2{0.f};
 
@@ -1301,9 +1300,9 @@ private:
     /// destroyed since still names who it was.
     struct PairState
     {
+        glm::dvec3 point{0.0};
         std::uint64_t stamp = 0;
         glm::vec3 normal{0.f};
-        glm::vec3 point{0.f};
         glm::vec3 velocity1{0.f};
         glm::vec3 velocity2{0.f};
 
@@ -1418,13 +1417,13 @@ private:
     // --- Queries (PhysicsQueries.cpp) ------------------------------------------
 
     /// One ray hit, for a ray from @p origin along @p sweep.
-    QueryHit RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH::RayCastResult &result) const;
+    QueryHit RayHit(const glm::dvec3 &origin, glm::vec3 sweep, const JPH::RayCastResult &result) const;
 
     /// One shape-cast hit, for a cast along @p sweep.
-    QueryHit ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResult &result) const;
+    QueryHit ShapeHit(const glm::dvec3 &base, glm::vec3 sweep, const JPH::ShapeCastResult &result) const;
 
     /// One overlap hit; its distance is the depth.
-    QueryHit OverlapHit(const JPH::CollideShapeResult &result) const;
+    QueryHit OverlapHit(const glm::dvec3 &base, const JPH::CollideShapeResult &result) const;
 
     /// The piece @p subShape names on @p body, read under the body's lock.
     ECS::Entity PieceStruck(const JPH::BodyID &body, const JPH::SubShapeID &subShape) const;
@@ -1791,7 +1790,7 @@ private:
     /// Puts @p record's character and its inner body at @p feet with
     /// @p velocity, finds what it touches there, and writes and snaps its
     /// Transform.
-    void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
+    void PlaceCharacter(CharacterRecord &record, const glm::dvec3 &feet, glm::vec3 velocity);
     /// Puts the character back as @p frame's physics state has it, ground and
     /// contacts included; placed as PlaceCharacter does when that state does
     /// not read back.

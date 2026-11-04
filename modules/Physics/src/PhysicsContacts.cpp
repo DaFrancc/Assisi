@@ -45,13 +45,13 @@ namespace
 
 /// The middle of a manifold's contact points, halfway between the two
 /// surfaces: one point that stands for the whole patch.
-glm::vec3 ContactMiddle(const JPH::ContactManifold &manifold)
+glm::dvec3 ContactMiddle(const JPH::ContactManifold &manifold)
 {
     const JPH::uint count = manifold.mRelativeContactPointsOn1.size();
     if (count == 0)
     {
         const JPH::RVec3 base = manifold.mBaseOffset;
-        return glm::vec3(base.GetX(), base.GetY(), base.GetZ());
+        return ToGlm(base);
     }
     JPH::Vec3 sum = JPH::Vec3::sZero();
     for (JPH::uint i = 0; i < count; ++i)
@@ -59,7 +59,7 @@ glm::vec3 ContactMiddle(const JPH::ContactManifold &manifold)
         sum += manifold.mRelativeContactPointsOn1[i] + manifold.mRelativeContactPointsOn2[i];
     }
     const JPH::RVec3 middle = manifold.mBaseOffset + sum / (2.f * static_cast<float>(count));
-    return glm::vec3(middle.GetX(), middle.GetY(), middle.GetZ());
+    return ToGlm(middle);
 }
 
 /// The piece pair's order, for a tie between two equally deep touches.
@@ -116,11 +116,11 @@ void PhysicsWorld::Impl::RecordTouch(const JPH::Body &body1, const JPH::Body &bo
                                     if (body.IsStatic())
                                         return glm::vec3(0.f);
                                     const JPH::Vec3 v = body.GetLinearVelocity();
-                                    return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+                                    return ToGlm(v);
                                 };
 
-    const TouchRecord record{.normal = glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
-                             .point = ContactMiddle(manifold),
+    const TouchRecord record{.point = ContactMiddle(manifold),
+                             .normal = glm::vec3{n.GetX(), n.GetY(), n.GetZ()},
                              .velocity1 = linearVelocity(body1),
                              .velocity2 = linearVelocity(body2),
                              .piece1 = PieceOf(body1, manifold.mSubShapeID1),
@@ -147,7 +147,7 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &chara
     if (bodies.IsAdded(other) && bodies.GetMotionType(other) != JPH::EMotionType::Static)
     {
         const JPH::Vec3 v = bodies.GetLinearVelocity(other);
-        otherVelocity     = glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+        otherVelocity     = ToGlm(v);
     }
 
     const bool sensor = bodies.IsAdded(other) && layers.EntryOf(bodies.GetObjectLayer(other)).trigger;
@@ -156,9 +156,9 @@ void PhysicsWorld::Impl::RecordCharacterTouch(const JPH::CharacterVirtual &chara
     // the same sense the body-vs-body path records, which is what lets both
     // arrive at a consumer looking identical.
     const JPH::Vec3 velocity = character.GetLinearVelocity();
-    const TouchRecord record{.normal = glm::vec3(normal.GetX(), normal.GetY(), normal.GetZ()),
-                             .point = glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-                             .velocity1 = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+    const TouchRecord record{.point = ToGlm(position),
+                             .normal = ToGlm(normal),
+                             .velocity1 = ToGlm(velocity),
                              .velocity2 = otherVelocity,
                              .piece1 = EntityOfUserData(character.GetUserData()),
                              .piece2 = otherPiece,
@@ -213,12 +213,12 @@ void PhysicsWorld::Impl::EmitPair(const PairState &state, ContactPhase phase, st
     // a reflection wants and what spares a consumer working out the pair's order.
     if (e1 != ECS::NullEntity)
     {
-        out.push_back(ContactEvent{-state.normal, state.point, state.velocity1, e1, e2, state.piece1, state.piece2,
+        out.push_back(ContactEvent{state.point, -state.normal, state.velocity1, e1, e2, state.piece1, state.piece2,
                                    phase, state.sensor});
     }
     if (e2 != ECS::NullEntity)
     {
-        out.push_back(ContactEvent{state.normal, state.point, state.velocity2, e2, e1, state.piece2, state.piece1,
+        out.push_back(ContactEvent{state.point, state.normal, state.velocity2, e2, e1, state.piece2, state.piece1,
                                    phase, state.sensor});
     }
 }

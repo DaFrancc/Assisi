@@ -266,7 +266,7 @@ TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
     (void)BuildSceneBodies(world.scene, world.physics);
 
     CHECK(world.physics.GetBodyState(entity).linearVelocity == glm::vec3(0.f));
-    CHECK(world.physics.GetBodyPose(entity).position == spawn);
+    CHECK(glm::vec3(world.physics.GetBodyPose(entity).position) == spawn);
 }
 
 TEST_CASE("Resident worlds simulate independently and outlive each other")
@@ -301,8 +301,8 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
         });
     }
 
-    const float fell = falling.scene.Get<Assisi::ECS::Transform>(a)->position.y;
-    const float landed = caught.scene.Get<Assisi::ECS::Transform>(b)->position.y;
+    const float fell = static_cast<float>(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y);
+    const float landed = static_cast<float>(caught.scene.Get<Assisi::ECS::Transform>(b)->position.y);
     CHECK(fell < -5.f);  // nothing to stop it
     CHECK(landed > 0.f); // the other world's floor did stop it
     CHECK(landed < 5.f); // ...but it did fall

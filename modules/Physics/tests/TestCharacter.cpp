@@ -44,14 +44,14 @@ constexpr glm::vec3 kWalkForward{5.f, 0.f, 0.f};
 
 /// A box reconciled into @p world at once, so a hit or a contact has something
 /// to name before any step runs.
-ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at, glm::vec3 halfExtents,
+ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, const glm::dvec3 &at, glm::vec3 halfExtents,
                      Physics::CollisionChannel channel = Physics::CollisionChannel::World)
 {
     // A static box, or the always-awake kind of sensor for a trigger.
     const PhysicsTests::BodySpec descriptor =
         PhysicsTests::WithFilter(PhysicsTests::Box(halfExtents, channel != Physics::CollisionChannel::Trigger),
                                  Physics::CollisionFilter{Physics::AllChannels, channel});
-    const ECS::Entity entity = PhysicsTests::AddBody(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddBody(scene, glm::dvec3(at), descriptor);
     world.Reconcile();
     return entity;
 }
@@ -64,10 +64,10 @@ ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world)
 
 /// A character standing at @p at, with whatever the descriptor defaults are
 /// unless the caller changed them first, reconciled into @p world at once.
-ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
+ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, const glm::dvec3 &at,
                            Physics::Character descriptor = {})
 {
-    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, glm::dvec3(at), descriptor);
     world.Reconcile();
     REQUIRE(world.HasBody(entity));
     return entity;
@@ -87,9 +87,9 @@ void Walk(ECS::Scene &scene, Physics::PhysicsWorld &world, ECS::Entity character
 /// through the Transform rather than the simulation because that is what gameplay
 /// and the editor see — a writeback that quietly skipped characters would satisfy
 /// every other assertion in this file.
-glm::vec3 CharacterPosition(ECS::Scene &scene)
+glm::dvec3 CharacterPosition(ECS::Scene &scene)
 {
-    glm::vec3 position{0.f};
+    glm::dvec3 position{0.0};
     for (auto [entity, transform, character] : scene.Query<ECS::Transform, Physics::Character>())
     {
         (void)entity;
@@ -99,7 +99,7 @@ glm::vec3 CharacterPosition(ECS::Scene &scene)
     return position;
 }
 
-bool Finite(glm::vec3 value)
+template <typename Vector> bool Finite(const Vector &value)
 {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
@@ -143,7 +143,7 @@ TEST_CASE("A character walking into a wall stops at it")
 
     // Stopped at the face less its own radius, give or take the padding the sweep
     // keeps off geometry.
-    const glm::vec3 position = CharacterPosition(scene);
+    const glm::vec3 position = glm::vec3(CharacterPosition(scene));
     CHECK(position.x < 2.f - descriptor.radius + 0.1f);
     CHECK(position.x > 1.f); // it did actually travel
 }
@@ -191,7 +191,7 @@ TEST_CASE("A character walking into a body locked on several axes stays finite")
             pose.rotation = nearlyIdentity;
             pose.scale = nearlyUnit;
 
-            const ECS::Entity character = SpawnCharacter(scene, world, start);
+            const ECS::Entity character = SpawnCharacter(scene, world, glm::dvec3(start));
             Walk(scene, world, character, -glm::normalize(start) * glm::length(kWalkForward), kSettleSteps);
 
             CHECK(Finite(CharacterPosition(scene)));
@@ -256,10 +256,10 @@ float WalkInto(const Physics::Character &walker, const Physics::Character &stand
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
-    (void)SpawnCharacter(scene, world, kInTheWay, standing);
+    (void)SpawnCharacter(scene, world, glm::dvec3(kInTheWay), standing);
     const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, 0.f}, walker);
     Walk(scene, world, walking, kWalkForward, kSettleSteps);
-    return scene.Get<ECS::Transform>(walking)->position.x;
+    return static_cast<float>(scene.Get<ECS::Transform>(walking)->position.x);
 }
 
 /// How far counts as shoved rather than nudged by rounding (m).
@@ -286,13 +286,14 @@ Meeting WalkIntoStanding(FirstToStep first)
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
-    const ECS::Entity standing = SpawnCharacter(scene, world, kInTheWay);
+    const ECS::Entity standing = SpawnCharacter(scene, world, glm::dvec3(kInTheWay));
     const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
     world.SetCharacterOrderKey(standing, first == FirstToStep::Standing ? 0u : 1u);
     world.SetCharacterOrderKey(walking, first == FirstToStep::Walking ? 0u : 1u);
     Walk(scene, world, walking, kWalkForward, kSettleSteps);
-    return Meeting{.shoved = scene.Get<ECS::Transform>(standing)->position.x - kInTheWay.x,
-                   .reached = scene.Get<ECS::Transform>(walking)->position.x};
+    return Meeting{
+        .shoved = static_cast<float>(scene.Get<ECS::Transform>(standing)->position.x - static_cast<double>(kInTheWay.x)),
+        .reached = static_cast<float>(scene.Get<ECS::Transform>(walking)->position.x)};
 }
 
 } // namespace
@@ -346,12 +347,12 @@ TEST_CASE("A character meeting another off-centre slides around it, and the othe
     ECS::Scene scene;
     Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
     (void)SpawnFloor(scene, world);
-    const ECS::Entity standing = SpawnCharacter(scene, world, kInTheWay);
+    const ECS::Entity standing = SpawnCharacter(scene, world, glm::dvec3(kInTheWay));
     const ECS::Entity walking = SpawnCharacter(scene, world, {0.f, 0.f, kOffCentre});
     Walk(scene, world, walking, kWalkForward, kSettleSteps);
 
-    CHECK(scene.Get<ECS::Transform>(walking)->position.x > kInTheWay.x + kWalkedThrough);
-    CHECK(glm::length(scene.Get<ECS::Transform>(standing)->position - kInTheWay) < kShoved);
+    CHECK(scene.Get<ECS::Transform>(walking)->position.x > static_cast<double>(kInTheWay.x + kWalkedThrough));
+    CHECK(glm::length(scene.Get<ECS::Transform>(standing)->position - glm::dvec3(kInTheWay)) < static_cast<double>(kShoved));
 }
 
 TEST_CASE("A character asked onto one of the engine's other channels is on Character")
@@ -572,7 +573,7 @@ TEST_CASE("A crouched character is not hit at standing head height")
     Walk(scene, world, character, glm::vec3(0.f), 10);
 
     // Across the standing capsule's upper half, well above the crouched one.
-    const glm::vec3 origin{-3.f, 1.5f, 0.f};
+    const glm::dvec3 origin{-3.0, 1.5, 0.0};
     const glm::vec3 sweep{6.f, 0.f, 0.f};
 
     REQUIRE(world.CastRay(origin, sweep, {}, ECS::NullEntity).has_value());
@@ -606,14 +607,14 @@ TEST_CASE("Crouching in the air lifts the feet and leaves the eye where it was")
     Walk(scene, world, character, glm::vec3(0.f), 14);
     REQUIRE(PhysicsTests::StateOf(scene, character).ground == Physics::GroundState::InAir);
 
-    const float feetBefore = CharacterPosition(scene).y;
+    const float feetBefore = static_cast<float>(CharacterPosition(scene).y);
     const float eyeBefore = feetBefore + PhysicsTests::StateOf(scene, character).eyeHeight;
     REQUIRE(feetBefore > kLift);
 
     REQUIRE(PhysicsTests::AskStance(scene, world, character, Physics::Stance::Crouching));
 
     // No step in between: the whole change is the stance call's.
-    const float feetCrouched = CharacterPosition(scene).y;
+    const float feetCrouched = static_cast<float>(CharacterPosition(scene).y);
     CHECK(feetCrouched == doctest::Approx(feetBefore + kLift));
     CHECK(feetCrouched + PhysicsTests::StateOf(scene, character).eyeHeight == doctest::Approx(eyeBefore));
 
@@ -631,7 +632,7 @@ TEST_CASE("Crouching on the ground leaves the feet where they are")
 
     const ECS::Entity character = SpawnCharacter(scene, world, {0.f, 0.f, 0.f});
     Walk(scene, world, character, glm::vec3(0.f), 60);
-    const float feetBefore = CharacterPosition(scene).y;
+    const float feetBefore = static_cast<float>(CharacterPosition(scene).y);
 
     REQUIRE(PhysicsTests::AskStance(scene, world, character, Physics::Stance::Crouching));
     CHECK(CharacterPosition(scene).y == doctest::Approx(feetBefore));
@@ -730,7 +731,7 @@ TEST_CASE("Two characters walking at each other stop rather than overlapping")
     {
         (void)entity;
         (void)ch;
-        xs.push_back(tc.position.x);
+        xs.push_back(static_cast<float>(tc.position.x));
     }
     REQUIRE(xs.size() == 2u);
 
