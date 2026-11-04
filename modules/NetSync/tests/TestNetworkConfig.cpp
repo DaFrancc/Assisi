@@ -50,11 +50,11 @@ TEST_CASE("a config that quantizes differently changes the hash two peers compar
     const RestoreGlobals restore;
     const std::uint64_t baseline = NetProtocolHash();
 
-    REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig", "positionExtent": 512.0 })"));
+    REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig", "positionBits": 20 })"));
 
-    CHECK(Quantization().positionExtent == doctest::Approx(512.f));
+    CHECK(Quantization().positionBits == 20u);
     CHECK(NetProtocolHash() != baseline);
-    CHECK(NetProtocolSummary().find("positionExtent=512") != std::string::npos);
+    CHECK(NetProtocolSummary().find("positionBits=20") != std::string::npos);
 }
 
 TEST_CASE("a bad quantization block costs only itself")
@@ -81,10 +81,10 @@ TEST_CASE("a bad smoothing block costs only itself")
     // largeErrorDistance under smallErrorDistance inverts the blend.
     REQUIRE(ApplyText(R"({ "version": 1, "type": "NetworkConfig",
                            "smallErrorDistance": 5.0, "largeErrorDistance": 1.0,
-                           "positionExtent": 300.0 })"));
+                           "positionBits": 20 })"));
 
     CHECK(Smoothing().hardSnapDistance == doctest::Approx(snapBefore));
-    CHECK(Quantization().positionExtent == doctest::Approx(300.f));
+    CHECK(Quantization().positionBits == 20u);
 }
 
 TEST_CASE("the never-replicate list and the relevancy settings reach the accessors")

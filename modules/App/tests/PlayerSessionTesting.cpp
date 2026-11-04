@@ -35,6 +35,10 @@ constexpr std::uint16_t kPastLastPort = 27280;
 /// How far apart two starts are put (m): well clear of two capsules.
 constexpr float kStartsApart = 4.f;
 
+/// Half the width and half the thickness of a floor AddFloors puts down (m).
+constexpr double kFloorHalfWidth = 50.0;
+constexpr double kFloorHalfHeight = 1.0;
+
 nlohmann::json Pose(float y)
 {
     return {{"position", {0.f, y, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}};
@@ -170,27 +174,33 @@ std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role)
     return 0;
 }
 
-void JoinOnFloor(Session &session, Machine &host, Machine &client)
+void AddFloors(Session &session, const glm::dvec3 &centre)
 {
-    // A floor on both machines, as a level puts one there.
     for (const std::unique_ptr<Machine> &machine : session.machines)
     {
         const ECS::Entity floor = machine->world.scene.Create();
-        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
+        (void)machine->world.scene.Add<ECS::Transform>(
+            floor, ECS::Transform{.position = centre + glm::dvec3{0.0, -kFloorHalfHeight, 0.0}});
         Physics::Collider collider;
         collider.shape = Physics::ColliderShape::Box;
-        collider.halfExtents = {50.f, 1.f, 50.f};
+        collider.halfExtents = {kFloorHalfWidth, kFloorHalfHeight, kFloorHalfWidth};
         (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
     }
+}
+
+void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dvec3 &origin)
+{
+    AddFloors(session, origin);
 
     // A start each, apart: two characters made on one start push each other
     // apart, and the host, who sees the other where it is, rightly wins that.
     App::PlayerStart startAt;
     startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
-    for (const float x : {0.f, kStartsApart})
+    for (const double x : {0.0, static_cast<double>(kStartsApart)})
     {
         const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = {x, 0.f, 0.f}});
+        (void)host.world.scene.Add<ECS::Transform>(start,
+                                                   ECS::Transform{.position = origin + glm::dvec3{x, 0.0, 0.0}});
         (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
     }
 

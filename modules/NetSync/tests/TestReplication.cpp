@@ -1368,7 +1368,8 @@ std::vector<std::byte> HandSnapshot(std::uint64_t serverTick, const NetId *block
     if (body != nullptr)
     {
         writer.WriteBool(true);
-        WriteBodyState(*body, writer);
+        CellReference reference;
+        WriteBodyState(*body, reference, writer);
     }
     writer.WriteBool(false);
     writer.WriteBool(false); // no events

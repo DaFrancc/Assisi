@@ -106,22 +106,14 @@ const ViewSmoothing &Smoothing() { return gSmoothing; }
 
 void SetSmoothing(const ViewSmoothing &smoothing) { gSmoothing = smoothing; }
 
-void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
+void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer)
 {
     const BodyQuantization &q = gQuantization;
 
     writer.WriteVarId(state.netId); // wire write
     writer.WriteBool(state.asleep);
 
-    // Packed into the extent around the world's origin, and clamped to it, so a
-    // float holds every value that survives the packing.
-    writer.WriteFloatQuantized(static_cast<float>(state.position.x), -q.positionExtent, q.positionExtent,
-                               q.positionBits);
-    writer.WriteFloatQuantized(static_cast<float>(state.position.y), -q.positionExtent, q.positionExtent,
-                               q.positionBits);
-    writer.WriteFloatQuantized(static_cast<float>(state.position.z), -q.positionExtent, q.positionExtent,
-                               q.positionBits);
-
+    WriteWorldPosition(state.position, reference, writer);
     WriteQuaternion(state.rotation, writer);
 
     // A sleeping body has no motion by definition, so six values of zero would be
@@ -151,7 +143,7 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
     }
 }
 
-bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
+bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState &outState)
 {
     const BodyQuantization &q = gQuantization;
 
@@ -159,13 +151,10 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     state.netId  = reader.ReadVarId<NetId>(); // wire read
     state.asleep = reader.ReadBool();
 
-    state.position.x =
-        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
-    state.position.y =
-        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
-    state.position.z =
-        static_cast<double>(reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits));
-
+    if (!ReadWorldPosition(reader, reference, state.position))
+    {
+        return false;
+    }
     state.rotation = ReadQuaternion(reader);
 
     if (!state.asleep)

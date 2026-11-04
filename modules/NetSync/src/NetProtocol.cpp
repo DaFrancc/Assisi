@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 
 #include <format>
@@ -63,9 +64,9 @@ std::string InputActionDescription()
 std::string QuantizationDescription()
 {
     const BodyQuantization &q = Quantization();
-    return std::format("body positionExtent={:g} positionBits={} linearMax={:g} linearBits={} "
+    return std::format("body cell={:g} positionBits={} linearMax={:g} linearBits={} "
                        "angularMax={:g} angularBits={}",
-                       static_cast<double>(q.positionExtent), q.positionBits,
+                       Math::kWorldCellSize, q.positionBits,
                        static_cast<double>(q.linearVelocityMax), q.linearVelocityBits,
                        static_cast<double>(q.angularVelocityMax), q.angularVelocityBits);
 }

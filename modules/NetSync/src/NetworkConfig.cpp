@@ -38,7 +38,7 @@ OwnershipConfig gOwnership;
 /// saying which key did it. Refusing the config says it.
 [[nodiscard]] bool QuantizationInRange(const NetworkConfig &config)
 {
-    return config.positionExtent > 0.f && config.linearVelocityMax > 0.f && config.angularVelocityMax > 0.f &&
+    return config.linearVelocityMax > 0.f && config.angularVelocityMax > 0.f &&
            BitsInRange(config.positionBits) && BitsInRange(config.linearVelocityBits) &&
            BitsInRange(config.angularVelocityBits);
 }
@@ -59,22 +59,21 @@ void ApplyQuantization(const NetworkConfig &config)
 {
     if (!QuantizationInRange(config))
     {
-        Core::Log::Warn("NetSync: the network config's quantization is out of range (extents must be positive, "
+        Core::Log::Warn("NetSync: the network config's quantization is out of range (velocity bounds must be positive, "
                         "bit counts {}..{}) - keeping the defaults.",
                         kMinQuantizationBits, kMaxQuantizationBits);
         return;
     }
 
-    const BodyQuantization loaded{.positionExtent      = config.positionExtent,
-                                  .positionBits        = config.positionBits,
+    const BodyQuantization loaded{.positionBits        = config.positionBits,
                                   .linearVelocityMax   = config.linearVelocityMax,
                                   .linearVelocityBits  = config.linearVelocityBits,
                                   .angularVelocityMax  = config.angularVelocityMax,
                                   .angularVelocityBits = config.angularVelocityBits};
     SetQuantization(loaded);
-    Core::Log::Info("NetSync: body quantization - position +/-{:g} m at {} bits, linear +/-{:g} m/s at {} bits, "
+    Core::Log::Info("NetSync: body quantization - position at {} bits in a cell, linear +/-{:g} m/s at {} bits, "
                     "angular +/-{:g} rad/s at {} bits.",
-                    static_cast<double>(loaded.positionExtent), loaded.positionBits,
+                    loaded.positionBits,
                     static_cast<double>(loaded.linearVelocityMax), loaded.linearVelocityBits,
                     static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits);
 }
