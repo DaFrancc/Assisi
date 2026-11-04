@@ -350,6 +350,8 @@ def build_geometry_stress(icosphere_count=150, half_extent=45.0, seed=0x5EED0004
 
 
 PRIM_SPHERE_COLLIDER = 1  # Physics::ColliderShape::Sphere, which levels store as its number
+PRIM_CYLINDER_COLLIDER = 3  # Physics::ColliderShape::Cylinder
+KINEMATIC_MOTION = 1  # Physics::MotionType::Kinematic
 
 
 def static_body():
@@ -481,6 +483,117 @@ def build_insane(half_extent=40.0, seed=0x5EED0005):
     return entities, systems
 
 
+def circle_path_entity(name, radius, height, order=0):
+    return {
+        "components": {
+            "CameraCirclePath": {
+                "center": [0.0, 0.0, 0.0],
+                "height": height,
+                "lookAt": [0.0, 0.0, 0.0],
+                "order": order,
+                "radius": radius,
+                "seconds": 15.0,
+                "startDegrees": 0.0,
+                "sweepDegrees": 360.0,
+            }
+        },
+        "name": name,
+    }
+
+
+def pile_body(name, index, position):
+    """A box, sphere or cylinder by @p index, each with the collider of the mesh
+    it is drawn as: prim://cube and prim://sphere-low are 1 m across, and
+    prim://cylinder is radius 1 over y in [-1, 1], scaled down here."""
+    kind = index % 3
+    if kind == 0:
+        entity = mesh_entity(name, "prim://cube", position, (1.0, 1.0, 1.0))
+        collider = {"halfExtents": [0.5, 0.5, 0.5]}
+    elif kind == 1:
+        entity = mesh_entity(name, "prim://sphere-low", position, (1.0, 1.0, 1.0))
+        collider = {"radius": 0.5, "shape": PRIM_SPHERE_COLLIDER}
+    else:
+        entity = mesh_entity(name, "prim://cylinder", position, (0.4, 0.5, 0.4))
+        collider = {"halfHeight": 1.0, "radius": 1.0, "shape": PRIM_CYLINDER_COLLIDER}
+    collider["restitution"] = 0.3
+    entity["components"]["Collider"] = collider
+    entity["components"]["RigidBody"] = {}
+    return entity
+
+
+def sweeper_entity(name, position, scale, axis, amplitude, period, phase):
+    """A kinematic bar that slides back and forth through the pile, so it never
+    settles and goes to sleep: the stage is just as busy every second of a run."""
+    entity = mesh_entity(name, "prim://cube", position, scale)
+    entity["components"]["Collider"] = {"halfExtents": [0.5, 0.5, 0.5]}
+    entity["components"]["RigidBody"] = {"motion": KINEMATIC_MOTION}
+    entity["components"]["Oscillator"] = {
+        "origin": [round6(v) for v in position],
+        "axis": list(axis),
+        "amplitude": round6(amplitude),
+        "periodSeconds": round6(period),
+        "phase": round6(phase),
+    }
+    return entity
+
+
+def build_physics(half_extent=13.0, columns=10, layers=10, seed=0x5EED0006):
+    """A thousand bodies churned by four sliding bars: the physics step's cost.
+
+    The rendering is deliberately light (one light, low-poly meshes), so the
+    `physics-step` scope is what a run is read for. A thousand bodies keeps the
+    pile's contact pairs well under the contact-constraint cap PhysicsWorld
+    initialises Jolt with; past it Jolt drops contacts and bodies fall through.
+    """
+    rng = Lcg(seed)
+    entities = [camera_entity((0.0, 18.0, 32.0), (0.0, 0.0, 0.0)), sun_entity(),
+                circle_path_entity("Orbit", radius=32.0, height=18.0)]
+
+    ground = ground_entity(half_extent)
+    ground["components"].update(static_body())
+    entities.append(ground)
+
+    wall_height = 10.0
+    thickness = 1.0
+    span = half_extent * 2.0 + thickness * 2.0
+    offset = half_extent + thickness * 0.5
+    y = wall_height * 0.5
+    entities += [
+        wall_entity("WallEast", (offset, y, 0.0), (thickness, wall_height, span)),
+        wall_entity("WallWest", (-offset, y, 0.0), (thickness, wall_height, span)),
+        wall_entity("WallNorth", (0.0, y, offset), (span, wall_height, thickness)),
+        wall_entity("WallSouth", (0.0, y, -offset), (span, wall_height, thickness)),
+    ]
+
+    # Columns of bodies dropped together: they topple into each other and the
+    # sweepers, rather than each landing alone.
+    spacing = (half_extent * 1.7) / columns
+    start = -spacing * (columns - 1) * 0.5
+    index = 0
+    for row in range(columns):
+        for column in range(columns):
+            for layer in range(layers):
+                # Above the sweepers, which are 1.2 m tall: a body spawned inside
+                # one would be thrown out of it.
+                position = (start + column * spacing + rng.range(-0.2, 0.2), 2.0 + layer * 1.3,
+                            start + row * spacing + rng.range(-0.2, 0.2))
+                entities.append(pile_body(f"Body_{index}", index, position))
+                index += 1
+
+    # Two bars sweep along x and two along z, crossing each other freely:
+    # kinematic bodies do not collide with one another or with the walls.
+    bar = half_extent * 1.5
+    amplitude = half_extent * 0.7
+    centre = (0.0, 0.6, 0.0)
+    entities += [
+        sweeper_entity("SweeperX_0", centre, (2.0, 1.2, bar), (1.0, 0.0, 0.0), amplitude, 5.1, 0.0),
+        sweeper_entity("SweeperX_1", centre, (2.0, 1.2, bar), (1.0, 0.0, 0.0), amplitude, 6.3, 0.5),
+        sweeper_entity("SweeperZ_0", centre, (bar, 1.2, 2.0), (0.0, 0.0, 1.0), amplitude, 7.7, 0.25),
+        sweeper_entity("SweeperZ_1", centre, (bar, 1.2, 2.0), (0.0, 0.0, 1.0), amplitude, 4.4, 0.75),
+    ]
+    return entities, ["Oscillate"]
+
+
 SCENES = {
     "PerfBlank": build_blank,
     "PerfReferenceManyInstances": build_many_instances,
@@ -488,6 +601,7 @@ SCENES = {
     "PerfStress": build_stress,
     "PerfGeometryStress": build_geometry_stress,
     "PerfInsane": build_insane,
+    "PerfPhysics": build_physics,
 }
 
 
@@ -519,12 +633,14 @@ def write_scene(name, entities, systems):
     # The sidecar carries the level's stable guid. Minted once and preserved on
     # regeneration: a new guid every run would repoint every reference to this
     # level at something the database has never seen.
+    # The cook refuses a sidecar that names no kind.
     sidecar_path = LEVELS / f"{name}.alvl.aast"
     if sidecar_path.exists():
         guid = json.loads(sidecar_path.read_text())["guid"]
     else:
         guid = str(uuid.uuid4())
-    sidecar_path.write_text(json.dumps({"guid": guid, "type": "AssetSidecar", "version": 1}, indent=2))
+    sidecar = {"guid": guid, "type": "AssetSidecar", "uses": [{"kind": "scene"}], "version": 1}
+    sidecar_path.write_text(json.dumps(sidecar, indent=2))
     return level_path
 
 

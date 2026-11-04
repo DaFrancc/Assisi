@@ -464,6 +464,13 @@ inline glm::vec3 ToGlm(JPH::Vec3Arg vector)
     return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
 }
 
+/// Narrowed to float, which is what a Transform holds.
+inline glm::vec3 ToGlm(JPH::RVec3Arg position)
+{
+    return glm::vec3(static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
+                     static_cast<float>(position.GetZ()));
+}
+
 inline glm::quat ToGlm(JPH::QuatArg rotation)
 {
     return glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
