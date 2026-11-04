@@ -32,7 +32,20 @@ struct Triple
 /// the absolute tolerance.
 constexpr double kFarOut = 1000.0;
 
+/// A double position far from the origin, where the float fraction would let
+/// two positions a metre apart agree.
+constexpr double kFarWorld = 100000.0;
+
+/// A miss a player sees: a predicted position a centimetre off the host's.
+constexpr double kVisibleMiss = 0.01;
+
 } // namespace
+
+TEST_CASE("a double far from the origin agrees within the absolute tolerance, not a fraction of itself")
+{
+    CHECK(PredictedFieldEqual(kFarWorld, kFarWorld + kPredictedAbsoluteTolerance / 2.0));
+    CHECK_FALSE(PredictedFieldEqual(kFarWorld, kFarWorld + kVisibleMiss));
+}
 
 TEST_CASE("two floats a rounding apart agree, and two a real step apart do not")
 {
