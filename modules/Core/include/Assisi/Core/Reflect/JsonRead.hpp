@@ -75,6 +75,11 @@ namespace Assisi::Core::Reflect
 [[nodiscard]] bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field,
                                   std::size_t count, float *out);
 
+/// @brief ReadFloatArray at double precision: the dvec3 case. A file written with
+/// float values reads them back exactly, since every float is a double.
+[[nodiscard]] bool ReadDoubleArray(const nlohmann::json &j, const char *component, const char *field,
+                                   std::size_t count, double *out);
+
 /// @brief One enumerator, as generated code spells it for ReadEnum.
 ///
 /// A view rather than a copy: the name is a string literal in the generated

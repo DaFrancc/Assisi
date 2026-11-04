@@ -303,7 +303,7 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     }
 
     RefreshCameraMatrix();
-    const glm::vec3 camPos = _cameraTransform.position;
+    const glm::vec3 camPos = glm::vec3(_cameraTransform.position);
     const glm::vec3 toCam = camPos - world.center;
     const float dist = glm::length(toCam);
 
@@ -403,7 +403,8 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     for (const auto &[id, row] : _world->instances.All())
     {
         float t = 0.f;
-        if (RayBillboardIntersect(ray.origin, ray.direction, row->transform.position, ray.cameraRight, ray.cameraUp,
+        if (RayBillboardIntersect(ray.origin, ray.direction, glm::vec3(row->transform.position), ray.cameraRight,
+                                  ray.cameraUp,
                                   iconHalf, t) &&
             t < tOut)
         {

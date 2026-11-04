@@ -42,7 +42,7 @@ void OscillateSystem(SystemContext &ctx)
 
         if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(entity))
         {
-            transform->position = oscillator.origin + (oscillator.axis / axisLength) * offset;
+            transform->position = oscillator.origin + glm::dvec3((oscillator.axis / axisLength) * offset);
         }
     }
 }

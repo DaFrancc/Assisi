@@ -65,7 +65,7 @@ ECS::Entity AddCrate(Machine &host, glm::vec3 from)
     ECS::Scene &scene = host.world.scene;
     const ECS::Entity crate = scene.Create();
     (void)scene.Add<ECS::Transform>(crate,
-                                    ECS::Transform{.position = from + glm::vec3{0.f, kCrateHalf, -kCrateAhead}});
+                                    ECS::Transform{.position = glm::dvec3(from + glm::vec3{0.f, kCrateHalf, -kCrateAhead})});
     Physics::Collider collider;
     collider.shape = Physics::ColliderShape::Box;
     collider.halfExtents = glm::vec3{kCrateHalf};
@@ -137,7 +137,7 @@ struct Pushing
         JoinOnFloor(session, *host, *client);
         player = LocalPlayerOf(client->world.scene);
         REQUIRE(player != ECS::NullEntity);
-        crate = AddCrate(*host, client->world.scene.Get<ECS::Transform>(player)->position);
+        crate = AddCrate(*host, glm::vec3(client->world.scene.Get<ECS::Transform>(player)->position));
         session.Run(kCatchUpFrames);
         crateMirror = client->play.Session().Client()->EntityOf(host->play.Session().Server()->NetIdOf(crate));
         REQUIRE(crateMirror != ECS::NullEntity);
@@ -164,7 +164,7 @@ void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, s
     for (const glm::vec3 at : starts)
     {
         const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = glm::dvec3(at)});
         (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
     }
     const std::uint16_t port = HostOnFreePort(host.play);
@@ -193,7 +193,7 @@ TEST_CASE("A client's player pushing a crate simulates it, and the host takes it
     NetSync::ReplicationServer &server = *rig.host->play.Session().Server();
     NetSync::ReplicationClient &replication = *rig.client->play.Session().Client();
     const NetSync::NetId own = replication.NetIdOf(rig.player);
-    const float start = rig.host->world.scene.Get<ECS::Transform>(rig.crate)->position.z;
+    const float start = static_cast<float>(rig.host->world.scene.Get<ECS::Transform>(rig.crate)->position.z);
     const std::uint64_t correctionsBefore = replication.PredictionCountsOf(own)->physics.corrections;
 
     rig.session.Run(kPushFrames, [&] { Walk(rig.client->world.scene, rig.player); });

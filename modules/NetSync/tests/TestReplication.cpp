@@ -175,7 +175,7 @@ bool Converged(const Harness &harness, float epsilon = 1e-4f)
         if (authoritative == nullptr || replica == nullptr)
             return false;
 
-        const glm::vec3 delta = authoritative->position - replica->position;
+        const glm::vec3 delta = glm::vec3(authoritative->position - replica->position);
         if (std::abs(delta.x) > epsilon || std::abs(delta.y) > epsilon || std::abs(delta.z) > epsilon)
             return false;
     }
@@ -1088,7 +1088,7 @@ TEST_CASE("interpolation renders between snapshots rather than stepping at the s
         harness.Step(1);
 
         const std::uint64_t applied = harness.client.LastAppliedTick();
-        const float shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        const float shown   = static_cast<float>(harness.clientScene.Get<ECS::Transform>(mirror)->position.x);
         if (samples.empty() || samples.back().first != applied)
             samples.emplace_back(applied, shown);
     }
@@ -1126,7 +1126,7 @@ TEST_CASE("interpolation renders between snapshots rather than stepping at the s
     SUBCASE("before the oldest sample shows the oldest, not garbage")
     {
         harness.client.Interpolate(0.0);
-        const float shown = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        const float shown = static_cast<float>(harness.clientScene.Get<ECS::Transform>(mirror)->position.x);
         CHECK(shown <= lastX);
         CHECK(std::isfinite(shown));
     }
@@ -1468,7 +1468,7 @@ TEST_CASE("a section left out of a snapshot does not confirm what it would have 
 
     SUBCASE("a body record without the block")
     {
-        const BodyState body{.netId = controlled.netId, .position = {4.f, 5.f, 6.f}, .asleep = true};
+        const BodyState body{.position = {4.0, 5.0, 6.0}, .netId = controlled.netId, .asleep = true};
         harness.client.HandleMessage(HandSnapshot(tick, nullptr, &body));
         REQUIRE(harness.client.LastAppliedTick() == tick);
 

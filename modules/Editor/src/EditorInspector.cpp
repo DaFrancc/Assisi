@@ -605,6 +605,11 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::Vec3:
         edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
         break;
+    // Dragged and typed as doubles, so a position far from the origin keeps the
+    // precision the field holds it at.
+    case FieldType::DVec3:
+        edited = ImGui::DragScalarN(field.name.c_str(), ImGuiDataType_Double, fp, 3, 0.01f, nullptr, nullptr, "%.3f");
+        break;
     case FieldType::Vec4:
         edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
         break;
@@ -1474,7 +1479,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
             RefreshCameraMatrix();
             const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
             constexpr float kSpawnDistance = 5.f;
-            tc->position = _cameraTransform.position + forward * kSpawnDistance;
+            tc->position = _cameraTransform.position + glm::dvec3(forward * kSpawnDistance);
         }
     }
     else if (IsComponent<Assisi::Runtime::MeshRenderer>(meta))
@@ -1840,12 +1845,12 @@ void EditorApp::DrawInstanceInspector()
 
     // Re-read from the row every frame, never cached: the gizmo writes the same
     // fields, and a cached copy would fight it for a frame on every drag.
-    glm::vec3 position = row->transform.position;
+    glm::dvec3 position = row->transform.position;
     glm::vec3 euler = glm::degrees(glm::eulerAngles(row->transform.rotation));
     float scale = row->transform.scale.x;
 
     bool edited = false;
-    edited |= ImGui::DragFloat3("position", &position.x, 0.01f);
+    edited |= ImGui::DragScalarN("position", ImGuiDataType_Double, &position.x, 3, 0.01f, nullptr, nullptr, "%.3f");
     edited |= ImGui::DragFloat3("rotation", &euler.x, 0.5f);
     // One number, because uniform scale is all an instance may have. Three would
     // let a non-uniform scale be typed and then silently averaged, which reads as

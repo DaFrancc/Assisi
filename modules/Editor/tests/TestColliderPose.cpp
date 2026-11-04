@@ -105,12 +105,12 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
     // ComposeTransform is the engine's other statement of the same composition, so
     // the expectation is not this function marking its own homework.
     const ECS::Transform expected = ECS::ComposeTransform(parentPose, local);
-    CHECK(NearlyEqual(TranslationOf(model), expected.position));
+    CHECK(NearlyEqual(TranslationOf(model), glm::vec3(expected.position)));
     CHECK(NearlyEqual(RotationOf(model), expected.rotation));
 
     // The defect this file exists for: the local pose is a different place, and
     // drawing there is the mistake.
-    CHECK_FALSE(NearlyEqual(TranslationOf(model), local.position));
+    CHECK_FALSE(NearlyEqual(TranslationOf(model), glm::vec3(local.position)));
     CHECK_FALSE(NearlyEqual(RotationOf(model), local.rotation));
 }
 
@@ -125,7 +125,7 @@ TEST_CASE("ColliderBodyModel: an unparented body is posed at its own transform")
     (void)ECS::PropagateTransforms(scene, 0);
 
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
-    CHECK(NearlyEqual(TranslationOf(model), local.position));
+    CHECK(NearlyEqual(TranslationOf(model), glm::vec3(local.position)));
     CHECK(NearlyEqual(RotationOf(model), local.rotation));
 }
 
@@ -139,7 +139,7 @@ TEST_CASE("ColliderBodyModel: a parent's scale moves the body but never stretche
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // The offset is in the parent's space, so it scales with it...
-    CHECK(NearlyEqual(TranslationOf(model), ECS::ComposeTransform(parentPose, local).position));
+    CHECK(NearlyEqual(TranslationOf(model), glm::vec3(ECS::ComposeTransform(parentPose, local).position)));
     // ...but the pose carries none of it: the collider's scale is the caller's
     // to compose in.
     CHECK(IsUnscaled(model));
@@ -176,5 +176,5 @@ TEST_CASE("ColliderBodyModel: a parent with no Transform leaves the body where i
     // Nothing to resolve against — the same answer Physics gets when
     // ECS::ParentWorldMatrix returns null, rather than a crash or a zeroed pose.
     const glm::mat4 model = ColliderBodyModel(scene, body, local);
-    CHECK(NearlyEqual(TranslationOf(model), local.position));
+    CHECK(NearlyEqual(TranslationOf(model), glm::vec3(local.position)));
 }

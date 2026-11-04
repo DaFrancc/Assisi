@@ -117,7 +117,7 @@ inline BodySpec WithFilter(BodySpec spec, Physics::CollisionFilter filter)
 }
 
 /// An entity at @p position carrying @p spec.
-inline ECS::Entity AddBody(ECS::Scene &scene, glm::vec3 position, const BodySpec &spec)
+inline ECS::Entity AddBody(ECS::Scene &scene, const glm::dvec3 &position, const BodySpec &spec)
 {
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, ECS::Transform{.position = position}) != nullptr);
@@ -131,7 +131,7 @@ inline ECS::Entity AddBody(ECS::Scene &scene, glm::vec3 position, const BodySpec
 
 /// An entity under @p parent, at @p localPosition in the parent's space,
 /// carrying @p collider.
-inline ECS::Entity AddChildCollider(ECS::Scene &scene, ECS::Entity parent, glm::vec3 localPosition,
+inline ECS::Entity AddChildCollider(ECS::Scene &scene, ECS::Entity parent, const glm::dvec3 &localPosition,
                                     const Physics::Collider &collider)
 {
     const ECS::Entity entity = scene.Create();
@@ -142,7 +142,7 @@ inline ECS::Entity AddChildCollider(ECS::Scene &scene, ECS::Entity parent, glm::
 }
 
 /// A character standing with its feet at @p feet.
-inline ECS::Entity AddCharacter(ECS::Scene &scene, glm::vec3 feet,
+inline ECS::Entity AddCharacter(ECS::Scene &scene, const glm::dvec3 &feet,
                                 const Physics::Character &character = Physics::Character{})
 {
     const ECS::Entity entity = scene.Create();

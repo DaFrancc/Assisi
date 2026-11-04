@@ -106,7 +106,7 @@ TEST_CASE("Skeleton overlay: each bone is a diamond, widest near its parent and 
         ++boneSegments;
         for (std::size_t end = i; end < i + kVerticesPerLine; ++end)
         {
-            const glm::vec3 point = lines[end].position;
+            const glm::vec3 point = glm::vec3(lines[end].position);
             if (glm::distance(point, parent) < 1e-5f)
             {
                 ++parentEnds;

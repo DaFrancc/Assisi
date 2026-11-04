@@ -128,10 +128,10 @@ Run WalkOffLedge(PhysicsTests::TestScene &test)
     return run;
 }
 
-void CheckSameFrame(const Physics::CharacterFrame &replayed, const Physics::CharacterFrame &live, glm::vec3 shift,
+void CheckSameFrame(const Physics::CharacterFrame &replayed, const Physics::CharacterFrame &live, const glm::dvec3 &shift,
                     float tolerance)
 {
-    CHECK(glm::length(replayed.position - (live.position + shift)) < tolerance);
+    CHECK(glm::length(replayed.position - (live.position + shift)) < static_cast<double>(tolerance));
     CHECK(glm::length(replayed.velocity - live.velocity) < tolerance);
     CHECK(replayed.timeSinceGrounded == doctest::Approx(live.timeSinceGrounded).epsilon(tolerance));
     CHECK(replayed.jumpBufferRemaining == doctest::Approx(live.jumpBufferRemaining).epsilon(tolerance));
@@ -158,7 +158,7 @@ void ReplayFrom(PhysicsTests::TestScene &test, const Run &run, std::size_t from)
     {
         CAPTURE(i);
         StepAgain(test, run.character, run.frames[i]);
-        CheckSameFrame(test.world.CaptureCharacter(run.character), run.frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(run.character), run.frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
 }
 
@@ -197,7 +197,7 @@ DeckRun RideAcrossDeck(PhysicsTests::TestScene &test)
     PhysicsTests::BodySpec spec = PhysicsTests::Box({kDeckHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, false);
     spec.rigidBody->motion = Physics::MotionType::Kinematic;
     DeckRun run;
-    const glm::vec3 deckStart{0.f, -kDeckHalfThickness, 0.f};
+    const glm::dvec3 deckStart{0.f, -kDeckHalfThickness, 0.f};
     run.deckEntity = PhysicsTests::AddBody(test.scene, deckStart, spec);
     REQUIRE(test.scene.Add(run.deckEntity, Physics::Carrier{}) != nullptr);
     run.rider = PhysicsTests::AddCharacter(test.scene, {1.f, 0.f, 2.f});
@@ -207,7 +207,7 @@ DeckRun RideAcrossDeck(PhysicsTests::TestScene &test)
     {
         const float seconds = static_cast<float>(i + 1) * kStep;
         ECS::Transform &deck = *test.scene.GetMut<ECS::Transform>(run.deckEntity);
-        deck.position = deckStart + kDeckVelocity * seconds;
+        deck.position = deckStart + glm::dvec3(kDeckVelocity * seconds);
         deck.rotation = glm::angleAxis(kDeckYawRate * seconds, glm::vec3(0.f, 1.f, 0.f));
         test.scene.GetMut<Physics::CharacterIntent>(run.rider)->move = {0.f, 0.f, -1.f};
         test.world.Update(kStep);
@@ -236,7 +236,7 @@ TEST_CASE("A rider rewound on a moving deck, and stepped again with the deck's r
         const std::array<Physics::FollowerStep, 1> deck{
             Physics::FollowerStep{.from = run.deck[i - 1], .to = run.deck[i], .entity = run.deckEntity}};
         test.world.StepCharacters(riders, deck, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(run.rider), run.frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(run.rider), run.frames[i], glm::dvec3(0.0), kReplayTolerance);
         CHECK(std::abs(glm::dot(test.scene.Get<ECS::Transform>(run.rider)->rotation, run.facings[i])) >
               1.f - kReplayTolerance);
     }
@@ -269,8 +269,8 @@ TEST_CASE("Two characters pushing each other, rewound and stepped again together
         *test.scene.GetMut<Physics::CharacterIntent>(left) = frames[i][0].intent;
         *test.scene.GetMut<Physics::CharacterIntent>(right) = frames[i][1].intent;
         test.world.StepCharacters(both, {}, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(left), frames[i][0], glm::vec3(0.f), kReplayTolerance);
-        CheckSameFrame(test.world.CaptureCharacter(right), frames[i][1], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(left), frames[i][0], glm::dvec3(0.0), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(right), frames[i][1], glm::dvec3(0.0), kReplayTolerance);
     }
 }
 
@@ -280,8 +280,8 @@ TEST_CASE("A character stepped again against another one as a follower meets it 
     // walker's path and cannot be shoved, as another machine's player is. Left
     // where it ends up, the walker would step again into empty floor.
     // The crosser starts off the walker's path and walks across it.
-    constexpr glm::vec3 kWalkerStart{-1.f, 0.f, 0.f};
-    constexpr glm::vec3 kCrosserStart{0.f, 0.f, -1.5f};
+    constexpr glm::dvec3 kWalkerStart{-1.f, 0.f, 0.f};
+    constexpr glm::dvec3 kCrosserStart{0.f, 0.f, -1.5f};
     // Steps of the replayed window the two must touch in, so the replay has
     // something to meet.
     constexpr int32_t kLeastStepsTouching = 5;
@@ -320,7 +320,7 @@ TEST_CASE("A character stepped again against another one as a follower meets it 
         const std::array<Physics::FollowerStep, 1> crossing{
             Physics::FollowerStep{.from = crossings[i - 1], .to = crossings[i], .entity = crosser}};
         test.world.StepCharacters(only, crossing, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
 }
 
@@ -380,7 +380,7 @@ TEST_CASE("A push given in a step stepped again lands as it did live, and only o
         }
         *test.scene.GetMut<Physics::CharacterIntent>(character) = frames[i].intent;
         test.world.StepCharacters(only, {}, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(character), frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(character), frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
 
     // Nothing left over for the live step after.
@@ -427,7 +427,7 @@ TEST_CASE("A rewind places the character where the frame says, and the replay ca
 
     // The floor is wide enough for half a metre either side, so the same
     // inputs from half a metre over trace the same path half a metre over.
-    const glm::vec3 shift{0.f, 0.f, kSideways};
+    const glm::dvec3 shift{0.0, 0.0, kSideways};
     Physics::CharacterFrame moved = run.frames[0];
     moved.position += shift;
     test.world.RewindCharacter(run.character, moved);
@@ -522,7 +522,7 @@ TEST_CASE("A character stepped again against a crate as a follower meets it wher
         const std::array<Physics::FollowerStep, 1> crate{
             Physics::FollowerStep{.from = run.crate[i - 1], .to = run.crate[i], .entity = run.crateEntity}};
         test.world.StepCharacters(only, crate, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(run.pusher), run.frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(run.pusher), run.frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
     const Physics::Pose crate = test.world.GetBodyPose(run.crateEntity);
     CHECK(glm::length(crate.position - run.crate.back().pose.position) < kReplayTolerance);
@@ -537,7 +537,7 @@ constexpr int32_t kGlanceSteps = 90;
 
 /// How far the crate stands ahead, and to the side so the walk catches its
 /// corner (m).
-constexpr glm::vec3 kGlanceCrateAt{1.5f, kCrateHalf, 0.4f};
+constexpr glm::dvec3 kGlanceCrateAt{1.5f, kCrateHalf, 0.4f};
 
 /// The walk, a little to the side of the crate's centre.
 constexpr glm::vec3 kGlanceMove{1.f, 0.f, 0.25f};
@@ -577,7 +577,7 @@ TEST_CASE("A character glancing off a crate as a follower, stepped again from ea
         const std::array<Physics::FollowerStep, 1> follower{
             Physics::FollowerStep{.from = crateFrames[i - 1], .to = crateFrames[i], .entity = crate}};
         test.world.StepCharacters(only, follower, kStep);
-        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
 }
 
@@ -586,7 +586,7 @@ namespace
 
 /// A step lower than a character climbs, across its way ahead: walked onto and
 /// off its far edge in the steps given.
-constexpr glm::vec3 kLedgeStepAt{1.5f, 0.1f, 0.f};
+constexpr glm::dvec3 kLedgeStepAt{1.5f, 0.1f, 0.f};
 constexpr glm::vec3 kLedgeStepHalf{1.f, 0.1f, 2.f};
 constexpr int32_t kLedgeSteps = 120;
 
@@ -611,17 +611,17 @@ TEST_CASE("A character climbing onto a step and off it, stepped again from each 
         test.scene.GetMut<Physics::CharacterIntent>(walker)->move = {1.f, 0.f, 0.f};
         test.world.Update(kStep);
         frames.push_back(test.world.CaptureCharacter(walker));
-        climbed = climbed || frames.back().position.y > kOnLedgeStep;
+        climbed = climbed || frames.back().position.y > static_cast<double>(kOnLedgeStep);
     }
     REQUIRE(climbed);
-    REQUIRE(frames.back().position.x > kLedgeStepAt.x + kLedgeStepHalf.x);
+    REQUIRE(frames.back().position.x > kLedgeStepAt.x + static_cast<double>(kLedgeStepHalf.x));
 
     for (std::size_t i = 1; i < frames.size(); ++i)
     {
         CAPTURE(i);
         test.world.RewindCharacter(walker, frames[i - 1]);
         StepAgain(test, walker, frames[i]);
-        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::vec3(0.f), kReplayTolerance);
+        CheckSameFrame(test.world.CaptureCharacter(walker), frames[i], glm::dvec3(0.0), kReplayTolerance);
     }
 }
 
@@ -688,7 +688,8 @@ TEST_CASE("A crate solved again is drawn where the solve left it, not slid there
     ECS::SetBlendAlpha(test.scene, kPartWay);
     tick = ECS::PropagateTransforms(test.scene, tick);
     const glm::vec3 drawn = Math::TranslationOf(test.scene.Get<ECS::WorldMatrix>(run.crateEntity)->matrix);
-    CHECK(glm::length(drawn - test.world.GetBodyPose(run.crateEntity).position) < kReplayTolerance);
+    CHECK(glm::length(glm::dvec3(drawn) - test.world.GetBodyPose(run.crateEntity).position) <
+          static_cast<double>(kReplayTolerance));
 }
 
 TEST_CASE("A follower that is also solved is solved, not put where its step left it")
@@ -699,7 +700,7 @@ TEST_CASE("A follower that is also solved is solved, not put where its step left
     const std::array<ECS::Entity, 1> only{run.pusher};
     const std::array<ECS::Entity, 1> solved{run.crateEntity};
     Physics::FollowerFrame away = run.crate[kPushRewindTo];
-    away.pose.position.z += 5.f;
+    away.pose.position.z += 5.0;
     const std::array<Physics::FollowerStep, 1> crate{
         Physics::FollowerStep{.from = run.crate[kPushRewindTo - 1], .to = away, .entity = run.crateEntity}};
     *test.scene.GetMut<Physics::CharacterIntent>(run.pusher) = run.frames[kPushRewindTo].intent;
@@ -716,7 +717,7 @@ TEST_CASE("A crate solved again on a moving deck is carried by it as it was live
     PhysicsTests::BodySpec deckSpec =
         PhysicsTests::Box({kDeckHalfWidth, kDeckHalfThickness, kDeckHalfWidth}, /*isStatic=*/ false);
     deckSpec.rigidBody->motion = Physics::MotionType::Kinematic;
-    const glm::vec3 deckStart{0.f, -kDeckHalfThickness, 0.f};
+    const glm::dvec3 deckStart{0.f, -kDeckHalfThickness, 0.f};
     const ECS::Entity deck = PhysicsTests::AddBody(test.scene, deckStart, deckSpec);
     PhysicsTests::BodySpec crateSpec = PhysicsTests::Box(glm::vec3(kCrateHalf), /*isStatic=*/ false);
     crateSpec.rigidBody->mass = kCrateMass;
@@ -728,7 +729,7 @@ TEST_CASE("A crate solved again on a moving deck is carried by it as it was live
     for (int32_t i = 0; i < kRideSteps; ++i)
     {
         test.scene.GetMut<ECS::Transform>(deck)->position =
-            deckStart + glm::vec3(kDeckVelocity.x, 0.f, 0.f) * (static_cast<float>(i + 1) * kStep);
+            deckStart + glm::dvec3(glm::vec3(kDeckVelocity.x, 0.f, 0.f) * (static_cast<float>(i + 1) * kStep));
         test.world.Update(kStep);
         deckFrames.push_back(test.world.CaptureFollower(deck));
         crateFrames.push_back(test.world.CaptureFollower(crate));
@@ -756,15 +757,15 @@ TEST_CASE("A solve stepped again moves no awake body but its own, and wakes none
     spec.rigidBody->mass = kCrateMass;
     // One falling far off, and one put to sleep just past the crate's far
     // side, which the crate is pushed against.
-    constexpr glm::vec3 kFallingAt{-10.f, 20.f, 0.f};
+    constexpr glm::dvec3 kFallingAt{-10.f, 20.f, 0.f};
     constexpr glm::vec3 kFallingVelocity{0.f, -3.f, 0.f};
-    constexpr glm::vec3 kAsideAt{0.f, kCrateHalf, 10.f};
+    constexpr glm::dvec3 kAsideAt{0.f, kCrateHalf, 10.f};
     constexpr float kGap = 0.01f;
     const glm::quat upright(1.f, 0.f, 0.f, 0.f);
     const ECS::Entity falling = PhysicsTests::AddBody(test.scene, kFallingAt, spec);
     const ECS::Entity sleeping = PhysicsTests::AddBody(test.scene, kAsideAt, spec);
     const PushRun run = PushCrate(test);
-    const glm::vec3 pastCrate = run.crate.back().pose.position + glm::vec3(kCrateHalf * 2.f + kGap, 0.f, 0.f);
+    const glm::dvec3 pastCrate = run.crate.back().pose.position + glm::dvec3(kCrateHalf * 2.f + kGap, 0.f, 0.f);
     test.world.ApplyCorrection(sleeping, Physics::Pose{upright, pastCrate}, Physics::BodyState{.asleep = true});
     test.world.ApplyCorrection(falling, Physics::Pose{upright, kFallingAt},
                                Physics::BodyState{.linearVelocity = kFallingVelocity});
@@ -789,7 +790,8 @@ TEST_CASE("A solve stepped again moves no awake body but its own, and wakes none
     // bodies sink before it pushes them apart, and the little the sleeping
     // one gives in each solve before it is put back.
     constexpr float kSunk = 0.05f;
-    CHECK(test.world.GetBodyPose(run.crateEntity).position.x < slept.position.x - kCrateHalf * 2.f + kSunk);
+    CHECK(test.world.GetBodyPose(run.crateEntity).position.x <
+          slept.position.x - static_cast<double>(kCrateHalf * 2.f) + static_cast<double>(kSunk));
 }
 
 TEST_CASE("A crate at rest placed as a follower stays asleep, and one moving is woken")

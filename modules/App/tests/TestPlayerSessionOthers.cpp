@@ -55,7 +55,7 @@ constexpr float kMostDrawnOffStanding = 0.01f;
 glm::vec3 Drawn(ECS::Scene &scene, ECS::Entity entity)
 {
     const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
-    return scene.Get<ECS::Transform>(entity)->position + (offset != nullptr ? offset->position : glm::vec3(0.f));
+    return glm::vec3(scene.Get<ECS::Transform>(entity)->position) + (offset != nullptr ? offset->position : glm::vec3(0.f));
 }
 
 } // namespace
@@ -98,8 +98,8 @@ TEST_CASE("Another player pressing against this one does not tremble up and down
                 turned = true;
             }
         }
-        const glm::vec3 pusher = client.world.scene.Get<ECS::Transform>(hostOnClient)->position;
-        const glm::vec3 pushed = client.world.scene.Get<ECS::Transform>(clientOwn)->position;
+        const glm::vec3 pusher = glm::vec3(client.world.scene.Get<ECS::Transform>(hostOnClient)->position);
+        const glm::vec3 pushed = glm::vec3(client.world.scene.Get<ECS::Transform>(clientOwn)->position);
         if (glm::length(glm::vec2(pusher.x - pushed.x, pusher.z - pushed.z)) < kPressing)
         {
             ++framesPressing;
@@ -143,7 +143,7 @@ TEST_CASE("Another player walking is drawn at its feet, without bobbing above th
             controls->move = {0.f, 1.f};
         }
         const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient);
-        const float drawn = client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y +
+        const float drawn = static_cast<float>(client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y) +
                             (offset != nullptr ? offset->position.y : 0.f);
         highestDrawn = std::max(highestDrawn, std::abs(drawn));
     });
@@ -178,7 +178,7 @@ TEST_CASE("With the sync test on, another player that walked and stopped is draw
     host.world.scene.GetMut<App::PlayerInput>(hostOwn)->move = {0.f, 0.f};
     session.Run(kStandFrames);
 
-    const glm::vec3 standing = host.world.scene.Get<ECS::Transform>(hostOwn)->position;
+    const glm::vec3 standing = glm::vec3(host.world.scene.Get<ECS::Transform>(hostOwn)->position);
     REQUIRE(replication.SyncTestResults().replays > 0u);
     CHECK(glm::length(Drawn(client.world.scene, hostOnClient) - standing) < kMostDrawnOffStanding);
 }

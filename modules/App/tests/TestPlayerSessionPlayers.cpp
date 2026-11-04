@@ -109,7 +109,7 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
 
     // The first client walks forward; nobody else touches anything. Its
     // controls reach the host within a few frames.
-    const glm::vec3 before = host.world.scene.Get<ECS::Transform>(firstsOnHost)->position;
+    const glm::vec3 before = glm::vec3(host.world.scene.Get<ECS::Transform>(firstsOnHost)->position);
     std::int32_t frames = 0;
     std::int32_t arrived = -1;
     session.Run(kWalkSteps,
@@ -140,7 +140,7 @@ TEST_CASE("Each player of a session plays its own character, and takes it with t
     {
         CHECK(own->move.y == doctest::Approx(0.f));
     }
-    const glm::vec3 after = host.world.scene.Get<ECS::Transform>(firstsOnHost)->position;
+    const glm::vec3 after = glm::vec3(host.world.scene.Get<ECS::Transform>(firstsOnHost)->position);
     CHECK(glm::length(after - before) > 0.f);
 
     // It turns round and looks up; the other client sees it face the other way,

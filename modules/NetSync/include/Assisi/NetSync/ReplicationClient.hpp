@@ -828,7 +828,7 @@ private:
     struct TransformSample
     {
         std::uint64_t serverTick = 0;
-        glm::vec3 position{};
+        glm::dvec3 position{};
         glm::quat rotation{1.f, 0.f, 0.f, 0.f};
         glm::vec3 scale{1.f, 1.f, 1.f};
     };
@@ -846,8 +846,7 @@ private:
     /// local contact has woken it, where it *is* is no longer that.
     struct MirrorBody
     {
-        bool asleep = false;
-        glm::vec3 restPosition{};
+        glm::dvec3 restPosition{};
         glm::quat restRotation{1.f, 0.f, 0.f, 0.f};
 
         /// The visual offset that hides the last correction, as it stands this
@@ -869,6 +868,7 @@ private:
         glm::quat rotationErrorStart{1.f, 0.f, 0.f, 0.f};
         float smoothingElapsed = 0.f;
         float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
+        bool asleep = false;
     };
 
     /// Forget that a mirror is body-corrected. The body itself goes with the

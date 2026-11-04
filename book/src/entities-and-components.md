@@ -73,10 +73,37 @@ to entities in the editor, but it helps to know what they are.
 ```cpp
 struct Transform
 {
-    glm::vec3 position{0.f, 0.f, 0.f};
+    glm::dvec3 position{0.0, 0.0, 0.0};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 scale{1.f, 1.f, 1.f};
 };
+```
+
+#### Positions are doubles
+
+`position` is a `glm::dvec3`: three `double`s rather than three `float`s. A
+`float` gets coarser the further a number is from zero: 100 km from the center
+of the world it can only say where something is to the nearest 8 mm, and a
+character walking there would stutter. A `double` stays exact to far below a
+millimeter across the whole world.
+
+The rule for your own code: **a place in the world is a `glm::dvec3`; a
+direction, a velocity or an offset from something nearby is a `glm::vec3`.**
+Turning one into the other is always written out, and the compiler refuses it
+when it isn't:
+
+```cpp
+const glm::dvec3 enemy = scene.Get<ECS::Transform>(enemyEntity)->position;
+const glm::dvec3 self  = scene.Get<ECS::Transform>(selfEntity)->position;
+
+// The difference between two nearby places is small, so it fits a vec3.
+const glm::vec3 toEnemy = glm::vec3(enemy - self);
+
+// Moving by a velocity: adding a vec3 to a dvec3 with += needs no conversion.
+transform.position += velocity * dt;
+
+// Placing something at a position held as a vec3 says so.
+transform.position = glm::dvec3(spawnPoint);
 ```
 
 Adding a `Transform` also adds a `WorldMatrix`. You don't add, save or write a

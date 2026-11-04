@@ -34,7 +34,7 @@ namespace
 /// A body of @p isStatic at @p position, built and stepped once.
 ECS::Entity SpawnSimulatedBody(TestScene &test, glm::vec3 position, bool isStatic)
 {
-    const ECS::Entity e = AddBody(test.scene, position, Ball(0.5f, isStatic));
+    const ECS::Entity e = AddBody(test.scene, glm::dvec3(position), Ball(0.5f, isStatic));
     Step(test.world);
     return e;
 }
@@ -122,7 +122,7 @@ TEST_CASE("Writeback: a Transform written between steps reaches the body rather 
     test.scene.GetMut<ECS::Transform>(e)->position = dragged;
     Step(test.world);
 
-    const glm::vec3 after = test.scene.Get<ECS::Transform>(e)->position;
+    const glm::dvec3 after = test.scene.Get<ECS::Transform>(e)->position;
     CHECK(after.x == doctest::Approx(dragged.x));
     CHECK(after.y == doctest::Approx(dragged.y).epsilon(0.01));
 }
@@ -219,17 +219,17 @@ TEST_CASE("Writeback: a falling body is drawn between its last two steps")
     const ECS::Entity e = SpawnSimulatedBody(test, {0.f, 10.f, 0.f}, false);
     Step(test.world, 10);
     uint64_t tick = ECS::PropagateTransforms(test.scene, 0);
-    const float before = test.scene.Get<ECS::Transform>(e)->position.y;
+    const double before = test.scene.Get<ECS::Transform>(e)->position.y;
 
     {
         const ECS::FixedStepScope step(test.scene);
         Step(test.world);
     }
-    const float after = test.scene.Get<ECS::Transform>(e)->position.y;
+    const double after = test.scene.Get<ECS::Transform>(e)->position.y;
     REQUIRE(after < before);
     ECS::SetBlendAlpha(test.scene, 0.5f);
     tick = ECS::PropagateTransforms(test.scene, tick);
 
     const glm::mat4 &world = test.scene.Get<ECS::WorldMatrix>(e)->matrix;
-    CHECK(Math::TranslationOf(world).y == doctest::Approx(0.5f * (before + after)));
+    CHECK(Math::TranslationOf(world).y == doctest::Approx(0.5 * (before + after)));
 }

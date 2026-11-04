@@ -478,7 +478,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
 
     Assisi::Runtime::Transform placement;
-    placement.position = _cameraTransform.position + forward * 5.f;
+    placement.position = _cameraTransform.position + glm::dvec3(forward * 5.f);
 
     // A name unique in this level, because it is the prefix its members are
     // addressed by: `car_3/wheel_fl` has to name exactly one entity.

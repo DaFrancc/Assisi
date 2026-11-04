@@ -47,7 +47,7 @@ namespace Assisi::ECS
 ACOMP(replicable, predicted, tracked, requires = {WorldMatrix})
 struct Transform
 {
-    AFIELD() glm::vec3 position{0.f, 0.f, 0.f};
+    AFIELD() glm::dvec3 position{0.0, 0.0, 0.0};
     AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     AFIELD() glm::vec3 scale{1.f, 1.f, 1.f};
 };
@@ -117,11 +117,11 @@ private:
     /// One entity's poses for the current step.
     struct BlendEntry
     {
+        glm::dvec3 prevPosition{0.0};
+        glm::dvec3 endPosition{0.0};
         glm::quat prevRotation{1.f, 0.f, 0.f, 0.f};
         glm::quat endRotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 prevPosition{0.f};
         glm::vec3 prevScale{1.f};
-        glm::vec3 endPosition{0.f};
         glm::vec3 endScale{1.f};
         Entity entity{NullEntity};
         bool hasEnd = false;

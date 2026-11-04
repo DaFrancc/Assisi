@@ -86,7 +86,7 @@ struct Fixture
     ECS::Entity SpawnMeshed(glm::vec3 position, float halfExtent, float scale = 1.f)
     {
         const ECS::Entity entity = scene.Create();
-        REQUIRE(scene.Add(entity, ECS::Transform{.position = position, .scale = glm::vec3(scale)}) != nullptr);
+        REQUIRE(scene.Add(entity, ECS::Transform{.position = glm::dvec3(position), .scale = glm::vec3(scale)}) != nullptr);
         g_bounds[entity] = Geometry::Aabb{.min = glm::vec3(-halfExtent), .max = glm::vec3(halfExtent)};
         Propagate();
         return entity;
@@ -96,7 +96,7 @@ struct Fixture
     ECS::Entity SpawnIconOnly(glm::vec3 position)
     {
         const ECS::Entity entity = scene.Create();
-        REQUIRE(scene.Add(entity, ECS::Transform{.position = position}) != nullptr);
+        REQUIRE(scene.Add(entity, ECS::Transform{.position = glm::dvec3(position)}) != nullptr);
         Propagate();
         return entity;
     }

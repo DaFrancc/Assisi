@@ -102,6 +102,10 @@ enum class FieldType : std::uint8_t
     /// wire carries no count. The shape lives on `container`, as a vector's
     /// does. Appended rather than inserted, so no existing value shifts.
     Array,
+    /// glm::dvec3: a position that stays exact far from the origin. Encoded as
+    /// three doubles, never narrowed. Appended rather than inserted, so no
+    /// existing value shifts.
+    DVec3,
     /// Number of field types, for a table indexed by FieldType.
     ///
     /// Safe to move, unlike every enumerator above it: nothing serializes this and

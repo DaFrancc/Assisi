@@ -332,14 +332,14 @@ void EditorApp::SubmitInstanceIcons()
     for (const auto &[id, row] : rows)
     {
         (void)id;
-        positions.push_back(row->transform.position);
+        positions.push_back(glm::vec3(row->transform.position));
     }
     _overlays.SubmitEditorIcons(positions);
 
     if (_selectedInstance.IsValid())
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance))
-            _overlays.SubmitIconOutline(row->transform.position);
+            _overlays.SubmitIconOutline(glm::vec3(row->transform.position));
     }
 }
 

@@ -52,7 +52,7 @@ enum class BodyMotion : std::uint8_t
 struct Pose
 {
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
-    glm::vec3 position{0.f};
+    glm::dvec3 position{0.0};
 };
 
 /// @brief Everything one step of a character reads and leaves behind: enough
@@ -72,10 +72,10 @@ struct CharacterFrame
     /// while `position` and `velocity` are the ones it was taken with: a frame
     /// given others, such as the host's word, is placed there and asks again.
     std::vector<std::byte> physicsState;
+    glm::dvec3 position{0.0}; ///< The feet, in world space.
     CharacterIntent intent;
     /// While riding, its base's rotation when `localFeet` was taken.
     glm::quat baseRotation{1.f, 0.f, 0.f, 0.f};
-    glm::vec3 position{0.f}; ///< The feet, in world space.
     /// Its own velocity: relative to its base while it rides one.
     glm::vec3 velocity{0.f};
     /// Its velocity in the world, its base's included. Read back, never put
@@ -161,7 +161,7 @@ struct CollisionFilter
 /// fields whether a ray, a swept volume or a held one found it.
 struct QueryHit
 {
-    glm::vec3 position{0.f}; ///< World-space point on the struck surface.
+    glm::dvec3 position{0.0}; ///< World-space point on the struck surface.
 
     /// Unit surface normal at @ref position, pointing out of the surface and so
     /// back towards the caster. Reflecting a direction about it, or comparing it
@@ -204,13 +204,13 @@ enum class ContactPhase : std::uint8_t
 /// collapse into one.
 struct ContactEvent
 {
+    /// Where the two touch, in world space: the middle of the contact the step
+    /// last saw. On an Exit, where they last touched.
+    glm::dvec3 point{0.0};
+
     /// Unit world-space normal pointing away from @ref other's surface — so a
     /// body arriving at a floor sees +Y here, whichever way the pair was ordered.
     glm::vec3 normal{0.f};
-
-    /// Where the two touch, in world space: the middle of the contact the step
-    /// last saw. On an Exit, where they last touched.
-    glm::vec3 point{0.f};
 
     /// @ref entity's linear velocity when the contact was observed, which is
     /// **before the solver ran**. This is the field that makes the record worth
@@ -355,13 +355,13 @@ public:
 
     /// @brief Pushes @p entity by @p force (N) at a world-space @p point for the
     /// next step, which spins it as well when the point is off its centre.
-    void AddForceAt(ECS::Entity entity, glm::vec3 force, glm::vec3 point);
+    void AddForceAt(ECS::Entity entity, glm::vec3 force, const glm::dvec3 &point);
 
     /// @brief Kicks @p entity through its centre of mass by @p impulse (N·s).
     void AddImpulse(ECS::Entity entity, glm::vec3 impulse);
 
     /// @brief Kicks @p entity by @p impulse (N·s) at a world-space @p point.
-    void AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, glm::vec3 point);
+    void AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, const glm::dvec3 &point);
 
     /// @brief Twists @p entity by @p torque (N·m), about world axes, for the
     /// next step.
@@ -506,11 +506,11 @@ public:
     /// @param sweep   Direction and length together; a zero sweep finds nothing.
     /// @param filter  What is asking, and what it may find.
     /// @param ignore  An entity to skip, or NullEntity to skip nothing.
-    [[nodiscard]] std::optional<QueryHit> CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
+    [[nodiscard]] std::optional<QueryHit> CastRay(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter,
                                                   ECS::Entity ignore) const;
 
     /// @brief Every body a ray meets. See CastRay and the All form above.
-    void CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
+    void CastRayAll(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
                     std::vector<QueryHit> &out) const;
 
     /// @brief The first body a swept collider meets, or nothing if it meets none.

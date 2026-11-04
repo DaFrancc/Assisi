@@ -65,13 +65,13 @@ Pair MakePair(PhysicsTests::TestScene &test, bool rightFirst)
     Pair pair;
     if (rightFirst)
     {
-        pair.right = PhysicsTests::AddCharacter(test.scene, rightFeet);
-        pair.left = PhysicsTests::AddCharacter(test.scene, leftFeet);
+        pair.right = PhysicsTests::AddCharacter(test.scene, glm::dvec3(rightFeet));
+        pair.left = PhysicsTests::AddCharacter(test.scene, glm::dvec3(leftFeet));
     }
     else
     {
-        pair.left = PhysicsTests::AddCharacter(test.scene, leftFeet);
-        pair.right = PhysicsTests::AddCharacter(test.scene, rightFeet);
+        pair.left = PhysicsTests::AddCharacter(test.scene, glm::dvec3(leftFeet));
+        pair.right = PhysicsTests::AddCharacter(test.scene, glm::dvec3(rightFeet));
     }
     test.world.SetCharacterOrderKey(pair.left, kLeftKey);
     test.world.SetCharacterOrderKey(pair.right, kRightKey);
@@ -89,7 +89,7 @@ void WalkAtEachOther(PhysicsTests::TestScene &test, const Pair &pair)
 
 glm::vec3 FeetOf(const PhysicsTests::TestScene &test, ECS::Entity character)
 {
-    return test.scene.Get<ECS::Transform>(character)->position;
+    return glm::vec3(test.scene.Get<ECS::Transform>(character)->position);
 }
 
 } // namespace

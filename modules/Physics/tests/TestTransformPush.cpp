@@ -29,12 +29,12 @@ namespace
 {
 
 /// Whether a ray straight down onto @p point finds anything.
-bool SomethingAt(const Physics::PhysicsWorld &world, glm::vec3 point)
+bool SomethingAt(const Physics::PhysicsWorld &world, const glm::dvec3 &point)
 {
     constexpr float kAbove = 5.f;
     constexpr float kReach = 10.f;
     const std::optional<Physics::QueryHit> hit =
-        world.CastRay(point + glm::vec3(0.f, kAbove, 0.f), {0.f, -kReach, 0.f}, Physics::CollisionFilter{},
+        world.CastRay(point + glm::dvec3(0.0, kAbove, 0.0), {0.f, -kReach, 0.f}, Physics::CollisionFilter{},
                       ECS::NullEntity);
     return hit.has_value();
 }
@@ -54,8 +54,8 @@ constexpr int32_t kSettleSteps = 600;
 TEST_CASE("Writing a static body's Transform moves its collider")
 {
     TestScene test;
-    const glm::vec3 from{0.f, 0.f, 0.f};
-    const glm::vec3 to{10.f, 0.f, 0.f};
+    const glm::dvec3 from{0.0, 0.0, 0.0};
+    const glm::dvec3 to{10.0, 0.0, 0.0};
     const ECS::Entity wall = AddBody(test.scene, from, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
 
@@ -89,7 +89,7 @@ TEST_CASE("Writing a dynamic body's Transform places it and keeps its velocity")
     const float falling = test.world.GetBodyState(ball).linearVelocity.y;
     REQUIRE(falling < 0.f);
 
-    const glm::vec3 placed{3.f, 40.f, 3.f};
+    const glm::dvec3 placed{3.0, 40.0, 3.0};
     test.scene.GetMut<ECS::Transform>(ball)->position = placed;
     test.world.Reconcile();
 
@@ -104,7 +104,7 @@ TEST_CASE("Teleport places a body and stops it")
     Step(test.world, 20);
     REQUIRE(test.world.GetBodyState(ball).linearVelocity.y < 0.f);
 
-    const glm::vec3 target{3.f, 40.f, 3.f};
+    const glm::dvec3 target{3.0, 40.0, 3.0};
     test.world.Teleport(ball, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), target});
 
     CHECK(test.world.GetBodyPose(ball).position == target);
@@ -136,7 +136,7 @@ TEST_CASE("Turning a moving body leaves where it is alone")
     TestScene test;
     const ECS::Entity ball = AddBody(test.scene, {0.f, 50.f, 0.f}, Ball(0.5f, false));
     Step(test.world, 20);
-    const glm::vec3 before = test.world.GetBodyPose(ball).position;
+    const glm::dvec3 before = test.world.GetBodyPose(ball).position;
     REQUIRE(test.scene.Get<ECS::Transform>(ball)->position == before);
 
     test.scene.GetMut<ECS::Transform>(ball)->rotation = glm::angleAxis(1.f, glm::vec3(0.f, 1.f, 0.f));
@@ -150,7 +150,7 @@ TEST_CASE("Scaling an entity scales its collider")
     TestScene test;
     const ECS::Entity box = AddBody(test.scene, {0.f, 0.f, 0.f}, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
-    const glm::vec3 beyond{0.8f, 0.f, 0.f};
+    const glm::dvec3 beyond{0.8, 0.0, 0.0};
     REQUIRE_FALSE(SomethingAt(test.world, beyond));
 
     test.scene.GetMut<ECS::Transform>(box)->scale = glm::vec3(2.f);
@@ -199,7 +199,7 @@ TEST_CASE("Editing a collider's size resizes the live body")
     TestScene test;
     const ECS::Entity box = AddBody(test.scene, {0.f, 0.f, 0.f}, Box({0.5f, 0.5f, 0.5f}, true));
     test.world.Reconcile();
-    const glm::vec3 beyond{1.5f, 0.f, 0.f};
+    const glm::dvec3 beyond{1.5, 0.0, 0.0};
     REQUIRE_FALSE(SomethingAt(test.world, beyond));
 
     test.scene.GetMut<Physics::Collider>(box)->halfExtents = {2.f, 0.5f, 2.f};

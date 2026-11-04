@@ -56,7 +56,7 @@ glm::vec3 RunTo(World &world, Assisi::ECS::Entity entity, std::uint64_t ticks)
     }
     const Assisi::ECS::Transform *transform = world.scene.Get<Assisi::ECS::Transform>(entity);
     REQUIRE(transform != nullptr);
-    return transform->position;
+    return glm::vec3(transform->position);
 }
 
 } // namespace
@@ -102,8 +102,8 @@ TEST_CASE("OscillateSystem: the pose at a tick does not depend on how it got the
     const Assisi::ECS::Transform *transform = jumped.scene.Get<Assisi::ECS::Transform>(b);
     REQUIRE(transform != nullptr);
 
-    CHECK(walked.x == doctest::Approx(spec.origin.x + expectedOffset));
-    CHECK(transform->position.x == doctest::Approx(spec.origin.x + expectedOffset));
+    CHECK(walked.x == doctest::Approx(spec.origin.x + static_cast<double>(expectedOffset)));
+    CHECK(transform->position.x == doctest::Approx(spec.origin.x + static_cast<double>(expectedOffset)));
     CHECK(walked.y == doctest::Approx(transform->position.y));
     CHECK(walked.z == doctest::Approx(transform->position.z));
 }
@@ -115,7 +115,7 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
 
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world                = worlds.Create("Bounded");
-    const Assisi::ECS::Entity entity = SpawnOscillator(world, {.origin        = origin,
+    const Assisi::ECS::Entity entity = SpawnOscillator(world, {.origin        = glm::dvec3(origin),
                                                                .axis          = {1.f, 0.f, 0.f},
                                                                .amplitude     = kAmplitude,
                                                                .periodSeconds = 2.f,
@@ -136,8 +136,8 @@ TEST_CASE("OscillateSystem: travel stays bounded around the authored origin")
 
         const Assisi::ECS::Transform *transform = world.scene.Get<Assisi::ECS::Transform>(entity);
         REQUIRE(transform != nullptr);
-        lowest  = std::min(lowest, transform->position.x);
-        highest = std::max(highest, transform->position.x);
+        lowest  = std::min(lowest, static_cast<float>(transform->position.x));
+        highest = std::max(highest, static_cast<float>(transform->position.x));
 
         // The off-axis components never move at all.
         CHECK(transform->position.y == doctest::Approx(origin.y));
@@ -157,12 +157,12 @@ TEST_CASE("OscillateSystem: a parked mover is left where it was authored")
 
     // Two ways to park one: no period, and no axis.
     const Assisi::ECS::Entity noPeriod = SpawnOscillator(
-        world, {.origin = origin, .axis = {1.f, 0.f, 0.f}, .amplitude = 5.f, .periodSeconds = 0.f, .phase = 0.f});
+        world, {.origin = glm::dvec3(origin), .axis = {1.f, 0.f, 0.f}, .amplitude = 5.f, .periodSeconds = 0.f, .phase = 0.f});
     const Assisi::ECS::Entity noAxis = SpawnOscillator(
-        world, {.origin = origin, .axis = {0.f, 0.f, 0.f}, .amplitude = 5.f, .periodSeconds = 2.f, .phase = 0.f});
+        world, {.origin = glm::dvec3(origin), .axis = {0.f, 0.f, 0.f}, .amplitude = 5.f, .periodSeconds = 2.f, .phase = 0.f});
 
     const glm::vec3 restedPeriod = RunTo(world, noPeriod, 120);
-    const glm::vec3 restedAxis   = world.scene.Get<Assisi::ECS::Transform>(noAxis)->position;
+    const glm::vec3 restedAxis   = glm::vec3(world.scene.Get<Assisi::ECS::Transform>(noAxis)->position);
 
     CHECK(restedPeriod.x == doctest::Approx(origin.x));
     CHECK(restedAxis.x == doctest::Approx(origin.x));
@@ -188,8 +188,8 @@ TEST_CASE("OscillateSystem: phase separates movers that share a period")
     SystemContext ctx{world, kStep, /*simTick=*/ 30, nullptr, &actions, universal, true, &contextWorlds};
     OscillateSystem(ctx);
 
-    const float a = world.scene.Get<Assisi::ECS::Transform>(first)->position.x;
-    const float b = world.scene.Get<Assisi::ECS::Transform>(second)->position.x;
+    const float a = static_cast<float>(world.scene.Get<Assisi::ECS::Transform>(first)->position.x);
+    const float b = static_cast<float>(world.scene.Get<Assisi::ECS::Transform>(second)->position.x);
 
     // Half a cycle apart is exact opposition, which is also the strongest
     // evidence the phase term reaches the evaluation at all.
@@ -217,13 +217,13 @@ TEST_CASE("OscillateSystem: a mover is drawn between its last two steps at a fra
     float before = 0.f;
     for (std::uint64_t tick = kFirstTick; tick < kFirstTick + 2; ++tick)
     {
-        before = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;
+        before = static_cast<float>(world.scene.Get<Assisi::ECS::Transform>(entity)->position.x);
         propagationTick = Assisi::ECS::PropagateTransforms(world.scene, propagationTick);
         const Assisi::ECS::FixedStepScope step(world.scene);
         SystemContext ctx{world, kStep, tick, nullptr, &actions, universal, true, &worlds};
         OscillateSystem(ctx);
     }
-    const float after = world.scene.Get<Assisi::ECS::Transform>(entity)->position.x;
+    const float after = static_cast<float>(world.scene.Get<Assisi::ECS::Transform>(entity)->position.x);
     REQUIRE(after != before);
 
     Assisi::ECS::SetBlendAlpha(world.scene, 0.25f);

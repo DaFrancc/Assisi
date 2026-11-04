@@ -220,7 +220,10 @@ enum class RejectReason : std::uint8_t
 ///  - 12 → 13: a quantized float's range is cut into an even number of steps,
 ///    so zero is a level and a body at rest is sent at rest. The same bits mean
 ///    slightly different values, so a v12 peer reads every pose a little off.
-inline constexpr std::uint32_t kNetProtocolVersion = 13;
+///  - 13 → 14: an instance record's placement position is three doubles, so a
+///    blueprint instance far from the world's origin is placed exactly. A v13
+///    peer reads the record twelve bytes short.
+inline constexpr std::uint32_t kNetProtocolVersion = 14;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

@@ -184,8 +184,8 @@ void SetQuantization(const BodyQuantization &quantization);
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
+    glm::dvec3 position{};
     NetId netId = InvalidNetId;
-    glm::vec3 position{};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.

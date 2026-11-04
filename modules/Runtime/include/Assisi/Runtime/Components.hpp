@@ -341,7 +341,7 @@ struct Camera
 ACOMP()
 struct Oscillator
 {
-    AFIELD() glm::vec3 origin{0.f, 0.f, 0.f};  ///< World position the travel is centred on.
+    AFIELD() glm::dvec3 origin{0.0, 0.0, 0.0}; ///< World position the travel is centred on.
     AFIELD() glm::vec3 axis{0.f, 1.f, 0.f};    ///< Direction of travel; normalised on use, zero disables.
     AFIELD() float amplitude     = 1.f;         ///< Peak displacement from `origin`, in metres.
     AFIELD(min = 0) float periodSeconds = 4.f;  ///< Seconds for one full there-and-back cycle; 0 disables.

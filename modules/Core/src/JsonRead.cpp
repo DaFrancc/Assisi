@@ -272,8 +272,11 @@ bool ReadString(const nlohmann::json &j, const char *component, const char *fiel
     return true;
 }
 
-bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
-                    float *out)
+namespace
+{
+
+template <typename T>
+bool ReadNumberArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count, T *out)
 {
     const nlohmann::json *value = Present(j, field);
     if (value == nullptr)
@@ -301,9 +304,23 @@ bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *
             Reject(component, field, std::format("a number in every slot (slot {} is not one)", i), *value);
             return false;
         }
-        out[i] = element.get<float>();
+        out[i] = element.get<T>();
     }
     return true;
+}
+
+} // namespace
+
+bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
+                    float *out)
+{
+    return ReadNumberArray(j, component, field, count, out);
+}
+
+bool ReadDoubleArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
+                     double *out)
+{
+    return ReadNumberArray(j, component, field, count, out);
 }
 
 bool FindArray(const nlohmann::json &j, const char *component, const char *field, const nlohmann::json *&out)

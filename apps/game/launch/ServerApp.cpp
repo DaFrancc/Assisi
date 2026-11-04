@@ -237,7 +237,7 @@ void ServerApp::SpawnDemoMovers()
     for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
     {
         const ECS::Entity entity = _world.scene.Create();
-        const glm::vec3 origin{static_cast<float>(i) * kDemoMoverSpacing, 0.f, 0.f};
+        const glm::dvec3 origin{static_cast<double>(i) * static_cast<double>(kDemoMoverSpacing), 0.0, 0.0};
         (void)_world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = origin});
         (void)_world.scene.Add<Assisi::Runtime::Oscillator>(
             entity, Assisi::Runtime::Oscillator{.origin = origin,

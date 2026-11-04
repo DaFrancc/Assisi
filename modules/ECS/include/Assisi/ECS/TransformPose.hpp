@@ -59,15 +59,28 @@ namespace Assisi::ECS
     return glm::quat_cast(glm::mat3(glm::normalize(basis[0]), glm::normalize(basis[1]), glm::normalize(basis[2])));
 }
 
-/// @brief @p local placed into world space under @p parentWorld.
+/// @brief @p local placed into world space under @p parentWorld, the parent's
+/// simulated world pose.
 ///
 /// Position and rotation only: @p local's scale is carried through untouched
 /// rather than composed, because the callers place rigid bodies, whose collider
-/// dimensions do not scale with the entity.
+/// dimensions do not scale with the entity. The position is worked in doubles,
+/// so a body far from the world's origin is placed exactly.
+[[nodiscard]] Transform PoseUnderParent(const Transform &local, const Transform &parentWorld);
+
+/// @brief The inverse of PoseUnderParent: a world pose @p world expressed under
+/// @p parentWorld, scale carried through untouched.
+[[nodiscard]] Transform PoseInParent(const Transform &world, const Transform &parentWorld);
+
+/// @brief @p local placed into world space under @p parentWorld, a drawn world
+/// matrix.
+///
+/// For drawing where a body is, against the float matrix it is drawn with, so
+/// the position is narrowed to that matrix's precision.
 [[nodiscard]] inline Transform PoseUnderParent(const Transform &local, const glm::mat4 &parentWorld)
 {
     Transform out;
-    out.position = glm::vec3(parentWorld * glm::vec4(local.position, 1.f));
+    out.position = glm::dvec3(parentWorld * glm::vec4(glm::vec3(local.position), 1.f));
     out.rotation = glm::normalize(WorldRotationOf(parentWorld) * local.rotation);
     out.scale = local.scale;
     return out;

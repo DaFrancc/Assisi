@@ -142,14 +142,14 @@ ECS::Entity AddModelBody(ECS::Scene &scene, glm::vec3 position, const Physics::C
         spec.rigidBody = Physics::RigidBody{};
         spec.rigidBody->motion = *motion;
     }
-    return AddBody(scene, position, spec);
+    return AddBody(scene, glm::dvec3(position), spec);
 }
 
 /// Where a ray straight down from high over (@p x, @p z) first meets anything.
 std::optional<Physics::QueryHit> DropRay(const Physics::PhysicsWorld &world, float x, float z)
 {
     constexpr float kHeight = 10.f;
-    return world.CastRay(glm::vec3(x, kHeight, z), glm::vec3(0.f, -2.f * kHeight, 0.f), Physics::CollisionFilter{},
+    return world.CastRay(glm::dvec3(x, kHeight, z), glm::vec3(0.f, -2.f * kHeight, 0.f), Physics::CollisionFilter{},
                          ECS::NullEntity);
 }
 
@@ -198,7 +198,7 @@ TEST_CASE("Collision models: a Mesh on a kinematic body holds up what lands on i
     AddModels(test.collision);
     (void)AddModelBody(test.scene, glm::vec3(0.f), ModelCollider(kFloor, Physics::ColliderShape::Mesh),
                        Physics::MotionType::Kinematic);
-    const ECS::Entity ball = AddBody(test.scene, glm::vec3(0.f, 1.5f, 0.f), Ball(0.5f, false));
+    const ECS::Entity ball = AddBody(test.scene, glm::dvec3(0.f, 1.5f, 0.f), Ball(0.5f, false));
 
     Step(test.world, kSettleSteps);
     CheckAtRest(test.scene, ball, 0.5f);
@@ -234,8 +234,8 @@ TEST_CASE("Collision models: a hit on a model piece of a body names the piece's 
     AddModels(test.collision);
     BodySpec owner = Box(glm::vec3(0.5f), false);
     owner.rigidBody->gravityScale = 0.f;
-    const ECS::Entity body = AddBody(test.scene, glm::vec3(0.f), owner);
-    const ECS::Entity piece = AddChildCollider(test.scene, body, glm::vec3(0.f, 0.f, 3.f),
+    const ECS::Entity body = AddBody(test.scene, glm::dvec3(0.f), owner);
+    const ECS::Entity piece = AddChildCollider(test.scene, body, glm::dvec3(0.f, 0.f, 3.f),
                                                ModelCollider(kCube, Physics::ColliderShape::Convex));
     test.world.Reconcile();
 
@@ -258,7 +258,7 @@ TEST_CASE("Collision models: a set is its pieces where the model put them, weigh
     BodySpec spec;
     spec.collider = ModelCollider(kTwoParts, Physics::ColliderShape::Convex);
     spec.rigidBody = floating;
-    const ECS::Entity set = AddBody(test.scene, glm::vec3(0.f), spec);
+    const ECS::Entity set = AddBody(test.scene, glm::dvec3(0.f), spec);
     test.world.Reconcile();
 
     const std::optional<Physics::QueryHit> left = DropRay(test.world, -1.f, 0.f);
@@ -323,7 +323,7 @@ TEST_CASE("Collision models: a set with a round piece is built at a scale it can
     BodySpec spec;
     spec.collider = ModelCollider(kRoundSet, Physics::ColliderShape::Convex);
     spec.rigidBody = floating;
-    const ECS::Entity set = AddBody(test.scene, glm::vec3(0.f), spec);
+    const ECS::Entity set = AddBody(test.scene, glm::dvec3(0.f), spec);
     test.scene.GetMut<ECS::Transform>(set)->scale = glm::vec3(2.f, 1.f, 1.f);
     Step(test.world, 2);
 
@@ -342,7 +342,7 @@ TEST_CASE("Collision models: a shape cast with a convex model collider finds wha
 
     const Physics::Collider cube = ModelCollider(kCube, Physics::ColliderShape::Convex);
     const std::optional<Physics::QueryHit> hit = test.world.CastShape(
-        cube, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(0.f, 5.f, 0.f)}, glm::vec3(0.f, -10.f, 0.f),
+        cube, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(0.f, 5.f, 0.f)}, glm::vec3(0.f, -10.f, 0.f),
         ECS::NullEntity);
     REQUIRE(hit.has_value());
     // The cube's bottom meets the floor's top after 4.5 m of the 10 m sweep.

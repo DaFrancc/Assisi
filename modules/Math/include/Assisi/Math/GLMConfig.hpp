@@ -11,6 +11,9 @@
 /// - `GLM_FORCE_RADIANS`          — all angle parameters are in radians.
 /// - `GLM_FORCE_DEPTH_ZERO_TO_ONE` — clip-space depth maps to [0, 1] (Vulkan/D3D convention).
 /// - `GLM_ENABLE_EXPERIMENTAL`    — enables GLM extension headers (gtx/*).
+/// - `GLM_FORCE_EXPLICIT_CTOR`    — a conversion between vector types is
+///   written out, so a dvec3 never narrows to a vec3 unseen. Defined on glm's
+///   CMake target rather than here, so it holds whatever is included first.
 
 /* These must be defined before any GLM header is included anywhere. */
 #define GLM_FORCE_RADIANS

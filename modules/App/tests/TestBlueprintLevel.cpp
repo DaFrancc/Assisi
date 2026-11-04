@@ -96,7 +96,7 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
         (void)descriptor;
         REQUIRE(world.physics.HasBody(entity));
         ++bodies;
-        const glm::vec3 position = world.physics.GetBodyPose(entity).position;
+        const glm::vec3 position = glm::vec3(world.physics.GetBodyPose(entity).position);
         CHECK(position.x == doctest::Approx(30.f));
         CHECK(position.y == doctest::Approx(tag.memberIndex == 0 ? 0.f : 1.f));
     }
@@ -196,7 +196,7 @@ TEST_CASE("App: a child of a walking character follows it")
     // its own local offset, not the pose the level was composed at.
     const glm::vec3 eyeWorld = Math::TranslationOf(world.scene.Get<ECS::WorldMatrix>(eye)->matrix);
     CHECK(eyeWorld.x == doctest::Approx(bodyTransform->position.x).epsilon(0.01));
-    CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5f).epsilon(0.05));
+    CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5).epsilon(0.05));
 
     fs::remove_all(root, ec);
 }

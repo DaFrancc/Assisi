@@ -48,7 +48,7 @@ ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool i
 {
     const PhysicsTests::BodySpec descriptor =
         PhysicsTests::WithFilter(PhysicsTests::Box(halfExtents, isStatic), filter);
-    return PhysicsTests::AddBody(scene, at, descriptor);
+    return PhysicsTests::AddBody(scene, glm::dvec3(at), descriptor);
 }
 
 /// Counts the phases reported for @p entity over @p steps steps.
@@ -83,7 +83,7 @@ PhaseCounts CountPhases(Physics::PhysicsWorld &world, ECS::Entity entity, int32_
 float HeightOf(const Physics::PhysicsWorld &world, ECS::Entity entity)
 {
     REQUIRE(world.HasBody(entity));
-    return world.GetBodyPose(entity).position.y;
+    return static_cast<float>(world.GetBodyPose(entity).position.y);
 }
 
 } // namespace

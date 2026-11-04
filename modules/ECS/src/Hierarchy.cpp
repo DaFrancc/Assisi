@@ -231,7 +231,7 @@ struct Propagation
     /// blended between the last two fixed steps if it moved in the latest one.
     glm::mat4 DrawnLocalMatrix(uint32_t slot, const Transform &transform) const
     {
-        glm::vec3 position = transform.position;
+        glm::dvec3 position = transform.position;
         glm::vec3 scale = transform.scale;
         glm::quat rotation = transform.rotation;
         const SparseSetLanes<Transform>::BlendMark &mark = lanes._marks[slot];
@@ -239,7 +239,10 @@ struct Propagation
         {
             BlendPose(lanes._current[mark.entry], transform, position, scale, rotation);
         }
-        return ComposeMatrix(rotation, position, scale);
+        // The one place a simulated position narrows for drawing: WorldMatrix is
+        // a float matrix measured from the world's origin, so far from it what is
+        // drawn is coarser than what is simulated.
+        return ComposeMatrix(rotation, glm::vec3(position), scale);
     }
 
     /// Blends the pose @p transform is drawn at between the step's start and
@@ -248,15 +251,18 @@ struct Propagation
     /// the step, the step's motion is blended and the later write applied in
     /// full.
     void BlendPose(const SparseSetLanes<Transform>::BlendEntry &entry, const Transform &transform,
-                   glm::vec3 &position, glm::vec3 &scale, glm::quat &rotation) const
+                   glm::dvec3 &position, glm::vec3 &scale, glm::quat &rotation) const
     {
         const float alpha = lanes._alpha;
-        const glm::vec3 endPosition = entry.hasEnd ? entry.endPosition : transform.position;
+        const glm::dvec3 endPosition = entry.hasEnd ? entry.endPosition : transform.position;
         const glm::vec3 endScale = entry.hasEnd ? entry.endScale : transform.scale;
         const glm::quat endRotation = entry.hasEnd ? entry.endRotation : transform.rotation;
         if (entry.prevPosition != endPosition)
         {
-            position = glm::mix(entry.prevPosition, endPosition, alpha) + (transform.position - endPosition);
+            // A double alpha: glm::mix with a float one does its arithmetic in
+            // floats, which would round the position away.
+            position = glm::mix(entry.prevPosition, endPosition, static_cast<double>(alpha)) +
+                       (transform.position - endPosition);
         }
         if (entry.prevScale != endScale)
         {

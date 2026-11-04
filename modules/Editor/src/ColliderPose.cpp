@@ -21,7 +21,7 @@ glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const E
     const ECS::Transform pose = parent != nullptr ? ECS::PoseUnderParent(local, *parent) : local;
 
     glm::mat4 model = glm::mat4_cast(pose.rotation);
-    Math::SetTranslation(model, pose.position);
+    Math::SetTranslation(model, glm::vec3(pose.position));
     return model;
 }
 

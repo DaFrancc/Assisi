@@ -33,7 +33,7 @@ namespace
 ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at = {0.f, -0.5f, 0.f},
                        glm::vec3 halfExtents = {20.f, 0.5f, 20.f})
 {
-    const ECS::Entity entity = PhysicsTests::AddBody(scene, at, PhysicsTests::Box(halfExtents, true));
+    const ECS::Entity entity = PhysicsTests::AddBody(scene, glm::dvec3(at), PhysicsTests::Box(halfExtents, true));
     world.Reconcile();
     return entity;
 }
@@ -41,7 +41,7 @@ ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec
 ECS::Entity SpawnCharacter(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 at,
                            const Physics::Character &descriptor)
 {
-    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddCharacter(scene, glm::dvec3(at), descriptor);
     world.Reconcile();
     REQUIRE(world.HasBody(entity));
     return entity;
@@ -76,7 +76,7 @@ glm::vec3 CharacterPosition(ECS::Scene &scene)
     {
         (void)entity;
         (void)character;
-        position = transform.position;
+        position = glm::vec3(transform.position);
     }
     return position;
 }

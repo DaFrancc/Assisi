@@ -608,6 +608,10 @@ FetchContent_Declare(glm
     SYSTEM
 )
 FetchContent_MakeAvailable(glm)
+# Every conversion between vector types is written out: a dvec3 narrowed to a
+# vec3 without a word is a position losing its precision unseen. Set on glm's
+# own target, so it also reaches a file that includes GLM's headers directly.
+target_compile_definitions(glm INTERFACE GLM_FORCE_EXPLICIT_CTOR)
 
 # --- stb (header-only; no CMake build)
 # Pinned to a bare commit, so NO GIT_SHALLOW: a depth-1 fetch can only grab a
