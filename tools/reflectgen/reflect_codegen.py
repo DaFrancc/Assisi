@@ -353,16 +353,27 @@ def _field_comparisons(fields: list, path: str) -> list[str]:
 
 
 def _size_asserts(fqn: str, fields: list) -> list[str]:
-    """That @p fqn is exactly its reflected fields, nested structs included.
+    """That @p fqn holds nothing but its reflected fields, nested structs included.
 
     A member with no AFIELD would be copied by a byte copy and missed by the
-    field-wise compare, and padding would be the same; both make the sum of the
-    fields' sizes fall short of the type's.
+    field-wise compare. Each field is checked to start where the compiler would
+    put it straight after the one before, padding included, and the type to end
+    where its own alignment puts the last: a member between or after them moves
+    one or the other. Padding itself is fine, since the copy carries it and the
+    compare never reads it. A member small enough to sit inside padding the
+    fields already leave goes unseen.
     """
-    sizes = ' + '.join(f'sizeof(decltype({fqn}::{f.name}))' for f in fields)
-    asserts = [f'static_assert(sizeof({fqn}) == {sizes},\n'
-               f'              "{fqn} holds a member with no AFIELD, or padding: a predicted '
-               f'component must be exactly its fields, largest first");']
+    message = f'"{fqn} holds a member with no AFIELD: a predicted component must be only its fields"'
+    asserts = [f'static_assert(offsetof({fqn}, {fields[0].name}) == 0,\n              {message});']
+    for before, f in zip(fields, fields[1:]):
+        end = f'offsetof({fqn}, {before.name}) + sizeof(decltype({fqn}::{before.name}))'
+        align = f'alignof(decltype({fqn}::{f.name}))'
+        asserts.append(f'static_assert(offsetof({fqn}, {f.name}) == ({end} + {align} - 1) / {align} * {align},\n'
+                       f'              {message});')
+    last = fields[-1].name
+    end = f'offsetof({fqn}, {last}) + sizeof(decltype({fqn}::{last}))'
+    asserts.append(f'static_assert(sizeof({fqn}) == ({end} + alignof({fqn}) - 1) / alignof({fqn}) * alignof({fqn}),\n'
+                   f'              {message});')
     for f in fields:
         held = _struct_of(f)
         if held is not None:
@@ -1136,6 +1147,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <type_traits>')
     if has_predicted:
         includes.append('#include <Assisi/Core/Reflect/PredictedCompare.hpp>')
+        # offsetof, for the check that a predicted component is only its fields.
+        includes.append('#include <cstddef>')
         includes.append('#include <string>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
