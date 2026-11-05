@@ -1,8 +1,17 @@
-// Shared by the sun's cascades and the local lights' atlas: the comparison
-// sampler, the filter kernels and the receiver-plane arithmetic.
+// Shared by the sun's cascades and the local lights' atlas: the sampler, the
+// filter kernels and the receiver-plane arithmetic.
+//
+// Every texel a filter reads on the light's side of the receiver is compared
+// against the receiver's own plane at that texel's centre, not against one depth
+// for the whole lookup. On a surface the light grazes, those texels are the
+// surface itself, nearer the light, and one depth reads them as a blocker:
+// stripes of shadow across a lit surface. So a tap gathers its four texels raw
+// and compares and blends them here, where a comparison sampler would hold all
+// four to one depth.
 
-// Compares against four texels and returns the blend.
-layout(binding = 129) uniform samplerShadow uShadowSampler;
+// Reads texels raw for textureGather. Outside the map it returns depth 1, the
+// far plane, so a texel past the edge is never a blocker.
+layout(binding = 129) uniform sampler uShadowSampler;
 
 // Must match Render::ShadowDebugView.
 const uint kShadowDebugCascades = 1u;
@@ -43,14 +52,14 @@ const float kTwoPi = 6.28318531;
 // of the receiver's plane.
 const float kPcssBlockerMinDepthTexels = 1.0;
 
-// The steepest receiver slope accepted, in texels of depth per texel (about 84
-// degrees).
-const float kPcssMaxReceiverSlope = 10.0;
+// The steepest receiver slope a lookup follows, in texels of depth per texel
+// (about 89.94 degrees). Must match Render::kMaxReceiverSlopeTexels.
+const float kMaxReceiverSlope = 1000.0;
 
-// The world position's change one pixel across and one down. Set at the top of
-// main while control flow is uniform; zero while no contact-hardening path is on.
-vec3 gWorldPosDx = vec3(0.0);
-vec3 gWorldPosDy = vec3(0.0);
+// Past this, a normal lies too near the X axis for their cross product to be a
+// well-conditioned tangent, and the Y axis is used instead. Must match the one
+// in ShadowView.cpp.
+const float kTangentAxisLimit = 0.9;
 
 // Per-pixel rotation for the Vogel disk: Jimenez's interleaved gradient noise,
 // whose constants are the function.
@@ -68,11 +77,87 @@ vec2 VogelOffset(uint i, float phi, float radius)
 }
 
 // The rasterized surface's normal, flipped for a back face as the shaded normal
-// is. Shadow lookups offset along this rather than the normal-mapped one.
+// is. Shadow lookups offset along this rather than the normal-mapped one, and
+// take the receiver's plane from it.
 vec3 GeometricNormal()
 {
     vec3 n = normalize(vNormal);
     return gl_FrontFacing ? n : -n;
+}
+
+// A unit vector along the surface @p N faces. Any one will do: the plane is
+// fixed by it and its cross product with @p N.
+vec3 ReceiverTangent(vec3 N)
+{
+    vec3 axis = abs(N.x) < kTangentAxisLimit ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    return normalize(cross(N, axis));
+}
+
+// dz/du and dz/dv of the receiver in a map, from the change in (u, v, depth)
+// over two steps along it, @p along1 and @p along2. @p depthPerUv is one texel
+// of depth over one texel of UV. Zero where the surface is edge-on to the map.
+vec2 ReceiverPlaneSlope(vec3 along1, vec3 along2, float depthPerUv)
+{
+    float det = along1.x * along2.y - along1.y * along2.x;
+    if (det == 0.0)
+    {
+        return vec2(0.0);
+    }
+    vec2  slope = vec2(along1.z * along2.y - along1.y * along2.z, along1.x * along2.z - along1.z * along2.x) / det;
+    float limit = kMaxReceiverSlope * depthPerUv;
+    float len   = length(slope);
+    return len > limit ? slope * (limit / len) : slope;
+}
+
+// The four texels a bilinear tap at a point reads: where to gather them, and
+// how far past the first one's centre the point lies, in texels.
+struct TexelQuad
+{
+    vec2 gatherUv;
+    vec2 fraction;
+};
+
+TexelQuad QuadAt(vec2 uv, vec2 texels)
+{
+    vec2 position = uv * texels - 0.5;
+    vec2 first    = floor(position);
+    // The corner the four share. Gathered anywhere else, a point a rounding
+    // error from a texel centre could gather the next four along.
+    return TexelQuad((first + 1.0) / texels, position - first);
+}
+
+// A lookup's receiver in one map: where its own point lands, its depth there,
+// already biased, and how its plane deepens across the map.
+struct Receiver
+{
+    vec2  uv;
+    vec2  slope;
+    float reference;
+};
+
+// The depth a texel centred @p offset from the receiver's own point is compared
+// against: the plane where it runs toward the light, the receiver's own depth
+// where it runs away. Must match Render::ShadowComparedDepth, which says why.
+float ComparedDepth(Receiver receiver, vec2 offset)
+{
+    return receiver.reference + min(dot(offset, receiver.slope), 0.0);
+}
+
+// How lit a tap at @p tapUv is: the four texels gathered for @p quad, each lit
+// where the depth it is compared against is in front of what it stores, blended
+// bilinearly. @p texels is the map's size.
+float CompareTexels(vec4 stored, TexelQuad quad, vec2 texels, vec2 tapUv, Receiver receiver)
+{
+    // From the receiver's point to the first texel's centre and the second's,
+    // along each axis.
+    vec2 tap   = tapUv - receiver.uv;
+    vec2 back  = tap - quad.fraction / texels;
+    vec2 ahead = tap + (1.0 - quad.fraction) / texels;
+    // textureGather returns (i0, j1), (i1, j1), (i1, j0), (i0, j0).
+    vec4 compared = vec4(ComparedDepth(receiver, vec2(back.x, ahead.y)), ComparedDepth(receiver, ahead),
+                         ComparedDepth(receiver, vec2(ahead.x, back.y)), ComparedDepth(receiver, back));
+    vec4 lit = vec4(lessThan(compared, stored));
+    return mix(mix(lit.w, lit.z, quad.fraction.x), mix(lit.x, lit.y, quad.fraction.x), quad.fraction.y);
 }
 
 // ---- Contact hardening (percentage-closer soft shadows) ---------------------
@@ -82,30 +167,12 @@ vec3 GeometricNormal()
 // gap: a penumbra is (receiver - blocker) / blocker times the light's size, so
 // the shadow is sharp where a caster touches its receiver and widens with height.
 //
-// Each tap compares against the receiver's own plane (receiver-plane depth bias)
-// rather than a single depth. On a receiver tilted toward the light, a wide
-// kernel covers ground that recedes in depth, and one reference depth would read
-// the receiver's own texels as blockers.
+// The blocker search measures each texel against the receiver's plane too, so a
+// grazing receiver never counts its own texels as blockers.
 
 // How far a contact-hardened kernel reaches for a blocker @p gapDepth in front
 // of its receiver. Must match Render::PcssPenumbraUv.
 float PcssPenumbraUv(float penumbraUvPerDepth, float gapDepth, float maxReachUv)
 {
     return clamp(penumbraUvPerDepth * gapDepth, 0.0, maxReachUv);
-}
-
-// dz/du and dz/dv of the receiver in a map, from the change in (u, v, depth) one
-// pixel across (@p dx) and down (@p dy). @p depthPerUv is one texel of depth
-// over one texel of UV. Zero where the pixel's footprint is degenerate.
-vec2 ReceiverPlaneSlope(vec3 dx, vec3 dy, float depthPerUv)
-{
-    float det = dx.x * dy.y - dx.y * dy.x;
-    if (det == 0.0)
-    {
-        return vec2(0.0);
-    }
-    vec2  slope = vec2(dx.z * dy.y - dx.y * dy.z, dx.x * dy.z - dx.z * dy.x) / det;
-    float limit = kPcssMaxReceiverSlope * depthPerUv;
-    float len   = length(slope);
-    return len > limit ? slope * (limit / len) : slope;
 }

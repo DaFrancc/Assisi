@@ -92,6 +92,38 @@ ShadowView LocalShadowView(const LocalShadowLightPose &pose, const glm::vec3 &fo
     view.pcssMaxReachUv = kPcssMaxReachTexels * view.filterTapStepUv;
     return view;
 }
+
+/// Past this, a normal lies too near the X axis for their cross product to be a
+/// well-conditioned tangent, and the Y axis is used instead. Must match
+/// shadow_filters.glsl's kTangentAxisLimit.
+constexpr float kTangentAxisLimit = 0.9f;
+
+/// How far along the receiver its plane is measured, as a fraction of its
+/// distance from the light. A projection maps a plane to a plane, so the answer
+/// is the same at any distance; a fraction of the receiver's own keeps both
+/// points in front of a local light and their depths far enough apart for a
+/// float to tell. Must match local_shadows.glsl's kReceiverSlopeProbe.
+constexpr float kReceiverSlopeProbe = 1.f / 16.f;
+
+/// A unit vector along the surface @p normal faces. Any one will do: the plane
+/// is fixed by it and its cross product with @p normal.
+glm::vec3 ReceiverTangent(const glm::vec3 &normal)
+{
+    const glm::vec3 axis = std::abs(normal.x) < kTangentAxisLimit ? glm::vec3(1.f, 0.f, 0.f) : glm::vec3(0.f, 1.f, 0.f);
+    return glm::normalize(glm::cross(normal, axis));
+}
+
+/// Where @p world lands in @p view's target: UV in xy, comparison depth in z.
+/// The same as mesh.frag's ShadowCoord and LocalShadowCoord.
+glm::vec3 TargetCoord(const ShadowView &view, const glm::vec3 &world)
+{
+    const glm::vec4 clip = view.viewProjection * glm::vec4(world, 1.f);
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    // The map is drawn through a flipped viewport, so its first row is ndc.y = +1.
+    const glm::vec2 viewUv = glm::vec2(ndc) * glm::vec2(0.5f, -0.5f) + 0.5f;
+    const glm::vec4 scaleOffset = ShadowViewUvScaleOffset(view);
+    return glm::vec3(viewUv * glm::vec2(scaleOffset) + glm::vec2(scaleOffset.z, scaleOffset.w), ndc.z);
+}
 } // namespace
 
 glm::vec4 ShadowViewUvScaleOffset(const ShadowView &view)
@@ -111,6 +143,39 @@ nvrhi::Viewport ShadowViewViewport(const ShadowView &view)
     const auto y = static_cast<float>(view.rect.y);
     return nvrhi::Viewport(x, x + static_cast<float>(view.rect.width), y, y + static_cast<float>(view.rect.height), 0.f,
                            1.f);
+}
+
+glm::vec2 ReceiverPlaneSlope(const ShadowView &view, const glm::vec3 &position, const glm::vec3 &normal,
+                             float depthPerUv)
+{
+    // Two steps along the surface, as far as the receiver is from the light
+    // times kReceiverSlopeProbe. A cascade's w is 1, so its steps are that
+    // fraction of a world unit.
+    const float probe = (view.viewProjection * glm::vec4(position, 1.f)).w * kReceiverSlopeProbe;
+    const glm::vec3 first = ReceiverTangent(normal);
+    const glm::vec3 second = glm::cross(normal, first);
+    const glm::vec3 here = TargetCoord(view, position);
+    const glm::vec3 alongFirst = TargetCoord(view, position + first * probe) - here;
+    const glm::vec3 alongSecond = TargetCoord(view, position + second * probe) - here;
+
+    // The (du, dv) of both steps against their change in depth, solved for the
+    // depth's gradient.
+    const float det = alongFirst.x * alongSecond.y - alongFirst.y * alongSecond.x;
+    if (det == 0.f)
+    {
+        return glm::vec2(0.f);
+    }
+    const glm::vec2 slope = glm::vec2(alongFirst.z * alongSecond.y - alongFirst.y * alongSecond.z,
+                                      alongFirst.x * alongSecond.z - alongFirst.z * alongSecond.x) /
+                            det;
+    const float limit = kMaxReceiverSlopeTexels * depthPerUv;
+    const float length = glm::length(slope);
+    return length > limit ? slope * (limit / length) : slope;
+}
+
+float ShadowComparedDepth(float reference, const glm::vec2 &offset, const glm::vec2 &slope)
+{
+    return reference + std::min(glm::dot(offset, slope), 0.f);
 }
 
 ShadowViewGpu PackShadowView(const ShadowView &view)
@@ -274,8 +339,8 @@ glm::vec4 ShadowViewClampUv(const ShadowView &view, ShadowFilter filter)
     const glm::vec2 minUv(scaleOffset.z, scaleOffset.w);
     const glm::vec2 maxUv = minUv + glm::vec2(scaleOffset.x, scaleOffset.y);
 
-    // The kernel's outermost tap, plus the half texel the hardware's own
-    // bilinear comparison reaches on top of wherever a tap lands.
+    // The kernel's outermost tap, plus the half texel a tap's bilinear blend
+    // reaches on top of wherever it lands.
     const float inset = view.filterTapStepUv * (FilterRadiusTaps(filter) + 0.5f);
     const glm::vec2 room = (maxUv - minUv) * 0.5f;
     if (inset >= room.x || inset >= room.y)

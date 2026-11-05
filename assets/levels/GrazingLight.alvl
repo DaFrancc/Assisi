@@ -1,0 +1,400 @@
+{
+  "entities": [
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "direction": [
+            0.3380740392011739,
+            -0.25881904510252074,
+            -0.9659258262890683
+          ],
+          "intensity": 1.0
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            14.0,
+            0.5,
+            14.0
+          ]
+        }
+      },
+      "name": "SunFloor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "name": "SunCube"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            3.5,
+            1.0,
+            1.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "name": "SunSphere"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            40.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            14.0,
+            0.5,
+            14.0
+          ]
+        }
+      },
+      "name": "PointFloor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            40.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "name": "PointCube"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            36.0,
+            1.0,
+            3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "name": "PointSphere"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "castsShadows": true,
+          "color": [
+            0.2,
+            0.4,
+            1.0
+          ],
+          "intensity": 200.0,
+          "radius": 30.0
+        },
+        "Transform": {
+          "position": [
+            38.0,
+            2.034,
+            1.408
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PointLight"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            80.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            14.0,
+            0.5,
+            14.0
+          ]
+        }
+      },
+      "name": "SpotFloor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            80.0,
+            3.0,
+            -2.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            8.0,
+            6.0,
+            0.5
+          ]
+        }
+      },
+      "name": "SpotWall"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "castsShadows": true,
+          "innerAngle": 25.0,
+          "intensity": 300.0,
+          "outerAngle": 40.0,
+          "radius": 12.0
+        },
+        "Transform": {
+          "position": [
+            80.0,
+            5.5,
+            -1.722
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "SpotLight"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            40.0,
+            2.0,
+            6.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Camera"
+    }
+  ],
+  "systems": [],
+  "version": 2
+}

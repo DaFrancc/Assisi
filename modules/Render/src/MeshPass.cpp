@@ -156,8 +156,8 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::ShadowViews)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas)));
-    // One comparison sampler for both maps: the cascades and the atlas are
-    // filtered identically, and only the rectangle they are read from differs.
+    // One sampler for both maps: the cascades and the atlas are filtered
+    // identically, and only the rectangle they are read from differs.
     bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Shadow)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::Environment)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable)));
@@ -178,21 +178,21 @@ bool MeshPass::Initialize(const InitParams &params)
     }
     _sampler = device->createSampler(samplerDesc);
 
-    // The cascades are compared, not read: the hardware tests the reference
-    // depth against four texels and returns the blended result, so one fetch is
-    // already a 2x2 PCF and the kernel sizes below it are that many again.
-    // Clamped, because a lookup outside a cascade must not wrap to the far side
-    // of the map — the shader rejects those before they get here, and the clamp
-    // is what keeps a rounding error at the border from shadowing anything.
+    // The shadow maps are gathered, not compared by the hardware: a tap reads
+    // its four texels raw and the shader compares each against the receiver's
+    // plane at that texel, which a comparison sampler would hold to one depth.
+    // The border is depth 1, the far plane, because a lookup outside a cascade
+    // must not wrap to the far side of the map: the shader rejects those before
+    // they get here, and the border is what keeps a rounding error at the edge
+    // from shadowing anything.
     nvrhi::SamplerDesc shadowSamplerDesc;
-    shadowSamplerDesc.setAllFilters(true);
+    shadowSamplerDesc.setAllFilters(false);
     shadowSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::ClampToBorder);
     shadowSamplerDesc.setBorderColor(nvrhi::Color(1.f));
-    shadowSamplerDesc.setReductionType(nvrhi::SamplerReductionType::Comparison);
     _shadowSampler = device->createSampler(shadowSamplerDesc);
     if (_shadowSampler == nullptr)
     {
-        Core::Log::Error("MeshPass: failed to create the shadow comparison sampler.");
+        Core::Log::Error("MeshPass: failed to create the shadow sampler.");
         return false;
     }
 

@@ -347,8 +347,8 @@ float FilterRadiusTaps(ShadowFilter filter)
     switch (filter)
     {
     case ShadowFilter::Point:
-        // No taps of its own — the hardware's bilinear comparison is the whole
-        // of the footprint, and CascadePenumbraWorld adds that separately.
+        // No taps of its own — the bilinear tap's four texels are the whole of
+        // the footprint, and CascadePenumbraWorld adds that separately.
         return kPointFilterRadiusTaps;
     case ShadowFilter::Pcf5x5:
         return kPcf5FilterRadiusTaps;
@@ -409,9 +409,9 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
     const SunShadowSettings safe = Sanitized(settings);
     const float boxWidth = 2.f * cascade.extent;
     const float kernelUv = FilterRadiusTaps(safe.filter) * CascadeFilterTapStepUv(cascade, safe);
-    // The hardware compares against four texels and blends, so every filter —
-    // the one-tap one included — is soft to half a texel before its own kernel
-    // adds anything.
+    // Every tap compares four texels and blends them, so every filter — the
+    // one-tap one included — is soft to half a texel before its own kernel adds
+    // anything.
     const float bilinearUv = 0.5f / static_cast<float>(std::max(safe.resolution, 1u));
     return (kernelUv + bilinearUv) * boxWidth;
 }

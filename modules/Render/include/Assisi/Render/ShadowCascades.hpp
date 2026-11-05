@@ -374,7 +374,7 @@ inline constexpr float kMaxPenumbraWorld = 0.05f;
 ///
 /// Not the same as FilterTapStepUv, which is quoted against a fixed reference
 /// resolution and so stops shrinking once the map passes it. This is the real
-/// texel, which is what the comparison sampler snaps a tap onto.
+/// texel, which is what a tap's four texels are counted in.
 [[nodiscard]] float ShadowTexelSizeUv(const SunShadowSettings &settings);
 
 /// @brief How many screen pixels one of this cascade's texels covers, for a
@@ -394,8 +394,8 @@ inline constexpr float kMaxPenumbraWorld = 0.05f;
 
 /// @brief Half-width of the shadow's penumbra in this cascade, in world units.
 ///
-/// The kernel's reach plus the half-texel the hardware's own bilinear
-/// comparison covers, which is why the one-tap filter is still soft to a texel
+/// The kernel's reach plus the half-texel each tap's bilinear blend
+/// covers, which is why the one-tap filter is still soft to a texel
 /// rather than hard-edged. Reported so a tier's softness is a number rather
 /// than an impression: a higher tier that comes out *narrower* here is the
 /// defect this exists to catch.
@@ -460,8 +460,9 @@ struct SunPcssConstants
 /// corner it escapes the very surface that shades the receiver, so a leak is
 /// what it buys and a texel is all it may spend. Sizing it by the kernel instead
 /// makes the widest filter the leakiest tier, which inverts what a quality
-/// setting means. The taps' own self-shadowing belongs to the depth biases,
-/// which push along the light and leave the corner where it is.
+/// setting means. The taps' own self-shadowing is the receiver's plane's to
+/// stop: each texel a tap reads is compared against the plane at that texel,
+/// which leaves the corner where it is.
 ///
 /// Its cost is bounded and worth stating: a lookup moved this far can read past
 /// an occluder that is nearer than the offset, so the offset is also the largest

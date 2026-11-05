@@ -536,7 +536,7 @@ TEST_CASE("No filter reads further than its own radius in texels")
 {
     // The bound that keeps the reach tied to the map rather than to a constant
     // chosen elsewhere: whatever the resolution, a kernel spans its radius in
-    // the map's own texels and the half one the hardware comparison adds. That
+    // the map's own texels and the half one each tap's bilinear blend adds. That
     // is what lets the reach be reasoned about against scene geometry at all.
     for (const std::uint32_t resolution : {1024u, 4096u})
     {

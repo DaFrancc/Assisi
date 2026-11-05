@@ -81,10 +81,9 @@ enum class ShadowDebugView : uint32_t
     /// The distance, in metres, between the fragment and the occluder the map
     /// recorded at its own lookup: red where one sits nearer the light (which is
     /// what shadow looks like), green where nothing does, blue where the lookup
-    /// left the cascade. Reads the centre texel unfiltered, because the
-    /// comparison sampler returns a fraction and a fraction cannot distinguish
-    /// the map holding the wrong occluder from it holding the right one at the
-    /// wrong depth.
+    /// left the cascade. Reads the centre texel unfiltered, because a filtered
+    /// tap returns a fraction and a fraction cannot distinguish the map holding
+    /// the wrong occluder from it holding the right one at the wrong depth.
     Margin,
     /// The visibility that shades the pixel, against the two narrower answers
     /// inside it: red is what SunVisibility returns, green this cascade's own
@@ -440,9 +439,9 @@ private:
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
-    // Depth-comparison sampler for the cascades: the hardware compares the
-    // reference against four texels and blends the results, so even a one-tap
-    // lookup comes back filtered rather than as a hard 0 or 1.
+    // Gathers the shadow maps' texels raw: the shader compares each against
+    // the receiver's plane and blends the four itself, so even a one-tap lookup
+    // comes back filtered rather than as a hard 0 or 1.
     nvrhi::SamplerHandle _shadowSampler;
     // One pipeline per MeshPipeline, differing only in which pixel shader they
     // carry and whether they cull back faces. A draw run selects its own off the
