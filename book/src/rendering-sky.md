@@ -1,0 +1,254 @@
+# Sky and time of day
+
+An outdoor level needs a sky behind everything, a sun that lights the world from
+the right direction, and maybe a day that passes. All of these are components on
+**one entity**: the one with the `DirectionalLight`. That light is the sun.
+
+| Component | Header | What it adds |
+|---|---|---|
+| `DirectionalLight` | `<Assisi/Runtime/LightComponents.hpp>` | Sunlight. Required: everything below goes beside it. |
+| `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky drawn behind everything, coloured by that light, and the light the sky casts on the world. |
+| `TimeOfDay` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock: the hour, the day and the time of year. |
+| `Sun` | `<Assisi/Runtime/TimeOfDay.hpp>` | Aims the light from the clock, so the sun rises, crosses the sky and sets. |
+| `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A moon that rises and sets, goes through its phases, and lights the world at night. |
+
+[Entities and components](entities-and-components.md#the-sky-the-sun-and-the-moon)
+introduces these. This page explains what each does in full. The `Pretty` level
+(`assets/levels/Pretty.alvl`) has all five on its `Sun` entity.
+
+## Try it: a day that passes
+
+### Step 1: Make the sun
+
+Open the editor with a level that has no directional light, such as
+`levels/ShadowCheck.alvl`, or delete the one your level has.
+
+1. Add an entity and give it a `DirectionalLight`. It needs no `Transform`.
+2. Add a `Skybox`. A blue sky appears behind the level.
+
+### Step 2: Put it on a clock
+
+1. Add a `TimeOfDay` and a `Sun` to the same entity. The sun moves to where it
+   is at noon.
+2. Drag `TimeOfDay`'s `hour` between 5 and 20. The sun rises, crosses the sky
+   and sets as you drag, and the sky goes orange around sunrise and sunset.
+   This works without pressing Play.
+3. Set `hour` to `7` and `dayLengthSeconds` to `60`, so a whole day lasts a
+   minute.
+
+### Step 3: Let it run
+
+1. In the **Systems** panel, add the `TimeOfDay` system. It moves the clock
+   while the game runs. Without it, the time stays where you set it.
+2. Press **F5**. The sun climbs and the shadows swing round as the day passes.
+
+Add a `Moon` to the same entity to have a moon in the sky and moonlight at
+night.
+
+## Rules for the sky components
+
+- **A sky needs exactly one `DirectionalLight` in the level.** With none there
+  is no sun to light the sky. With two or more, the sky is not drawn and the log
+  warns once. Without a sky, the background is the `clearColor` from
+  [`game.json`](game-settings.md).
+- **The `Skybox`, `Sun` and `Moon` must be on the light's entity.** On any other
+  entity they do nothing.
+- **A `Moon` needs a `Sun`** beside it. Without one the moon is ignored and the
+  log says so.
+- **A `Sun` needs a `TimeOfDay`** somewhere in the level. Without one the sun
+  stands where it would at noon on day 0, and the log says so. The `TimeOfDay` can be on any entity, but the light's entity is the usual
+  place.
+- **There is one clock.** With more than one `TimeOfDay`, the first the engine
+  finds is used and the log warns.
+- A `Sun` works without a `Skybox`: the light then moves with the clock, and no
+  sky is drawn.
+
+## `Skybox`
+
+The sky is computed from a model of the air: how thick it is, and how much
+light the air and the dust in it scatter. This is what makes it blue overhead
+and orange at sunset without you painting either.
+
+The colour and brightness of daylight come from the `DirectionalLight`, not from
+the `Skybox`. Make the light blue and the sky, the sun's disk and every lit
+surface turn blue with it.
+
+The easiest way to choose a sky is `preset`:
+
+| `preset` | The sky |
+|---|---|
+| `Clear` | A temperate clear day. The default. |
+| `Arctic` | Cold, very clean air over snow: deep blue, almost no haze, and bright light thrown back up from the ground. |
+| `Savanna` | Hot and dusty: a warm haze that pales the sky towards the horizon. |
+| `Tropical` | Humid: the sky pales towards the sun and the horizon washes out. |
+| `Alpine` | Thin air at altitude: a dark blue sky and a hard white sun. |
+| `Hazy` | Thick, still air: the sun is a pale disk and the whole sky is nearly grey. |
+| `Airless` | No atmosphere: a black sky and a hard white sun, as on the moon. |
+| `Custom` | Uses the fields below as you set them. |
+
+While `preset` is anything but `Custom`, the fields below are greyed out and
+not used. To start a sky of your own from a preset, note the preset's look,
+switch to `Custom`, and change one field at a time.
+
+<details>
+<summary>The <code>Custom</code> fields</summary>
+
+| Field | What it changes |
+|---|---|
+| `airScattering` | How much the air scatters each of red, green and blue. Earth's air scatters blue most, which is why its sky is blue and its sunsets red. Change the balance for an alien sky. |
+| `airThickness` | How much air there is. `0` is no atmosphere. |
+| `hazeScattering` | How much dust and droplets scatter, per colour. Grey on Earth; colour it for a dusty sky. |
+| `hazeForwardness` | How much haze throws light onwards rather than back. Higher values make a brighter glow around a low sun. |
+| `skyBounce` | How much light scattered out of the sun's path still reaches the eye after scattering again. Too little turns the horizon green. |
+| `groundColor` | The colour of the ground the sky lights from below. It is not a surface you see; it is what the sky looks like below the horizon, and it colours the light surfaces get from below. |
+| `nightColor` | The colour the sky has with the sun down. |
+| `exposure` | How bright the sky is drawn compared to the rest of the scene. Default 10. |
+| `sunSizeDegrees` | The size of the sun's disk, as an angle. The real sun is about 0.27°; the default is 0.5° so the disk doesn't shrink to a flickering pixel. |
+| `sunEdgeSoftness` | How soft the disk's edge is, as a fraction of its size. |
+| `sunLimbDarkening` | How much darker the disk's rim is than its centre. `0` is a flat disk. |
+| `sunDiskIntensity` | How bright the disk is. `0` hides the disk and leaves the glow around it. |
+| `sunDiskColor` | A tint on the disk only. White keeps the disk the colour of the light. |
+
+</details>
+
+Two more fields work with every preset:
+
+| Field | What it changes |
+|---|---|
+| `minimumAmbient` | The least light the sky gives the world, at any hour. A night with no moon is close to black, which is realistic but usually unplayable; raise this to keep the ground visible. It doesn't make the sky itself brighter, and it casts no shadows. `0` (the default) is off. |
+| `minimumAmbientColor` | The colour of that light. Default a cool blue. |
+
+## `TimeOfDay`
+
+| Field | Meaning |
+|---|---|
+| `hour` | The time of day, from 0 to 24. 12 is noon, when the sun is highest. |
+| `day` | Days since the level began. The moon's phase counts these. |
+| `dayLengthSeconds` | How many seconds of play a whole day lasts. Default 600 (ten minutes). |
+| `paused` | Stops the daily clock. |
+| `dayOfYear` | The time of year, in days. `0` is the March equinox: the first day of spring in the north, of autumn in the south. |
+| `yearLengthDays` | How many days a year lasts. Default 12, so each season lasts three days. |
+| `seasonsPaused` | Stops the yearly clock, so the seasons stay where they are while the days still pass. |
+
+The clock moves only while the `TimeOfDay` system runs. It runs on the fixed
+step, so a day lasts the same time whatever the frame rate.
+
+### Changing the time from code
+
+`<Assisi/Runtime/TimeOfDay.hpp>` has three functions that jump the clock
+instead of running it forwards:
+
+| Function | What it does |
+|---|---|
+| `Jump(clock, day, hour)` | Goes to that day and hour. |
+| `JumpForwardTo(clock, hour)` | Goes to the next time it is `hour`: later today if that hour is still to come, otherwise tomorrow. Sleeping until morning is `JumpForwardTo(clock, 7.0)`. |
+| `JumpSeason(clock, dayOfYear)` | Goes to that time of year. |
+
+Use these rather than writing `hour` yourself. They keep `hour` between 0 and
+24, carrying past midnight into the next day, and they mark the change as a
+jump, which makes the shadows and the sky's reflections redraw for the new sun
+at once. Each returns `false` and changes nothing if given a value that is not
+a number, such as NaN.
+
+#### Example: sleeping until morning
+
+Pressing **Z** skips to 7:00 the next morning. `apps/game/src/Sleep.hpp`:
+
+```cpp
+#pragma once
+
+#include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
+
+/// Skips the clock to the next morning when Z is pressed.
+ASYSTEM(Update, name = "Sleep", activeWorldOnly)
+void SleepSystem(Assisi::App::SystemContext &ctx);
+```
+
+`apps/game/src/Sleep.cpp`:
+
+```cpp
+#include "Sleep.hpp"
+
+#include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Window/InputContext.hpp>
+#include <Assisi/Window/Key.hpp>
+
+void SleepSystem(Assisi::App::SystemContext &ctx)
+{
+    using namespace Assisi;
+
+    if (ctx.input == nullptr || !ctx.input->IsKeyPressed(Window::Key::Z))
+    {
+        return;
+    }
+    constexpr double kMorning = 7.0;
+    for (auto [entity, clock] : ctx.world.scene.Query<Mut<Runtime::TimeOfDay>>())
+    {
+        (void)entity;
+        Runtime::JumpForwardTo(clock, kMorning);
+    }
+}
+```
+
+Add `Sleep` to the level's systems, as well as `TimeOfDay`.
+
+## `Sun`
+
+| Field | Meaning |
+|---|---|
+| `latitudeDegrees` | How far north (positive) or south (negative) of the equator the level is. Near the equator the sun passes nearly overhead; far north it stays low. Default 45. |
+| `axialTiltDegrees` | How tilted the planet is, which is what causes seasons: long summer days and short winter ones. Earth's is 23.44. `0` means no seasons: every day is twelve hours long. |
+| `bearingDegrees` | Turns the compass, so you can choose which side of your level the sun rises on without moving the level. |
+
+With a `Sun`, the `DirectionalLight`'s own `direction` is ignored.
+
+## `Moon`
+
+| Field | Meaning |
+|---|---|
+| `intensity`, `color` | How much the moon lights the world, and in what colour. Real moonlight is far too dark to play in, so the default, 0.02, is much brighter than reality. |
+| `sizeDegrees` | The moon's size in the sky, as an angle. |
+| `diskColor`, `diskIntensity` | A tint and a brightness for the moon's picture in the sky. They don't change the light it gives. |
+| `atmosphericTint` | How orange a low moon turns, from 0 (not at all) to 1 (as orange as a low sun would be). Default 0.2. |
+| `cycleDays` | Days from one new moon to the next. Default 29.53. |
+| `phaseAtEpoch` | The phase on day 0: 0 is a new moon, 0.5 a full moon. The default, 0.25, puts a half moon in the afternoon sky. |
+| `inclinationDegrees`, `nodeAtEpochDegrees`, `nodeCycleYears` | The tilt and slow turning of the moon's orbit. These decide when eclipses happen; leave them alone unless you want to change that. |
+
+The sun and the moon share the one `DirectionalLight`. While the sun is up it
+lights the world; once it sets, the moon takes over the same light and its
+shadow, dimmed by its phase: a new moon gives no light at all. A moon in the
+daytime sky is drawn, but lights nothing. When neither is up, the world is lit
+only by the sky's own light.
+
+## The light the sky casts
+
+Besides the sun, a surface gets light from the whole sky around it, and from
+the ground. This is **ambient light**, also called **indirect light**: light
+that reaches a surface by any route other than straight from a light. It is
+what keeps the side of a building facing away from the sun from being black.
+
+With a `Skybox`, the sky provides it:
+
+- **Diffuse light.** A surface facing up gets the sky's colour, a surface
+  facing down gets `groundColor`, and anything in between gets a mix. It
+  follows the time of day: bright and blue at noon, warm at sunset, dark at
+  night with the moon's light added.
+- **Reflections.** Shiny surfaces reflect the sky. The engine draws the sky into
+  a small cube of six pictures, called a **reflection probe**, and smooth
+  materials read their reflection from it; rough ones read a blurred version.
+  The probe is redrawn when the sun or the moon has moved more than half a
+  degree. The player can turn reflections off or lower their resolution; see
+  [Sky reflections](rendering-settings.md#sky-reflections).
+
+Ambient light comes from every direction at once, so it casts no shadows. It
+does light the inside of a room as brightly as a field under the open sky,
+because the engine doesn't know the room has a roof. The player's
+[ambient occlusion](rendering-settings.md#ambient-occlusion) setting darkens
+corners and creases, which helps.
+
+**Without a `Skybox`**, every surface gets a dim, flat white ambient light, the
+same from every direction, and nothing is reflected. An indoor level lit only by
+its lamps has this.

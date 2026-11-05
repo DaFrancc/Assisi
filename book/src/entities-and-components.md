@@ -151,7 +151,8 @@ The color and brightness of daylight come from the `DirectionalLight`, not the
 surface all follow.
 
 The `Pretty` level (`assets/levels/Pretty.alvl`) is a working example to open in
-the editor.
+the editor. [Sky and time of day](rendering-sky.md) explains each of these
+components in full.
 
 <details>
 <summary>The main settings on each</summary>

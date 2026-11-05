@@ -133,6 +133,7 @@ Players don't need any. For testing:
 | `--ticks <n>` | Stop after `n` fixed steps. |
 | `--verbosity <level>` | Log less: `info`, `warn`, `error`… |
 | `--pak <path>` | Read a different package. **Only in debug and dev builds**; a ship build always reads the package beside it. The `ASSISI_PAK` environment variable does the same. |
+| `--benchmark [level]` | Fly the level's camera paths and record how fast it draws. **Only in a build with the profiler**; see [Measuring a level](rendering-debugging.md#measuring-a-level). |
 
 </details>
 
