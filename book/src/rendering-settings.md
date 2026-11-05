@@ -226,7 +226,9 @@ settings only matter in a level with a `Skybox`.
 | `rebakeDegrees` | **Rebake Angle** | 0 to 10 | `0.5` |
 
 - **`enabled`** off removes the sky's reflections; surfaces still get the sky's
-  light. It saves the probe's memory and the work of redrawing it.
+  light, and shiny surfaces reflect a plain blend of the sky's colour above and
+  the ground's below instead of the sky itself. It saves the probe's memory and
+  the work of redrawing it.
 - **`resolution`** is the size of each of the six pictures. Larger gives sharper
   reflections on smooth surfaces.
 - **`samples`** is how many points of the sky are averaged to make the blurred

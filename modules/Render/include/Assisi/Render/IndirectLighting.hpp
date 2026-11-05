@@ -31,7 +31,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 
 namespace Assisi::Render
 {
@@ -63,9 +62,8 @@ struct IndirectConstants
     float groundPadding = 0.0f;
 
     /// One while a prefiltered environment answers the specular half, and zero
-    /// otherwise. At zero mesh.frag takes the expression it had before there
-    /// was an environment at all, so every provider without one draws exactly
-    /// as it did.
+    /// otherwise. At zero mesh.frag reflects the two radiances above along the
+    /// reflection instead, so a metal still reflects the ambient it stands in.
     float specularEnvironment = 0.0f;
     /// The prefiltered cube's last mip, which is where roughness one is stored.
     float specularMaxLod = 0.0f;
@@ -125,25 +123,22 @@ public:
     [[nodiscard]] virtual IndirectConstants ShaderConstants() const = 0;
 
     /// @brief The mean radiance arriving at @p worldPosition along a GGX lobe
-    /// of @p roughness about @p reflection — the split sum's environment half —
-    /// or nothing, for a provider that has no environment to reflect.
+    /// of @p roughness about @p reflection — the split sum's environment half.
     ///
-    /// Nothing is not black. A provider that answers nothing leaves the shader
-    /// drawing the indirect term as a single diffuse radiance, which is what
-    /// the renderer drew before any provider had an environment; answering
-    /// black would instead take the diffuse term's share away and replace it
-    /// with no reflection.
-    ///
-    /// This is the reference the GPU's prefiltered cube approximates, computed
-    /// by sampling, and far too slow to run per frame.
+    /// A provider with an environment answers from it: the reference the GPU's
+    /// prefiltered cube approximates, computed by sampling, and far too slow to
+    /// run per frame. One without answers its own radiance along the
+    /// reflection, whatever the roughness, which is what mesh.frag reflects
+    /// while no environment is bound: never black, or a metal under a flat
+    /// ambient would turn dark rather than reflect it.
     ///
     /// @param reflection  Unit vector, world space.
     /// @param roughness   Perceptual roughness.
-    [[nodiscard]] virtual std::optional<Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
-                                                                               const glm::vec3 & /*reflection*/,
-                                                                               float /*roughness*/) const
+    [[nodiscard]] virtual Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> SpecularRadiance(const glm::vec3 &worldPosition,
+                                                                                                  const glm::vec3 &reflection,
+                                                                                                  float /*roughness*/) const
     {
-        return std::nullopt;
+        return Radiance(worldPosition, reflection);
     }
 };
 
@@ -244,9 +239,9 @@ public:
         return constants;
     }
 
-    [[nodiscard]] std::optional<Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
-                                                                       const glm::vec3 &reflection,
-                                                                       float roughness) const override
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> SpecularRadiance(const glm::vec3 & /*worldPosition*/,
+                                                                                          const glm::vec3 &reflection,
+                                                                                          float roughness) const override
     {
         const SkyProbeInputs &sky = _environment;
         const auto radiance = [&sky](const glm::vec3 &d) { return SkyRadiance(d, sky.sun, sky.moon, sky.settings); };

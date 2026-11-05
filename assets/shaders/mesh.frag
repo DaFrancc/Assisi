@@ -231,36 +231,32 @@ void main()
         occlusion = min(occlusion, screenOcclusion);
     }
 
+    // The split sum: the table gives how much of the environment the lobe
+    // reflects, and the diffuse layer gets the rest. With no environment bound
+    // the lobe reflects the ambient along the reflection, so a metal reflects
+    // the flat light it stands in rather than taking it as diffuse.
+    vec3 R              = reflect(-V, N);
+    vec2 ab             = brdf.envBrdf;
+    vec3 specularAlbedo = F0 * ab.x + ab.y;
+    // Multi-scatter compensation from this lobe's own albedo, A + B.
+    vec3 compensation   = vec3(1.0) + F0 * (1.0 / max(ab.x + ab.y, kEps) - 1.0);
+    vec3 environment    = uFrame.indirectSpecular.x != 0.0 ? IndirectSpecular(R, surf.roughness, vWorldPos)
+                                                           : IndirectRadiance(R, vWorldPos);
+    vec3 specular       = environment * specularAlbedo * compensation;
+    vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
     vec3 color;
-    if (uFrame.indirectSpecular.x == 0.0)
+    if (screenOccluded)
     {
-        // No environment to reflect.
-        color = indirect * albedo * occlusion + Lo + surf.emissive;
+        // A narrow reflection pointing out of a crease is occluded less than
+        // the diffuse term, so it takes its own share of the occlusion.
+        float alpha = surf.roughness * surf.roughness;
+        float specularOcclusion =
+            min(surf.occlusion, SpecularOcclusion(brdf.NdotV, screenOcclusion, alpha));
+        color = diffuse * occlusion + specular * specularOcclusion + Lo + surf.emissive;
     }
     else
     {
-        // The split sum: the table gives how much of the environment the lobe
-        // reflects, and the diffuse layer gets the rest.
-        vec2 ab             = brdf.envBrdf;
-        vec3 specularAlbedo = F0 * ab.x + ab.y;
-        // Multi-scatter compensation from this lobe's own albedo, A + B.
-        vec3 compensation   = vec3(1.0) + F0 * (1.0 / max(ab.x + ab.y, kEps) - 1.0);
-        vec3 specular       = IndirectSpecular(reflect(-V, N), surf.roughness, vWorldPos) * specularAlbedo *
-                              compensation;
-        vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
-        if (screenOccluded)
-        {
-            // A narrow reflection pointing out of a crease is occluded less than
-            // the diffuse term, so it takes its own share of the occlusion.
-            float alpha = surf.roughness * surf.roughness;
-            float specularOcclusion =
-                min(surf.occlusion, SpecularOcclusion(brdf.NdotV, screenOcclusion, alpha));
-            color = diffuse * occlusion + specular * specularOcclusion + Lo + surf.emissive;
-        }
-        else
-        {
-            color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
-        }
+        color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
     }
 
     // ---- Shadow debug views ----
