@@ -412,12 +412,17 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     const Assisi::Geometry::BoundingSphere fromCamera{worldSphere.center - _frame.camera, worldSphere.radius};
     const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), fromCamera) : 0u;
     EmitShadowCasters(source, ~0u, level, motion, _casters);
+    const std::size_t reachCount = reached.size() - firstReach;
     for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
     {
         if (emitted != before)
         {
-            reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
-                           reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
+            // Grown first and copied by position: inserting a range of the
+            // vector into itself is undefined.
+            const std::size_t at = reached.size();
+            reached.resize(at + reachCount);
+            std::copy_n(reached.begin() + static_cast<std::ptrdiff_t>(firstReach), reachCount,
+                        reached.begin() + static_cast<std::ptrdiff_t>(at));
         }
         _casterStart.push_back(static_cast<std::uint32_t>(reached.size()));
     }

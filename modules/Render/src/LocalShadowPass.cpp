@@ -45,7 +45,13 @@ bool LocalShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
     _depthRenderer = params.depthRenderer;
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    // First, so the mesh pass has a texture to bind even when the pass can
+    // never draw.
+    if (_device == nullptr || !CreateNoAtlasTexture())
+    {
+        return false;
+    }
+    if (_depthRenderer == nullptr || !_depthRenderer->IsReady())
     {
         return false;
     }
@@ -56,7 +62,8 @@ bool LocalShadowPass::Initialize(const InitParams &params)
                          params.tileResetVertexShaderSpvPath);
         return false;
     }
-    return CreateNoAtlasTexture();
+    _canDraw = true;
+    return true;
 }
 
 bool LocalShadowPass::CreateNoAtlasTexture()
@@ -205,9 +212,11 @@ bool LocalShadowPass::RebuildPipelines()
 
 bool LocalShadowPass::Configure(const LocalShadowSettings &settings, bool active)
 {
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (!_canDraw)
     {
-        return false; // Initialize failed; the pass stays inactive for good
+        // Initialize failed and the pass stays inactive for good. Fails only
+        // when asked for shadows, so the caller can turn them off once.
+        return !active;
     }
 
     if (!active)

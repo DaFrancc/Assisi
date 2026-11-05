@@ -41,6 +41,7 @@
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/ShadowCasterGather.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -476,6 +477,9 @@ private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
+    /// @brief Log each sky warning that was not raised last frame.
+    void WarnNewSkyWarnings(const SkyWarnings &warnings);
+
     nvrhi::IDevice *_device = nullptr;
     LightingSystem _lighting;
     Render::MeshPass _meshPass;
@@ -579,6 +583,10 @@ private:
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     AmbientOverride _ambient;                                               // inactive: the scene lights itself
     Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
+    // The sky's authoring warnings as of last frame, so each is said when it
+    // appears rather than at the frame rate, and again if it is fixed and comes
+    // back.
+    SkyWarnings _skyWarnings;
     // Latched so the unsupported-scene warning is said once rather than at the
     // frame rate. Cleared when the scene stops having several suns, so fixing it
     // and breaking it again is reported both times.

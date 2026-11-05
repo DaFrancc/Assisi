@@ -48,7 +48,13 @@ bool ShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
     _depthRenderer = params.depthRenderer;
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    // First, so the mesh pass has a texture to bind even when the pass can
+    // never draw.
+    if (_device == nullptr || !CreateNoCascadesTexture())
+    {
+        return false;
+    }
+    if (_depthRenderer == nullptr || !_depthRenderer->IsReady())
     {
         return false;
     }
@@ -65,7 +71,8 @@ bool ShadowPass::Initialize(const InitParams &params)
         Core::Log::Error("ShadowPass: failed to load the still-depth restore shaders.");
         return false;
     }
-    return CreateNoCascadesTexture();
+    _canDraw = true;
+    return true;
 }
 
 bool ShadowPass::CreateNoCascadesTexture()
@@ -269,9 +276,11 @@ void ShadowPass::RestoreStillDepth(nvrhi::ICommandList *commandList, std::uint32
 
 bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
 {
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (!_canDraw)
     {
-        return false; // Initialize failed; the pass stays inactive for good
+        // Initialize failed and the pass stays inactive for good. Fails only
+        // when asked for shadows, so the caller can turn them off once.
+        return !active;
     }
 
     if (!active)
