@@ -8,8 +8,9 @@
 /// it: hysteresis in one direction only (symmetric dwell relocates the artefact
 /// rather than removing it), fail-open when there is nothing to measure from
 /// (filtering here is a bandwidth tool, so a missing viewpoint must mean seeing
-/// everything, never seeing nothing), and the two escape classes that let an
-/// entity opt out of the whole mechanism in either direction.
+/// everything, never seeing nothing), an entity's own radius, and the two
+/// escape classes that let an entity opt out of the whole mechanism in either
+/// direction.
 
 #include <doctest/doctest.h>
 
@@ -92,7 +93,8 @@ struct Harness
     }
 };
 
-ECS::Entity SpawnAt(ECS::Scene &scene, glm::vec3 position, Relevance relevance = Relevance::Default)
+ECS::Entity SpawnAt(ECS::Scene &scene, glm::vec3 position, Relevance relevance = Relevance::Default,
+                    float relevanceRadius = 0.f)
 {
     const ECS::Entity entity = scene.Create();
     ECS::Transform transform;
@@ -101,6 +103,7 @@ ECS::Entity SpawnAt(ECS::Scene &scene, glm::vec3 position, Relevance relevance =
 
     Replicated marker;
     marker.relevance = relevance;
+    marker.relevanceRadius = relevanceRadius;
     (void)scene.Add<Replicated>(entity, marker);
     return entity;
 }
@@ -294,6 +297,49 @@ TEST_CASE("coming back inside the exit radius resets the dwell")
     CHECK(harness.server.IsRelevant(harness.serverSide(), wandererId));
 }
 
+TEST_CASE("an entity with its own radius enters and leaves at its own distances, with the game's gap")
+{
+    // The game enters at 10 m and leaves at 15 m. The entity's own 100 m
+    // radius keeps that ratio, so it leaves at 150 m: wide enough that an
+    // entity this far out does not flicker on its own boundary.
+    Harness harness(Distance(/*radius=*/ 10.f, /*exitRadius=*/ 15.f, /*dwellTicks=*/ 0));
+
+    const ECS::Entity anchor   = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
+    const ECS::Entity reaching = SpawnAt(harness.serverScene, {90.f, 0.f, 0.f}, Relevance::Default, 100.f);
+    const ECS::Entity ordinary = SpawnAt(harness.serverScene, {90.f, 0.f, 1.f});
+    harness.Step(2);
+
+    const ECS::Entity anchors[] = {anchor};
+    harness.server.SetViewAnchors(harness.serverSide(), anchors);
+    harness.Step(12);
+
+    const NetId reachingId = harness.server.NetIdOf(reaching);
+    CHECK(harness.server.IsRelevant(harness.serverSide(), reachingId));
+    CHECK(harness.client.EntityOf(reachingId) != ECS::NullEntity);
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(ordinary)));
+
+    // Past its radius but inside its exit radius: it stays.
+    MoveTo(harness.serverScene, reaching, {140.f, 0.f, 0.f});
+    harness.Step(12);
+    CHECK(harness.server.IsRelevant(harness.serverSide(), reachingId));
+
+    // Past its exit radius: it goes.
+    MoveTo(harness.serverScene, reaching, {160.f, 0.f, 0.f});
+    harness.Step(12);
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), reachingId));
+    CHECK(harness.client.EntityOf(reachingId) == ECS::NullEntity);
+
+    // Back inside its exit radius but not its radius: not yet.
+    MoveTo(harness.serverScene, reaching, {140.f, 0.f, 0.f});
+    harness.Step(12);
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), reachingId));
+
+    // Inside its radius: it comes back.
+    MoveTo(harness.serverScene, reaching, {95.f, 0.f, 0.f});
+    harness.Step(12);
+    CHECK(harness.server.IsRelevant(harness.serverSide(), reachingId));
+}
+
 TEST_CASE("a child is measured where it stands, not at its place under its parent")
 {
     // A child's Transform is relative to its parent. Measured as if it were a
@@ -337,6 +383,68 @@ TEST_CASE("an anchor that is a child views from where it stands")
 
     CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(nearEye)));
     CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(nearOrigin)));
+}
+
+TEST_CASE("an entity attached to another is sent exactly when its parent is")
+{
+    // A sword in a boss's hand is sent wherever the boss is, and never on its
+    // own: a client holding a child without its parent would place it at its
+    // pose under the parent as if that were a place in the world. So the
+    // child's own settings do not count.
+    Harness harness(Distance(10.f, 12.f, 0));
+
+    const ECS::Entity anchor = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
+    const ECS::Entity boss   = SpawnAt(harness.serverScene, {500.f, 0.f, 0.f}, Relevance::Always);
+    const ECS::Entity sword  = SpawnAt(harness.serverScene, {0.5f, 1.f, 0.f});
+    (void)harness.serverScene.Add<ECS::Parent>(sword, ECS::Parent{.parent = boss});
+    const ECS::Entity gem = SpawnAt(harness.serverScene, {0.f, 0.2f, 0.f});
+    (void)harness.serverScene.Add<ECS::Parent>(gem, ECS::Parent{.parent = sword});
+
+    const ECS::Entity crate = SpawnAt(harness.serverScene, {500.f, 0.f, 20.f});
+    const ECS::Entity flare = SpawnAt(harness.serverScene, {0.f, 1.f, 0.f}, Relevance::Always);
+    (void)harness.serverScene.Add<ECS::Parent>(flare, ECS::Parent{.parent = crate});
+    const ECS::Entity tag = SpawnAt(harness.serverScene, {0.f, 1.f, 0.f}, Relevance::Default, 1000.f);
+    (void)harness.serverScene.Add<ECS::Parent>(tag, ECS::Parent{.parent = crate});
+    harness.Step(2);
+
+    const ECS::Entity anchors[] = {anchor};
+    harness.server.SetViewAnchors(harness.serverSide(), anchors);
+    harness.Step(12);
+
+    CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(sword)));
+    CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(gem)));
+    CHECK(harness.client.EntityOf(harness.server.NetIdOf(sword)) != ECS::NullEntity);
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(crate)));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(flare)));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(tag)));
+}
+
+TEST_CASE("ControllerOnly still narrows what is attached, in both directions")
+{
+    Harness harness(Distance(10.f, 12.f, 0));
+
+    const ECS::Entity anchor = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
+
+    // Someone else's backpack, and what is in it: neither reaches this player.
+    const ECS::Entity backpack = SpawnAt(harness.serverScene, {1.f, 0.f, 0.f}, Relevance::ControllerOnly);
+    const ECS::Entity inside   = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<ECS::Parent>(inside, ECS::Parent{.parent = backpack});
+
+    // A private marker on a public cart: the cart reaches this player, the
+    // marker does not.
+    const ECS::Entity cart   = SpawnAt(harness.serverScene, {2.f, 0.f, 0.f});
+    const ECS::Entity marker = SpawnAt(harness.serverScene, {0.f, 1.f, 0.f}, Relevance::ControllerOnly);
+    (void)harness.serverScene.Add<ECS::Parent>(marker, ECS::Parent{.parent = cart});
+    harness.Step(2);
+
+    const ECS::Entity anchors[] = {anchor};
+    harness.server.SetViewAnchors(harness.serverSide(), anchors);
+    harness.Step(12);
+
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(backpack)));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(inside)));
+    CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(cart)));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(marker)));
 }
 
 TEST_CASE("Relevance::Always survives a provider that wants nothing")

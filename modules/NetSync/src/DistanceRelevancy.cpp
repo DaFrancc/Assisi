@@ -5,6 +5,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 
 #include <algorithm>
@@ -49,10 +50,12 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
 
     std::unordered_map<NetId, PairState> &pairs = _pairs[query.client.value];
 
-    // Squared throughout: a square root per pair per tick buys nothing, since
-    // every comparison here is against a constant that can be squared once.
+    // Squared throughout: a square root per pair per tick buys nothing.
     const double enterSq = static_cast<double>(_config.radius) * static_cast<double>(_config.radius);
     const double exitSq  = static_cast<double>(_config.exitRadius) * static_cast<double>(_config.exitRadius);
+    // An entity's own radius leaves at the same proportion further out as the
+    // game's does.
+    const double exitRatioSq = exitSq / enterSq;
 
     // Anchor positions, resolved once rather than per candidate entity. In the
     // world, not under a parent: a camera 1.5 m above its character views from
@@ -99,12 +102,21 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
             nearestSq             = std::min(nearestSq, glm::dot(delta, delta));
         }
 
+        double entityEnterSq = enterSq;
+        double entityExitSq  = exitSq;
+        if (const Replicated *marker = query.scene->Get<Replicated>(entity);
+            marker != nullptr && marker->relevanceRadius > 0.f)
+        {
+            entityEnterSq = static_cast<double>(marker->relevanceRadius) * static_cast<double>(marker->relevanceRadius);
+            entityExitSq  = entityEnterSq * exitRatioSq;
+        }
+
         const auto member = pairs.find(netId);
         if (member == pairs.end())
         {
             // Outside the set. Entry is immediate and unconditional — no dwell,
             // so an anchor teleport shows the world at once.
-            if (nearestSq <= enterSq)
+            if (nearestSq <= entityEnterSq)
             {
                 pairs.emplace(netId, PairState{});
                 out.push_back(netId);
@@ -113,7 +125,7 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
         }
 
         // Inside the set. Leaving takes both radii and the dwell.
-        if (nearestSq <= exitSq)
+        if (nearestSq <= entityExitSq)
         {
             member->second.outsideSince = 0; // came back inside; the clock resets
             out.push_back(netId);

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -75,7 +76,7 @@ void WritePlayerBlueprint(const std::filesystem::path &root)
     REQUIRE(out.good());
 }
 
-Machine::Machine()
+Machine::Machine(NetSync::ReplicationConfig config) : play(world, std::move(config))
 {
     REQUIRE(App::WorldManager::ApplySystems(world, std::vector<std::string>{"LocalPlayer", "CharacterCommand"},
                                             "players"));
@@ -151,9 +152,9 @@ ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
     return ECS::NullEntity;
 }
 
-Machine &Session::Add()
+Machine &Session::Add(NetSync::ReplicationConfig config)
 {
-    machines.push_back(std::make_unique<Machine>());
+    machines.push_back(std::make_unique<Machine>(std::move(config)));
     return *machines.back();
 }
 
@@ -207,6 +208,24 @@ void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dv
     const std::uint16_t port = HostOnFreePort(host.play);
     REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.play.Session().LastError());
     REQUIRE_MESSAGE(client.play.Join("127.0.0.1", port), client.play.Session().LastError());
+    session.Run(kJoinSteps);
+}
+
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts)
+{
+    App::PlayerStart startAt;
+    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
+    for (const glm::dvec3 &at : starts)
+    {
+        const ECS::Entity start = host.world.scene.Create();
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
+        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
+    }
+    const std::uint16_t port = HostOnFreePort(host.play);
+    REQUIRE(port != 0);
+    REQUIRE(first.play.Join("127.0.0.1", port));
+    session.Run(kJoinSteps);
+    REQUIRE(second.play.Join("127.0.0.1", port));
     session.Run(kJoinSteps);
 }
 

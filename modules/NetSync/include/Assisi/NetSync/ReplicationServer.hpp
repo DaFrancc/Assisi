@@ -564,12 +564,28 @@ private:
     /// Drop from @p ids every Relevance::ControllerOnly entity @p connection does
     /// not control. Order-preserving, so a sorted set stays sorted.
     ///
-    /// Called twice per computation, and the second call is the point (B6): the
+    /// Called after every widening, and the later calls are the point (B6): the
     /// first pass runs before block escalation so a withheld member cannot pull
     /// its own block, and escalation then re-adds every member of any block a
     /// surviving sibling belongs to — including the ones this had just removed.
-    /// A privacy class that a sibling's relevance can undo is not one.
+    /// FollowParents does the same for what is attached. A privacy class that a
+    /// sibling's or a parent's relevance can undo is not one.
     void ApplyControllerOnly(const Connection &connection, std::vector<NetId> &ids) const;
+
+    /// Put every attached entity in @p ids exactly when the entity at the top
+    /// of its chain is, whatever was decided about it alone. A client given a
+    /// child without its parent places it at its pose under the parent, as if
+    /// that were a place in the world. @p ids is sorted and stays sorted.
+    ///
+    /// After a ControllerOnly pass, so what is attached to a withheld entity is
+    /// withheld with it, and before another, which withholds a private entity
+    /// attached to a public one.
+    void FollowParents(std::vector<NetId> &ids);
+
+    /// The replicated entity at the top of @p entity's chain of replicated
+    /// parents, or InvalidNetId when its parent is not a live replicated
+    /// entity.
+    [[nodiscard]] NetId AttachmentRootOf(ECS::Entity entity) const;
 
     /// Make @p netId's next appearance a full state rather than a delta, by
     /// forgetting that @p connection ever had it.
@@ -912,6 +928,12 @@ private:
     /// Relevance::ControllerOnly, sorted by NetId, paired with the client that
     /// may see it (0 while uncontrolled, which means nobody may).
     std::vector<std::pair<NetId, std::uint32_t>> _controllerOnly;
+
+    /// Every replicated entity attached to another, sorted by its NetId, paired
+    /// with AttachmentRootOf it. Resolved with the escape classes, on the same
+    /// terms.
+    std::vector<std::pair<NetId, NetId>> _attachedTo;
+    std::vector<NetId>                   _followScratch;
 
     /// Entity ↔ NetId, both directions. One container rather than two maps
     /// because the two directions have to be written together: a NetId whose

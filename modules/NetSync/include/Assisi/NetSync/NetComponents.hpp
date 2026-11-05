@@ -67,6 +67,16 @@ struct Replicated
     /// ones that missed keep climbing and cannot starve.
     AFIELD(min = 0.0, max = 100.0) float priority = 1.f;
 
+    /// @brief Metres within which the distance provider sends this entity, in
+    /// place of the game's `relevancyRadius`; 0 uses the game's.
+    ///
+    /// It stops being sent at this times the game's exit radius over its
+    /// radius, so a far-reaching entity keeps the same proportion of slack
+    /// against flickering on its boundary. Read only for `Relevance::Default`,
+    /// only by the distance provider, and not for an entity attached to
+    /// another replicated entity (see `relevance`).
+    AFIELD(min = 0.0) float relevanceRadius = 0.f;
+
     /// @brief Capable component types this entity declines to send.
     ///
     /// **The policy half of the split.** `ACOMP(replicable)` on a type grants a
@@ -93,6 +103,12 @@ struct Replicated
     /// provider decides — is what almost everything wants; the other two exist
     /// because a distance radius is the wrong tool for correctness and for
     /// privacy respectively. See Relevance.
+    ///
+    /// An entity whose Parent is another replicated entity is sent exactly when
+    /// that parent is, so `Default` and `Always` do not count for it; only
+    /// `ControllerOnly` still narrows it. A client given a child without its
+    /// parent would place it at its pose under the parent, as if that were a
+    /// place in the world.
     ///
     /// Read live by the server every snapshot, like `excluded`, so there is
     /// nothing to invalidate.

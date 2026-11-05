@@ -51,6 +51,43 @@ struct Health
 };
 ```
 
+### How far away an entity is sent
+
+By default, every client is sent every `Replicated` entity, wherever it is.
+That's fine for a small level. On a big map, turn on the **distance filter** in
+`assets/config/network.json`:
+
+```json
+"relevancyProvider": "distance",
+"relevancyRadius": 60.0,
+"relevancyExitRadius": 75.0,
+"relevancyDwellTicks": 30
+```
+
+Each client is then sent only what is within `relevancyRadius` metres of its
+player. Something that moves away is still sent until it is past
+`relevancyExitRadius` and has stayed out for `relevancyDwellTicks` fixed steps.
+The gap between the two radii stops something on the edge from vanishing and
+reappearing over and over.
+
+`Replicated` changes this for one entity:
+
+| Setting | Who is sent it |
+|---|---|
+| Nothing set | Players within the game's radius. |
+| `relevanceRadius` | Players within that many metres, such as 1000 for other players' characters on a big map. It stops being sent the same proportion further out as the game's radii: at 1250 m, with the default 60 and 75. |
+| `relevance` set to **Always** | Every player, at any distance: a boss, a round timer, a flare everyone should see. |
+| `relevance` set to **ControllerOnly** | Only the player controlling it, such as their inventory. |
+
+An entity attached to another replicated entity, through a `Parent`, goes
+wherever its parent goes: a sword in a boss's hand is sent whenever the boss is,
+and never on its own, whatever the sword sets. Only **ControllerOnly** still
+applies to it.
+
+A player is always sent their own character. A one-off effect, like an
+explosion everyone hears, doesn't need an entity at all: send an `independent`
+message (see [Messages](#messages)) and let each machine play it.
+
 ## How it stays in sync
 
 Every machine runs the same physics simulation, so a client can predict most of
