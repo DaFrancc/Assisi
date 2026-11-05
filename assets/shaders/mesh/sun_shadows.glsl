@@ -277,11 +277,13 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
     return visibility;
 }
 
-// Flat tints for the cascade debug view, one per slice.
+// Flat tints for the cascade debug view, one per slice, as many as the frame
+// constants hold cascades: red, green, blue, yellow, magenta, cyan, orange, grey.
+const vec3 kCascadeTints[8] = vec3[8](vec3(1.0, 0.45, 0.45), vec3(0.45, 1.0, 0.45), vec3(0.45, 0.6, 1.0),
+                                      vec3(1.0, 0.95, 0.45), vec3(1.0, 0.45, 1.0), vec3(0.45, 1.0, 1.0),
+                                      vec3(1.0, 0.7, 0.3), vec3(0.75, 0.75, 0.75));
+
 vec3 CascadeTint(uint cascade)
 {
-    if (cascade == 0u) return vec3(1.0, 0.45, 0.45);
-    if (cascade == 1u) return vec3(0.45, 1.0, 0.45);
-    if (cascade == 2u) return vec3(0.45, 0.6, 1.0);
-    return vec3(1.0, 0.95, 0.45);
+    return kCascadeTints[min(cascade, uint(kCascadeTints.length()) - 1u)];
 }
