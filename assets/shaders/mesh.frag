@@ -29,14 +29,6 @@ const float kMinConeBlend = 1e-4;
 
 void main()
 {
-    // Derivatives while control flow is still uniform, before the masked build's
-    // discard; the shadow lookups that read them run inside per-light branches.
-    if (uFrame.shadowPcss.x > 0.0 || uFrame.localShadowCounts.z == 1u)
-    {
-        gWorldPosDx = dFdx(vWorldPos);
-        gWorldPosDy = dFdy(vWorldPos);
-    }
-
     Surface surf = SampleMaterial();
 
 #ifdef ASSISI_ALPHA_MASK
@@ -320,10 +312,8 @@ void main()
         ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
         float       blended  = SunVisibility(Ng, sunL, shadowCascade, NdotL);
         float       filtered = SampleCascade(shadowCascade, vWorldPos, Ng, NdotL);
-        float       centre   = ShadowTap(ShadowCoord(shadowCascade,
-                                                     vWorldPos + Ng * (uFrame.shadowCascade[shadowCascade].z *
-                                                                       sqrt(max(0.0, 1.0 - NdotL * NdotL)))).xy,
-                                         shadowCascade, probe.reference);
+        float       centre   = CascadeTap(
+            shadowCascade, probe.uv, Receiver(probe.uv, CascadeReceiverSlope(shadowCascade, Ng), probe.reference));
 
         color = vec3(blended, filtered, centre);
     }

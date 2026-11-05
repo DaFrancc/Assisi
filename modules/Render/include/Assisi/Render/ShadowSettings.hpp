@@ -37,8 +37,8 @@ namespace Assisi::Render
 /// failing to build.
 enum class ShadowFilter : std::uint8_t
 {
-    /// One bilinear comparison fetch. The hardware still blends four texels, so
-    /// this is soft to about a texel, not a hard-edged point sample.
+    /// One bilinear tap. It still blends four texels, so this is soft to about a
+    /// texel, not a hard-edged point sample.
     Point = 0,
     /// 3x3 comparison taps on the texel grid.
     Pcf3x3 = 1,
@@ -63,7 +63,7 @@ inline constexpr std::uint32_t kShadowFilterCount = 4;
 /// the penumbra cap, and the inset that keeps an atlas lookup inside its own
 /// tile — and a kernel wider than the inset assumed reads the light next door.
 ///
-/// Point has none of its own: the hardware's bilinear comparison is the whole of
+/// Point has none of its own: the bilinear tap's four texels are the whole of
 /// its footprint, and that half-texel is added separately wherever it matters.
 inline constexpr float kPointFilterRadiusTaps = 0.f;
 inline constexpr float kPcf3FilterRadiusTaps = 1.f;
@@ -209,11 +209,13 @@ inline constexpr float kSplitDistributionNear = 1.5f;
 /// that view's world-units-per-texel, so one value holds across maps whose
 /// texels differ by an order of magnitude.
 ///
-/// Like the normal offset, this is a floor under the receiver-plane bias rather
-/// than the thing that stops acne. It covers what the plane cannot: the depth
-/// format's own quantisation, and the residual where a receiver is curved
-/// across the kernel. Raising it buys nothing the plane bias does not already
-/// give and detaches every shadow from its contact edge.
+/// Not the thing that stops acne: the lookup compares every texel it reads
+/// against the receiver's own plane at that texel (see ReceiverPlaneSlope),
+/// and that is what keeps a surface the light grazes from shadowing itself.
+/// This covers what the plane cannot: the depth format's own quantisation, and
+/// the residual where a receiver is curved across the kernel. Raising it buys
+/// nothing the plane does not already give and detaches every shadow from its
+/// contact edge.
 inline constexpr float kMinDepthBiasTexels = 0.0f;
 inline constexpr float kMaxDepthBiasTexels = 8.0f;
 
@@ -225,12 +227,13 @@ inline constexpr float kMaxSlopeBias = 8.0f;
 /// @brief How far along the surface normal a sample is pushed before it is
 /// looked up, in shadow-map texels.
 ///
-/// A safety net, not the mechanism: the receiver-plane bias in the mesh shader
-/// is what corrects a tap for the receiver's slope, and it does so by an amount
-/// derived from the surface rather than by a constant that has to be large
-/// enough for the worst case. What is left for this to cover is the case that
-/// bias cannot see — a receiver whose curvature or displacement leaves it off
-/// the plane its own screen-space quad reports.
+/// A safety net, not the mechanism: the lookup compares every texel it reads
+/// against the receiver's own plane, taken from its geometric normal, and that
+/// corrects each texel for the receiver's slope by an amount derived from the
+/// surface rather than by a constant that has to be large enough for the worst
+/// case. What is left for this to cover is the case the plane cannot see — a
+/// receiver whose curvature or displacement leaves it off the plane its normal
+/// describes.
 ///
 /// Every texel of it is a leak: the offset moves the *lookup*, so near a
 /// silhouette it moves the lookup off the occluder and the fragment reads lit.
@@ -297,8 +300,8 @@ struct SunShadowCadenceSettings
     /// cascade's depth range. The camera's movement is not: a kept map stays
     /// right for as long as the slice is inside it (see kCascadePadding).
     ///
-    /// Half a texel is at or below the half-texel the hardware's own bilinear
-    /// comparison already softens every edge by, so the step a re-render makes is
+    /// Half a texel is at or below the half-texel the bilinear tap already
+    /// softens every edge by, so the step a re-render makes is
     /// inside the penumbra the cheapest filter already has.
     float driftTexels = 0.5f;
 };
@@ -343,9 +346,9 @@ struct SunShadowSettings
     float slopeBias = 2.0f;
 
     /// Texels of the cascade's own map, moved along the geometric normal. Half a
-    /// texel is the floor that means anything: the hardware comparison blends
-    /// four texels, so a lookup that has not cleared half a texel has not left
-    /// the surface it is standing on. It is also the ceiling worth paying — this
+    /// texel is the floor that means anything: a tap blends four texels, so a
+    /// lookup that has not cleared half a texel has not left the surface it is
+    /// standing on. It is also the ceiling worth paying — this
     /// is the one bias that moves the lookup sideways, and sideways is what walks
     /// a receiver out from under the occluder next to it.
     float normalOffsetTexels = 0.5f;
