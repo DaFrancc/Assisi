@@ -1671,7 +1671,9 @@ class EditorApp : public Assisi::App::Application
     // entity: as members the pose survives a level load for free.
     Assisi::Runtime::Transform _cameraTransform;
     Assisi::ECS::WorldMatrix _cameraWorld; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
-    Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
+    // How far the editor sees in a level with no active camera, in metres.
+    static constexpr float kEditorDrawDistance = 200.f;
+    Assisi::Runtime::Camera _camera{60.f, 0.1f, kEditorDrawDistance, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
     float _yaw = 0.f;
