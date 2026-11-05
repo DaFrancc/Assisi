@@ -90,6 +90,9 @@ The editor imports **glTF** models (`.gltf` or `.glb`).
 > `.glb` aren't read, so keep textures as separate image files (PNG or JPEG).
 > There's no drag-and-drop from the file browser into the scene yet.
 
+[Models](rendering-models.md) explains what the import reads, and
+[Materials](rendering-materials.md) how to change how a model looks.
+
 ### Saving
 
 Use the **Levels** panel:
@@ -122,7 +125,9 @@ windows. See [Multiplayer basics](multiplayer.md).
 ## Other windows
 
 - **F11** opens **Options**: frame times and graphics settings like shadows,
-  anti-aliasing and ambient occlusion.
+  anti-aliasing and ambient occlusion, and views for looking at rendering
+  problems. See [Graphics settings](rendering-settings.md) and
+  [Looking at rendering problems](rendering-debugging.md).
 - **F9** opens the profiler's capture panel. It only works in a `-chiara` build
   (see [Build types](build-types.md)); otherwise it's empty.
 
