@@ -1204,6 +1204,13 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             options.SaveToJson();
         }
 
+        if (ImGui::Checkbox("Dither", &options.tonemap.dither))
+        {
+            options.SaveToJson();
+        }
+        ImGui::SetItemTooltip("Up to one display step of noise before the image is written at 8 bits, so a slow "
+                              "fade reads as an even grain instead of bands.");
+
         ImGui::Separator();
 
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};

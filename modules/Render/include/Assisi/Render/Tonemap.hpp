@@ -70,6 +70,9 @@ struct TonemapSettings
     float exposureStops = 0.0f;
     float contrast = kPunchyContrast;
     float saturation = kPunchySaturation;
+    /// Noise of up to one display step before the 8-bit write, which turns the
+    /// bands a slow fade steps through into an even grain. See DisplayDither.
+    bool dither = true;
 };
 
 /// @brief Clamps to [low, high], substituting `fallback` for a non-finite value.
@@ -111,15 +114,59 @@ struct TonemapConstants
     float saturation = 1.0f;
     std::uint32_t op = static_cast<std::uint32_t>(TonemapOperator::AgX);
     std::uint32_t passthrough = 0;
+    /// One display step in output units while dithering, else 0.
+    float ditherScale = 0.0f;
 };
+
+/// @brief The steps an 8-bit display target has above black.
+inline constexpr float kDisplaySteps = 255.0f;
+
+/// @brief Scrambles @p value's bits so neighbouring inputs land far apart. The
+/// lowbias32 integer hash; its constants are the function. tonemap.frag carries
+/// the same one.
+[[nodiscard]] constexpr std::uint32_t DitherHash(std::uint32_t value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+/// @brief How far, in display steps, the tone map moves pixel (@p x, @p y)
+/// before the 8-bit write: in (-1, 1), most often near 0.
+///
+/// The image is rendered in float and the display keeps 256 values per channel,
+/// so a slow fade holds one value and then jumps to the next, a band. Noise of
+/// up to a step either way spreads each pixel over the two steps it falls
+/// between, in proportion to how near it is to each, so a patch of them looks
+/// like the value between. Triangular, the sum of two uniform draws, because
+/// that leaves the noise's strength the same whatever the value; uniform noise
+/// is visibly stronger halfway between two steps. The same pattern every frame:
+/// nothing here accumulates over time. tonemap.frag computes the same values.
+[[nodiscard]] constexpr float DisplayDither(std::uint32_t x, std::uint32_t y)
+{
+    // Two 16-bit uniform draws from one hash of the pixel, each taken at the
+    // middle of its step so neither reaches 0 or 1 and the sum stays inside
+    // (-1, 1).
+    constexpr std::uint32_t kHalfBits = 16u;
+    constexpr std::uint32_t kHalfMask = 0xffffu;
+    constexpr float kHalfRange = 65536.0f;
+    constexpr float kMidStep = 0.5f;
+    const std::uint32_t hash = DitherHash(x ^ DitherHash(y));
+    const float first = (static_cast<float>(hash & kHalfMask) + kMidStep) / kHalfRange;
+    const float second = (static_cast<float>(hash >> kHalfBits) + kMidStep) / kHalfRange;
+    return first + second - 1.0f;
+}
 
 /// @brief The constants for one tone map draw.
 ///
 /// `copyThrough` covers the two steps that must move an image without restating
 /// it: the Blit, whose input this same shader already mapped, and the material
 /// debug views, whose scene target holds channel values rather than radiance.
-/// Both come out as an identity copy — exposing or grading either would apply
-/// the look a second time.
+/// Both come out as an identity copy — exposing, grading or dithering either
+/// would apply the look a second time.
 [[nodiscard]] inline TonemapConstants MakeTonemapConstants(const TonemapSettings &settings, bool copyThrough)
 {
     if (copyThrough)
@@ -132,7 +179,8 @@ struct TonemapConstants
                             .contrast = safe.contrast,
                             .saturation = safe.saturation,
                             .op = static_cast<std::uint32_t>(safe.op),
-                            .passthrough = 0};
+                            .passthrough = 0,
+                            .ditherScale = safe.dither ? 1.0f / kDisplaySteps : 0.0f};
 }
 
 } // namespace Assisi::Render

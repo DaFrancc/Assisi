@@ -131,7 +131,7 @@ With **Editor Overlays** on, the editor draws:
 | There is no sky. | The level has no `Skybox` on its directional light, or has more than one `DirectionalLight`. The log warns about the second. |
 | A lamp has no shadow. | Select it and read the **Shadow** line in the inspector. |
 | Stripes or speckles of shadow on lit surfaces. | Shadow acne. See [When shadows look wrong](rendering-shadows.md#when-shadows-look-wrong). |
-| Soft bands, like contour lines, where light fades slowly across a dim surface. | The picture on screen has 256 levels of brightness per colour, and a slow fade steps from one level to the next. Turning off the light's `castsShadows` leaves the bands where they are, which tells them apart from shadow acne. |
+| Soft bands, like contour lines, where light fades slowly across a dim surface. | **Dither** is off in the tone map settings. The screen has 256 levels of brightness per colour, and without the dither a slow fade steps from one level to the next. See [Tone mapping](rendering-settings.md#tone-mapping). Turning off the light's `castsShadows` leaves these bands where they are, which tells them apart from shadow acne. |
 | Edges are jagged. | Anti-aliasing is off; it is off by default. See [Anti-aliasing](rendering-settings.md#anti-aliasing). |
 | Shadows appear a few frames after the camera jumps. | Spot and point light shadows are drawn a few at a time. See [Spot and point light shadows](rendering-shadows.md#spot-and-point-light-shadows). |
 

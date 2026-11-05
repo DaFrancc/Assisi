@@ -208,6 +208,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             ReadField(tm, "exposureStops", cfg.tonemap.exposureStops);
             ReadField(tm, "contrast", cfg.tonemap.contrast);
             ReadField(tm, "saturation", cfg.tonemap.saturation);
+            ReadField(tm, "dither", cfg.tonemap.dither);
             // Whatever the file said, the shader only ever sees values in range.
             cfg.tonemap = Render::Sanitized(cfg.tonemap);
         }
@@ -446,6 +447,7 @@ nlohmann::json FullJson(const OptionsConfig &options)
     json["toneMap"]["exposureStops"] = tonemap.exposureStops;
     json["toneMap"]["contrast"] = tonemap.contrast;
     json["toneMap"]["saturation"] = tonemap.saturation;
+    json["toneMap"]["dither"] = tonemap.dither;
 
     json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
 

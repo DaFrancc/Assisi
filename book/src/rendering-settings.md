@@ -75,7 +75,8 @@ compressed rather than cut off, so they keep their detail and colour.
     "operator": "agx",
     "exposureStops": 0.0,
     "contrast": 1.35,
-    "saturation": 1.4
+    "saturation": 1.4,
+    "dither": true
 }
 ```
 
@@ -85,6 +86,7 @@ compressed rather than cut off, so they keep their detail and colour.
 | `exposureStops` | **Exposure** | −8 to 8 | `0` |
 | `contrast` | **Contrast** | 0.5 to 2.5 | `1.35` |
 | `saturation` | **Saturation** | 0 to 2 | `1.4` |
+| `dither` | **Dither** | `true`, `false` | `true` |
 
 - **`operator`** chooses the curve. **AgX** fades very bright, strongly coloured
   light towards white without changing its colour. **ACES** has more contrast,
@@ -96,6 +98,13 @@ compressed rather than cut off, so they keep their detail and colour.
   each alone; `0` saturation is black and white. The F11 window's **Punchy**
   button sets them to 1.35 and 1.4, the defaults, and **Neutral** sets both
   to 1.
+- **`dither`** adds a faint, fixed grain before the picture goes to the screen.
+  A screen shows 256 levels of brightness per colour, so where light fades
+  slowly, such as a dim floor at the edge of a lamp's reach, the picture holds
+  one level for a stretch and then steps to the next: soft bands, like contour
+  lines. The grain moves each pixel by less than one level, so the stretch
+  between two levels becomes a mix of both and the bands disappear. Turn it
+  off only to compare.
 
 The tone map runs every frame whatever it is set to, so these settings cost
 nothing.
