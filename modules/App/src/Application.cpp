@@ -35,6 +35,7 @@
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -1195,7 +1196,7 @@ void Application::RenderFrame()
         if (sceneFrame.depthTexture)
         {
             sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
-                                                             1.0f, false, 0);
+                                                             Assisi::Render::kSceneDepthFar, false, 0);
         }
     }
 

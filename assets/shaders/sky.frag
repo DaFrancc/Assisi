@@ -32,7 +32,7 @@ layout(binding = 256) uniform SkyConstants
 layout(binding = 0)   uniform texture2D uMoon;
 layout(binding = 128) uniform sampler   uMoonSampler;
 
-layout(location = 0) in vec4 vFarPoint;
+layout(location = 0) in vec4 vRayPoint;
 layout(location = 0) out vec4 outColor;
 
 const float kHorizonAirMass  = 35.567;
@@ -212,7 +212,7 @@ vec3 MoonDisk(vec3 ray, vec3 toMoon, vec3 toSun, float radius)
 
 void main()
 {
-    vec3 ray = normalize(vFarPoint.xyz / vFarPoint.w - uSky.cameraPosition.xyz);
+    vec3 ray = normalize(vRayPoint.xyz / vRayPoint.w - uSky.cameraPosition.xyz);
 
     vec3  sunDirection = uSky.sunDirection.xyz;
     vec3  radiantSun   = uSky.sunRadiance.rgb;

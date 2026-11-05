@@ -172,9 +172,9 @@ public:
     [[nodiscard]] VkFormat GetSwapchainFormat() const { return _swapchainFormat; }
 
     /// Depth-stencil format chosen for the swapchain depth buffer. Queried
-    /// against the device at swapchain creation (D24S8 -> D32S8 -> D32), so
-    /// consumers must read it rather than assume D24S8. May be a depth-only
-    /// format (D32_SFLOAT) with no stencil aspect.
+    /// against the device at swapchain creation (D32 -> D32S8 -> D24S8), so
+    /// consumers must read it rather than assume one. Usually the depth-only
+    /// D32_SFLOAT, with no stencil aspect.
     [[nodiscard]] VkFormat GetDepthFormat() const { return _depthFormat; }
     ///@}
 

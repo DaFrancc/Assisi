@@ -8,6 +8,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/ShadowView.hpp>
 #include <Assisi/Render/SpecularIbl.hpp>
@@ -305,6 +306,7 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
+    pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
 
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
@@ -373,7 +375,7 @@ bool MeshPass::PreparePrepass()
         desc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
         desc.PS = masked ? _maskedDepthPixelShader : nullptr;
         desc.renderState.depthStencilState.depthWriteEnable = true;
-        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Less;
+        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
         desc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
         _prepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
 
@@ -383,7 +385,7 @@ bool MeshPass::PreparePrepass()
         desc.VS = _invariantVertexShader;
         desc.PS = _pixelShaders[masked ? kPixelShaderMasked : kPixelShaderOpaque];
         desc.renderState.depthStencilState.depthWriteEnable = false;
-        desc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;
+        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
         desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
         _afterPrepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
 
