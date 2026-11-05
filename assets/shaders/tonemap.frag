@@ -33,7 +33,41 @@ layout(push_constant) uniform PushConstants
     // material debug views, whose scene target holds channel values rather than
     // radiance, and the final copy of an already-mapped image to the swapchain.
     uint  passthrough;
+    float ditherScale; // one display step while dithering, else 0
 } pc;
+
+// --- Dither ------------------------------------------------------------------
+//
+// Up to one display step of noise before the 8-bit write, so a slow fade spreads
+// over the two steps it falls between instead of holding one and jumping to the
+// next in a band. Render::DisplayDither says why it is triangular; these must
+// give the same values.
+
+const uint  kHalfBits  = 16u;
+const uint  kHalfMask  = 0xffffu;
+const float kHalfRange = 65536.0;
+const float kMidStep   = 0.5;
+
+// The lowbias32 integer hash; its constants are the function. Must match
+// Render::DitherHash.
+uint DitherHash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+// In (-1, 1) display steps. Must match Render::DisplayDither.
+float DisplayDither(uvec2 pixel)
+{
+    uint  hash   = DitherHash(pixel.x ^ DitherHash(pixel.y));
+    float first  = (float(hash & kHalfMask) + kMidStep) / kHalfRange;
+    float second = (float(hash >> kHalfBits) + kMidStep) / kHalfRange;
+    return first + second - 1.0;
+}
 
 const uint kAgx      = 0u;
 const uint kAces     = 1u;
@@ -141,6 +175,9 @@ void main()
         color = (pc.op == kAces) ? AcesFit(color) : Reinhard(color);
         color = Grade(EncodeGamma(color));
     }
+
+    // The same noise in every channel, so it reads as grain rather than colour.
+    color += DisplayDither(uvec2(gl_FragCoord.xy)) * pc.ditherScale;
 
     outColor = vec4(clamp(color, vec3(0.0), vec3(1.0)), scene.a);
 }

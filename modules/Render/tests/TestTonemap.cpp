@@ -260,3 +260,59 @@ TEST_CASE("The defaults are the punchy look, on AgX")
     CHECK(defaults.contrast > 1.0f);
     CHECK(defaults.saturation > 1.0f);
 }
+
+TEST_CASE("Dithered, a block of pixels between two display steps averages to its true value")
+{
+    // A dim gradient sits between two of the display's steps almost everywhere.
+    // Rounded, every pixel takes the nearer step, so a slow fade holds one value
+    // and then jumps to the next in a visible band. Dithered, the pixels spread
+    // over both steps and a block of them averages to the value itself.
+    constexpr std::uint32_t kBlock = 64;
+    // In display steps. Rounding alone is off by up to half a step.
+    constexpr double kAverageTolerance = 0.05;
+
+    for (const float value : {10.3f, 10.5f, 10.8f})
+    {
+        double sum = 0.0;
+        for (std::uint32_t y = 0; y < kBlock; ++y)
+        {
+            for (std::uint32_t x = 0; x < kBlock; ++x)
+            {
+                sum += static_cast<double>(std::round(value + DisplayDither(x, y)));
+            }
+        }
+        CAPTURE(value);
+        CHECK(std::abs(sum / static_cast<double>(kBlock * kBlock) - static_cast<double>(value)) <
+              kAverageTolerance);
+    }
+}
+
+TEST_CASE("Dither moves a pixel by less than one display step either way")
+{
+    // More than a step and the noise itself would show, as grain rather than
+    // as bands.
+    constexpr std::uint32_t kBlock = 256;
+    for (std::uint32_t y = 0; y < kBlock; ++y)
+    {
+        for (std::uint32_t x = 0; x < kBlock; ++x)
+        {
+            const float noise = DisplayDither(x, y);
+            CHECK(noise > -1.0f);
+            CHECK(noise < 1.0f);
+        }
+    }
+}
+
+TEST_CASE("Only a mapped image is dithered, and only while dithering is on")
+{
+    TonemapSettings settings;
+    CHECK(settings.dither);
+    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ false).ditherScale ==
+          doctest::Approx(1.0f / kDisplaySteps));
+
+    // A copy through moves an image this shader already dithered.
+    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ true).ditherScale == 0.0f);
+
+    settings.dither = false;
+    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ false).ditherScale == 0.0f);
+}
