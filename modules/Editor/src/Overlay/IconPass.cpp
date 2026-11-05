@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Editor/TextureFile.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 namespace Assisi::Editor
@@ -86,7 +87,7 @@ bool IconPass::BuildPipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo)
     pipelineDesc.renderState.rasterState.cullMode                  = nvrhi::RasterCullMode::None;
     pipelineDesc.renderState.depthStencilState.depthTestEnable     = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable    = false;
-    pipelineDesc.renderState.depthStencilState.depthFunc           = nvrhi::ComparisonFunc::LessOrEqual;
+    pipelineDesc.renderState.depthStencilState.depthFunc           = Render::kSceneDepthNearerOrSame;
 
     nvrhi::BlendState::RenderTarget &blend = pipelineDesc.renderState.blendState.targets[0];
     blend.blendEnable    = true;

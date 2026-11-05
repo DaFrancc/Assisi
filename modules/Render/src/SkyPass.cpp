@@ -154,10 +154,10 @@ bool SkyPass::BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     // property of the index arithmetic rather than of anything a caller controls.
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
 
-    // Equal against the 1.0 the depth clear left. The scene tests Less and so
-    // wrote something smaller wherever it drew, which is what makes covered
-    // pixels fail here and cost nothing. Depth is not written, so the scene's
-    // depth reaches the passes after this one intact.
+    // Equal against the far-plane depth the clear left. The scene wrote a
+    // nearer depth wherever it drew, which is what makes covered pixels fail
+    // here and cost nothing. Depth is not written, so the scene's depth reaches
+    // the passes after this one intact.
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
     pipelineDesc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Equal;

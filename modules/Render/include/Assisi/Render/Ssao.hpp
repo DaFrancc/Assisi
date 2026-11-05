@@ -87,7 +87,8 @@ inline constexpr float kSsaoBlurDepthTolerance = 0.05f;
 ///
 /// For a perspective projection with depth in [0, 1] and the camera looking down
 /// -Z: the two lens scales, and the pair that maps a stored depth back to a
-/// distance. No reversed Z; a depth of one is the far plane.
+/// distance. Holds for the scene's reversed Z as for any other layout: the far
+/// plane, which the depth clear and the sky sit at, is kSceneDepthFar.
 struct SsaoProjection
 {
     float xScale = 1.0f;     ///< projection[0][0] — one over (aspect x tan(fov/2))

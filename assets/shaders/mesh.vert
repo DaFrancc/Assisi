@@ -9,7 +9,8 @@
 // that draws after it.
 //
 // Both of those declare gl_Position invariant. The lit pass after a prepass
-// tests its depth against the prepass's with LessOrEqual and writes none of its
+// tests its depth against the prepass's with GreaterOrEqual (reversed Z: see
+// Render/SceneDepth.hpp) and writes none of its
 // own, so a fragment survives only if the two stages computed its position to
 // the bit. Two separately compiled stages are free to schedule the same
 // arithmetic differently unless both say invariant; one that is off by an ulp

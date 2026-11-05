@@ -2,6 +2,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 
 #include <Assisi/Math/Matrix.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 
 namespace Assisi::Runtime
 {
@@ -16,7 +17,7 @@ glm::mat4 ViewMatrix(const glm::mat4 &world)
 
 glm::mat4 ProjectionMatrix(const Camera &camera, float aspectRatio)
 {
-    return glm::perspective(glm::radians(camera.fovDegrees), aspectRatio, camera.nearZ, camera.farZ);
+    return Render::ScenePerspective(glm::radians(camera.fovDegrees), aspectRatio, camera.nearZ, camera.farZ);
 }
 
 float AspectRatio(int32_t width, int32_t height)

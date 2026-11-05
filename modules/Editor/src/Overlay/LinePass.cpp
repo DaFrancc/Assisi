@@ -3,8 +3,10 @@
 #include <Assisi/Editor/Overlay/LinePass.hpp>
 
 #include <cstddef>
+#include <cstdint>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 namespace Assisi::Editor
@@ -20,6 +22,11 @@ struct LinePushConstants
 {
     glm::mat4 viewProjection;
 };
+
+// How far a depth-tested line is pulled toward the camera, in the depth
+// format's smallest steps at the line's own depth. Positive is nearer: the
+// scene's depth is reversed (Render/SceneDepth.hpp).
+constexpr int32_t kTowardCameraBias = 256;
 } // namespace
 
 bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
@@ -89,10 +96,10 @@ bool LinePass::BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo
     // wraps (a floor box's rim on the floor surface); a small CONSTANT bias toward
     // the camera keeps those lines from z-fighting the surface without a slope-scaled
     // term, which at grazing angles would pull the lines in front of everything.
-    pipelineDesc.renderState.rasterState.depthBias            = -256;
+    pipelineDesc.renderState.rasterState.depthBias            = kTowardCameraBias;
     pipelineDesc.renderState.rasterState.slopeScaledDepthBias = 0.0f;
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthFunc       = nvrhi::ComparisonFunc::LessOrEqual;
+    pipelineDesc.renderState.depthStencilState.depthFunc       = Render::kSceneDepthNearerOrSame;
     _depthTestedPipeline = _device->createGraphicsPipeline(pipelineDesc, sceneFramebufferInfo);
 
     // On-top variant: depth test off, so the selected collider stays visible

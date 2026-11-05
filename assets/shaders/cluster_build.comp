@@ -36,6 +36,9 @@ layout(push_constant) uniform PushConstants
     vec4  screenSizeNearFar;  // xy = framebuffer size in pixels, z = nearZ, w = farZ
 } pc;
 
+// The scene's near-plane depth, Render::kSceneDepthNear.
+const float kNearDepth = 1.0;
+
 // Unproject a screen-space pixel position to a view-space point on the near plane.
 // Camera is at the origin in view space; -Z is forward.
 //
@@ -50,15 +53,11 @@ vec3 screenToViewNear(vec2 screenPos)
 {
     vec2 uv   = screenPos / pc.screenSizeNearFar.xy;
     vec2 ndc  = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    // GLM_FORCE_DEPTH_ZERO_TO_ONE (Assisi/Math/GLMConfig.hpp) makes every
-    // projection matrix in this engine Vulkan/D3D-style: NDC Z in [0, 1] with
-    // the near plane at Z=0, not OpenGL's [-1, 1] range (near at Z=-1). Using
-    // -1.0 here unprojected a bogus point instead of the actual near plane —
-    // increasingly wrong the further the ray is from dead-center, and
-    // therefore also worse for clusters seen at a distance/off-axis, which is
-    // exactly the "lights only work near screen center, or up close" symptom
-    // this was causing.
-    vec4 clip = vec4(ndc, 0.0, 1.0); // NDC z = 0  →  near plane (zero-to-one depth)
+    // The camera's projection stores the near plane at one (reversed Z,
+    // Render/SceneDepth.hpp). Any other depth unprojects a point off the near
+    // plane, increasingly wrong the further the ray is from dead-centre, which
+    // shows as lights that only work near the screen centre or up close.
+    vec4 clip = vec4(ndc, kNearDepth, 1.0);
     vec4 view = pc.invProjection * clip;
     return view.xyz / view.w;
 }

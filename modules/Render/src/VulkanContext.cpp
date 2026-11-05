@@ -442,17 +442,17 @@ struct DepthFormatChoice
     nvrhi::Format nvrhiFmt = nvrhi::Format::UNKNOWN;
 };
 
-// The Vulkan spec only guarantees that ONE of D24_UNORM_S8_UINT /
-// D32_SFLOAT_S8_UINT is usable as a depth-stencil attachment; D24S8 in
-// particular is absent on much AMD hardware. Query the device and fall back
-// D24S8 -> D32S8 -> D32 (depth-only). Returns {UNDEFINED, UNKNOWN} if the
-// device somehow supports none, which the caller treats as a hard failure.
+// Float depth first: the scene's reversed Z (Render/SceneDepth.hpp) keeps
+// distant surfaces apart only in a float format, and nothing uses stencil, so
+// plain D32 is the whole want. The integer format stays as a last resort, which
+// still draws correctly but fights at a distance. Returns {UNDEFINED, UNKNOWN}
+// if the device supports none, which the caller treats as a hard failure.
 DepthFormatChoice ChooseDepthFormat(VkPhysicalDevice physicalDevice)
 {
     const std::array<DepthFormatChoice, 3> candidates{{
-        {VK_FORMAT_D24_UNORM_S8_UINT, nvrhi::Format::D24S8},
-        {VK_FORMAT_D32_SFLOAT_S8_UINT, nvrhi::Format::D32S8},
         {VK_FORMAT_D32_SFLOAT, nvrhi::Format::D32},
+        {VK_FORMAT_D32_SFLOAT_S8_UINT, nvrhi::Format::D32S8},
+        {VK_FORMAT_D24_UNORM_S8_UINT, nvrhi::Format::D24S8},
     }};
 
     for (const DepthFormatChoice &candidate : candidates)
