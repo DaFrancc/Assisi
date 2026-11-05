@@ -362,6 +362,26 @@ TEST_CASE("A face the budget refused stays owed")
     CHECK(plans[1].dirtyFaces == 0b1u);
 }
 
+TEST_CASE("A budget smaller than a point light's cube still lets one light through each frame")
+{
+    LocalShadowCache cache;
+    LocalShadowCacheSettings settings;
+    settings.updateBudgetFaces = 1;
+
+    const std::vector<LocalShadowRequest> requests{PointAt(0, glm::vec3(0.f)), PointAt(1, glm::vec3(50.f))};
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests), plans);
+    CHECK_FALSE(plans[0].deferred); // all six faces, over the budget
+    CHECK(plans[1].deferred);
+    CHECK(cache.Stats().bakedFaces == 6);
+
+    RunFrame(cache, FrameAt(2, settings, requests), plans);
+    CHECK(plans[0].dirtyFaces == 0);
+    CHECK_FALSE(plans[1].deferred);
+    CHECK(cache.Stats().bakedFaces == 6);
+}
+
 TEST_CASE("A light that loses its tile forgets the depth in it")
 {
     LocalShadowCache cache;

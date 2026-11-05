@@ -33,6 +33,12 @@ enum class AtlasLayer : std::uint32_t
 
 /// Vertices in the triangle shadow_tile_reset.vert expands to cover the viewport.
 constexpr std::uint32_t kFullscreenTriangleVertices = 3;
+
+/// Whether @p plan redraws still casters into its tile this frame.
+[[nodiscard]] bool Bakes(const LocalShadowTilePlan &plan)
+{
+    return plan.dirtyFaces != 0u && !plan.deferred;
+}
 } // namespace
 
 void LocalShadowCasterIndex::Clear()
@@ -641,13 +647,12 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         return !_plans.empty();
     }
 
-    // Deferred lights included: they bake nothing this frame, but a row they
-    // do not read costs only the gather, and leaving them out would make this
-    // a second copy of the budget's decision to keep in step with it.
+    // Not for a light the budget deferred: it is not drawn this frame, and
+    // gathering for it would walk the scene every frame it waits.
     _stillRequests.resize(_plans.size());
     for (std::size_t index = 0; index < _plans.size(); ++index)
     {
-        _stillRequests[index] = _plans[index].dirtyFaces != 0u ? 1u : 0u;
+        _stillRequests[index] = Bakes(_plans[index]) ? 1u : 0u;
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved
@@ -658,7 +663,7 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
     // at all until something else happens to dirty it again.
     for (const LocalShadowTilePlan &plan : _plans)
     {
-        if (plan.dirtyFaces != 0u || (plan.hasMovers && plan.redrawMovers))
+        if (Bakes(plan) || (!plan.deferred && plan.hasMovers && plan.redrawMovers))
         {
             return true;
         }

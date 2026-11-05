@@ -175,7 +175,9 @@ Spot and point light shadows, under `shadows.local`:
   so its shadow follows it exactly, at the cost of a redraw per frame for each
   moving light.
 - **`cache.updateBudgetFaces`** is how many tiles may be redrawn in one frame.
-  Lights over the budget go without a shadow until their turn.
+  Lights over the budget go without a shadow until their turn. The first light
+  waiting is always redrawn in full, so a point light, which needs six tiles at
+  once, still gets its shadow when the budget is under six.
 - **`cache.promoteStillSeconds`** is how long a mesh must stay still before it
   joins the kept shadows again.
 - **`cache.movingLightUpdateDivisor`** lets the less important lights redraw
