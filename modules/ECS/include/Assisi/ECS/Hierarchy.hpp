@@ -9,7 +9,8 @@
 ///
 /// Transform stores local-space TRS. PropagateTransforms() walks the
 /// parent chain and writes each entity's WorldMatrix component.
-/// For root entities (no parent), the world matrix is the local TRS matrix.
+/// For root entities (no parent), the world matrix is the local TRS, measured
+/// from the world cell the entity is in.
 
 #include <cstdint>
 #include <vector>
@@ -22,6 +23,8 @@
 
 namespace Assisi::ECS
 {
+
+struct WorldMatrix;
 
 /// @brief Marks an entity as a child of another entity.
 ///
@@ -127,6 +130,6 @@ std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 /// Reads the parent's WorldMatrix, so it is only as current as the last
 /// PropagateTransforms. A null answer means @p entity's local pose is its world
 /// pose.
-[[nodiscard]] const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity);
+[[nodiscard]] const WorldMatrix *ParentWorldMatrix(const Scene &scene, Entity entity);
 
 } // namespace Assisi::ECS

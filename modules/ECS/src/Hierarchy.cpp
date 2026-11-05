@@ -6,6 +6,8 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Math/Float.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -103,6 +105,54 @@ void ApplyRenderOffset(glm::mat4 &world, const RenderOffset &offset)
         world[column] = glm::vec4(turn * glm::vec3(world[column]), 0.f);
     }
     world[3] += glm::vec4(offset.position, 0.f);
+}
+
+/// Moves @p world into the cell its translation reaches, when that is not the
+/// cell it is measured from. Exact: a whole number of cells is a multiple of
+/// every float step a translation that far out has.
+void MoveIntoOwnCell(WorldMatrix &world)
+{
+    const glm::vec3 translation(world.inCell[3]);
+    if (!Math::IsFinite(translation))
+    {
+        return;
+    }
+    const float cellSize = static_cast<float>(Math::kWorldCellSize);
+    const glm::ivec3 shift(glm::floor(translation / cellSize + 0.5f));
+    if (shift == glm::ivec3(0))
+    {
+        return;
+    }
+    world.cell += shift;
+    world.inCell[3] -= glm::vec4(glm::vec3(shift) * cellSize, 0.f);
+}
+
+/// A pose as it is drawn this frame: its Transform, blended between fixed steps.
+struct DrawnPose
+{
+    glm::dvec3 position{0.0};
+    glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+    glm::vec3 scale{1.f};
+};
+
+/// A root drawn at @p pose, which is in world space: its double position split
+/// into the cell it is in and a float offset from that cell's centre.
+WorldMatrix RootMatrix(const DrawnPose &pose)
+{
+    const glm::ivec3 cell = Math::WorldCellOf(pose.position);
+    const glm::vec3 offset(pose.position - Math::WorldCellCentre(cell));
+    return WorldMatrix{.inCell = ComposeMatrix(pose.rotation, offset, pose.scale), .cell = cell};
+}
+
+/// A child drawn at @p pose, which is relative to @p parent: composed in the
+/// parent's cell, then moved into its own.
+WorldMatrix ChildMatrix(const WorldMatrix &parent, const DrawnPose &pose)
+{
+    WorldMatrix world{
+        .inCell = MultiplyMatrices(parent.inCell, ComposeMatrix(pose.rotation, glm::vec3(pose.position), pose.scale)),
+        .cell = parent.cell};
+    MoveIntoOwnCell(world);
+    return world;
 }
 
 /// Per-entity scratch for one propagation pass, indexed by Entity::index. One
@@ -227,22 +277,17 @@ struct Propagation
         }
     }
 
-    /// The local matrix @p transform, at dense slot @p slot, is drawn with:
-    /// blended between the last two fixed steps if it moved in the latest one.
-    glm::mat4 DrawnLocalMatrix(uint32_t slot, const Transform &transform) const
+    /// The local pose @p transform, at dense slot @p slot, is drawn at: blended
+    /// between the last two fixed steps if it moved in the latest one.
+    DrawnPose DrawnLocalPose(uint32_t slot, const Transform &transform) const
     {
-        glm::dvec3 position = transform.position;
-        glm::vec3 scale = transform.scale;
-        glm::quat rotation = transform.rotation;
+        DrawnPose pose{.position = transform.position, .rotation = transform.rotation, .scale = transform.scale};
         const SparseSetLanes<Transform>::BlendMark &mark = lanes._marks[slot];
         if (mark.step == lanes._step)
         {
-            BlendPose(lanes._current[mark.entry], transform, position, scale, rotation);
+            BlendPose(lanes._current[mark.entry], transform, pose.position, pose.scale, pose.rotation);
         }
-        // The one place a simulated position narrows for drawing: WorldMatrix is
-        // a float matrix measured from the world's origin, so far from it what is
-        // drawn is coarser than what is simulated.
-        return ComposeMatrix(rotation, glm::vec3(position), scale);
+        return pose;
     }
 
     /// Blends the pose @p transform is drawn at between the step's start and
@@ -300,22 +345,23 @@ struct Propagation
         Slot(e.index).resolving = true;
 
         bool parentChanged = false;
-        const glm::mat4 *parentWorld = ResolveParent(e, parentChanged);
+        const WorldMatrix *parentWorld = ResolveParent(e, parentChanged);
 
         const bool worldChanged = Slot(e.index).dirtyPass == pass || parentChanged;
         if (worldChanged)
         {
-            const glm::mat4 local = DrawnLocalMatrix(slot, *scene.Get<Transform>(e));
-            glm::mat4 drawn = parentWorld != nullptr ? MultiplyMatrices(*parentWorld, local) : local;
+            const DrawnPose local = DrawnLocalPose(slot, *scene.Get<Transform>(e));
+            WorldMatrix drawn = parentWorld != nullptr ? ChildMatrix(*parentWorld, local) : RootMatrix(local);
             if (const RenderOffset *offset = scene.Get<RenderOffset>(e); offset != nullptr)
             {
-                ApplyRenderOffset(drawn, *offset);
+                ApplyRenderOffset(drawn.inCell, *offset);
+                MoveIntoOwnCell(drawn);
             }
             // Stamped only when it moved on screen, so a reader of the change
             // ticks — the shadows — is not told about a matrix rebuilt the same.
-            if (drawn != world->matrix)
+            if (drawn != *world)
             {
-                scene.GetMut<WorldMatrix>(e)->matrix = drawn;
+                *scene.GetMut<WorldMatrix>(e) = drawn;
             }
             ++resolved;
         }
@@ -327,7 +373,7 @@ struct Propagation
 
     /// Resolves @p e's parent and returns its world matrix, or null when @p e is
     /// a root. Sets @p parentChanged when that matrix changed this pass.
-    const glm::mat4 *ResolveParent(Entity e, bool &parentChanged)
+    const WorldMatrix *ResolveParent(Entity e, bool &parentChanged)
     {
         const Parent *p = scene.Get<Parent>(e);
         if (p == nullptr || p->parent == NullEntity || !scene.Has<Transform>(p->parent) ||
@@ -352,7 +398,7 @@ struct Propagation
 
         parentChanged = Resolve(p->parent);
         // Finalised by the recursion; no pool changes size during a pass.
-        return &scene.Get<WorldMatrix>(p->parent)->matrix;
+        return scene.Get<WorldMatrix>(p->parent);
     }
 
     /// Resolves every child of an entity whose world matrix changed this pass,
@@ -545,15 +591,14 @@ Transform WorldTransformOf(const Scene &scene, Entity entity)
     return world;
 }
 
-const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity)
+const WorldMatrix *ParentWorldMatrix(const Scene &scene, Entity entity)
 {
     const Parent *parent = scene.Get<Parent>(entity);
     if (parent == nullptr || parent->parent == NullEntity)
     {
         return nullptr;
     }
-    const WorldMatrix *world = scene.Get<WorldMatrix>(parent->parent);
-    return world != nullptr ? &world->matrix : nullptr;
+    return scene.Get<WorldMatrix>(parent->parent);
 }
 
 } // namespace Assisi::ECS

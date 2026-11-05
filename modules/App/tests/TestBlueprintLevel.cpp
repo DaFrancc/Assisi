@@ -194,7 +194,7 @@ TEST_CASE("App: a child of a walking character follows it")
 
     // And the child came with it: its world matrix is the character's pose plus
     // its own local offset, not the pose the level was composed at.
-    const glm::vec3 eyeWorld = Math::TranslationOf(world.scene.Get<ECS::WorldMatrix>(eye)->matrix);
+    const glm::vec3 eyeWorld = glm::vec3(ECS::WorldPositionOf(*world.scene.Get<ECS::WorldMatrix>(eye)));
     CHECK(eyeWorld.x == doctest::Approx(bodyTransform->position.x).epsilon(0.01));
     CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5).epsilon(0.05));
 

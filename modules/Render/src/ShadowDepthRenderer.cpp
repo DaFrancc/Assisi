@@ -522,9 +522,10 @@ void ShadowDepthRenderer::EnsureIndirectCapacity(std::uint32_t commandCount) con
     _indirectCapacity = capacity;
 }
 
-void ShadowDepthRenderer::BeginFrame()
+void ShadowDepthRenderer::BeginFrame(const glm::vec3 &sampledFrom)
 {
     _views.clear();
+    _sampledFrom = sampledFrom;
 }
 
 ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *commandList,
@@ -545,9 +546,12 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
         // The table describes the frame, not this call: appended to and re-uploaded
         // whole, so it is complete after whichever kind of shadow map draws last.
         ASSISI_PROFILE_SCOPE("view-table");
+        const glm::mat4 fromSampler = glm::translate(glm::mat4(1.f), _sampledFrom);
         for (const ShadowDepthTarget &target : targets)
         {
-            _views.push_back(PackShadowView(target.view));
+            ShadowViewGpu row = PackShadowView(target.view);
+            row.viewProjection = row.viewProjection * fromSampler;
+            _views.push_back(row);
         }
         if (!_viewTable.IsValid() || _views.size() > _viewTable.CapacityElements())
         {

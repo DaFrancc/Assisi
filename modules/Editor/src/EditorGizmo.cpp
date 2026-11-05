@@ -18,6 +18,8 @@
 
 #include <ImGuizmo.h>
 
+#include <optional>
+
 namespace Assisi::Editor
 {
 
@@ -71,11 +73,12 @@ bool EditorApp::IsUsingGizmo() const
 
 namespace
 {
-/// @brief A TRS as a matrix, composed in the order everything else here uses.
-glm::mat4 TransformMatrix(const Rt::Transform &transform)
+/// @brief A world-space TRS as a matrix measured from @p origin, composed in
+/// the order everything else here uses.
+glm::mat4 TransformMatrixFrom(const Rt::Transform &transform, const glm::dvec3 &origin)
 {
-    return glm::translate(glm::mat4(1.f), glm::vec3(transform.position)) * glm::mat4_cast(transform.rotation) *
-           glm::scale(glm::mat4(1.f), transform.scale);
+    return glm::translate(glm::mat4(1.f), glm::vec3(transform.position - origin)) *
+           glm::mat4_cast(transform.rotation) * glm::scale(glm::mat4(1.f), transform.scale);
 }
 
 } // namespace
@@ -112,17 +115,19 @@ void EditorApp::DrawInstanceGizmo()
 
     // The camera the viewport is drawn from, which is a scene camera while a play
     // session is running — a gizmo projected from the editor's own would be drawn
-    // and dragged somewhere the cursor is not.
-    glm::mat4 viewWorld{1.f};
+    // and dragged somewhere the cursor is not. Measured from that camera, as the
+    // scene is drawn, so the handle is in small numbers however far out it is.
+    Assisi::ECS::WorldMatrix viewWorld;
     Rt::Camera viewCamera;
     ViewCamera(viewWorld, viewCamera);
+    const glm::dvec3 origin = Assisi::ECS::WorldPositionOf(viewWorld);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(viewWorld);
+    const glm::mat4 view = Rt::ViewMatrix(Assisi::ECS::MatrixFrom(viewWorld, origin));
     const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
     const Rt::Transform placementBefore = row->transform;
-    glm::mat4 world = TransformMatrix(placementBefore);
+    glm::mat4 world = TransformMatrixFrom(placementBefore, origin);
 
     const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
                             : _gizmoOp == GizmoOp::Rotate  ? kRotateSnap
@@ -152,7 +157,7 @@ void EditorApp::DrawInstanceGizmo()
         if (glm::decompose(world, scale, orientation, translation, skew, perspective))
         {
             Rt::Transform placement;
-            placement.position = translation;
+            placement.position = origin + glm::dvec3(translation);
             placement.rotation = glm::normalize(orientation);
             placement.scale = scale;
             ApplyInstancePlacement(_selectedInstance, placement);
@@ -208,8 +213,9 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
 
     // Move the members by the delta rather than re-expanding the instance:
     // re-expansion destroys and recreates entity handles behind undo's back, and
-    // this runs every frame of a drag, so it has to stay cheap.
-    const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
+    // this runs every frame of a drag, so it has to stay cheap. Each member is
+    // turned and scaled about the placement by its offset from it, which is
+    // small, and placed back in doubles, so a member far out keeps its place.
     const glm::quat deltaRotation = glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
     const float scaleRatio = row->transform.scale.x != 0.f ? placement.scale.x / row->transform.scale.x : 1.f;
 
@@ -224,7 +230,8 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
         if (memberTransform == nullptr)
             continue;
 
-        memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
+        const glm::vec3 offset(memberTransform->position - row->transform.position);
+        memberTransform->position = placement.position + glm::dvec3(deltaRotation * (offset * scaleRatio));
         memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
         memberTransform->scale *= scaleRatio;
     }
@@ -338,27 +345,26 @@ bool EditorApp::DrawTransformGizmoHandles()
 
     // The same view/projection the scene renders with. Do not add a Y-flip: NVRHI
     // already flips the viewport, so what is on screen matches ImGuizmo's
-    // convention as-is.
-    glm::mat4 viewWorld{1.f};
+    // convention as-is. Every matrix here is measured from the camera, as the
+    // scene is drawn.
+    Assisi::ECS::WorldMatrix viewWorld;
     Rt::Camera viewCamera;
     ViewCamera(viewWorld, viewCamera);
+    const glm::dvec3 origin = Assisi::ECS::WorldPositionOf(viewWorld);
 
     const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(viewWorld);
+    const glm::mat4 view = Rt::ViewMatrix(Assisi::ECS::MatrixFrom(viewWorld, origin));
     const glm::mat4 proj = Rt::ProjectionMatrix(viewCamera, aspect);
 
-    // The frame the result is converted back through. Identity for a root, where
-    // world and local are the same matrix.
-    glm::mat4 parentWorld(1.f);
-    if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(_selectedEntity))
+    // The frame the result is converted back through. None for a root, whose
+    // local pose is its world pose.
+    std::optional<glm::mat4> parentWorld;
+    if (const Assisi::ECS::WorldMatrix *parentMatrix = Assisi::ECS::ParentWorldMatrix(*_scene, _selectedEntity))
     {
-        if (const Assisi::ECS::WorldMatrix *parentMatrix = _scene->Get<Assisi::ECS::WorldMatrix>(parent->parent))
-        {
-            parentWorld = parentMatrix->matrix;
-        }
+        parentWorld = Assisi::ECS::MatrixFrom(*parentMatrix, origin);
     }
 
-    glm::mat4 world = _scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity)->matrix;
+    glm::mat4 world = Assisi::ECS::MatrixFrom(*_scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity), origin);
 
     const ImGuizmo::OPERATION operation = ToOperation(_gizmoOp);
     // Translate and rotate honour the toggle; scale is along the object's own axes
@@ -378,7 +384,7 @@ bool EditorApp::DrawTransformGizmoHandles()
         {
             if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
             {
-                instanceFrame = TransformMatrix(row->transform);
+                instanceFrame = TransformMatrixFrom(row->transform, origin);
                 gizmoView = view * instanceFrame;
                 inInstanceFrame = true;
             }
@@ -444,7 +450,8 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The pose the handle started *this frame* at. The rest follow by the change in
     // it, so a rotate turns the group about the handle instead of spinning each one
     // in place.
-    const glm::mat4 worldBefore = _scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity)->matrix;
+    const glm::mat4 worldBefore =
+        Assisi::ECS::MatrixFrom(*_scene->Get<Assisi::ECS::WorldMatrix>(_selectedEntity), origin);
 
     if (inInstanceFrame)
         world = glm::inverse(instanceFrame) * world;
@@ -472,7 +479,7 @@ bool EditorApp::DrawTransformGizmoHandles()
         // The handle's own entity takes the matrix ImGuizmo produced, not a delta, so
         // it lands exactly under the handle even after a long drag has accumulated
         // rounding.
-        ApplyGizmoWorldMatrix(_selectedEntity, parentWorld, world);
+        ApplyGizmoWorldMatrix(_selectedEntity, parentWorld ? &*parentWorld : nullptr, world, origin);
 
         // The rest follow by the same world-space change, applied to their current
         // pose rather than to a start-of-drag snapshot: this runs every frame, and
@@ -486,16 +493,13 @@ bool EditorApp::DrawTransformGizmoHandles()
                 if (entityWorld == nullptr)
                     continue;
 
-                glm::mat4 entityParentWorld(1.f);
-                if (const Assisi::ECS::Parent *parent = _scene->Get<Assisi::ECS::Parent>(entity))
+                std::optional<glm::mat4> entityParentWorld;
+                if (const Assisi::ECS::WorldMatrix *parentMatrix = Assisi::ECS::ParentWorldMatrix(*_scene, entity))
                 {
-                    if (const Assisi::ECS::WorldMatrix *parentMatrix =
-                            _scene->Get<Assisi::ECS::WorldMatrix>(parent->parent))
-                    {
-                        entityParentWorld = parentMatrix->matrix;
-                    }
+                    entityParentWorld = Assisi::ECS::MatrixFrom(*parentMatrix, origin);
                 }
-                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * entityWorld->matrix);
+                ApplyGizmoWorldMatrix(entity, entityParentWorld ? &*entityParentWorld : nullptr,
+                                      delta * Assisi::ECS::MatrixFrom(*entityWorld, origin), origin);
             }
         }
     }
@@ -505,11 +509,12 @@ bool EditorApp::DrawTransformGizmoHandles()
     return nowUsing;
 }
 
-void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld, const glm::mat4 &world)
+void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 *parentWorld, const glm::mat4 &world,
+                                      const glm::dvec3 &origin)
 {
-    // Back to local against the parent's world; `parentWorld` is identity for a
-    // root, where local and world are the same matrix.
-    const glm::mat4 local = glm::inverse(parentWorld) * world;
+    // Back to local against the parent's world. A root has none: its local pose
+    // is its world pose, which is measured from @p origin like everything here.
+    const glm::mat4 local = parentWorld != nullptr ? glm::inverse(*parentWorld) * world : world;
 
     glm::vec3 scale;
     glm::quat orientation;
@@ -522,7 +527,7 @@ void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat
     Rt::Transform *mutableTransform = _scene->GetMut<Rt::Transform>(entity);
     if (mutableTransform == nullptr)
         return;
-    mutableTransform->position = translation;
+    mutableTransform->position = parentWorld != nullptr ? glm::dvec3(translation) : origin + glm::dvec3(translation);
     mutableTransform->rotation = glm::normalize(orientation);
     mutableTransform->scale = scale;
 }

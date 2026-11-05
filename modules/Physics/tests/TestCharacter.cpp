@@ -701,7 +701,7 @@ TEST_CASE("A teleported character is somewhere else immediately, not next step")
     // destination.
     ECS::SetBlendAlpha(scene, 0.5f);
     tick = ECS::PropagateTransforms(scene, tick);
-    CHECK(Math::TranslationOf(scene.Get<ECS::WorldMatrix>(character)->matrix).x == 10.f);
+    CHECK(ECS::WorldPositionOf(*scene.Get<ECS::WorldMatrix>(character)).x == 10.0);
 }
 
 TEST_CASE("Two characters walking at each other stop rather than overlapping")

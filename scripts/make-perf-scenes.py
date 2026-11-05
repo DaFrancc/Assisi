@@ -594,6 +594,46 @@ def build_physics(half_extent=13.0, columns=10, layers=10, seed=0x5EED0006):
     return entities, ["Oscillate"]
 
 
+# How far PerfFar is moved from the origin, in whole world cells of 512 m: about
+# 354 km out on x and as far back on z, 500 km in all. Whole cells, so each
+# entity sits in its own cell exactly where it sits in PerfInsane, and the two
+# should draw the same picture.
+FAR_CELLS = (691, 0, -691)
+WORLD_CELL_SIZE = 512.0
+
+
+def moved(point, offset):
+    return [point[axis] + offset[axis] for axis in range(3)]
+
+
+def build_far():
+    """PerfInsane, moved about 500 km from the origin by a whole number of
+    world cells. Drawn from the same route, it is the same picture: the check
+    that nothing wobbles, shimmers or slides that far out, and the measurement
+    of what being there costs.
+
+    Built on the committed PerfInsane, so regenerating it after PerfInsane
+    changes carries those changes too. Every world position is moved: roots'
+    Transforms, the movers' origins and the camera route. A parented entity's
+    Transform is relative to its parent and stays where it is.
+    """
+    base = json.loads((LEVELS / "PerfInsane.alvl").read_text())
+    offset = [cells * WORLD_CELL_SIZE for cells in FAR_CELLS]
+    for entity in base["entities"]:
+        components = entity["components"]
+        if "Transform" in components and "Parent" not in components:
+            transform = components["Transform"]
+            transform["position"] = moved(transform.get("position", [0.0, 0.0, 0.0]), offset)
+        if "Oscillator" in components:
+            oscillator = components["Oscillator"]
+            oscillator["origin"] = moved(oscillator.get("origin", [0.0, 0.0, 0.0]), offset)
+        for path, fields in (("CameraLinePath", ("from", "to", "lookAt")), ("CameraCirclePath", ("center", "lookAt"))):
+            if path in components:
+                for field in fields:
+                    components[path][field] = moved(components[path].get(field, [0.0, 0.0, 0.0]), offset)
+    return base["entities"], base.get("systems", [])
+
+
 SCENES = {
     "PerfBlank": build_blank,
     "PerfReferenceManyInstances": build_many_instances,
@@ -602,6 +642,7 @@ SCENES = {
     "PerfGeometryStress": build_geometry_stress,
     "PerfInsane": build_insane,
     "PerfPhysics": build_physics,
+    "PerfFar": build_far,
 }
 
 

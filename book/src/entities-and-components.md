@@ -111,14 +111,22 @@ Adding a `Transform` also adds a `WorldMatrix`. You don't add, save or write a
 `WorldMatrix` yourself. Once a frame the engine fills it with where the entity
 is drawn: its pose combined with its parents', smoothed between fixed steps.
 Game code reads and writes the `Transform`. Only code that draws things reads
-the matrix, through an ordinary query:
+the matrix, through an ordinary query.
+
+The world is divided into **cells**, cubes 512 m wide, and a `WorldMatrix` is
+stored as the cell the entity is in plus a matrix measured from that cell's
+centre, so it stays exact however far out the entity is. Everything is drawn
+measured from the camera, so a `Render` system turns the matrix into one
+measured from `ctx.origin`, the camera's position:
 
 ```cpp
-for (auto [entity, world, marker] : scene.Query<ECS::WorldMatrix, Marker>())
+for (auto [entity, world, marker] : ctx.scene.Query<ECS::WorldMatrix, Marker>())
 {
-    DrawMarker(world.matrix, marker);
+    DrawMarker(ECS::MatrixFrom(world, ctx.origin), marker);
 }
 ```
+
+`ctx.view` is measured from the same place, so the two go together.
 
 ### The sky, the sun and the moon
 

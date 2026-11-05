@@ -23,6 +23,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Editor/Overlay/IconPass.hpp>
 #include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Editor/Overlay/OutlinePass.hpp>
@@ -147,11 +148,11 @@ public:
     ///
     /// Consumed and cleared each Render(); re-submit every frame. Skipped entirely
     /// when icons are hidden.
-    void SubmitEditorIcons(std::span<const glm::vec3> positions);
+    void SubmitEditorIcons(std::span<const glm::dvec3> positions);
 
     /// @brief Outline one of those billboards, so a selected instance reads the
     /// same as a selected entity. Cleared each Render(); re-submit every frame.
-    void SubmitIconOutline(const glm::vec3 &position);
+    void SubmitIconOutline(const glm::dvec3 &position);
 
     /// @brief Queue one independent silhouette outline for the next Render(): the
     /// @p items' silhouettes union into a SINGLE border of @p color (a capsule
@@ -165,15 +166,18 @@ public:
 
     /// @brief Draw everything queued, for the scene @p sceneRenderer just drew.
     ///
+    /// Drawn measured from the camera at @p cameraWorld, as the scene is, so
+    /// every line and outline model submitted must be measured from it too.
+    ///
     /// @p sceneRenderer is consulted for the LOD each mesh was actually drawn at:
     /// a border traced around a finer silhouette than the one on screen reads as a
     /// halo, so the outline asks rather than deciding for itself.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                 const Runtime::Camera &camera, const Runtime::SceneRenderer &sceneRenderer);
 
 private:
     void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
-                         const glm::vec3 &cameraPosition, ECS::Scene &scene);
+                         ECS::Scene &scene);
 
     void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
                               ECS::Scene &scene, const Runtime::SceneRenderer &sceneRenderer);
@@ -217,8 +221,11 @@ private:
     /// Billboards belonging to no entity — a blueprint instance's root, which has
     /// no Transform in the scene to be found by a query. Pushed in by the caller
     /// and cleared each Render(). See SubmitEditorIcons.
-    std::vector<glm::vec3> _submittedIcons;
-    std::vector<glm::vec3> _submittedIconOutlines;
+    std::vector<glm::dvec3> _submittedIcons;
+    std::vector<glm::dvec3> _submittedIconOutlines;
+
+    /// Where the Render in progress measures from: the camera.
+    glm::dvec3 _origin{0.0};
 
     /// Which highlighted entity outlines in the active colour. See
     /// SetActiveHighlight.

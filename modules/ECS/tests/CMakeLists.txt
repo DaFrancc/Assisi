@@ -29,6 +29,7 @@ add_executable(Assisi-ECS-Tests
   TestEntityRef.cpp
   TestHierarchy.cpp
   TestTransformBlend.cpp
+  TestWorldCells.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-ECS-Tests)

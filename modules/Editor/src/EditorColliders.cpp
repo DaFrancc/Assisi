@@ -25,6 +25,7 @@
 #include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Editor/WireShapes.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Editor/Overlay/LinePass.hpp>
 #include <Assisi/Math/Matrix.hpp>
@@ -144,7 +145,7 @@ template <typename T> void CollectJoints(const Assisi::ECS::Scene &scene, std::v
 /// A joint's lines: a cross at its anchor, its axis, and a line to where it
 /// holds the other body.
 void AppendJointLines(std::vector<LineVertex> &out, const Assisi::ECS::Scene &scene, const JointView &joint,
-                      const glm::vec4 &color)
+                      const glm::vec4 &color, const glm::dvec3 &origin)
 {
     const Assisi::ECS::Transform *transform = scene.Get<Assisi::ECS::Transform>(joint.owner);
     const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(joint.owner);
@@ -153,7 +154,8 @@ void AppendJointLines(std::vector<LineVertex> &out, const Assisi::ECS::Scene &sc
         return;
     }
     // Anchors are scaled with the entity, as the physics world builds them.
-    const glm::mat4 body = glm::scale(ColliderBodyModel(scene, joint.owner, *transform), WorldScaleOf(world->matrix));
+    const glm::mat4 body =
+        glm::scale(ColliderBodyModel(scene, joint.owner, *transform, origin), WorldScaleOf(world->inCell));
     const glm::vec3 anchor = glm::vec3(body * glm::vec4(joint.anchor, 1.f));
     const glm::mat4 identity{1.f};
     for (const glm::vec3 &direction : {kAxisX, kAxisY, kAxisZ})
@@ -177,7 +179,7 @@ void AppendJointLines(std::vector<LineVertex> &out, const Assisi::ECS::Scene &sc
     }
     if (const Assisi::ECS::WorldMatrix *other = scene.Get<Assisi::ECS::WorldMatrix>(joint.other); other != nullptr)
     {
-        AddSegment(out, identity, color, anchor, glm::vec3(other->matrix[3]));
+        AddSegment(out, identity, color, anchor, Assisi::Math::TranslationOf(Assisi::ECS::MatrixFrom(*other, origin)));
     }
 }
 } // namespace
@@ -202,6 +204,9 @@ void EditorApp::SubmitColliderWireframes()
     // from it.
     std::vector<Assisi::ECS::Entity> outlinedAsBodies;
 
+    // Measured from the camera, as the overlay draws them.
+    const glm::dvec3 origin = ViewOrigin();
+
     for (auto [entity, tc, desc] :
          _scene->Query<Assisi::ECS::Transform, Assisi::Physics::Collider>())
     {
@@ -223,8 +228,8 @@ void EditorApp::SubmitColliderWireframes()
         // tracing its local offset would put the wireframe somewhere the body is
         // not, and disagree with the mesh silhouette drawn below.
         const glm::mat4 bodyModel =
-            ColliderShapeModel(ColliderBodyModel(*_scene, entity, tc), desc, _physics->GetColliderScale(entity),
-                               WorldScaleOf(_scene->Get<Assisi::ECS::WorldMatrix>(entity)->matrix));
+            ColliderShapeModel(ColliderBodyModel(*_scene, entity, tc, origin), desc, _physics->GetColliderScale(entity),
+                               WorldScaleOf(_scene->Get<Assisi::ECS::WorldMatrix>(entity)->inCell));
 
         // The traced edges go out for EVERY collider.
         std::vector<LineVertex> &lineOut =
@@ -251,7 +256,7 @@ void EditorApp::SubmitColliderWireframes()
                                : nullptr;
             if (mesh != nullptr)
             {
-                const glm::mat4 &world = _scene->Get<Assisi::ECS::WorldMatrix>(entity)->matrix;
+                const glm::mat4 world = Assisi::ECS::MatrixFrom(*_scene->Get<Assisi::ECS::WorldMatrix>(entity), origin);
                 _overlays.SubmitOutline(mesh, world, outlineColor);
             }
         }
@@ -273,7 +278,7 @@ void EditorApp::SubmitColliderWireframes()
                                     : selected ? kSelectedColor
                                                : kUnselectedColor;
 
-        const glm::mat4 feet = ColliderBodyModel(*_scene, entity, tc);
+        const glm::mat4 feet = ColliderBodyModel(*_scene, entity, tc, origin);
         const glm::mat4 bodyModel =
             glm::translate(feet, glm::vec3(0.f, desc.halfHeight + desc.radius, 0.f));
 
@@ -302,7 +307,7 @@ void EditorApp::SubmitColliderWireframes()
         const glm::vec4 lineColor = active     ? kActiveSelectedColor
                                     : selected ? kSelectedColor
                                                : kUnselectedColor;
-        AppendJointLines(selected ? _colliderLinesOnTop : _colliderLinesDepthTested, *_scene, joint, lineColor);
+        AppendJointLines(selected ? _colliderLinesOnTop : _colliderLinesDepthTested, *_scene, joint, lineColor, origin);
     }
 
     _overlays.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);

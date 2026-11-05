@@ -67,11 +67,11 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
             break;
         }
 
-        glm::mat4 world = scene.Get<ECS::WorldMatrix>(entity)->matrix;
+        ECS::WorldMatrix world = *scene.Get<ECS::WorldMatrix>(entity);
         if (const std::optional<glm::quat> look = PlayerLook(scene, entity, *transform))
         {
             // Where it stands stays blended, so moving is as smooth as before.
-            world = glm::translate(glm::mat4(1.f), glm::vec3(world[3])) * glm::mat4_cast(*look);
+            world.inCell = glm::translate(glm::mat4(1.f), glm::vec3(world.inCell[3])) * glm::mat4_cast(*look);
         }
         found = SceneView{.world = world, .pose = *transform, .camera = sceneCamera, .entity = entity};
     }

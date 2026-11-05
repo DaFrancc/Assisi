@@ -26,6 +26,7 @@
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
 using namespace Assisi;
@@ -100,7 +101,7 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
 
     ECS::Scene scene;
     const ECS::Entity body = AddParentedBody(scene, parentPose, local);
-    const glm::mat4 model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local, glm::dvec3(0.0));
 
     // ComposeTransform is the engine's other statement of the same composition, so
     // the expectation is not this function marking its own homework.
@@ -124,7 +125,7 @@ TEST_CASE("ColliderBodyModel: an unparented body is posed at its own transform")
     REQUIRE(scene.Add(body, local) != nullptr);
     (void)ECS::PropagateTransforms(scene, 0);
 
-    const glm::mat4 model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local, glm::dvec3(0.0));
     CHECK(NearlyEqual(TranslationOf(model), glm::vec3(local.position)));
     CHECK(NearlyEqual(RotationOf(model), local.rotation));
 }
@@ -136,7 +137,7 @@ TEST_CASE("ColliderBodyModel: a parent's scale moves the body but never stretche
 
     ECS::Scene scene;
     const ECS::Entity body = AddParentedBody(scene, parentPose, local);
-    const glm::mat4 model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local, glm::dvec3(0.0));
 
     // The offset is in the parent's space, so it scales with it...
     CHECK(NearlyEqual(TranslationOf(model), glm::vec3(ECS::ComposeTransform(parentPose, local).position)));
@@ -154,7 +155,7 @@ TEST_CASE("ColliderBodyModel: the body's own scale does not reach the pose")
 
     ECS::Scene scene;
     const ECS::Entity body = AddParentedBody(scene, parentPose, local);
-    const glm::mat4 model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local, glm::dvec3(0.0));
 
     // Non-uniform, so composing it in here would shear the basis rather than
     // merely stretch it — the rotation read back would not even be the body's.
@@ -175,6 +176,33 @@ TEST_CASE("ColliderBodyModel: a parent with no Transform leaves the body where i
 
     // Nothing to resolve against — the same answer Physics gets when
     // ECS::ParentWorldMatrix returns null, rather than a crash or a zeroed pose.
-    const glm::mat4 model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local, glm::dvec3(0.0));
     CHECK(NearlyEqual(TranslationOf(model), glm::vec3(local.position)));
+}
+
+TEST_CASE("ColliderBodyModel: measured from a camera beside it, a body 500 km out is drawn where it is")
+{
+    // A whole number of cells out, and a hair more: on the 2^-9 m grid, so the
+    // parent's pose is exact in its cell, and off the grid a float has that far
+    // out, so a pose that went through one would not be.
+    const glm::dvec3 far = Math::WorldCellCentre(glm::ivec3{977, 0, -977}) + glm::dvec3{0.001953125, 0.0, 0.0};
+    ECS::Transform parentPose = ParentPose();
+    parentPose.position += far;
+    const ECS::Transform local{.position = {1.f, 0.f, 0.f},
+                               .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
+
+    ECS::Scene scene;
+    const ECS::Entity body = AddParentedBody(scene, parentPose, local);
+    const ECS::Transform expected = ECS::ComposeTransform(parentPose, local);
+    const glm::dvec3 camera = expected.position + glm::dvec3{2.0, -1.0, 4.0};
+
+    const glm::mat4 parented = ColliderBodyModel(scene, body, local, camera);
+    CHECK(NearlyEqual(TranslationOf(parented), glm::vec3{-2.f, 1.f, -4.f}));
+    CHECK(NearlyEqual(RotationOf(parented), expected.rotation));
+
+    // And a root, whose Transform is already its world pose.
+    const ECS::Entity root = scene.Create();
+    REQUIRE(scene.Add(root, expected) != nullptr);
+    (void)ECS::PropagateTransforms(scene, 0);
+    CHECK(NearlyEqual(TranslationOf(ColliderBodyModel(scene, root, expected, camera)), glm::vec3{-2.f, 1.f, -4.f}));
 }

@@ -1986,7 +1986,7 @@ void EditorApp::DrawLodVerdict()
     }
 
     const Assisi::Runtime::LodReport lod =
-        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, world->matrix);
+        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
 
     if (lod.levelCount <= 1)
     {

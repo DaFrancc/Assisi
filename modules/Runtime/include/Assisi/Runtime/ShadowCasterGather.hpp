@@ -95,9 +95,26 @@ struct ShadowCasterGather
 /// comes from the shared Render::ShadowCasterMobility, so the sun and the
 /// local lights always agree about which layer holds it. A frame rebaking no
 /// still layer walks the movers alone rather than the scene.
+/// @brief Where a shadow gather measures from.
+///
+/// Shadow maps are kept from one frame to the next, so their casters are
+/// measured from a point that holds still while the camera moves: the centre
+/// of the camera's world cell. LOD is measured from the camera, so a caster's
+/// bounds are moved back by @ref camera before a level is chosen for them.
+struct ShadowGatherFrame
+{
+    /// What every caster's matrix and bounds are measured from.
+    glm::dvec3 origin{0.0};
+    /// Where the camera stands, measured from @ref origin.
+    glm::vec3 camera{0.f};
+};
+
 class SunShadowCasterGather
 {
 public:
+    /// @brief Measure this frame's casters from @p frame.
+    void SetFrame(const ShadowGatherFrame &frame) { _frame = frame; }
+
     /// @brief This frame's views: @p stillViews still layers first, then the
     /// read slices movers are drawn into, one volume each, in the order they
     /// are drawn. A caster's view mask is numbered the same way.
@@ -119,6 +136,7 @@ private:
                    const Assisi::Render::MeshBuffer &mesh);
 
     ShadowCasterGather _result;
+    ShadowGatherFrame _frame;
     // The gather in progress's mobility table and level selector, valid during
     // Gather.
     Assisi::Render::ShadowCasterMobility *_mobility = nullptr;
@@ -139,6 +157,9 @@ private:
 class LocalShadowCasterGather
 {
 public:
+    /// @brief Measure this frame's casters from @p frame.
+    void SetFrame(const ShadowGatherFrame &frame) { _frame = frame; }
+
     /// @brief Every shadow-casting submesh in the scene, and which of
     /// @p lightVolumes each one reaches. A caster reaching none is dropped.
     ///
@@ -188,6 +209,7 @@ private:
                    const Assisi::Render::MeshBuffer &mesh);
 
     std::vector<Assisi::Render::ShadowCaster> _casters;
+    ShadowGatherFrame _frame;
 
     // The gather in progress's lights, and which of them draw still casters
     // (empty: all of them). Views of the caller's spans, valid during Gather.
@@ -213,12 +235,13 @@ private:
     std::uint32_t _culledEntities = 0;
 };
 
-/// @brief The shadow casters among @p changed, with where they now stand.
+/// @brief The shadow casters among @p changed, with where they now stand,
+/// measured from @p origin as the shadow maps are.
 ///
 /// The invalidation input, and the reason it is cheap: @p changed comes from the
 /// WorldMatrix pool's change ticks, so it names what moved on screen rather than
 /// what exists, and a frame in which nothing moved produces nothing here.
 void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::Entity> changed,
-                        std::vector<Assisi::Render::ShadowMover> &out);
+                        const glm::dvec3 &origin, std::vector<Assisi::Render::ShadowMover> &out);
 
 } // namespace Assisi::Runtime

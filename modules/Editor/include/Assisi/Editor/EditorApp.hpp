@@ -341,10 +341,14 @@ class EditorApp : public Assisi::App::Application
     /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
     /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
     /// only for moving the editor camera itself.
-    void ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
+    void ViewCamera(Assisi::ECS::WorldMatrix &world, Assisi::Runtime::Camera &camera) const;
+    /// @brief Where the viewport is measured from this frame: the camera
+    /// ViewCamera names. Every overlay line is built measured from it, as the
+    /// scene is drawn, so none of them holds a large number.
+    [[nodiscard]] glm::dvec3 ViewOrigin() const;
 
     /// @brief Puts the editor camera at @p eye, looking at @p target.
-    void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
+    void AimCamera(const glm::dvec3 &eye, const glm::dvec3 &target);
 
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
@@ -455,8 +459,10 @@ class EditorApp : public Assisi::App::Application
     void DrawInstanceGizmo(); // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
     /// and syncs any physics body to it. The tail of a gizmo drag, factored out
-    /// because a multi-selection runs it once per entity.
-    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld, const glm::mat4 &world);
+    /// because a multi-selection runs it once per entity. Both matrices are
+    /// measured from @p origin; a null @p parentWorld is a root.
+    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 *parentWorld, const glm::mat4 &world,
+                               const glm::dvec3 &origin);
     // --- Networking ---------------------------------------------------------
     void DrawNetworkWindow();    // negotiated level + live net stats
     void DrawHostUnsavedModal(); // "save and host / host last-saved / cancel"
@@ -1664,7 +1670,7 @@ class EditorApp : public Assisi::App::Application
     // The fly camera is not level data, so it is plain state here rather than an
     // entity: as members the pose survives a level load for free.
     Assisi::Runtime::Transform _cameraTransform;
-    glm::mat4 _cameraWorld{1.f}; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
+    Assisi::ECS::WorldMatrix _cameraWorld; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
     Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
@@ -1971,8 +1977,8 @@ class EditorApp : public Assisi::App::Application
     // input cancels it. Always kCameraFocusDuration, whatever the travel distance.
     bool _cameraFocusActive = false;
     float _cameraFocusElapsed = 0.f;
-    glm::vec3 _cameraFocusStartPos{0.f};
-    glm::vec3 _cameraFocusEndPos{0.f};
+    glm::dvec3 _cameraFocusStartPos{0.0};
+    glm::dvec3 _cameraFocusEndPos{0.0};
     glm::quat _cameraFocusStartRot{1.f, 0.f, 0.f, 0.f};
     glm::quat _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
     static constexpr float kCameraFocusDuration = 0.25f;

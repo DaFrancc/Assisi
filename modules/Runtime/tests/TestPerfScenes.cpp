@@ -315,7 +315,7 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     {
         (void)entity;
         (void)light;
-        const glm::mat4 &world = worldMatrix.matrix;
+        const glm::mat4 world = ECS::MatrixFrom(worldMatrix, glm::dvec3(0.0));
         const glm::vec3 position = Math::TranslationOf(world);
         const glm::vec3 aim = Runtime::SpotWorldDirection(world);
 

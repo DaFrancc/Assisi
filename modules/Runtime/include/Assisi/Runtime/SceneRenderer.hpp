@@ -22,6 +22,7 @@
 /// camera and the frame's dimensions — callers never build a projection matrix.
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Render/MeshPass.hpp>
@@ -44,6 +45,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -93,7 +95,7 @@ public:
     /// scene's transforms, refreshes lighting, rebuilds the froxel grid if the
     /// projection changed since last frame, and draws every mesh entity. No-op
     /// until Initialize() succeeds.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                 const Camera &camera)
     {
         Render(frame, scene, cameraWorld, camera, _lastPropagationTick);
@@ -109,8 +111,13 @@ public:
     /// several worlds resident stores the bookmark in the world
     /// (App::World::propagationTick) and passes it here; the overload above
     /// keeps the renderer's own for the single-scene case.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const glm::mat4 &cameraWorld,
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                 const Camera &camera, uint64_t &propagationTick);
+
+    /// @brief The point the last Render measured the lit pass from: the camera.
+    /// A matrix measured from it, ECS::MatrixFrom(world, ViewOrigin()), is in
+    /// the space everything on screen was drawn in.
+    [[nodiscard]] const glm::dvec3 &ViewOrigin() const { return _viewOrigin; }
 
     [[nodiscard]] bool IsValid() const { return _meshPass.IsValid(); }
 
@@ -191,7 +198,7 @@ public:
     /// looking at. Measured against this frame's camera, so it answers for the
     /// image on screen.
     [[nodiscard]] Runtime::LodReport LodReportFor(ECS::Entity entity, const Render::MeshBuffer &mesh,
-                                                  const glm::mat4 &worldMatrix) const;
+                                                  const ECS::WorldMatrix &worldMatrix) const;
 
     /// @brief The level the mesh pass drew @p entity at, drawing @p mesh at
     /// @p worldMatrix.
@@ -200,7 +207,7 @@ public:
     /// its pick is a function of the frame alone, so the same measurement taken
     /// here lands where it did.
     [[nodiscard]] uint32_t DrawnLodLevel(ECS::Entity entity, const Render::MeshBuffer &mesh,
-                                         const glm::mat4 &worldMatrix) const;
+                                         const ECS::WorldMatrix &worldMatrix) const;
 
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
@@ -421,18 +428,26 @@ private:
     ///
     /// Called after LightingSystem::Gather, which is where the shadow-casting
     /// sun comes from, and before UpdateFrameConstants, which borrows the fit.
+    /// @p cameraInShadow is the camera measured from the shadow origin.
     [[nodiscard]] Render::MeshPass::ShadowFrameData RenderSunShadows(const Render::RenderFrame &frame,
                                                                      ECS::Scene &scene, const Camera &camera,
-                                                                     const glm::mat4 &view);
+                                                                     const glm::mat4 &cameraInShadow);
 
     /// @brief Choose which local lights hold atlas tiles, draw their faces, and
     /// stamp each winner's view index into the light record the shader reads.
     ///
     /// Between LightingSystem::Gather and LightingSystem::Upload, which is the
     /// only window in which that stamp reaches the GPU. Fills in @p shadows'
-    /// local half.
+    /// local half. @p cameraInShadow is the camera measured from the shadow
+    /// origin.
     void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                            const glm::mat4 &cameraWorld, Render::MeshPass::ShadowFrameData &shadows);
+                            const glm::mat4 &cameraInShadow, Render::MeshPass::ShadowFrameData &shadows);
+
+    /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
+    /// from the camera itself, the shadow maps from the centre of its world
+    /// cell. A camera in a new cell redraws every kept shadow map, which holds
+    /// its casters measured from the old one.
+    void PlaceOrigins(const ECS::WorldMatrix &cameraWorld);
 
     /// @brief Join this frame's selection, allocation and budget into one row
     /// per shadow-casting light. A no-op unless an editor asked for it.
@@ -525,6 +540,11 @@ private:
     // Counts frames for the atlas's throttle phase and its tile ages. Its own
     // counter rather than the scene's tick, which advances per write.
     std::uint32_t _shadowFrameIndex = 0;
+    // What this frame is measured from (see PlaceOrigins), and the cell the
+    // kept shadow maps were measured from; none before the first frame.
+    glm::dvec3 _viewOrigin{0.0};
+    glm::dvec3 _shadowOrigin{0.0};
+    std::optional<glm::ivec3> _shadowCell;
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear. See SkyPass for why that ordering is the cheap one.
     Render::SkyPass _skyPass;

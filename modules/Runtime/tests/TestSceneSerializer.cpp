@@ -88,7 +88,7 @@ TEST_CASE("SceneSerializer: a loaded Transform brings a WorldMatrix, which is ne
     {
         (void)entity;
         (void)meshRenderer;
-        CHECK(Math::TranslationOf(world.matrix) == glm::vec3(1.f, 2.f, 3.f));
+        CHECK(ECS::WorldPositionOf(world) == glm::dvec3(1.0, 2.0, 3.0));
         ++yielded;
     }
     CHECK(yielded == 1);

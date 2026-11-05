@@ -82,17 +82,18 @@ glm::vec4 UnselectedColor(const glm::vec3 &lightColor)
     return glm::vec4(glm::max(lightColor / brightest, glm::vec3(0.15f)), kUnselectedAlpha);
 }
 
-/// @brief Where an entity sits, or the world origin when it has no Transform.
+/// @brief Where an entity sits, or the world origin when it has no Transform,
+/// measured from @p origin.
 ///
 /// A directional light commonly has none — it has no position to speak of — and
 /// the alternative to a fallback is a gizmo drawn nowhere.
-glm::vec3 EntityPosition(Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity)
+glm::vec3 EntityPosition(Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity, const glm::dvec3 &origin)
 {
     if (const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(entity))
     {
-        return Assisi::Math::TranslationOf(world->matrix);
+        return Assisi::Math::TranslationOf(Assisi::ECS::MatrixFrom(*world, origin));
     }
-    return glm::vec3(0.f);
+    return glm::vec3(-origin);
 }
 
 // The three builders below are what a light's outline *is*. Both the draw and the
@@ -156,6 +157,9 @@ void EditorApp::SubmitLightGizmos()
     _lightLinesDepthTested.clear();
     _lightLinesOnTop.clear();
 
+    // Measured from the camera, as the overlay draws them.
+    const glm::dvec3 origin = ViewOrigin();
+
     // Which colour and which batch a light draws in. The selection goes on top so
     // the light being edited is never hidden behind the geometry it lights, which
     // is exactly where a light usually is.
@@ -179,13 +183,13 @@ void EditorApp::SubmitLightGizmos()
     for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::PointLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddPointLightOutline(*style.batch, style.color, world.matrix, light);
+        AddPointLightOutline(*style.batch, style.color, Assisi::ECS::MatrixFrom(world, origin), light);
     }
 
     for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::SpotLight>())
     {
         const auto style = styleFor(entity, glm::vec3(light.color));
-        AddSpotLightOutline(*style.batch, style.color, world.matrix, light,
+        AddSpotLightOutline(*style.batch, style.color, Assisi::ECS::MatrixFrom(world, origin), light,
                             style.detailed);
     }
 
@@ -197,7 +201,7 @@ void EditorApp::SubmitLightGizmos()
         // drives — so the arrow agrees with the shadows rather than with a field
         // nothing reads.
         const glm::vec3 travels = sky.light.entity == entity ? sky.light.direction : light.direction;
-        AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity), travels);
+        AddDirectionalLightOutline(*style.batch, style.color, EntityPosition(*_scene, entity, origin), travels);
     }
 
     _overlays.SubmitOverlayLines(_lightLinesDepthTested, /*onTop=*/ false);
@@ -259,13 +263,13 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
 
     for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::PointLight>())
     {
-        AddPointLightOutline(_lightPickOutline, kUnread, world.matrix, light);
+        AddPointLightOutline(_lightPickOutline, kUnread, Assisi::ECS::MatrixFrom(world, ray.measuredFrom), light);
         takeNearest(entity);
     }
 
     for (auto [entity, world, light] : _scene->Query<Assisi::ECS::WorldMatrix, Rt::SpotLight>())
     {
-        AddSpotLightOutline(_lightPickOutline, kUnread, world.matrix, light,
+        AddSpotLightOutline(_lightPickOutline, kUnread, Assisi::ECS::MatrixFrom(world, ray.measuredFrom), light,
                             IsSelected(entity));
         takeNearest(entity);
     }
@@ -274,7 +278,8 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
     {
         const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
         const glm::vec3 travels = sky.light.entity == entity ? sky.light.direction : light.direction;
-        AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity), travels);
+        AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity, ray.measuredFrom),
+                                   travels);
         takeNearest(entity);
     }
 
@@ -319,13 +324,15 @@ bool EditorApp::DrawDirectionalLightGizmo()
 
     ImGuiIO &io = ImGui::GetIO();
     const float aspect = io.DisplaySize.y > 0.f ? io.DisplaySize.x / io.DisplaySize.y : 1.f;
-    const glm::mat4 view = Rt::ViewMatrix(_cameraWorld);
+    // Measured from the camera, as the scene is drawn.
+    const glm::dvec3 origin = Assisi::ECS::WorldPositionOf(_cameraWorld);
+    const glm::mat4 view = Rt::ViewMatrix(Assisi::ECS::MatrixFrom(_cameraWorld, origin));
     const glm::mat4 proj = Rt::ProjectionMatrix(_camera, aspect);
 
     // Where the arrow is, which is where its handles are. A directional light
     // needs no Transform and often has none, so the origin is the fallback rather
     // than an error: a gizmo with nowhere to be is one nobody can grab.
-    const glm::vec3 pivot = EntityPosition(*_scene, _selectedEntity);
+    const glm::vec3 pivot = EntityPosition(*_scene, _selectedEntity, origin);
 
     // The arrow's own pose, as a matrix ImGuizmo can turn. Rotation only — a
     // directional light has no scale and its position is a convenience, so a

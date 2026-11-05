@@ -193,7 +193,7 @@ ECS::Entity PickEntityInScene(ECS::Scene &scene, const PickRay &ray, float iconH
 
     for (auto [e, worldMatrix] : scene.Query<ECS::WorldMatrix>())
     {
-        const glm::mat4 &world = worldMatrix.matrix;
+        const glm::mat4 world = ECS::MatrixFrom(worldMatrix, ray.measuredFrom);
         // A meshed entity is picked by the bounds it reports; a placement-only one
         // by its icon quad alone, so it does not swallow clicks over a whole cube.
         const std::optional<Geometry::Aabb> bounds = boundsOf(scene, e);
