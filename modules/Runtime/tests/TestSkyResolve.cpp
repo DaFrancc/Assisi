@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 using namespace Assisi;
 using Assisi::Runtime::DirectionalLight;
@@ -478,6 +479,11 @@ TimeOfDay ClockAt(double hour, double dayOfYear = 0.0, float yearLengthDays = 12
     clock.yearLengthDays = yearLengthDays;
     return clock;
 }
+
+bool Raised(const Runtime::SkyResolution &sky, Runtime::SkyWarning warning)
+{
+    return sky.warnings.test(std::to_underlying(warning));
+}
 } // namespace
 
 TEST_CASE("A Sun takes the aim from the clock, and without one the authored aim stands")
@@ -896,6 +902,33 @@ TEST_CASE("A Moon without a Sun is ignored, and a moon below the horizon lights 
     // A full moon at noon is below the horizon, opposite the sun.
     REQUIRE(daytime.moon.directionToMoon.y < 0.f);
     CHECK(daytime.light.body == LightingBody::Sun);
+}
+
+TEST_CASE("The sky reports what it worked around instead of logging it every frame")
+{
+    using Runtime::SkyWarning;
+
+    ECS::Scene scene;
+    const ECS::Entity entity = AddSun(scene, glm::vec3(0.f, -1.f, 0.f), false);
+    (void)scene.Add<Skybox>(entity);
+    CHECK(ResolveSky(scene).warnings.none());
+
+    (void)scene.Add<Moon>(entity);
+    CHECK(Raised(ResolveSky(scene), SkyWarning::MoonWithoutSun));
+
+    (void)scene.Add<Sun>(entity, Sun{});
+    const Runtime::SkyResolution unclocked = ResolveSky(scene);
+    CHECK_FALSE(Raised(unclocked, SkyWarning::MoonWithoutSun));
+    CHECK(Raised(unclocked, SkyWarning::SunWithoutClock));
+
+    (void)scene.Add<TimeOfDay>(entity, ClockAt(12.0));
+    CHECK(ResolveSky(scene).warnings.none());
+
+    const ECS::Entity second = scene.Create();
+    (void)scene.Add<TimeOfDay>(second, ClockAt(6.0));
+    const Runtime::SkyResolution twoClocks = ResolveSky(scene);
+    CHECK(Raised(twoClocks, SkyWarning::SeveralClocks));
+    CHECK(twoClocks.warnings.count() == 1u);
 }
 
 TEST_CASE("Two suns leave every aim authored, clock or no clock")

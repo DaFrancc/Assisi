@@ -362,6 +362,9 @@ private:
     LocalShadowCache _cache;
 
     LocalShadowSettings _settings;
+    // Whether Initialize succeeded; without it the pass only ever binds the
+    // empty texture.
+    bool _canDraw = false;
     bool _active = false;
     std::uint32_t _builtResolution = 0;
     ShadowMapFormat _builtFormat = ShadowMapFormat::D16;

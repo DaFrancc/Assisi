@@ -15,10 +15,34 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Sky.hpp>
 
+#include <bitset>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
+#include <utility>
 
 namespace Assisi::Runtime
 {
+
+/// @brief An authoring mistake ResolveSky worked around.
+///
+/// Reported rather than logged: the resolve runs every frame, and the caller
+/// says each one once, when it appears.
+enum class SkyWarning : std::uint8_t
+{
+    /// More than one TimeOfDay in the scene; the first found is the clock.
+    SeveralClocks,
+    /// A Moon on a light with no Sun; it is ignored.
+    MoonWithoutSun,
+    /// A Sun with no TimeOfDay in the scene; it stands at noon on an equinox.
+    SunWithoutClock,
+    Count_,
+};
+
+using SkyWarnings = std::bitset<static_cast<std::size_t>(SkyWarning::Count_)>;
+
+/// @brief The log line for one warning.
+[[nodiscard]] std::string_view SkyWarningMessage(SkyWarning warning);
 
 /// @brief Why a scene does or does not draw a sky.
 enum class SkyStatus : std::uint8_t
@@ -117,6 +141,7 @@ struct SkyResolution
     /// How many times the clock has been cut. A change means forget any history
     /// keyed to the old sun direction.
     std::uint32_t jumpSerial = 0;
+    SkyWarnings warnings;
 
     double hour = 12.0;
     std::int32_t day = 0;

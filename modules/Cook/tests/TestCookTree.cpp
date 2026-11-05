@@ -19,11 +19,13 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include <Assisi/Cook/CookTree.hpp>
+#include <Assisi/Cook/Cooker.hpp>
 #include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -950,4 +952,25 @@ TEST_CASE("A key its table does not have fails the screen's cook")
     REQUIRE_FALSE(report.has_value());
     CHECK(report.error().vpath == "ui/Menu.amdn");
     CHECK(report.error().reason.starts_with("2:"));
+}
+
+TEST_CASE("A texture two channels store alike is cooked once, and one stored differently is refused")
+{
+    using Assisi::Geometry::MaterialChannel;
+    // glTF's usual packing: occlusion in the red channel of the metal-roughness
+    // image, so one file is bound by both.
+    const std::optional<Assisi::Core::AssetId> packed =
+        Assisi::Core::AssetId::Parse("6f1c2a4e-0b3d-4e5f-8a9b-1c2d3e4f5a6b");
+    REQUIRE(packed.has_value());
+
+    Assisi::Cook::TextureRoles roles;
+    CHECK(roles.Bind(*packed, MaterialChannel::MetallicRoughness, "materials/Rock.amat"));
+    CHECK(roles.Bind(*packed, MaterialChannel::Occlusion, "materials/Rock.amat"));
+    CHECK(roles.ChannelOf(*packed).has_value());
+    CHECK(roles.Conflict(*packed).first.empty());
+
+    // A normal map is a different format, so the same file cannot also be one.
+    CHECK_FALSE(roles.Bind(*packed, MaterialChannel::Normal, "materials/Moss.amat"));
+    CHECK_FALSE(roles.ChannelOf(*packed).has_value());
+    CHECK(roles.Conflict(*packed).second == "materials/Moss.amat");
 }

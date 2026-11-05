@@ -6,22 +6,26 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace Assisi::Runtime
 {
 
-void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache)
+namespace
 {
-    meshRenderer.meshBuffer = cache.ResolveMesh(meshRenderer.mesh);
+/// The mesh @p meshRenderer names, with its materials written to @p materials.
+const Render::MeshBuffer *ResolvedAssets(const MeshRenderer &meshRenderer, Render::AssetCache &cache,
+                                         std::vector<const Render::Material *> &materials)
+{
+    const Render::MeshBuffer *mesh = cache.ResolveMesh(meshRenderer.mesh);
 
     // One resolved Material per mesh slot: the override when that slot has a
     // non-nil entry, otherwise the default the mesh loaded with. A primitive mesh
     // has no slot table, so `materials` stays empty and the draw path uses the
     // cache's fallback.
-    const std::size_t slotCount =
-        meshRenderer.meshBuffer != nullptr ? meshRenderer.meshBuffer->Materials().size() : 0;
-    meshRenderer.materials.clear();
-    meshRenderer.materials.reserve(slotCount);
+    const std::size_t slotCount = mesh != nullptr ? mesh->Materials().size() : 0;
+    materials.clear();
+    materials.reserve(slotCount);
     for (std::size_t slot = 0; slot < slotCount; ++slot)
     {
         const bool hasOverride =
@@ -31,14 +35,36 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
                                              : cache.SlotMaterial(meshRenderer.mesh, static_cast<uint32_t>(slot));
         // ResolveMaterial(nil) yields the fallback, so a slot with no recorded
         // material still renders.
-        meshRenderer.materials.push_back(cache.ResolveMaterial(materialId));
+        materials.push_back(cache.ResolveMaterial(materialId));
     }
+    return mesh;
+}
+} // namespace
+
+void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache)
+{
+    meshRenderer.meshBuffer = ResolvedAssets(meshRenderer, cache, meshRenderer.materials);
 }
 
 void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
 {
-    for (auto [entity, meshRenderer] : scene.Query<Mut<MeshRenderer>>())
-        ResolveMeshRendererAssets(meshRenderer, cache);
+    // Read first and written only where the answer changed: this runs every
+    // frame while anything streams, and a write marks the MeshRenderer changed,
+    // which makes its shadow redraw.
+    std::vector<const Render::Material *> materials;
+    std::vector<ECS::Entity> changed;
+    for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
+    {
+        const Render::MeshBuffer *mesh = ResolvedAssets(meshRenderer, cache, materials);
+        if (mesh != meshRenderer.meshBuffer || materials != meshRenderer.materials)
+        {
+            changed.push_back(entity);
+        }
+    }
+    for (const ECS::Entity entity : changed)
+    {
+        ResolveMeshRendererAssets(*scene.GetMut<MeshRenderer>(entity), cache);
+    }
 
     // Bound here as well as before each evaluation, so a freshly loaded skinned
     // mesh holds its rest pose before anything reads it.

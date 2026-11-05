@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <vector>
 
 namespace Assisi::Runtime
 {
@@ -34,6 +36,69 @@ glm::vec3 SafeDirection(const glm::vec3 &direction)
 constexpr ShadowCaster AsShadowCaster(bool castsShadows)
 {
     return castsShadows ? ShadowCaster::Yes : ShadowCaster::No;
+}
+
+/// How far the camera is from the edge of @p row's reach. Rows are measured
+/// from the camera, so this is the position's length less the radius, and a
+/// light the camera stands inside is nearer than any it is outside of.
+template <typename Row> float ReachDistance(const Row &row)
+{
+    return glm::length(glm::vec3(row.positionRadius)) - row.positionRadius.w;
+}
+
+/// Keep the @p capacity rows of @p rows nearest the camera, in the order they
+/// were gathered, with @p flags kept parallel and @p shadowLights pointed at
+/// their new rows or dropped with them.
+///
+/// The GPU buffer holds @p capacity lights and drops the rest; without this the
+/// ones dropped are whichever the scene happened to list last, so the lamp
+/// beside the camera can go while lamps kilometres off are drawn.
+template <typename Row>
+void KeepNearest(std::vector<Row> &rows, std::vector<ShadowCaster> &flags,
+                 std::vector<LightingSystem::LocalLight> &shadowLights, std::uint32_t capacity,
+                 std::vector<std::uint32_t> &kept)
+{
+    if (rows.size() <= capacity)
+    {
+        return;
+    }
+    kept.resize(rows.size());
+    for (std::uint32_t row = 0; row < kept.size(); ++row)
+    {
+        kept[row] = row;
+    }
+    std::ranges::nth_element(kept, kept.begin() + capacity, std::less<>{},
+                             [&rows](std::uint32_t row) { return ReachDistance(rows[row]); });
+    kept.resize(capacity);
+    std::ranges::sort(kept);
+
+    // Moved down in place: the rows kept are in rising order, so each one's
+    // source is at or after the slot it moves to.
+    for (std::uint32_t slot = 0; slot < capacity; ++slot)
+    {
+        rows[slot] = rows[kept[slot]];
+        flags[slot] = flags[kept[slot]];
+    }
+    rows.resize(capacity);
+    flags.resize(capacity);
+
+    // Both lists rise in row order, so one walk renumbers the shadow lights.
+    std::size_t slot = 0;
+    std::size_t written = 0;
+    for (std::size_t read = 0; read < shadowLights.size(); ++read)
+    {
+        LightingSystem::LocalLight light = shadowLights[read];
+        while (slot < kept.size() && kept[slot] < light.index)
+        {
+            ++slot;
+        }
+        if (slot < kept.size() && kept[slot] == light.index)
+        {
+            light.index = static_cast<std::uint32_t>(slot);
+            shadowLights[written++] = light;
+        }
+    }
+    shadowLights.resize(written);
 }
 } // namespace
 
@@ -218,6 +283,9 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     // against — and what says whether a froxel-cull cost is the scene's fault.
     ASSISI_PROFILE_COUNTER("lights/point", static_cast<double>(_pointLights.size()));
     ASSISI_PROFILE_COUNTER("lights/spot", static_cast<double>(_spotLights.size()));
+
+    KeepNearest(_pointLights, _pointShadowFlags, _shadowPoints, Render::ClusterGrid::kMaxPointLights, _keptRows);
+    KeepNearest(_spotLights, _spotShadowFlags, _shadowSpots, Render::ClusterGrid::kMaxSpotLights, _keptRows);
     ASSISI_PROFILE_COUNTER("lights/dir", static_cast<double>(_dirLights.size()));
 
     // Clamped for the same reason CullLights clamps its counts: Upload

@@ -233,6 +233,10 @@ private:
     // between them are absent.
     std::vector<LocalLight> _shadowSpots;
     std::vector<LocalLight> _shadowPoints;
+
+    // Which rows survive when a kind has more lights than its buffer holds.
+    // Scratch, kept for its capacity.
+    std::vector<uint32_t> _keptRows;
 };
 
 } // namespace Assisi::Runtime

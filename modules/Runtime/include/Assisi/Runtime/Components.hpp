@@ -68,7 +68,11 @@ using ECS::Transform;
 /// Replicable: a mirror with no mesh reference draws nothing. Only the durable
 /// GUID layer travels — a resolved pointer is local to the process that owns it,
 /// and every machine resolves its own from the same ids.
-ACOMP(replicable)
+///
+/// Tracked: a change redraws the entity's kept shadows. Spelled out rather than
+/// left to `replicable`'s implication, so dropping `replicable` would not take
+/// that signal with it.
+ACOMP(replicable, tracked)
 struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetId mesh;

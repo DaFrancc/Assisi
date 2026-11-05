@@ -60,8 +60,10 @@ that also has a `Transform`.
 | Editing | The editor's own camera, which you fly with the right mouse button. The level's cameras are ignored. |
 | Playing or paused | The level's active camera, as in the game. If the level has none, the editor's own camera. |
 
-The editor's own camera draws to 200 m. Its field of view changes with the
-scroll wheel; its near and far planes can't be changed.
+The editor's own camera draws as far as the level's active camera, its
+`farZ`, so you edit the level out to the distance the game shows it. A level
+with no active camera is drawn to 200 m. The field of view changes with the
+scroll wheel; the near plane can't be changed.
 
 **Players.** In a game with [players](players.md), the `PlayerCamera` system
 sets `isActive` on the camera of the player who is playing on this machine, and

@@ -187,6 +187,8 @@ void PostProcess::Rebuild()
                                desc.format = depthFormat;
                                desc.sampleCount = sampleCount;
                                desc.isRenderTarget = true;
+                               // The scene distance pass reads it when SSAO is on.
+                               desc.isShaderResource = true;
                                desc.debugName = debugName;
                                desc.initialState = nvrhi::ResourceStates::DepthWrite;
                                desc.keepInitialState = true;

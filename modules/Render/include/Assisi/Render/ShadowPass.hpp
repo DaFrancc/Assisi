@@ -198,6 +198,9 @@ private:
     nvrhi::TextureHandle _noCascadesTexture;
 
     SunShadowSettings _settings;
+    // Whether Initialize succeeded; without it the pass only ever binds the
+    // empty texture.
+    bool _canDraw = false;
     bool _active = false;
     // Whether Stats::cascadeCasters is filled. See SetCascadeCountsEnabled.
     bool _cascadeCounts = false;

@@ -77,7 +77,7 @@ shadows.
 
 | View | Shows |
 |---|---|
-| **Cascades** | Tints the picture by which cascade each pixel's shadow comes from: red, green, blue, then yellow for the fourth cascade and every one after it. Shows where the cascades split, and how wide the blend between them is. |
+| **Cascades** | Tints the picture by which cascade each pixel's shadow comes from: red, green, blue, yellow, magenta, cyan, orange and grey, one for each cascade. Shows where the cascades split, and how wide the blend between them is. |
 | **Occluder Margin** | For each pixel, how far in front of it the shadow map's nearest surface is. Red is in shadow, brighter the further the thing casting it; green is lit; black means the two are within a millimetre of each other, where shadow acne can appear; blue is outside every cascade. |
 | **Filter Taps** | Compares three answers for each pixel: red is the shadow as drawn, green this cascade's filtered lookup, blue its single centre lookup. Black and white mean they agree. Coloured pixels show where blending or filtering changed the answer, which helps find light leaking into a shadow. |
 

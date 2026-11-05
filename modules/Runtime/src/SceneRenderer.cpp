@@ -110,19 +110,22 @@ bool SceneRenderer::Initialize(const InitParams &params)
     // Before the mesh pass: it binds both shadow maps into every binding set it
     // builds, and each pass keeps a one-texel empty texture there until
     // something wants shadows. A failure is non-fatal — the scene renders
-    // unshadowed rather than not at all.
-    if (!_shadowDepthRenderer.Initialize(
-            Render::ShadowDepthRenderer::InitParams{.device = _device,
-                                                    .vertexShaderSpvPath = kShadowVertexShader,
-                                                    .maskedVertexShaderSpvPath = kShadowMaskedVertexShader,
-                                                    .maskedPixelShaderSpvPath = kShadowMaskedPixelShader,
-                                                    .materialTable = params.materialTable,
-                                                    .bindlessLayout = params.bindlessLayout,
-                                                    .bindlessTable = params.bindlessTable}) ||
-        !_shadowPass.Initialize(Render::ShadowPass::InitParams{.device = _device,
-                                                               .depthRenderer = &_shadowDepthRenderer,
-                                                               .restoreVertexShaderSpvPath = kShadowTileResetShader,
-                                                               .restorePixelShaderSpvPath = kShadowDepthRestoreShader}))
+    // unshadowed rather than not at all. Each pass initialises even when the
+    // depth renderer failed, since that is what creates its empty texture.
+    const bool depthRendererOk = _shadowDepthRenderer.Initialize(
+        Render::ShadowDepthRenderer::InitParams{.device = _device,
+                                                .vertexShaderSpvPath = kShadowVertexShader,
+                                                .maskedVertexShaderSpvPath = kShadowMaskedVertexShader,
+                                                .maskedPixelShaderSpvPath = kShadowMaskedPixelShader,
+                                                .materialTable = params.materialTable,
+                                                .bindlessLayout = params.bindlessLayout,
+                                                .bindlessTable = params.bindlessTable});
+    const bool sunShadowsOk = _shadowPass.Initialize(
+        Render::ShadowPass::InitParams{.device = _device,
+                                       .depthRenderer = &_shadowDepthRenderer,
+                                       .restoreVertexShaderSpvPath = kShadowTileResetShader,
+                                       .restorePixelShaderSpvPath = kShadowDepthRestoreShader});
+    if (!depthRendererOk || !sunShadowsOk)
     {
         Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
     }
@@ -240,6 +243,19 @@ void SceneRenderer::RebuildClusterGrid(int32_t width, int32_t height, const Came
     _clusterProjection = projection;
 }
 
+void SceneRenderer::WarnNewSkyWarnings(const SkyWarnings &warnings)
+{
+    const SkyWarnings raised = warnings & ~_skyWarnings;
+    _skyWarnings = warnings;
+    for (std::size_t bit = 0; bit < raised.size(); ++bit)
+    {
+        if (raised.test(bit))
+        {
+            Core::Log::Warn("SceneRenderer: {}", SkyWarningMessage(static_cast<SkyWarning>(bit)));
+        }
+    }
+}
+
 void SceneRenderer::Resize(int32_t width, int32_t height, const Camera &camera)
 {
     RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
@@ -295,12 +311,16 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Keep the froxel grid aligned with the render projection; a drift (window
     // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
     // it and shows rectangular lighting artifacts.
-    if (projection != _clusterProjection)
+    if (projection != _clusterProjection && _meshPass.IsValid())
     {
         // Scoped even though it is rare: it is a full grid rebuild, so the one
         // frame that pays it should say so rather than look like a random spike.
+        // Recorded into the frame's own list, which is what the scope times, and
+        // so an animated FOV or far plane submits nothing extra.
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "cluster-rebuild");
-        RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
+        _lighting.Resize(frame.commandList, static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height),
+                         camera.nearZ, camera.farZ, projection);
+        _clusterProjection = projection;
     }
 
     // The scene's sky, which lights the geometry, is drawn behind it, and says
@@ -421,6 +441,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     {
         _multipleSunsWarned = false;
     }
+    WarnNewSkyWarnings(sky.warnings);
 
     // What the frame actually drew, on their own tracks. These are the numbers you
     // reach for the moment `draw-scene` moves: a jump in batches or draw calls says

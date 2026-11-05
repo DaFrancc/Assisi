@@ -355,8 +355,11 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
     // The budget, spent in request order — which is importance order, so what it
     // runs out on is by construction the least important light asking. A light
     // it refuses holds no tile and lights unshadowed, rather than lighting from
-    // a tile whose depth no longer describes the scene.
+    // a tile whose depth no longer describes the scene. The first light asking
+    // is drawn whole whatever the budget, so a budget smaller than a point
+    // light's six faces still lets one through each frame.
     std::uint32_t remaining = std::max(frame.settings.updateBudgetFaces, 1u);
+    bool admittedAny = false;
     for (std::size_t index = 0; index < requests.size(); ++index)
     {
         LocalShadowTilePlan &plan = out[index];
@@ -369,14 +372,15 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
             }
             continue;
         }
-        if (wanted > remaining)
+        if (wanted > remaining && admittedAny)
         {
             plan.deferred = true;
             _stats.deferredFaces += wanted;
             ++_stats.deferredLights;
             continue;
         }
-        remaining -= wanted;
+        remaining -= std::min(wanted, remaining);
+        admittedAny = true;
         _stats.bakedFaces += wanted;
     }
 }
@@ -404,7 +408,11 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         }
 
         Entry &entry = _entries[KeyOf(request.kind, request.lightIndex)];
-        entry.sizeClass = request.sizeClass;
+        // The class asked for, so a demoted light the atlas cannot grow keeps
+        // its smaller tile rather than being cut afresh every frame. One that
+        // can grow is remembered at the class it got, which the next Plan does
+        // not retain.
+        entry.sizeClass = tile.canGrow ? ShadowSizeClassOf(tile.resolution) : request.sizeClass;
         entry.faces = faces;
         for (std::uint32_t face = 0; face < faces; ++face)
         {

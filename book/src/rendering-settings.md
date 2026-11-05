@@ -175,7 +175,9 @@ Spot and point light shadows, under `shadows.local`:
   so its shadow follows it exactly, at the cost of a redraw per frame for each
   moving light.
 - **`cache.updateBudgetFaces`** is how many tiles may be redrawn in one frame.
-  Lights over the budget go without a shadow until their turn.
+  Lights over the budget go without a shadow until their turn. The first light
+  waiting is always redrawn in full, so a point light, which needs six tiles at
+  once, still gets its shadow when the budget is under six.
 - **`cache.promoteStillSeconds`** is how long a mesh must stay still before it
   joins the kept shadows again.
 - **`cache.movingLightUpdateDivisor`** lets the less important lights redraw
@@ -224,7 +226,9 @@ settings only matter in a level with a `Skybox`.
 | `rebakeDegrees` | **Rebake Angle** | 0 to 10 | `0.5` |
 
 - **`enabled`** off removes the sky's reflections; surfaces still get the sky's
-  light. It saves the probe's memory and the work of redrawing it.
+  light, and shiny surfaces reflect a plain blend of the sky's colour above and
+  the ground's below instead of the sky itself. It saves the probe's memory and
+  the work of redrawing it.
 - **`resolution`** is the size of each of the six pictures. Larger gives sharper
   reflections on smooth surfaces.
 - **`samples`** is how many points of the sky are averaged to make the blurred

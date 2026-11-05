@@ -248,3 +248,36 @@ TEST_CASE("A shadow-casting light far out is measured from the shadow origin, as
     CHECK(lighting.ShadowCastingPointLights()[0].position == glm::vec3(kIntoCell));
     CHECK(lighting.ShadowCastingSpotLights()[0].position == glm::vec3(-kIntoCell));
 }
+
+TEST_CASE("Past the buffer's capacity, the lights nearest the camera are the ones kept")
+{
+    using Assisi::ECS::Transform;
+    using Assisi::Runtime::PointLight;
+    using Assisi::Render::ClusterGrid;
+
+    // Listed farthest first, so the scene's order would keep the far ones. The
+    // nearest light casts shadows, so its shadow row must follow it.
+    constexpr std::uint32_t kExtra = 8;
+    constexpr std::uint32_t kLights = ClusterGrid::kMaxPointLights + kExtra;
+    constexpr double kSpacing = 10.0;
+    ECS::Scene scene;
+    for (std::uint32_t light = 0; light < kLights; ++light)
+    {
+        const ECS::Entity entity = scene.Create();
+        const double distance = kSpacing * static_cast<double>(kLights - light);
+        (void)scene.Add(entity, Transform{.position = glm::dvec3(distance, 0.0, 0.0)});
+        (void)scene.Add(entity, PointLight{.radius = 1.f, .castsShadows = light + 1u == kLights});
+    }
+    (void)ECS::PropagateTransforms(scene, 0u);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, nullptr, Assisi::Runtime::LightFrame{});
+
+    REQUIRE(lighting.PointLightShadowFlags().size() == ClusterGrid::kMaxPointLights);
+    REQUIRE(lighting.ShadowCastingPointLights().size() == 1u);
+    const LightingSystem::LocalLight &nearest = lighting.ShadowCastingPointLights()[0];
+    CHECK(nearest.position.x == doctest::Approx(kSpacing));
+    // Last of the rows kept, as it was last of the lights gathered.
+    CHECK(nearest.index == ClusterGrid::kMaxPointLights - 1u);
+    CHECK(lighting.PointLightShadowFlags()[nearest.index] == Assisi::Runtime::ShadowCaster::Yes);
+}

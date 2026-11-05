@@ -915,7 +915,11 @@ bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel
     fresh.channel = channel;
 
     const auto [slot, inserted] = _bindings.try_emplace(texture, std::move(fresh));
-    if (inserted || slot->second.channel == channel)
+    // Two channels stored alike share the blob: glTF packs occlusion into the
+    // red channel of the metal-roughness image, which is one file read by both.
+    const Geometry::MaterialChannelFormat kept = Geometry::FormatFor(slot->second.channel);
+    const Geometry::MaterialChannelFormat wanted = Geometry::FormatFor(channel);
+    if (inserted || (kept.format == wanted.format && kept.space == wanted.space))
     {
         return true;
     }

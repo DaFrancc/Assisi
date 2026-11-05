@@ -143,9 +143,11 @@ class TextureRoles
 public:
     /// @brief Record that @p material binds @p texture to @p channel.
     ///
-    /// @return false if @p texture is already bound to a different channel — one
-    ///         GUID names one blob, so a texture wanted as two formats has to be
-    ///         two files. The names of both materials are kept for the message.
+    /// @return false if @p texture is already bound to a channel stored in a
+    ///         different format — one GUID names one blob, so a texture wanted as
+    ///         two formats has to be two files. The names of both materials are
+    ///         kept for the message. Channels stored alike, such as metal-roughness
+    ///         and occlusion, share it.
     bool Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material);
 
     /// @brief The channel @p texture is bound to, or nullopt when no material

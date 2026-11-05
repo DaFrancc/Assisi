@@ -437,7 +437,9 @@ struct LocalShadowCacheSettings
     /// opening onto a dozen lamps — landing as one long frame. A light whose
     /// face does not fit this frame's budget goes unshadowed until it does,
     /// never shadowed from a stale tile: a light waiting its turn is one not yet
-    /// drawn, and that is a dimmer image rather than a wrong one.
+    /// drawn, and that is a dimmer image rather than a wrong one. The first
+    /// light asking in a frame is drawn whole whatever the budget, so a point
+    /// light's six faces get through a budget smaller than six.
     std::uint32_t updateBudgetFaces = 32;
 
     /// Seconds a caster must hold still before it is folded back into the still

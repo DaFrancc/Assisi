@@ -123,6 +123,17 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     _removedEntities.clear();
     const bool removalsComplete = scene.RemovedSince<Transform>(_lastMoverTick, _removedEntities) &&
                                   scene.RemovedSince<MeshRenderer>(_lastMoverTick, _removedEntities);
+    // An edited MeshRenderer changes what its kept shadows should hold without
+    // moving anything: Casts Shadows turned off, another mesh, a material that
+    // is now masked or double-sided. It is forgotten, which redraws where it was
+    // kept, and moves, which draws it as it is now. One that also moved is
+    // listed twice, which the mobility table takes as one move.
+    const std::size_t editedFrom = _movedEntities.size();
+    scene.ChangedSince<MeshRenderer>(_lastMoverTick, _movedEntities);
+    for (std::size_t edited = editedFrom; edited < _movedEntities.size(); ++edited)
+    {
+        _casterMobility.Drop(ShadowCasterId(_movedEntities[edited]));
+    }
     _lastMoverTick = scene.CurrentChangeTick();
 
     if (removalsComplete)
@@ -341,8 +352,42 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
 
     // No shadow-casting local light means no allocation and no pass — the same
     // blank-scene rule the cascades keep, and the reason `active` is a scene
-    // fact rather than a settings one.
-    const bool active = _shadowSettings.local.enabled && !(spots.empty() && points.empty());
+    // fact rather than a settings one. Selected before the pass is configured,
+    // since a selection the caps leave empty is no pass as well: the atlas is
+    // released and its kept tiles forgotten, so none come back stale when a
+    // light is let in again.
+    const bool wanted = _shadowSettings.local.enabled && !(spots.empty() && points.empty());
+    if (wanted)
+    {
+        const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
+
+        _localCandidates.reserve(spots.size() + points.size());
+        const auto addCandidate = [&](const LightingSystem::LocalLight &light, Render::LocalLightKind kind)
+                                  {
+                                      _localCandidates.push_back(Render::LocalShadowCandidate{
+                    .kind = kind,
+                    .lightIndex = light.index,
+                    .screenCoverage = LocalLightScreenCoverage(light.position, light.range, cameraPosition, tanHalfFovY),
+                    .intensity = light.intensity,
+                    .priority = light.shadowPriority,
+                    .pinned = light.shadowAlwaysOn,
+                    // Every gathered light is a candidate. A frustum test here would
+                    // drop the shadows of lights just off screen, and their casters
+                    // are exactly the ones whose shadows reach into it.
+                    .visible = true});
+                                  };
+        for (const LightingSystem::LocalLight &light : spots)
+        {
+            addCandidate(light, Render::LocalLightKind::Spot);
+        }
+        for (const LightingSystem::LocalLight &light : points)
+        {
+            addCandidate(light, Render::LocalLightKind::Point);
+        }
+
+        _localShadowSelector.Select(_localCandidates, _shadowSettings.local, _shadowSettings.selection, _lastSelection);
+    }
+    const bool active = wanted && !_lastSelection.lights.empty();
     if (!_localShadowPass.Configure(_shadowSettings.local, active))
     {
         Core::Log::Warn("SceneRenderer: local-light shadows disabled (the atlas failed to rebuild).");
@@ -369,38 +414,6 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     if (!_shadowPass.IsActive())
     {
         _shadowDepthRenderer.BeginFrame(cameraPosition);
-    }
-
-    const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
-
-    _localCandidates.reserve(spots.size() + points.size());
-    const auto addCandidate = [&](const LightingSystem::LocalLight &light, Render::LocalLightKind kind)
-                              {
-                                  _localCandidates.push_back(Render::LocalShadowCandidate{
-                .kind = kind,
-                .lightIndex = light.index,
-                .screenCoverage = LocalLightScreenCoverage(light.position, light.range, cameraPosition, tanHalfFovY),
-                .intensity = light.intensity,
-                .priority = light.shadowPriority,
-                .pinned = light.shadowAlwaysOn,
-                // Every gathered light is a candidate. A frustum test here would
-                // drop the shadows of lights just off screen, and their casters
-                // are exactly the ones whose shadows reach into it.
-                .visible = true});
-                              };
-    for (const LightingSystem::LocalLight &light : spots)
-    {
-        addCandidate(light, Render::LocalLightKind::Spot);
-    }
-    for (const LightingSystem::LocalLight &light : points)
-    {
-        addCandidate(light, Render::LocalLightKind::Point);
-    }
-
-    _localShadowSelector.Select(_localCandidates, _shadowSettings.local, _shadowSettings.selection, _lastSelection);
-    if (_lastSelection.lights.empty())
-    {
-        return;
     }
 
     // Back to the light each winner names, for the geometry its views are built

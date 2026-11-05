@@ -19,6 +19,24 @@
 namespace Assisi::Editor
 {
 
+namespace
+{
+/// How far the level's first active camera draws, or @p fallback without one.
+/// Quiet, unlike App::ActiveSceneCamera: it runs every frame, and two active
+/// cameras are reported by whatever looks through them.
+float LevelDrawDistance(Assisi::ECS::Scene &scene, float fallback)
+{
+    for (auto [entity, camera] : scene.Query<Assisi::Runtime::Camera>())
+    {
+        if (camera.isActive && scene.Has<Assisi::ECS::Transform>(entity))
+        {
+            return camera.farZ;
+        }
+    }
+    return fallback;
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Entity picking + eyedropper
 // ---------------------------------------------------------------------------
@@ -110,6 +128,10 @@ void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 
 void EditorApp::UpdateCamera(float dt)
 {
+    // The editor sees as far as the level's camera draws, so a level drawn to
+    // 2 km is edited to 2 km.
+    _camera.farZ = _scene != nullptr ? LevelDrawDistance(*_scene, kEditorDrawDistance) : kEditorDrawDistance;
+
     // The keys and the mouse belong to the session while one is running, and the
     // two controllers read the same ones — WASD and mouse movement would fly the
     // editor camera and walk the player at once, and the pose the author left

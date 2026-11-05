@@ -136,10 +136,12 @@ Things to know about the maps:
 - **An emissive surface glows, but lights nothing else.** It shows at full
   brightness in the dark, but doesn't light the floor in front of it. Put a
   `PointLight` next to it for that.
-- **Use a separate file for each map.** Some tools pack occlusion into the red
-  channel of the metal-and-roughness image, and use the one file for both. The
-  editor draws that correctly, but the cook refuses a texture used as two
-  different kinds of map: copy the image and use one copy for each.
+- **One image can be both the metal-and-roughness map and the occlusion map.**
+  Many tools pack occlusion into the red channel of the metal-and-roughness
+  image, and a glTF import binds that one file to both. Any other image used as
+  two kinds of map, such as a colour map that is also a normal map, fails the
+  cook, because each kind is compressed differently: copy the image and use one
+  copy for each.
 - **Textures are PNG or JPEG files.** The cook compresses them and makes their
   smaller versions for distance, called **mipmaps**, for you.
 

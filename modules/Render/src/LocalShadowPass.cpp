@@ -33,6 +33,12 @@ enum class AtlasLayer : std::uint32_t
 
 /// Vertices in the triangle shadow_tile_reset.vert expands to cover the viewport.
 constexpr std::uint32_t kFullscreenTriangleVertices = 3;
+
+/// Whether @p plan redraws still casters into its tile this frame.
+[[nodiscard]] bool Bakes(const LocalShadowTilePlan &plan)
+{
+    return plan.dirtyFaces != 0u && !plan.deferred;
+}
 } // namespace
 
 void LocalShadowCasterIndex::Clear()
@@ -45,7 +51,13 @@ bool LocalShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
     _depthRenderer = params.depthRenderer;
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    // First, so the mesh pass has a texture to bind even when the pass can
+    // never draw.
+    if (_device == nullptr || !CreateNoAtlasTexture())
+    {
+        return false;
+    }
+    if (_depthRenderer == nullptr || !_depthRenderer->IsReady())
     {
         return false;
     }
@@ -56,7 +68,8 @@ bool LocalShadowPass::Initialize(const InitParams &params)
                          params.tileResetVertexShaderSpvPath);
         return false;
     }
-    return CreateNoAtlasTexture();
+    _canDraw = true;
+    return true;
 }
 
 bool LocalShadowPass::CreateNoAtlasTexture()
@@ -205,9 +218,11 @@ bool LocalShadowPass::RebuildPipelines()
 
 bool LocalShadowPass::Configure(const LocalShadowSettings &settings, bool active)
 {
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (!_canDraw)
     {
-        return false; // Initialize failed; the pass stays inactive for good
+        // Initialize failed and the pass stays inactive for good. Fails only
+        // when asked for shadows, so the caller can turn them off once.
+        return !active;
     }
 
     if (!active)
@@ -375,8 +390,11 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
         _tiles.push_back(Tile{
                 .kind = request.kind, .lightIndex = request.lightIndex, .firstView = firstView, .resolution = resolution});
         _tileViewStart.push_back(static_cast<std::uint32_t>(_targets.size()));
-        _servedTiles.push_back(
-                LocalShadowServedTile{.requestIndex = static_cast<std::uint32_t>(index), .resolution = resolution});
+        // After every cut, so what is still free is free for the whole frame.
+        const std::uint32_t askedClass = std::min(request.sizeClass, kShadowSizeClassCount - 1u);
+        const bool canGrow = assignedClass[index] < askedClass && _allocator.Available(askedClass) >= faces;
+        _servedTiles.push_back(LocalShadowServedTile{
+                .requestIndex = static_cast<std::uint32_t>(index), .resolution = resolution, .canGrow = canGrow});
     }
     return unserved;
 }
@@ -632,13 +650,12 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
         return !_plans.empty();
     }
 
-    // Deferred lights included: they bake nothing this frame, but a row they
-    // do not read costs only the gather, and leaving them out would make this
-    // a second copy of the budget's decision to keep in step with it.
+    // Not for a light the budget deferred: it is not drawn this frame, and
+    // gathering for it would walk the scene every frame it waits.
     _stillRequests.resize(_plans.size());
     for (std::size_t index = 0; index < _plans.size(); ++index)
     {
-        _stillRequests[index] = _plans[index].dirtyFaces != 0u ? 1u : 0u;
+        _stillRequests[index] = Bakes(_plans[index]) ? 1u : 0u;
     }
 
     // A tile with a dirty face needs the *still* casters, which have not moved
@@ -649,7 +666,7 @@ bool LocalShadowPass::PlanFrame(const Frame &frame)
     // at all until something else happens to dirty it again.
     for (const LocalShadowTilePlan &plan : _plans)
     {
-        if (plan.dirtyFaces != 0u || (plan.hasMovers && plan.redrawMovers))
+        if (Bakes(plan) || (!plan.deferred && plan.hasMovers && plan.redrawMovers))
         {
             return true;
         }
