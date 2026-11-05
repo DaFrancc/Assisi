@@ -88,6 +88,10 @@ struct LocalShadowServedTile
     /// The tile edge in texels, one face of it — every face of a light is the
     /// same class.
     std::uint32_t resolution = 0;
+    /// Served below the class it asked for, while the atlas had room left at
+    /// that class. Its tile is not kept, so the next frame cuts it at the class
+    /// it asked for rather than leaving it small for as long as it rests.
+    bool canGrow = false;
 };
 
 /// @brief What one light's tile needs this frame.

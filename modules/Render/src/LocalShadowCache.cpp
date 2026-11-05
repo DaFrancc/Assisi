@@ -408,7 +408,11 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         }
 
         Entry &entry = _entries[KeyOf(request.kind, request.lightIndex)];
-        entry.sizeClass = request.sizeClass;
+        // The class asked for, so a demoted light the atlas cannot grow keeps
+        // its smaller tile rather than being cut afresh every frame. One that
+        // can grow is remembered at the class it got, which the next Plan does
+        // not retain.
+        entry.sizeClass = tile.canGrow ? ShadowSizeClassOf(tile.resolution) : request.sizeClass;
         entry.faces = faces;
         for (std::uint32_t face = 0; face < faces; ++face)
         {

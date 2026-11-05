@@ -382,6 +382,31 @@ TEST_CASE("A budget smaller than a point light's cube still lets one light throu
     CHECK(cache.Stats().bakedFaces == 6);
 }
 
+TEST_CASE("A demoted light keeps its small tile only while the atlas has no room for the one it asked for")
+{
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    const std::vector<LocalShadowRequest> requests{SpotAt(0, glm::vec3(0.f))};
+    const std::vector<ShadowViewRect> rects{ShadowViewRect{.x = 0, .y = 0, .width = 256, .height = 256}};
+    std::vector<LocalShadowTilePlan> plans;
+
+    // Served at 256 for a request of 512, with nothing free at 512: kept, so it
+    // is not redrawn every frame it cannot grow.
+    cache.Plan(FrameAt(1, settings, requests), plans);
+    cache.Commit(1, requests, plans, std::vector<LocalShadowServedTile>{{.requestIndex = 0, .resolution = 256}}, rects);
+    cache.Plan(FrameAt(2, settings, requests), plans);
+    CHECK(plans[0].retained);
+    CHECK(plans[0].dirtyFaces == 0);
+
+    // The same, with room at 512 left over: given up, so the next frame cuts
+    // it at the size it asked for.
+    cache.Commit(2, requests, plans,
+                 std::vector<LocalShadowServedTile>{{.requestIndex = 0, .resolution = 256, .canGrow = true}}, rects);
+    cache.Plan(FrameAt(3, settings, requests), plans);
+    CHECK_FALSE(plans[0].retained);
+    CHECK(plans[0].dirtyFaces == 0b1u);
+}
+
 TEST_CASE("A light that loses its tile forgets the depth in it")
 {
     LocalShadowCache cache;

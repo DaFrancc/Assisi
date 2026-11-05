@@ -390,8 +390,11 @@ std::uint32_t LocalShadowPass::AllocateTiles(std::span<const LocalShadowRequest>
         _tiles.push_back(Tile{
                 .kind = request.kind, .lightIndex = request.lightIndex, .firstView = firstView, .resolution = resolution});
         _tileViewStart.push_back(static_cast<std::uint32_t>(_targets.size()));
-        _servedTiles.push_back(
-                LocalShadowServedTile{.requestIndex = static_cast<std::uint32_t>(index), .resolution = resolution});
+        // After every cut, so what is still free is free for the whole frame.
+        const std::uint32_t askedClass = std::min(request.sizeClass, kShadowSizeClassCount - 1u);
+        const bool canGrow = assignedClass[index] < askedClass && _allocator.Available(askedClass) >= faces;
+        _servedTiles.push_back(LocalShadowServedTile{
+                .requestIndex = static_cast<std::uint32_t>(index), .resolution = resolution, .canGrow = canGrow});
     }
     return unserved;
 }
