@@ -713,6 +713,31 @@ TEST_CASE("Mobility: a caster that is gone leaves the layer that drew it")
     CHECK(invalidate.empty());
 }
 
+TEST_CASE("Mobility: an edited caster is redrawn where it was kept and where it now is")
+{
+    // What the scene renderer does with a still caster whose MeshRenderer
+    // changed: forget it, then report it moved, at a larger size since a mesh
+    // swap can grow it.
+    ShadowCasterMobility mobility;
+    std::vector<ShadowMover> dynamic;
+    std::vector<ShadowMover> invalidate;
+    const ShadowMover baked = CasterAt(3, glm::vec3(5.f, 0.f, 0.f), 1.f);
+    mobility.NoteBaked(baked);
+
+    mobility.Drop(3);
+    const ShadowMover edited = CasterAt(3, glm::vec3(5.f, 0.f, 0.f), 4.f);
+    mobility.Update(1, 30, std::vector<ShadowMover>{edited}, dynamic, invalidate);
+
+    // The kept layer loses the old silhouette, and the new one is drawn with
+    // the movers until it settles.
+    REQUIRE(invalidate.size() == 2);
+    CHECK(invalidate[0].worldSphere.radius == doctest::Approx(baked.worldSphere.radius));
+    CHECK(invalidate[1].worldSphere.radius == doctest::Approx(edited.worldSphere.radius));
+    CHECK(mobility.IsDynamic(3));
+    REQUIRE(dynamic.size() == 1);
+    CHECK(dynamic[0].worldSphere.radius == doctest::Approx(edited.worldSphere.radius));
+}
+
 TEST_CASE("Mobility: DropIf keeps what is still there")
 {
     ShadowCasterMobility mobility;
