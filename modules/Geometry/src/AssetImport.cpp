@@ -153,23 +153,15 @@ std::optional<std::uint64_t> HashGltfSource(std::string_view gltfVirtualPath)
 ///        enters a `.amat`. This is the "did the material change?" test the
 ///        reconciler classifies with.
 ///
-/// Every serialized field has to be here. A field left out reads as unchanged,
-/// so a re-export that touched only that field is classified geometry-only, the
-/// source hash is refreshed, and the new value is lost with nothing left to
-/// report it as stale.
+/// It uses MaterialData's defaulted ==, so every field is compared, including
+/// one added later. A field left out would read as unchanged: a re-export that
+/// touched only that field would be classified geometry-only, the source hash
+/// refreshed, and the new value lost with nothing left to report it as stale.
 bool SameMaterialFields(const MaterialData &a, const MaterialData &b)
 {
-    return a.BaseColorFactor == b.BaseColorFactor && a.MetallicFactor == b.MetallicFactor &&
-           a.RoughnessFactor == b.RoughnessFactor && a.NormalScale == b.NormalScale &&
-           a.OcclusionStrength == b.OcclusionStrength && a.EmissiveFactor == b.EmissiveFactor &&
-           a.BaseWeight == b.BaseWeight && a.SpecularWeight == b.SpecularWeight &&
-           a.SpecularColor == b.SpecularColor && a.SpecularIor == b.SpecularIor &&
-           a.BaseDiffuseRoughness == b.BaseDiffuseRoughness &&
-           a.SpecularAntiAliasing == b.SpecularAntiAliasing &&
-           a.SpecularAaVarianceClamp == b.SpecularAaVarianceClamp &&
-           a.BaseColorTexture == b.BaseColorTexture && a.NormalTexture == b.NormalTexture &&
-           a.MetallicRoughnessTexture == b.MetallicRoughnessTexture && a.OcclusionTexture == b.OcclusionTexture &&
-           a.EmissiveTexture == b.EmissiveTexture;
+    MaterialData renamed = a;
+    renamed.Name = b.Name;
+    return renamed == b;
 }
 
 /// @brief Load the stored `.amat` for each manifest slot into a dense slot→

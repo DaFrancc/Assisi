@@ -548,6 +548,49 @@ TEST_CASE("DiffGltfMaterials: an authored specular-AA setting counts as a change
     fs::remove_all(root);
 }
 
+TEST_CASE("DiffGltfMaterials: a different alpha mode, alpha cutoff or double-sidedness counts as a change")
+{
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    // The stored material differs from the source in one field only. A diff
+    // blind to it reports the slot unchanged, and the reconciler then refreshes
+    // the source hash, so the difference is never offered for regeneration.
+    std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> stored =
+        DeserializeMaterial(ReadFile(root / "model_Wood.amat"));
+    REQUIRE(stored.has_value());
+    SUBCASE("alpha mode")
+    {
+        stored->Alpha = Assisi::Geometry::AlphaMode::Mask;
+    }
+    SUBCASE("alpha cutoff")
+    {
+        stored->AlphaCutoff = 0.25f;
+    }
+    SUBCASE("double-sided")
+    {
+        stored->DoubleSided = true;
+    }
+    const std::expected<std::string, Assisi::Geometry::MaterialFileError> text =
+        Assisi::Geometry::SerializeMaterial(*stored);
+    REQUIRE(text.has_value());
+    {
+        std::ofstream amat(root / "model_Wood.amat", std::ios::binary | std::ios::trunc);
+        amat.write(text->data(), static_cast<std::streamsize>(text->size()));
+    }
+
+    const MaterialDiff diff = DiffGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(diff.valid);
+    REQUIRE(diff.slots.size() == 1);
+    CHECK(diff.slots[0].change == SlotChange::Changed);
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Removed")
 {
     const AssetId gltfId = MintAssetId();

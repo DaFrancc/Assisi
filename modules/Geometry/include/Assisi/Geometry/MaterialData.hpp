@@ -130,6 +130,10 @@ struct MaterialData
     /// @brief Display label (the glTF material name). UI only — never
     /// serialized into .amat, never a lookup key, so deliberately not AFIELD.
     std::string Name;
+
+    /// Every member, Name included. Defaulted so a field added above is
+    /// compared without anyone having to list it.
+    bool operator==(const MaterialData &) const = default;
 };
 
 } /* namespace Assisi::Geometry */
