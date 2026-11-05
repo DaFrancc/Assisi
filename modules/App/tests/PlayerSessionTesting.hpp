@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -26,6 +27,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/Physics/CollisionSource.hpp>
 
 namespace Assisi::App::Testing
@@ -63,11 +65,12 @@ void WritePlayerBlueprint(const std::filesystem::path &root);
 /// clock and tick, since a client runs a little faster or slower than the host.
 struct Machine
 {
-    /// Runs the systems the editor's play runs a player with.
-    Machine();
+    /// Runs the systems the editor's play runs a player with, its session
+    /// tuned by @p config.
+    explicit Machine(NetSync::ReplicationConfig config = {});
 
     App::World world{Physics::NoCollisionAssets()};
-    App::NetworkedPlay play{world};
+    App::NetworkedPlay play;
     Core::EventQueue universal{Core::EventScope::Universal};
     App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
     /// The tick each step was, in order: the session's, not the local count.
@@ -112,7 +115,7 @@ struct Session
 {
     std::vector<std::unique_ptr<Machine>> machines;
 
-    Machine &Add();
+    Machine &Add(NetSync::ReplicationConfig config = {});
 
     /// Runs @p frames frames. Real time has to match: these are real sockets,
     /// and a client's clock measures the trip in milliseconds and leads by it
@@ -156,5 +159,10 @@ void AddFloors(Session &session, const glm::dvec3 &centre);
 /// A host and @p client on a floor around @p origin, a start each for the host
 /// to make their characters at, @p client joined and settled.
 void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dvec3 &origin = glm::dvec3{0.0});
+
+/// @p first and @p second joined to @p host, with the players spread over
+/// @p starts in the order the host spreads them: @p second, the host, @p first
+/// for three starts.
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts);
 
 } // namespace Assisi::App::Testing

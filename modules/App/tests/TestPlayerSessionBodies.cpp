@@ -150,26 +150,6 @@ struct Pushing
     [[nodiscard]] NetSync::ClientId ClientId() const { return client->play.Session().LocalClientId(); }
 };
 
-/// @p first and @p second joined to @p host, with the players spread over
-/// @p starts in the order the host spreads them.
-void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts)
-{
-    App::PlayerStart startAt;
-    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
-    for (const glm::dvec3 &at : starts)
-    {
-        const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
-        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
-    }
-    const std::uint16_t port = HostOnFreePort(host.play);
-    REQUIRE(port != 0);
-    REQUIRE(first.play.Join("127.0.0.1", port));
-    session.Run(kJoinSteps);
-    REQUIRE(second.play.Join("127.0.0.1", port));
-    session.Run(kJoinSteps);
-}
-
 /// A quarter turn to the left (rad): from facing -z to facing -x.
 constexpr float kQuarterLeft = 1.5707963f;
 

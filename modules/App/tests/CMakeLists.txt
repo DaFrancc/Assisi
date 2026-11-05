@@ -61,6 +61,7 @@ add_executable(Assisi-App-Tests
   TestPlayerSessionOthers.cpp
   TestPlayerSessionOwnCharacter.cpp
   TestPlayerSessionPlayers.cpp
+  TestPlayerSessionReach.cpp
   TestPlayerSessionTicks.cpp
   TestPlayerSessionWalls.cpp
 )

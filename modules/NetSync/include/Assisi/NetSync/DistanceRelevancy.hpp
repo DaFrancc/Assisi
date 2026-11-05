@@ -17,6 +17,10 @@ namespace Assisi::NetSync
 
 /// @brief Tells a connection about entities near its view anchors.
 ///
+/// Near is the config's radius, or an entity's own Replicated::relevanceRadius
+/// when it sets one: a far-reaching entity is the same mechanism at a larger
+/// distance, hysteresis included.
+///
 /// The industry default, from Unreal's `NetCullDistanceSquared` to Fusion's
 /// area of interest, and the only provider that ships with the engine — a game
 /// wanting an information boundary (line of sight, fog of war) writes its own,

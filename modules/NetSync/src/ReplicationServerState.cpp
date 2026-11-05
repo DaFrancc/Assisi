@@ -2,6 +2,7 @@
 
 #include <Assisi/NetSync/ReplicationServer.hpp>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
@@ -14,6 +15,15 @@
 
 namespace Assisi::NetSync
 {
+namespace
+{
+
+/// How many replicated parents AttachmentRootOf climbs: deeper than any real
+/// hierarchy, so a cycle in Parent ends the walk rather than hanging it.
+constexpr std::uint32_t kMaxAttachmentDepth = 256;
+
+} // namespace
+
 void ReplicationServer::ReconcileNetIds()
 {
     _liveNetIds.clear();
@@ -138,6 +148,7 @@ void ReplicationServer::ReconcileNetIds()
     // whole live set once per connection — the cost relevancy exists to avoid.
     _alwaysRelevant.clear();
     _controllerOnly.clear();
+    _attachedTo.clear();
     if (_relevancy != nullptr)
     {
         for (const NetId netId : _liveNetIds)
@@ -145,6 +156,9 @@ void ReplicationServer::ReconcileNetIds()
             const ECS::Entity entity = EntityOf(netId);
             if (entity == ECS::NullEntity)
                 continue;
+
+            if (const NetId root = AttachmentRootOf(entity); root != InvalidNetId)
+                _attachedTo.emplace_back(netId, root);
 
             const Replicated *marker = _scene.Get<Replicated>(entity);
             if (marker == nullptr || marker->relevance == Relevance::Default)
@@ -161,8 +175,28 @@ void ReplicationServer::ReconcileNetIds()
             }
         }
     }
-    // Both lists come out sorted because `_liveNetIds` is, and the binary
+    // All three lists come out sorted because `_liveNetIds` is, and the binary
     // searches downstream depend on that.
+}
+
+NetId ReplicationServer::AttachmentRootOf(ECS::Entity entity) const
+{
+    NetId root = InvalidNetId;
+    ECS::Entity current = entity;
+    for (std::uint32_t depth = 0; depth < kMaxAttachmentDepth; ++depth)
+    {
+        const ECS::Parent *parent = _scene.Get<ECS::Parent>(current);
+        if (parent == nullptr || parent->parent == ECS::NullEntity)
+            break;
+
+        const NetId parentId = NetIdOf(parent->parent);
+        if (parentId == InvalidNetId)
+            break; // not replicated: the chain the client can rebuild ends here
+
+        root = parentId;
+        current = parent->parent;
+    }
+    return root;
 }
 
 Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const
