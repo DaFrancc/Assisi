@@ -1,0 +1,10 @@
+{
+  "guid": "cd3c793a-4d2f-4fe8-8ef4-831c25b623f0",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "sprite sheet"
+    }
+  ],
+  "version": 1
+}

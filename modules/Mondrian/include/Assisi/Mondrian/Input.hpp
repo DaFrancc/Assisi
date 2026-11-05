@@ -84,6 +84,9 @@ struct InputResult
 struct Interaction
 {
     NodeId hovered; ///< the focusable, enabled node under the pointer
+    /// The topmost node under the pointer, whatever it is: the one the hover
+    /// state holds for, with every node holding it.
+    NodeId pointed;
     NodeId pressed; ///< the node a held press began on, which keeps it until release
     NodeId focused;
     NodeId activated; ///< the node clicked or accepted this frame

@@ -67,6 +67,8 @@ AssetKindRegistry::AssetKindRegistry()
         kFontKind, {ReadFormat(".afont"), ConsumeFormat(".ttf"), ConsumeFormat(".otf"), ConsumeFormat(".txt")}));
     _kinds.push_back(BuiltIn(kScreenKind, {ReadFormat(".amdn"), ConsumeFormat(".amdt")}));
     _kinds.push_back(BuiltIn(kStringTableKind, {ReadFormat(".csv")}));
+    _kinds.push_back(BuiltIn(kThemeKind, {ReadFormat(".amth")}));
+    _kinds.push_back(BuiltIn(kSpriteSheetKind, {ReadFormat(".amsp")}));
     _kinds.push_back(BuiltIn(kVerbatimKind, {ReadFormat(".webp")}));
 }
 

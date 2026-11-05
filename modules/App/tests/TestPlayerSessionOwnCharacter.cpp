@@ -47,7 +47,16 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
     // as it comes, it puts the character back where it stood, and it walks
     // only once the host has seen it asked to.
     const std::filesystem::path root = FreshRoot("assisi_players_own");
-    WritePlayerBlueprint(root);
+    std::string_view movement;
+    SUBCASE("moving by SourceMovement")
+    {
+        movement = "SourceMovement";
+    }
+    SUBCASE("moving by ArcadeMovement")
+    {
+        movement = "ArcadeMovement";
+    }
+    WritePlayerBlueprint(root, movement);
 
     Session session;
     Machine &host = session.Add();

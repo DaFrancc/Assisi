@@ -31,8 +31,9 @@ bool IsSpace(char character)
     return character == ' ' || character == '\t' || character == '\r' || character == '\n';
 }
 
-/// What may start a name, and what may continue one. Deliberately without `:`,
-/// which is how a namespaced document announces itself.
+/// What may start a name, and what may continue one. Without `:`, which only
+/// joins a prefix to an attribute's name, and in an element's name is how a
+/// namespaced document announces itself.
 bool IsNameStart(char character)
 {
     return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_';
@@ -249,12 +250,24 @@ std::expected<void, MarkupError> ParseAttributes(Scanner &scanner, MarkupElement
         attribute.name = scanner.TakeName();
         if (attribute.name.empty())
         {
-            if (scanner.Peek() == ':')
+            if (scanner.Peek() == kPrefixSeparator)
             {
-                return std::unexpected(scanner.Fail("this markup has no namespaces, so ':' cannot appear in a "
-                                                    "name."));
+                return std::unexpected(scanner.Fail("a ':' joins a prefix to the attribute it qualifies, as in "
+                                                    "hover:background, so it cannot start a name."));
             }
             return std::unexpected(scanner.Fail("expected an attribute name, '>' or '/>'."));
+        }
+        while (scanner.Peek() == kPrefixSeparator)
+        {
+            scanner.Skip(1);
+            const std::string qualified = scanner.TakeName();
+            if (qualified.empty())
+            {
+                return std::unexpected(scanner.Fail("a ':' is followed by the name of the attribute it qualifies, "
+                                                    "as in hover:background."));
+            }
+            attribute.name += kPrefixSeparator;
+            attribute.name += qualified;
         }
 
         scanner.SkipSpace();

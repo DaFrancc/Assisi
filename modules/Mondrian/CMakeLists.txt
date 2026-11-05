@@ -7,6 +7,7 @@ Assisi_apply_defaults(Assisi-Mondrian)
 
 target_sources(Assisi-Mondrian
   PUBLIC
+    "include/Assisi/Mondrian/Binding.hpp"
     "include/Assisi/Mondrian/Clipboard.hpp"
     "include/Assisi/Mondrian/Draw.hpp"
     "include/Assisi/Mondrian/DrawList.hpp"
@@ -22,20 +23,26 @@ target_sources(Assisi-Mondrian
     "include/Assisi/Mondrian/Pattern.hpp"
     "include/Assisi/Mondrian/SampleScreen.hpp"
     "include/Assisi/Mondrian/Screen.hpp"
+    "include/Assisi/Mondrian/Sprite.hpp"
+    "include/Assisi/Mondrian/SpriteSheetReader.hpp"
     "include/Assisi/Mondrian/ScreenBlob.hpp"
     "include/Assisi/Mondrian/ScreenDocument.hpp"
     "include/Assisi/Mondrian/ScreenLoader.hpp"
     "include/Assisi/Mondrian/ScreenReader.hpp"
+    "include/Assisi/Mondrian/ScreenWorld.hpp"
     "include/Assisi/Mondrian/StringTable.hpp"
     "include/Assisi/Mondrian/StringTableReader.hpp"
     "include/Assisi/Mondrian/Style.hpp"
     "include/Assisi/Mondrian/Text.hpp"
     "include/Assisi/Mondrian/TextEdit.hpp"
+    "include/Assisi/Mondrian/Theme.hpp"
+    "include/Assisi/Mondrian/ThemeReader.hpp"
     "include/Assisi/Mondrian/Ui.hpp"
     "include/Assisi/Mondrian/UiConfig.hpp"
     "include/Assisi/Mondrian/Utf8.hpp"
     "include/Assisi/Mondrian/Widget.hpp"
   PRIVATE
+    "src/Binding.cpp"
     "src/Draw.cpp"
     "src/DrawList.cpp"
     "src/Font.cpp"
@@ -50,10 +57,15 @@ target_sources(Assisi-Mondrian
     "src/ScreenBlob.cpp"
     "src/ScreenLoader.cpp"
     "src/ScreenReader.cpp"
+    "src/Sprite.cpp"
+    "src/SpriteSheetReader.cpp"
     "src/StringTable.cpp"
     "src/StringTableReader.cpp"
+    "src/Style.cpp"
     "src/Text.cpp"
     "src/TextField.cpp"
+    "src/Theme.cpp"
+    "src/ThemeReader.cpp"
     "src/Ui.cpp"
     "src/Utf8.cpp"
     "src/Widget.cpp"
@@ -83,6 +95,8 @@ assisi_reflect(
     include/Assisi/Mondrian/FontDescription.hpp
     include/Assisi/Mondrian/UiConfig.hpp
     include/Assisi/Mondrian/Style.hpp
+    include/Assisi/Mondrian/Theme.hpp
+    include/Assisi/Mondrian/Sprite.hpp
     include/Assisi/Mondrian/Widget.hpp
     include/Assisi/Mondrian/Screen.hpp
     include/Assisi/Mondrian/ScreenDocument.hpp

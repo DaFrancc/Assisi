@@ -2,17 +2,100 @@
 #include <Assisi/Mondrian/Draw.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 
 namespace Assisi::Mondrian
 {
 namespace
 {
 
-/// An image draws its texture's own colours.
-constexpr Math::Color4<Math::ColorSpace::Srgb> kUntinted{1.f, 1.f, 1.f, 1.f};
+/// Where between its two ends the middle of a span is: a contained picture
+/// sits there, and a covering one loses as much off each side.
+constexpr float kMiddle = 0.5f;
 
-/// How much of its colour a field's placeholder keeps: faint enough to read as
+/// The most a nine-slice inset can say, in whole pixels.
+constexpr float kMaxSliceInset = static_cast<float>(kSliceInsetMask);
+
+/// Where a picture lands in the space it fills, and the part of it that shows.
+struct Placement
+{
+    Rect rect;
+    Rect uv;
+};
+
+/// @p sprite placed in @p box as @p fit says. A picture of no known size
+/// stretches, having no shape to keep.
+Placement Fitted(const Sprite &sprite, const Rect &box, ImageFit fit)
+{
+    if (fit == ImageFit::Stretch || sprite.width == 0 || sprite.height == 0 || box.width <= 0.f || box.height <= 0.f)
+    {
+        return {.rect = box, .uv = sprite.uv};
+    }
+    const float width = static_cast<float>(sprite.width);
+    const float height = static_cast<float>(sprite.height);
+    const float scaleX = box.width / width;
+    const float scaleY = box.height / height;
+    if (fit == ImageFit::Contain)
+    {
+        const float scale = std::min(scaleX, scaleY);
+        const float shownWidth = width * scale;
+        const float shownHeight = height * scale;
+        return {.rect = {.x = box.x + ((box.width - shownWidth) * kMiddle),
+                         .y = box.y + ((box.height - shownHeight) * kMiddle),
+                         .width = shownWidth,
+                         .height = shownHeight},
+                .uv = sprite.uv};
+    }
+    // Cover: the larger scale fills both ways, and the share of the picture
+    // that fits shows from its middle.
+    const float scale = std::max(scaleX, scaleY);
+    const float shownX = box.width / (width * scale);
+    const float shownY = box.height / (height * scale);
+    const Rect &uv = sprite.uv;
+    return {.rect = box,
+            .uv = {.x = uv.x + (uv.width * (1.f - shownX) * kMiddle),
+                   .y = uv.y + (uv.height * (1.f - shownY) * kMiddle),
+                   .width = uv.width * shownX,
+                   .height = uv.height * shownY}};
+}
+
+/// A whole number of pixels that fits an inset.
+uint16_t Inset(float pixels)
+{
+    return static_cast<uint16_t>(std::clamp(pixels, 0.f, kMaxSliceInset));
+}
+
+/// A nine-slice's two insets on one axis of a quad @p length long, from its
+/// borders @p start and @p end in texels at @p scale device pixels to one:
+/// whole pixels, shrunk in proportion where the two would overlap, so a small
+/// frame keeps its shape rather than its corners crossing.
+std::array<uint16_t, 2> InsetsAlong(uint32_t start, uint32_t end, float scale, float length)
+{
+    float first = std::round(static_cast<float>(start) * scale);
+    float second = std::round(static_cast<float>(end) * scale);
+    if (first + second > length)
+    {
+        const float shrink = std::max(length, 0.f) / (first + second);
+        first = std::floor(first * shrink);
+        second = std::floor(second * shrink);
+    }
+    return {Inset(first), Inset(second)};
+}
+
+/// How much its padding leaves of @p placed: where a node's picture goes.
+Rect InsidePadding(const LayoutNode &placed)
+{
+    const Rect &rect = placed.rect;
+    const Insets &padding = placed.padding;
+    return {.x = rect.x + padding.left,
+            .y = rect.y + padding.top,
+            .width = std::max(0.f, rect.width - padding.left - padding.right),
+            .height = std::max(0.f, rect.height - padding.top - padding.bottom)};
+}
+
+/// How much its colour a field's placeholder keeps of its colour a field's placeholder keeps: faint enough to read as
 /// a prompt rather than as text, and solid enough to read at all. The field's
 /// own, until themes decide it.
 constexpr float kPlaceholderOpacity = 0.45f;
@@ -54,12 +137,14 @@ class Drawer
                 .Border(border, style.borderColor)
                 .Corners(radius, style.cornerStyle);
         }
+        if (node.hasBackgroundImage)
+        {
+            DrawSprite(node.background, Placement{.rect = result.rect, .uv = node.background.uv}, true, style, radius);
+        }
         if (node.hasImage)
         {
-            _list.Quad(result.rect)
-                .Fill(kUntinted)
-                .Texture(node.image, node.imageUv)
-                .Corners(radius, style.cornerStyle);
+            DrawSprite(node.image, Fitted(node.image, InsidePadding(result), style.fit),
+                       style.fit == ImageFit::Stretch, style, radius);
         }
         const WidgetType *widget = _tree.Widgets().Get(node.behaviour);
 
@@ -101,6 +186,31 @@ class Drawer
     }
 
   private:
+    /// @p sprite where @p placed says, tinted and shaped as @p style says, with
+    /// corners of @p radius. Its borders slice it only when @p stretched: a
+    /// picture fitted to keep its shape has no stretching for its corners to
+    /// stay out of.
+    void DrawSprite(const Sprite &sprite, const Placement &placed, bool stretched, const Style &style, float radius)
+    {
+        QuadBuilder quad = _list.Quad(placed.rect)
+                               .Fill(style.tint)
+                               .Texture(sprite.texture, placed.uv)
+                               .Corners(radius, style.cornerStyle);
+        if (!stretched || !sprite.borders.Any())
+        {
+            return;
+        }
+        const SpriteBorders &borders = sprite.borders;
+        const float scale = _layout.scale;
+        const std::array<uint16_t, 2> across = InsetsAlong(borders.left, borders.right, scale, placed.rect.width);
+        const std::array<uint16_t, 2> down = InsetsAlong(borders.top, borders.bottom, scale, placed.rect.height);
+        quad.NineSlice({.left = across[0], .top = down[0], .right = across[1], .bottom = down[1]},
+                       {.left = Inset(static_cast<float>(borders.left)),
+                        .top = Inset(static_cast<float>(borders.top)),
+                        .right = Inset(static_cast<float>(borders.right)),
+                        .bottom = Inset(static_cast<float>(borders.bottom))});
+    }
+
     /// What the control on @p index sees of its node this frame.
     [[nodiscard]] WidgetView ViewOf(uint32_t index, const LayoutNode &result, const WidgetType &widget) const
     {

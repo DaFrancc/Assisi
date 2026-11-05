@@ -38,6 +38,7 @@ target_sources(Assisi-Core
     "src/InternedString.cpp"
     "src/StringJson.cpp"
     "src/StringPool.cpp"
+    "src/StructRegistry.cpp"
     "src/FieldMeta.cpp"
     "src/ComponentRegistry.cpp"
     "src/MessageRegistry.cpp"

@@ -23,15 +23,22 @@
 #include <Assisi/Mondrian/Navigation.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Reflect/StructMeta.hpp>
 
 #include <array>
 #include <cstdint>
+#include <expected>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -95,6 +102,42 @@ class Ui
     [[nodiscard]] bool IsHeld(const Screen &screen, NodeId id) const;
 
     // -------------------------------------------------------------------------
+    // Sources
+    // -------------------------------------------------------------------------
+
+    /// @brief Makes @p source, an ASTRUCT on no entity, what bindings naming
+    /// its struct read and write, on every screen, replacing any registered
+    /// before it. It must outlive the UI or be unregistered first.
+    ///
+    /// Looked up at each sync, so a screen may be made first, and a source
+    /// taken away leaves its bindings as they last were.
+    template <typename T> void RegisterSource(T &source)
+    {
+        static_assert(Core::Reflect::StructTraits<T>::reflected,
+                      "a source is a non-const ASTRUCT, and a file using it as one says so at global scope with "
+                      "ASSISI_REFLECTED_STRUCT(Type)");
+        RegisterSource(*Core::Reflect::StructTraits<T>::Spec(), &source);
+    }
+
+    /// @brief Takes away the source of struct @p T, if there is one.
+    template <typename T> void UnregisterSource()
+    {
+        static_assert(Core::Reflect::StructTraits<T>::reflected,
+                      "a source is an ASTRUCT, and a file using it as one says so at global scope with "
+                      "ASSISI_REFLECTED_STRUCT(Type)");
+        UnregisterSource(*Core::Reflect::StructTraits<T>::Spec());
+    }
+
+    /// @brief The same given the struct's table rather than its type.
+    void RegisterSource(const Core::Reflect::StructSpec &spec, void *data);
+    void UnregisterSource(const Core::Reflect::StructSpec &spec);
+
+    /// @brief What is registered as a @p spec, or null when nothing is. Found
+    /// by the table rather than its name, so a binding that looked up some
+    /// other struct of that name can never read this one as that.
+    [[nodiscard]] void *FindSource(const Core::Reflect::StructSpec &spec) const;
+
+    // -------------------------------------------------------------------------
     // The frame
     // -------------------------------------------------------------------------
 
@@ -143,6 +186,30 @@ class Ui
     void SetPlaceholderTexture(TextureId texture) { _placeholderTexture = texture; }
     [[nodiscard]] TextureId GetPlaceholderTexture() const { return _placeholderTexture; }
 
+    /// @brief Makes every sprite of @p sheet, the sheet loaded from @p vpath,
+    /// one a screen can name as `sheet:name`, drawn from @p texture, which the
+    /// engine registered holding the sheet's image. Add sheets before loading
+    /// screens that name their sprites.
+    void AddSpriteSheet(std::string_view vpath, const SpriteSheetDocument &sheet, TextureId texture);
+
+    /// @brief The sprite called @p qualified, `sheet:name`, or null when no
+    /// sheet added has it.
+    [[nodiscard]] const Sprite *FindSprite(std::string_view qualified) const;
+
+    /// @brief Uploads the image at an asset path and registers it, giving all
+    /// of it as one picture of its size; nullopt, logged, when it cannot.
+    using TextureLoader = std::function<std::optional<Sprite>(std::string_view vpath)>;
+
+    /// @brief What a picture named by its texture's path is loaded through:
+    /// the engine's, which can reach the GPU and the UI cannot. Until set,
+    /// every such picture is the placeholder.
+    void SetTextureLoader(TextureLoader loader) { _textureLoader = std::move(loader); }
+
+    /// @brief All of the image at @p vpath as one picture: loaded the first
+    /// time it is asked for, and kept until the UI goes. The placeholder, of
+    /// no known size, when it cannot be loaded.
+    [[nodiscard]] Sprite TextureSprite(std::string_view vpath);
+
     /// @brief How the UI reaches the system clipboard. Until set, it reads as
     /// empty and writes go nowhere.
     void SetClipboard(Clipboard clipboard) { _clipboard = std::move(clipboard); }
@@ -168,6 +235,26 @@ class Ui
     /// something to see and fix, not a reason for a screen not to load.
     [[nodiscard]] std::string StringFor(std::string_view qualified) const;
 
+    /// @brief The themes a node naming a style or a token takes them from, and
+    /// the first of them, in its first mode, put on every screen now. They must
+    /// outlive the Ui or be replaced first; null or none takes them away, and
+    /// every node wears only its own look.
+    void SetThemes(const Themes *themes);
+
+    /// @brief Puts the theme loaded from @p vpath on every screen, in the mode
+    /// called what the current one is when it has one, and its first otherwise.
+    std::expected<void, ThemeError> SetTheme(std::string_view vpath);
+
+    /// @brief Puts the current theme's mode called @p mode on every screen.
+    std::expected<void, ThemeError> SetThemeMode(std::string_view mode);
+
+    /// @brief Where the theme every screen wears was loaded from, or empty for
+    /// none.
+    [[nodiscard]] std::string_view GetTheme() const;
+
+    /// @brief The mode it is in, or empty for no theme.
+    [[nodiscard]] std::string_view GetThemeMode() const;
+
   private:
     friend class Screen;
 
@@ -176,6 +263,9 @@ class Ui
     /// owns the screen is what decides how long the UI holds it.
     void Adopt(Screen &screen);
     void Forget(Screen &screen);
+
+    /// Puts @p theme on every screen.
+    void PutOn(const ThemeView &theme);
 
     /// Which step the host loop owes next.
     enum class FrameStep : uint8_t
@@ -202,6 +292,13 @@ class Ui
         uint32_t clicks = 0;              ///< presses in the run the last one belongs to
     };
 
+    /// A struct on no entity that bindings can reach. Not owned.
+    struct Source
+    {
+        const Core::Reflect::StructSpec *spec = nullptr;
+        void *data = nullptr;
+    };
+
     /// Whether @p screen draws over @p other: by sort key, and within a key by
     /// which was shown later.
     [[nodiscard]] static bool Above(const Screen &screen, const Screen &other);
@@ -225,6 +322,10 @@ class Ui
 
     /// Moves hover, presses and focus for @p input on @p screen.
     InputResult Interact(Screen &screen, const UiInput &input);
+    /// Answers what happened to every screen's contexts since the last input
+    /// step. Here rather than in Sync, which runs after the frame's systems:
+    /// an event pushed there would be dropped before any of them read it.
+    void AnnounceContexts();
     /// Pushes the events this frame's interaction calls for, from @p screen.
     void Announce(Screen *screen);
     /// Hands @p event to the control on @p id, if it is one, and remembers a
@@ -264,6 +365,8 @@ class Ui
     /// puts itself here and takes itself away, and whatever owns it outlives
     /// the entry.
     std::vector<Screen *> _screens;
+    /// Few, so a scan finds one.
+    std::vector<Source> _sources;
     Clipboard _clipboard;
     DrawList _drawList;
     /// Nodes on the input screen whose value moved this frame, announced once
@@ -277,6 +380,15 @@ class Ui
     Core::EventQueue &_universal;
     const Font *_font = nullptr;
     const StringTables *_tables = nullptr;
+    const Themes *_themes = nullptr;
+    /// The theme every screen wears, which a screen made later is given too.
+    ThemeView _theme;
+    /// Every sheet's sprites, by `sheet:name`.
+    std::unordered_map<Core::InternedString, Sprite> _sprites;
+    /// Every picture named by its texture's path that a screen has asked for,
+    /// by that path, the placeholder standing in for one that did not load.
+    std::unordered_map<Core::InternedString, Sprite> _textures;
+    TextureLoader _textureLoader;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;

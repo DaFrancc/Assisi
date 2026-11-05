@@ -65,6 +65,7 @@ to entities in the editor, but it helps to know what they are.
 | `Collider` | `<Assisi/Physics/PhysicsComponents.hpp>` | A collision shape. On its own, static geometry. See [Physics](physics.md). |
 | `RigidBody` | `<Assisi/Physics/PhysicsComponents.hpp>` | Makes a `Collider` move. |
 | `Character` | `<Assisi/Physics/PhysicsComponents.hpp>` | A player or NPC the character controller moves. |
+| `ArcadeMovement`, `SourceMovement` | `<Assisi/Physics/PhysicsComponents.hpp>` | How a character speeds up, slows down and steers in the air. See [The character controller](physics-character.md). |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
 

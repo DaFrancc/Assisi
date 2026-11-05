@@ -28,6 +28,8 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/SampleScreen.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/SpriteSheetReader.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 
 #include <Assisi/Core/ConfigReader.hpp>
@@ -396,6 +398,9 @@ bool Application::InitializePresentation()
         // pass that registered it, and an image whose asset has not arrived
         // wants exactly this texture.
         _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
+        // The UI and the pass are both this Application's, and the UI goes
+        // first.
+        _ui->SetTextureLoader([this](std::string_view vpath) { return LoadUiTexture(vpath); });
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -409,7 +414,7 @@ bool Application::InitializePresentation()
         {
             _ui->SetFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
-        LoadUiStrings();
+        LoadUiSettings();
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
@@ -478,6 +483,7 @@ Application::~Application()
         _uiPass.Shutdown();
         _uiPlaceholderTexture = Render::Texture{};
         _uiFontAtlas = Render::Texture{};
+        _uiTextures.clear();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -669,6 +675,14 @@ void Application::Run()
     const double physicsStep = 1.0 / _config.physicsHz;
 
     OnStart();
+
+    // After OnStart and before the first frame: a sheet's texture is found by
+    // its path through the asset index, which an editor builds in OnStart, and
+    // the screens naming its sprites load during frames.
+    if (_ui != nullptr)
+    {
+        LoadUiSprites(_uiSettings);
+    }
 
     Clock::time_point prevTime = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
@@ -1356,16 +1370,78 @@ void Application::InitializeAudio()
     }
 }
 
-void Application::LoadUiStrings()
+void Application::LoadUiSettings()
 {
-    // A project with no UI settings has no tables, which is not an error.
+    // A project with no UI settings has no tables, themes or sheets, which is
+    // not an error.
     Mondrian::UiConfig settings;
     if (const std::expected<void, Core::ConfigError> read = Core::ReadConfig(Mondrian::kUiConfigPath, settings); !read)
     {
-        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables.", Mondrian::kUiConfigPath,
-                        Core::ToString(read.error()));
+        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables, themes or sprite sheets.",
+                        Mondrian::kUiConfigPath, Core::ToString(read.error()));
         return;
     }
+    LoadUiStrings(settings);
+    LoadUiThemes(settings);
+    _uiSettings = std::move(settings);
+}
+
+void Application::LoadUiSprites(const Mondrian::UiConfig &settings)
+{
+    const std::expected<Mondrian::SpriteSheets, Mondrian::SpriteSheetLoadError> sheets =
+        Mondrian::LoadSpriteSheets(settings);
+    if (!sheets)
+    {
+        Core::Log::Error("UI: the sprite sheet '{}' did not load ({}); every sprite shows the placeholder.",
+                         sheets.error().vpath, Mondrian::ToString(sheets.error().error));
+        return;
+    }
+    for (const Mondrian::ListedSheet &sheet : sheets->listed)
+    {
+        // A sheet whose texture did not load, which LoadUiTexture has said,
+        // leaves its sprites out, and a screen naming one shows the
+        // placeholder.
+        if (const std::optional<Mondrian::Sprite> texture = LoadUiTexture(sheet.document.texture.View()))
+        {
+            _ui->AddSpriteSheet(sheet.vpath, sheet.document, texture->texture);
+        }
+    }
+}
+
+std::optional<Mondrian::Sprite> Application::LoadUiTexture(std::string_view vpath)
+{
+    Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (vulkanContext == nullptr)
+    {
+        return std::nullopt;
+    }
+    Render::Texture texture;
+    const std::optional<Mondrian::Extent> size =
+        Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), vpath);
+    if (!size)
+    {
+        return std::nullopt;
+    }
+    const Mondrian::TextureId id = _uiPass.RegisterTexture(texture.NativeTexture());
+    _uiTextures.push_back(std::move(texture));
+    return Mondrian::WholeTexture(id, size->width, size->height);
+}
+
+void Application::LoadUiThemes(const Mondrian::UiConfig &settings)
+{
+    std::expected<Mondrian::Themes, Mondrian::ThemeLoadError> themes = Mondrian::LoadThemes(settings);
+    if (!themes)
+    {
+        Core::Log::Error("UI: the theme '{}' did not load ({}); every node wears only its own look.",
+                         themes.error().vpath, Mondrian::ToString(themes.error().error));
+        return;
+    }
+    _uiThemes = std::move(*themes);
+    _ui->SetThemes(&_uiThemes);
+}
+
+void Application::LoadUiStrings(const Mondrian::UiConfig &settings)
+{
     std::expected<Mondrian::StringTables, Mondrian::StringTableLoadError> tables = Mondrian::LoadStringTables(settings);
     if (!tables)
     {

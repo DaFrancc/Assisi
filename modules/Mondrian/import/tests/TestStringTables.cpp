@@ -2,7 +2,7 @@
 #include "ScreenTesting.hpp"
 
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
 #include <Assisi/Mondrian/StringTable.hpp>
 
@@ -120,20 +120,20 @@ TEST_CASE("StringTable: a key names its table before the separator")
     CHECK_FALSE(SplitKey("pause:").has_value());
 }
 
-TEST_CASE("TextRules: a project with no UI settings has no tables and allows literal text")
+TEST_CASE("ScreenRules: a project with no UI settings has no tables and allows literal text")
 {
-    const std::expected<TextRules, MarkupError> rules = LoadTextRules(Serving({}));
+    const std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(Serving({}));
     REQUIRE_MESSAGE(rules.has_value(), Why(rules));
     CHECK(rules->tables.byName.empty());
     CHECK(rules->literals == LiteralText::Allowed);
 }
 
-TEST_CASE("TextRules: every listed table is read under its name, with the project's policies")
+TEST_CASE("ScreenRules: every listed table is read under its name, with the project's policies")
 {
     const Files files{{std::string{kUiConfigPath}, Settings("\"ui/pause.csv\", \"text/quests.csv\"", true, true)},
                       {"ui/pause.csv", "key,en\ntitle,Paused\n"},
                       {"text/quests.csv", "key,en\nintro,\n"}};
-    const std::expected<TextRules, MarkupError> rules = LoadTextRules(Serving(files));
+    const std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(Serving(files));
     REQUIRE_MESSAGE(rules.has_value(), Why(rules));
     CHECK(rules->literals == LiteralText::RequiresKey);
     REQUIRE(rules->tables.Find("pause", "title") != nullptr);
@@ -143,30 +143,30 @@ TEST_CASE("TextRules: every listed table is read under its name, with the projec
     CHECK(rules->tables.Find("quests", "intro")->empty());
 }
 
-TEST_CASE("TextRules: the empty-text policy reaches the tables")
+TEST_CASE("ScreenRules: the empty-text policy reaches the tables")
 {
     const Files files{{std::string{kUiConfigPath}, Settings("\"ui/pause.csv\"", false, false)},
                       {"ui/pause.csv", "key,en\ntitle,\n"}};
-    const std::expected<TextRules, MarkupError> rules = LoadTextRules(Serving(files));
+    const std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(Serving(files));
     REQUIRE_FALSE(rules.has_value());
     CHECK(rules.error().file == "ui/pause.csv");
     CHECK(rules.error().line == 2);
 }
 
-TEST_CASE("TextRules: a listed table that is not there is named")
+TEST_CASE("ScreenRules: a listed table that is not there is named")
 {
     const Files files{{std::string{kUiConfigPath}, Settings("\"ui/pause.csv\"", false, false)}};
-    const std::expected<TextRules, MarkupError> rules = LoadTextRules(Serving(files));
+    const std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(Serving(files));
     REQUIRE_FALSE(rules.has_value());
     CHECK(rules.error().message.find("ui/pause.csv") != std::string::npos);
 }
 
-TEST_CASE("TextRules: two tables with one name are refused, naming both")
+TEST_CASE("ScreenRules: two tables with one name are refused, naming both")
 {
     const Files files{{std::string{kUiConfigPath}, Settings("\"ui/pause.csv\", \"old/pause.csv\"", false, false)},
                       {"ui/pause.csv", "key,en\ntitle,Paused\n"},
                       {"old/pause.csv", "key,en\ntitle,Paused\n"}};
-    const std::expected<TextRules, MarkupError> rules = LoadTextRules(Serving(files));
+    const std::expected<ScreenRules, MarkupError> rules = LoadScreenRules(Serving(files));
     REQUIRE_FALSE(rules.has_value());
     CHECK(rules.error().message.find("ui/pause.csv") != std::string::npos);
     CHECK(rules.error().message.find("old/pause.csv") != std::string::npos);

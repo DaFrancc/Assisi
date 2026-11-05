@@ -33,7 +33,7 @@ struct Libraries
 {
     const SourceReader &read;
     const Core::EventCatalog &catalog;
-    const TextRules &rules;
+    const ScreenRules &rules;
     /// A deque, because a Template points into its library and a library is
     /// loaded while the one importing it is still being filled.
     std::deque<Library> loaded;

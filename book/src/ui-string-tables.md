@@ -38,6 +38,10 @@ A key can be passed to a template like any other value:
 <menu_button label="#pause:resume" />
 ```
 
+A binding can use a table too, so that an enum or a `bool` shows translated words
+rather than names from the code. See [Words from a string
+table](ui-bindings.md#words-from-a-string-table).
+
 ## Table files
 
 A table is a `.csv` file, which any spreadsheet program can edit. The first row
@@ -90,12 +94,15 @@ A `.csv` file is a string table only when `assets/config/ui.json` lists it:
 | `stringTables` | Every string table the game has. Two tables with the same file name fail the cook. |
 | `requireStringKeys` | When `true`, any text that is not a key fails the cook, so no text is missed when the game is translated. |
 | `allowEmptyStrings` | When `false` (the default), an entry with no text fails the cook, since it is usually text nobody wrote yet. |
+| `themes` | Every theme the game has. See [Themes](ui-themes.md#listing-themes). |
+| `spriteSheets` | Every sprite sheet the game has. See [Images](ui-images.md#sprite-sheets). |
 
 ## Requiring keys
 
 With `requireStringKeys` on, text written as it is fails the cook in every place
 a key could go. This includes text with no letters, such as `100%`, because
-numbers and symbols are also written differently in some languages.
+numbers and symbols are also written differently in some languages. An enum or a
+`bool` bound in text with no key fails too.
 
 Only text written in screen files is checked. Text that arrives while the game
 runs is not: chat messages and other text code sets with `SetText`, and
@@ -128,8 +135,9 @@ mistake is visible rather than blank.
 ## Replacing the tables
 
 `Ui::SetStringTables` replaces the tables the UI reads from. Every node showing
-a key, on every screen, updates at once. There is no language setting yet; when
-there is, it will switch languages this way.
+a key, on every screen, updates at once, and text bound through a table updates
+at the next sync. There is no language setting yet; when there is, it will switch
+languages this way.
 
 Two kinds of text are not updated:
 

@@ -7,6 +7,7 @@
 #include <Assisi/Mondrian/Utf8.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace Assisi::Mondrian
 {
@@ -123,6 +125,72 @@ WidgetEvent EditGesture(EditKey key, TextReach reach, TextStep step)
     return event;
 }
 
+/// @p id and every node holding it, or none for an id naming no node.
+std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
+{
+    std::vector<NodeId> chain;
+    for (NodeId at = id; tree.IsAlive(at); at = tree.Get(at)->parent)
+    {
+        chain.push_back(at);
+    }
+    return chain;
+}
+
+/// Puts on every node of @p tree the look of each state that holds for it under
+/// @p interaction, over its resting look, and its parent's text colour where
+/// nothing it wears writes one, with the background image it names found among
+/// @p sprites. Parents first, so the colour a node passes on is the one it
+/// wears this frame.
+///
+/// A background image no sheet has draws nothing: the cook refuses a screen or
+/// theme naming one, so this is a stale package, and saying so every frame
+/// would bury the log.
+void Restyle(NodeTree &tree, const Interaction &interaction,
+             const std::unordered_map<Core::InternedString, Sprite> &sprites)
+{
+    // Hover and a press hold for a node and for everything holding it, so a
+    // row is hovered while the pointer is over the label inside it.
+    const std::vector<NodeId> hovered = WithAncestors(tree, interaction.pointed);
+    const std::vector<NodeId> pressed = WithAncestors(tree, interaction.pressed);
+
+    // Depth-first with an explicit stack, so a deep tree cannot overflow the
+    // call stack.
+    std::vector<NodeId> pending{tree.Root()};
+    while (!pending.empty())
+    {
+        const NodeId id = pending.back();
+        pending.pop_back();
+        Node *node = tree.Editable(id);
+        for (NodeId child = node->firstChild; child; child = tree.Get(child)->nextSibling)
+        {
+            pending.push_back(child);
+        }
+
+        StateSet holds{};
+        // Shown as the focus ring is, while the keys were used last, or always
+        // on what is being typed into: a button clicked with the mouse does
+        // not go on looking focused.
+        holds[static_cast<std::size_t>(StyleState::Focused)] =
+            interaction.focused == id && (interaction.device == InputDevice::Keys || node->takesKeyboard);
+        holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(hovered, id) != hovered.end();
+        holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(pressed, id) != pressed.end();
+        holds[static_cast<std::size_t>(StyleState::Disabled)] = !node->enabled;
+        const StylePatch worn = Restyled(node->resting, node->states, holds);
+        node->style = worn.values;
+        if (const Node *parent = tree.Get(node->parent); parent != nullptr && !worn.Writes(StyleProperty::TextColor))
+        {
+            node->style.textColor = parent->style.textColor;
+        }
+        const std::unordered_map<Core::InternedString, Sprite>::const_iterator background =
+            node->style.backgroundImage.Empty() ? sprites.end() : sprites.find(node->style.backgroundImage);
+        node->hasBackgroundImage = background != sprites.end();
+        if (node->hasBackgroundImage)
+        {
+            node->background = background->second;
+        }
+    }
+}
+
 } // namespace
 
 Ui::Ui(Core::EventQueue &universal) : _universal(universal)
@@ -137,6 +205,7 @@ Ui::~Ui() = default;
 void Ui::Adopt(Screen &screen)
 {
     _screens.push_back(&screen);
+    screen.Tree().SetTheme(_theme);
 }
 
 void Ui::Forget(Screen &screen)
@@ -296,6 +365,23 @@ bool Ui::IsHeld(const Screen &screen, NodeId id) const
     return _inputScreen == &screen && _session.interaction.pressed == id;
 }
 
+void Ui::RegisterSource(const Core::Reflect::StructSpec &spec, void *data)
+{
+    UnregisterSource(spec);
+    _sources.push_back(Source{.spec = &spec, .data = data});
+}
+
+void Ui::UnregisterSource(const Core::Reflect::StructSpec &spec)
+{
+    std::erase_if(_sources, [&spec](const Source &held) { return held.spec == &spec; });
+}
+
+void *Ui::FindSource(const Core::Reflect::StructSpec &spec) const
+{
+    const std::vector<Source>::const_iterator found = std::ranges::find(_sources, &spec, &Source::spec);
+    return found != _sources.end() ? found->data : nullptr;
+}
+
 // -----------------------------------------------------------------------------
 // The frame
 // -----------------------------------------------------------------------------
@@ -304,6 +390,10 @@ InputResult Ui::ProcessInput(const UiInput &input)
 {
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingInput, "Ui::ProcessInput called twice without a Sync between");
     _nextStep = FrameStep::AwaitingSync;
+
+    // First, so a screen that hides when its context goes is gone before this
+    // frame's input could reach it.
+    AnnounceContexts();
 
     // The screen the frame belongs to, taken once: Back can change which screen
     // has the keys partway through, and everything below is about this one.
@@ -329,6 +419,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     else
     {
         _session.interaction.hovered = {};
+        _session.interaction.pointed = {};
         _session.interaction.pressed = {};
         _session.interaction.activated = {};
     }
@@ -349,6 +440,24 @@ InputResult Ui::ProcessInput(const UiInput &input)
         Back();
     }
     return result;
+}
+
+void Ui::AnnounceContexts()
+{
+    // Every screen, shown or not: a hidden boss bar still has to hear that a
+    // boss arrived. Walked as a copy, so a reaction that makes a screen does
+    // not move the list under the walk; destroying one asserts in Forget.
+    _announcing = true;
+    const std::vector<Screen *> screens = _screens;
+    for (Screen *const screen : screens)
+    {
+        const Core::EventRoute events{screen->Events(), _universal};
+        for (const Screen::Reaction &reaction : screen->TakeMoments())
+        {
+            reaction(events);
+        }
+    }
+    _announcing = false;
 }
 
 void Ui::Announce(Screen *screen)
@@ -391,6 +500,8 @@ void Ui::Announce(Screen *screen)
     }
     for (const NodeId id : changed)
     {
+        // First, so whatever hears of the move finds the field already moved.
+        screen->WriteBound(id);
         if (const Node *node = tree.Get(id); node != nullptr && node->onChange)
         {
             node->onChange(events, *node);
@@ -560,12 +671,14 @@ InputResult Ui::Interact(Screen &screen, const UiInput &input)
     if (input.grant == InputGrant::Nothing || input.pointerClaimed)
     {
         now.hovered = {};
+        now.pointed = {};
         now.pressed = {};
     }
     else
     {
         const NodeId hit = HitTest(tree, layout, input.pointer);
         now.hovered = CanFocus(tree, layout, hit) ? hit : NodeId{};
+        now.pointed = PointedAt(tree, layout, input.pointer);
         if (moved || input.primaryPressed)
         {
             now.device = InputDevice::Pointer;
@@ -810,6 +923,13 @@ void Ui::Sync(Extent viewport)
     {
         for (Screen *screen : DrawOrder())
         {
+            // First, so what the world holds now is what is laid out, and a
+            // node a binding hides takes no room.
+            screen->RefreshBindings();
+            // Before layout, so a look that changes a size is placed in the
+            // frame it takes hold. Hover, presses and focus are only the input
+            // screen's, for the reason drawing gives below.
+            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{}, _sprites);
             ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
             // Only the screen with the keys draws anything as hovered, pressed
             // or focused. A node id means nothing on another screen, so handing
@@ -851,6 +971,60 @@ void Ui::SetStringTables(const StringTables *tables)
     }
 }
 
+void Ui::PutOn(const ThemeView &theme)
+{
+    _theme = theme;
+    for (Screen *screen : _screens)
+    {
+        screen->Tree().SetTheme(_theme);
+    }
+}
+
+void Ui::SetThemes(const Themes *themes)
+{
+    _themes = themes;
+    const bool any = _themes != nullptr && !_themes->listed.empty();
+    PutOn(any ? ThemeView{.theme = &_themes->listed.front(), .mode = 0} : ThemeView{});
+}
+
+std::expected<void, ThemeError> Ui::SetTheme(std::string_view vpath)
+{
+    const ListedTheme *theme = _themes != nullptr ? _themes->Find(vpath) : nullptr;
+    if (theme == nullptr)
+    {
+        Core::Log::Error("UI: no listed theme was loaded from '{}'; the theme stays as it is.", vpath);
+        return std::unexpected(ThemeError::UnknownTheme);
+    }
+    // The same variant of the new look, where it has one: a player who chose
+    // high contrast keeps it across a change of theme.
+    const std::optional<uint32_t> mode = theme->document.FindMode(GetThemeMode());
+    PutOn(ThemeView{.theme = theme, .mode = mode.value_or(0)});
+    return {};
+}
+
+std::expected<void, ThemeError> Ui::SetThemeMode(std::string_view mode)
+{
+    const std::optional<uint32_t> found =
+        _theme.theme != nullptr ? _theme.theme->document.FindMode(mode) : std::nullopt;
+    if (!found)
+    {
+        Core::Log::Error("UI: the theme '{}' has no mode '{}'; the mode stays as it is.", GetTheme(), mode);
+        return std::unexpected(ThemeError::UnknownMode);
+    }
+    PutOn(ThemeView{.theme = _theme.theme, .mode = *found});
+    return {};
+}
+
+std::string_view Ui::GetTheme() const
+{
+    return _theme.theme != nullptr ? std::string_view{_theme.theme->vpath} : std::string_view{};
+}
+
+std::string_view Ui::GetThemeMode() const
+{
+    return _theme.theme != nullptr ? _theme.theme->document.modes[_theme.mode].View() : std::string_view{};
+}
+
 std::string Ui::StringFor(std::string_view qualified) const
 {
     if (_tables != nullptr)
@@ -864,6 +1038,43 @@ std::string Ui::StringFor(std::string_view qualified) const
         }
     }
     return kKeyMark + std::string{qualified};
+}
+
+void Ui::AddSpriteSheet(std::string_view vpath, const SpriteSheetDocument &sheet, TextureId texture)
+{
+    const std::string_view name = SheetName(vpath);
+    for (const SheetSprite &sprite : sheet.sprites)
+    {
+        _sprites.insert_or_assign(Core::InternedString{QualifiedSprite(name, sprite.name.View())},
+                                  SpriteOf(sheet, sprite, texture));
+    }
+}
+
+const Sprite *Ui::FindSprite(std::string_view qualified) const
+{
+    const std::unordered_map<Core::InternedString, Sprite>::const_iterator found =
+        _sprites.find(Core::InternedString{qualified});
+    return found != _sprites.end() ? &found->second : nullptr;
+}
+
+Sprite Ui::TextureSprite(std::string_view vpath)
+{
+    const Core::InternedString key{vpath};
+    if (const std::unordered_map<Core::InternedString, Sprite>::const_iterator found = _textures.find(key);
+        found != _textures.end())
+    {
+        return found->second;
+    }
+    std::optional<Sprite> loaded = _textureLoader ? _textureLoader(vpath) : std::nullopt;
+    if (!_textureLoader)
+    {
+        Core::Log::Error("Mondrian: no texture loader is installed to load '{}'; it shows the placeholder.", vpath);
+    }
+    // Kept even when it failed, so a texture that cannot load is tried, and
+    // reported, once rather than by every screen naming it.
+    const Sprite sprite = loaded.value_or(WholeTexture(_placeholderTexture, 0, 0));
+    _textures.emplace(key, sprite);
+    return sprite;
 }
 
 } // namespace Assisi::Mondrian

@@ -8,7 +8,10 @@
 /// in an offline tool with no device in scope. Output is always Rgba8; block
 /// compression is Compress.hpp's, so a caller may decode without encoding.
 
+#include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -29,6 +32,20 @@ namespace Assisi::Image
 ///         decoded.
 [[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath,
                                                                         ColorSpace colorSpace) noexcept;
+
+/// @brief An image's size in pixels.
+struct ImageExtent
+{
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+
+/// @brief The size of the image file held in @p bytes, read from its header
+/// without decoding a pixel.
+///
+/// @return the size, or CorruptAsset when the bytes are no image this build
+///         decodes.
+[[nodiscard]] std::expected<ImageExtent, Core::AssetError> ReadImageExtent(std::span<const std::byte> bytes) noexcept;
 
 /// @brief Decode every frame of an animated WebP at @p vpath, in playback order.
 ///

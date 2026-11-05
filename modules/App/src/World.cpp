@@ -66,20 +66,41 @@ Network &WorldNetwork(World &world)
     return world.net;
 }
 
+const void *SceneScreenWorld::Read(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity) const
+{
+    // A tag registered for its id alone has nothing to read.
+    if (!component.getByEntity)
+    {
+        return nullptr;
+    }
+    return component.getByEntity(&_scene, entity.index, entity.generation);
+}
+
+void *SceneScreenWorld::Write(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity)
+{
+    // As for reading: a tag has nothing to write.
+    if (!component.getMutable)
+    {
+        return nullptr;
+    }
+    return component.getMutable(&_scene, entity.index, entity.generation);
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {
     ASSISI_ASSERT(screen != nullptr, "a world was given a screen that is not there");
-    // Its controls push into the queue it was built with, which only this
-    // world's systems read.
-    ASSISI_ASSERT(&screen->Events() == &world.events,
-                  "a world was given a screen built to push into another world's events");
+    // Its controls push into the queue of the world it was built for, which
+    // only that world's systems read, and its contexts are that world's
+    // entities.
+    ASSISI_ASSERT(&screen->Events() == &world.events, "a world was given a screen built for another world");
 
     // Named in the install error if one of them is undeclared: the screen that
     // asked is what a programmer has to go and fix.
     const std::string context(screen->Name());
     world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
-                                              .screen = std::move(screen)});
+                                              .screen = std::move(screen),
+                                              .id = ScreenId{++world.lastScreenId}});
     if (!world.screenStack.back().systems.empty())
     {
         QueueSystemInstall(world, world.screenStack.back().systems, context);
@@ -101,7 +122,7 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, world.events, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.screenWorld, vpath, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
         Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
@@ -123,6 +144,19 @@ Mondrian::Screen *FindScreen(World &world, std::string_view name)
         std::ranges::find_if(world.screenStack, [name](const World::Screen &held)
                              { return held.screen != nullptr && held.screen->Name() == name; });
     return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
+Mondrian::Screen *FindScreen(World &world, ScreenId id)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
+ScreenId IdOf(const World &world, const Mondrian::Screen &screen)
+{
+    const std::vector<World::Screen>::const_iterator at = std::ranges::find_if(
+        world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+    return at == world.screenStack.end() ? ScreenId{} : at->id;
 }
 
 World &WorldManager::Create(std::string_view label)
@@ -280,8 +314,15 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
         if (outgoing == _edited)
         {
-            // The authored level stays resident so Stop can restore it.
+            // The authored level stays resident so Stop can restore it, but none
+            // of its screens stays up: a world nobody is playing shows no HUD,
+            // takes no keys and pauses nothing. Stop throws them away, so
+            // nothing needs them shown again.
             outgoing->state = WorldState::Dormant;
+            for (const World::Screen &held : outgoing->screenStack)
+            {
+                held.screen->Hide();
+            }
         }
         else
         {

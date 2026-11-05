@@ -16,6 +16,8 @@
 #include <nvrhi/nvrhi.h>
 
 #include <cstdint>
+#include <optional>
+#include <string_view>
 #include <vector>
 
 namespace Assisi::Mondrian::Engine
@@ -95,5 +97,12 @@ private:
 /// @brief Uploads the checkerboard the placeholder strip's textured tile shows.
 /// Display values in a non-sRGB format, as RegisterTexture requires.
 void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device);
+
+/// @brief Uploads the image at @p vpath for the UI, through the installed
+/// asset source, as the display values its file holds in a non-sRGB format, as
+/// RegisterTexture requires. Its size in pixels, or nullopt, logged, when it
+/// cannot be loaded.
+[[nodiscard]] std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device,
+                                                    std::string_view vpath);
 
 } // namespace Assisi::Mondrian::Engine

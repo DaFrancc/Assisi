@@ -2,13 +2,14 @@
 
 ## Elements
 
-Each element becomes one node. There are nine:
+Each element becomes one node. There are ten:
 
 | Element | What it is | Holds text | Holds elements |
 |---|---|---|---|
 | `column` | A container that stacks its children top to bottom | No | Yes |
 | `row` | A container that places its children left to right | No | Yes |
 | `text` | Text | Yes | No |
+| `image` | A picture, named by `sprite` or `texture` (see [Images](ui-images.md)) | No | No |
 | `button` | A button; its text is its label | Yes | No |
 | `toggle` | An on/off switch | No | No |
 | `slider` | A slider that can rest anywhere between its ends | No | No |

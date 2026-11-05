@@ -229,6 +229,46 @@ TEST_CASE("Markup: what belongs to a larger XML is refused by name")
     }
 }
 
+TEST_CASE("Markup: an attribute's name keeps the prefixes written before it, whole")
+{
+    // What a prefix means is the compiler's to say. The parser keeps the name
+    // as written, so an instance overriding its template's matches it whole.
+    const MarkupElement button = Parsed("<button background=\"#222222\" hover:background=\"#e63319\" />");
+    REQUIRE(button.Find("hover:background") != nullptr);
+    CHECK(button.Find("hover:background")->value == "#e63319");
+    REQUIRE(button.Find("background") != nullptr);
+    CHECK(button.Find("background")->value == "#222222");
+
+    CHECK(Parsed("<slider thumb:hover:background=\"#ffffff\" />").Find("thumb:hover:background") != nullptr);
+}
+
+TEST_CASE("Markup: a ':' with no name on one side of it is refused where it is")
+{
+    SUBCASE("starting a name")
+    {
+        const MarkupError error = Refused("<button\n"
+                                          "    :background=\"#ffffff\" />");
+        CHECK(error.line == 2);
+        CHECK(error.message.find("hover:background") != std::string::npos);
+    }
+
+    SUBCASE("ending a name")
+    {
+        const MarkupError error = Refused("<button\n"
+                                          "    hover:=\"#ffffff\" />");
+        CHECK(error.line == 2);
+        CHECK(error.message.find("hover:background") != std::string::npos);
+    }
+
+    SUBCASE("two together")
+    {
+        const MarkupError error = Refused("<button\n"
+                                          "    hover::background=\"#ffffff\" />");
+        CHECK(error.line == 2);
+        CHECK(error.message.find("hover:background") != std::string::npos);
+    }
+}
+
 TEST_CASE("Markup: a document holds exactly one root")
 {
     CHECK(Refused("").message.find("no element") != std::string::npos);

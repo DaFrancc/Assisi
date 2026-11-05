@@ -40,6 +40,7 @@ enum class PlayerAction : std::uint8_t
 {
     Jump = 0,
     Crouch = 1,
+    Sprint = 2,
 
     /// One past the last slot: the controls have a bit for every action, the
     /// game's included.
@@ -53,7 +54,7 @@ static_assert(static_cast<std::uint32_t>(PlayerAction::Count_) == Core::kBitmask
 using PlayerButtons = Core::Bitmask<PlayerAction, std::uint32_t>;
 
 /// The first slot after the engine's own actions.
-inline constexpr std::uint32_t kFirstGameAction = static_cast<std::uint32_t>(PlayerAction::Crouch) + 1u;
+inline constexpr std::uint32_t kFirstGameAction = static_cast<std::uint32_t>(PlayerAction::Sprint) + 1u;
 
 /// How many actions a game may take.
 inline constexpr std::uint32_t kGameActionCount =
@@ -78,6 +79,7 @@ consteval PlayerAction GameAction(std::uint32_t index)
 /// input bindings.
 inline constexpr std::string_view kActionJump = "Jump";
 inline constexpr std::string_view kActionCrouch = "Crouch";
+inline constexpr std::string_view kActionSprint = "Sprint";
 inline constexpr std::string_view kActionMoveForward = "MoveForward";
 inline constexpr std::string_view kActionMoveBackward = "MoveBackward";
 inline constexpr std::string_view kActionMoveLeft = "MoveLeft";
@@ -177,6 +179,24 @@ struct Player
 ACOMP(transient)
 struct LocalPlayer
 {
+};
+
+/// @brief A character has just become this machine's player: what anything
+/// made per player, such as a HUD, is made on. Pushed by the step that tags
+/// it LocalPlayer.
+AEVENT()
+struct LocalPlayerGained
+{
+    ECS::Entity entity = ECS::NullEntity;
+};
+
+/// @brief A character has just stopped being this machine's player: control
+/// moved elsewhere, or it was destroyed. A destroyed character is already gone,
+/// components included, so @p entity only says which one it was.
+AEVENT()
+struct LocalPlayerLost
+{
+    ECS::Entity entity = ECS::NullEntity;
 };
 
 /// @brief Where a player's character is made when one joins a networked game,

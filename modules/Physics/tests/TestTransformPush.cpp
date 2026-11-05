@@ -239,7 +239,15 @@ TEST_CASE("Editing a walking character keeps its momentum")
 
     SUBCASE("a tuning edit")
     {
-        test.scene.GetMut<Physics::Character>(walker)->walkSpeed = 6.f;
+        test.scene.GetMut<Physics::Character>(walker)->eyeSpeed = 6.f;
+    }
+    SUBCASE("a locomotion edit")
+    {
+        test.scene.GetMut<Physics::CharacterLocomotion>(walker)->preset = Physics::LocomotionPreset::Arcade;
+    }
+    SUBCASE("a movement edit")
+    {
+        test.scene.GetMut<Physics::SourceMovement>(walker)->friction = 6.f;
     }
     SUBCASE("a capsule edit, which rebuilds it")
     {

@@ -40,9 +40,14 @@ add_executable(Assisi-MondrianImport-Tests
   ScreenTesting.hpp
   TestCsv.cpp
   TestMarkup.cpp
+  TestScreenBindings.cpp
   TestScreenCompiler.cpp
+  TestScreenContexts.cpp
+  TestScreenControls.cpp
+  TestSpriteSheets.cpp
   TestStringTables.cpp
   TestTemplateLibraries.cpp
+  TestThemeCompiler.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-MondrianImport-Tests)
@@ -60,6 +65,8 @@ target_link_libraries(Assisi-MondrianImport-Tests
   PRIVATE
     Assisi::MondrianImport
     Assisi::TestSupport
+    # For its support headers: the test world a loaded screen is built for.
+    Assisi-Mondrian-TestStructs
 )
 
 # The screens the game ships, read in place rather than copied into a fixture.
@@ -67,8 +74,11 @@ target_link_libraries(Assisi-MondrianImport-Tests
 # which no test runs.
 target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   ASSISI_PAUSE_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Pause.amdn"
-  ASSISI_PAUSE_TABLE_PATH="${CMAKE_SOURCE_DIR}/assets/ui/pause.csv"
+  ASSISI_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
   ASSISI_CONTROLS_SCREEN_PATH="${CMAKE_SOURCE_DIR}/assets/ui/Controls.amdn"
+  # Any image will do for a sheet's texture; this one has been 256 pixels
+  # square since it was added.
+  ASSISI_TEST_IMAGE_PATH="${CMAKE_SOURCE_DIR}/assets/textures/checker.png"
 )
 
 Assisi_add_doctest_tests(Assisi-MondrianImport-Tests NAME MondrianImport)

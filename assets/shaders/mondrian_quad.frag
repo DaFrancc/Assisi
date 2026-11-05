@@ -34,6 +34,15 @@ const float kSdfMinGradient = 1.0 / 1024.0;
 // 1 / sqrt(2): scales a distance measured along a diagonal to a true distance.
 const float kInvSqrt2 = 0.70710678;
 
+// How far inside its own rectangle of the texture an image samples, in texels:
+// half of one keeps a sample at the edge from blending in the texel beyond,
+// which in a sheet belongs to another sprite.
+const float kHalfTexel = 0.5;
+
+// The shortest middle a nine-slice divides by, in pixels. Corners that meet
+// leave no middle, and then no pixel samples it.
+const float kMinSliceMiddle = 1.0e-4;
+
 // The sRGB transfer function's constants, for decoding a display colour to
 // the linear value an sRGB target encodes back to it.
 const float kSrgbLinearThreshold = 0.04045;
@@ -97,6 +106,50 @@ vec4 Premultiply(vec4 color)
     return vec4(color.rgb * color.a, color.a);
 }
 
+// The two insets packed in @p word, the low half first.
+vec2 UnpackInsets(uint word)
+{
+    return vec2(float(word & kSliceInsetMask), float(word >> kSliceInsetBits));
+}
+
+// One axis of a nine-slice: how many texels into the sprite the pixel @p offset
+// in from the quad's start samples. The quad is @p length long with corners
+// @p quadInsets in from its two ends; the sprite is @p texels long with corners
+// @p spriteInsets in from its ends. A corner shows its texels at its own size
+// and the middle stretches.
+float SliceTexel(float offset, float length, vec2 quadInsets, vec2 spriteInsets, float texels)
+{
+    if (offset < quadInsets.x)
+    {
+        return offset * (spriteInsets.x / quadInsets.x);
+    }
+    if (offset > length - quadInsets.y)
+    {
+        return texels - ((length - offset) * (spriteInsets.y / quadInsets.y));
+    }
+    // From the centre of the middle's first texel to the centre of its last:
+    // a sample between a corner's texel and the middle's would carry the
+    // corner's colour into the middle and stretch it there.
+    const float middle = max(length - quadInsets.x - quadInsets.y, kMinSliceMiddle);
+    const float first  = spriteInsets.x + kHalfTexel;
+    const float last   = max(texels - spriteInsets.y - kHalfTexel, first);
+    return first + ((offset - quadInsets.x) / middle * (last - first));
+}
+
+// How many texels one pixel moves across on one axis of a nine-slice, for the
+// whole quad: the corners' rate where the axis has corners. One rate for every
+// part picks one mip level for every part, where each part's own would switch
+// levels at a corner's edge and draw it as a seam.
+float SliceRate(float length, vec2 quadInsets, vec2 spriteInsets, float texels)
+{
+    const float corners = quadInsets.x + quadInsets.y;
+    if (corners > 0.0)
+    {
+        return (spriteInsets.x + spriteInsets.y) / corners;
+    }
+    return texels / max(length, kMinSliceMiddle);
+}
+
 void main()
 {
     const vec4 rect        = InstanceSlot(vInstance, kSlotRect);
@@ -117,9 +170,44 @@ void main()
 
     const float outer = ShapeDistance(local, halfSize, radius, style);
 
-    // Sampled, and its gradient taken, outside any branch: derivatives are only
-    // defined where every pixel of a 2x2 quad runs the same code.
-    const vec4 texel       = texture(sampler2D(uTexture, uSampler), vUv);
+    // Where the texture is sampled, and how fast that moves per pixel each way:
+    // as the vertex shader interpolated it, except on a nine-slice, which
+    // works out its own piece by piece. The derivatives are taken here, before
+    // any branch, since they are only defined where every pixel of a 2x2 quad
+    // runs the same code.
+    const vec4 uvRect = InstanceSlot(vInstance, kSlotUv);
+    const vec2 texels = vec2(textureSize(sampler2D(uTexture, uSampler), 0));
+    vec2 uv           = vUv;
+    vec2 uvAcross     = dFdx(vUv);
+    vec2 uvDown       = dFdy(vUv);
+    if (kind == kKindNineSlice)
+    {
+        const uvec4 slice   = floatBitsToUint(InstanceSlot(vInstance, kSlotSlice));
+        const vec2 quadFrom = UnpackInsets(slice.x);   // left, top
+        const vec2 quadTo   = UnpackInsets(slice.y);   // right, bottom
+        const vec2 cutFrom  = UnpackInsets(slice.z);
+        const vec2 cutTo    = UnpackInsets(slice.w);
+        const vec2 acrossQuad = vec2(quadFrom.x, quadTo.x);
+        const vec2 acrossCut  = vec2(cutFrom.x, cutTo.x);
+        const vec2 downQuad   = vec2(quadFrom.y, quadTo.y);
+        const vec2 downCut    = vec2(cutFrom.y, cutTo.y);
+        const vec2 sprite     = uvRect.zw * texels;
+        const vec2 offset     = vPixel - rect.xy;
+        const vec2 into       = vec2(SliceTexel(offset.x, rect.z, acrossQuad, acrossCut, sprite.x),
+                                     SliceTexel(offset.y, rect.w, downQuad, downCut, sprite.y));
+        uv       = uvRect.xy + (into / texels);
+        uvAcross = vec2(SliceRate(rect.z, acrossQuad, acrossCut, sprite.x) / texels.x, 0.0);
+        uvDown   = vec2(0.0, SliceRate(rect.w, downQuad, downCut, sprite.y) / texels.y);
+    }
+    if (kind == kKindImage || kind == kKindNineSlice)
+    {
+        const vec2 inset = kHalfTexel / texels;
+        uv = min(max(uv, uvRect.xy + inset), uvRect.xy + uvRect.zw - inset);
+    }
+
+    // Sampled, and the field's gradient taken, outside any branch, for the
+    // same reason.
+    const vec4 texel       = textureGrad(sampler2D(uTexture, uSampler), uv, uvAcross, uvDown);
     const float fieldWidth = max(fwidth(texel.r), kSdfMinGradient);
 
     vec4 fill = color;

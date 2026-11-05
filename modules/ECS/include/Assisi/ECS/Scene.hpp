@@ -75,8 +75,9 @@ struct Scene
     /// runs (once per frame from Application::Run, or explicitly in tests and
     /// custom loops). That is what makes it safe to Destroy() while iterating a
     /// Query: no component pool is touched until the flush, so no iterator is
-    /// invalidated. A handle already dead — or destroyed twice this frame — is
-    /// ignored; the slot is not reused until the flush actually applies it.
+    /// invalidated. A handle already dead is ignored. One destroyed twice this
+    /// frame is queued twice, and the flush applies the first and skips the
+    /// second; the slot is not reused until the flush actually applies it.
     void Destroy(Entity entity)
     {
         ASSISI_ASSERT(!_replaying, "Scene::Destroy during a replay: a replayed step destroys no entities");

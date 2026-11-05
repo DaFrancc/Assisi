@@ -30,6 +30,11 @@ namespace Assisi::Mondrian::Import
 /// parser's recursion off the stack.
 inline constexpr uint32_t kMaxMarkupDepth = 64;
 
+/// @brief What joins a prefix to the attribute it qualifies: `hover:background`.
+/// The parser keeps such a name whole; what a prefix may be is the compiler's
+/// to say.
+inline constexpr char kPrefixSeparator = ':';
+
 /// @brief What went wrong, and where a person should look.
 ///
 /// Line and column are one-based, counted the way an editor shows them, so the
@@ -49,6 +54,7 @@ struct MarkupError
 /// @brief One attribute, with where it was written.
 struct MarkupAttribute
 {
+    /// As written, prefixes included.
     std::string name;
     std::string value;
     /// Where the name starts, which is what an error about either half points

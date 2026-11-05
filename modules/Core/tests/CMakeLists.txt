@@ -70,6 +70,7 @@ add_executable(Assisi-Core-Tests
   TestLogger.cpp
   TestStringCodec.cpp
   TestStringPool.cpp
+  TestStructRegistry.cpp
   TestTrivialString.cpp
 )
 

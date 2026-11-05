@@ -355,6 +355,13 @@ class Layouter
                 minContent = content;
             }
         }
+        else if (node.hasImage && node.image.width != 0 && node.image.height != 0)
+        {
+            // One of the picture's pixels to one UI pixel, so it scales with
+            // everything else on the screen.
+            content = Scaled(static_cast<float>(axis == Axis::X ? node.image.width : node.image.height));
+            minContent = content;
+        }
         else
         {
             const bool main = IsMainAxis(style.direction, axis);

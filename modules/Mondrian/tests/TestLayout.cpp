@@ -127,6 +127,23 @@ TEST_CASE("Layout: UI lengths are scaled to device pixels")
     CHECK(scene.RectOf(box).height == 20.f);
 }
 
+TEST_CASE("Layout: a picture sized to fit is one UI pixel to each of its own, padding around it")
+{
+    Scene scene;
+    Style style;
+    style.padding = Padding::All(Px(5.f));
+    const NodeId picture = scene.Add(scene.tree.Root(), style);
+    scene.tree.SetImage(picture, WholeTexture(TextureId{1}, 40, 30));
+    const NodeId unknown = scene.Add(scene.tree.Root(), Style{});
+    scene.tree.SetImage(unknown, WholeTexture(TextureId{1}, 0, 0));
+    scene.Run(kReference, 2.f);
+
+    CHECK(scene.RectOf(picture).width == 100.f);
+    CHECK(scene.RectOf(picture).height == 80.f);
+    // A picture of no known size asks for no room of its own.
+    CHECK(scene.RectOf(unknown).width == 0.f);
+}
+
 TEST_CASE("Layout: text wraps at its final width before heights are fitted")
 {
     // A single pass that measured text on both axes at once would size the
@@ -255,6 +272,20 @@ TEST_CASE("Layout: a text size in em is of its parent's, and chains down the tre
     CHECK(scene.NodeOf(child).textSize == 20.f);
     CHECK(scene.NodeOf(grandchild).textSize == 20.f);
     CHECK(scene.NodeOf(grandchild).padding.left == doctest::Approx(20.f));
+}
+
+TEST_CASE("Layout: a text size nobody sets is the parent's, and the root's is the default")
+{
+    Scene scene;
+    Style parentStyle = Box(Fixed(100.f), Fixed(100.f));
+    parentStyle.textSize = Px(10.f);
+    const NodeId parent = scene.Add(scene.tree.Root(), parentStyle);
+    const NodeId child = scene.Add(parent, Box(Fixed(50.f), Fixed(50.f)));
+    const NodeId beside = scene.Add(scene.tree.Root(), Box(Fixed(50.f), Fixed(50.f)));
+    scene.Run();
+
+    CHECK(scene.NodeOf(child).textSize == 10.f);
+    CHECK(scene.NodeOf(beside).textSize == kDefaultTextSize);
 }
 
 TEST_CASE("Layout: each edge of a padding keeps its own unit")

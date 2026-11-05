@@ -1,0 +1,8 @@
+<!-- The game's panel frames, one per palette mode of ui/Default.amth, which
+     picks between them with its $frame token. Each keeps its 16-pixel
+     corners at their size and stretches the rest, so one frame fits a panel
+     of any size. -->
+<sheet texture="ui/frames.png">
+  <sprite name="panel" rect="0 0 48 48" borders="16" />
+  <sprite name="panel_contrast" rect="48 0 48 48" borders="16" />
+</sheet>

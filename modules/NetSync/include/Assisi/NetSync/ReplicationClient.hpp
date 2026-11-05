@@ -507,6 +507,15 @@ public:
     /// or has not said yet.
     [[nodiscard]] AppliedCommand CommandAppliedAt(std::uint64_t tick) const;
 
+    /// @brief Puts back into every predicted character's CharacterIntent what
+    /// its live step of @p tick consumed, before that step is stepped again.
+    ///
+    /// A replayed step runs only the engine's own systems, so a value the
+    /// game's systems wrote into the intent, such as a speed scale, would
+    /// otherwise be stepped again as it is now rather than as it was then.
+    /// What CharacterCommand writes it writes again over this, the same.
+    void RestoreIntentsAt(std::uint64_t tick);
+
     /// @brief How every kinematic body moved through the step of @p tick, for
     /// that step stepped again, so a platform carries its riders where it did.
     /// In the sync test, every other character too, so it is met where it was.

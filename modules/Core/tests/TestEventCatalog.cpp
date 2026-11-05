@@ -22,16 +22,34 @@ struct QuitRequested
 {
 };
 
+struct Rested
+{
+    float value = 0.f;
+};
+
+struct Flipped
+{
+    bool value = false;
+};
+
+struct Picked
+{
+    int32_t value = 0;
+};
+
+struct Named
+{
+    std::string value;
+};
+
 /// A catalog holding the two above, built by hand. The generated registrations
 /// fill the process-wide one; a test that used that would depend on what the
 /// link happened to contain.
 EventCatalog TwoEvents()
 {
     EventCatalog catalog;
-    catalog.Register(
-        {.name = "Game::ResumeClicked", .push = [](const EventRoute &events) { events.Push(ResumeClicked{}); }});
-    catalog.Register(
-        {.name = "Game::QuitRequested", .push = [](const EventRoute &events) { events.Push(QuitRequested{}); }});
+    catalog.Register(Assisi::Core::DefineEvent<ResumeClicked>("Game::ResumeClicked"));
+    catalog.Register(Assisi::Core::DefineEvent<QuitRequested>("Game::QuitRequested"));
     return catalog;
 }
 
@@ -70,10 +88,14 @@ TEST_CASE("EventCatalog: the first registration of a name wins")
     catalog.Register({
         .name = "Game::ResumeClicked",
         .push = [](const EventRoute &events) { events.Push(ResumeClicked{.marker = 1}); },
+        .pushValue = {},
+        .valueKind = EventValueKind::None,
     });
     catalog.Register({
         .name = "Game::ResumeClicked",
         .push = [](const EventRoute &events) { events.Push(ResumeClicked{.marker = 2}); },
+        .pushValue = {},
+        .valueKind = EventValueKind::None,
     });
 
     EventQueue events;
@@ -93,4 +115,37 @@ TEST_CASE("EventCatalog: every entry is listed, for naming what is available")
     REQUIRE(catalog.All().size() == 2);
     CHECK(catalog.All()[0].name == "Game::ResumeClicked");
     CHECK(catalog.All()[1].name == "Game::QuitRequested");
+}
+
+TEST_CASE("EventCatalog: an event with a value field takes what a control hands it")
+{
+    const EventDefinition rested = DefineEvent<Rested>("Game::Rested");
+    CHECK(rested.valueKind == EventValueKind::Float);
+    CHECK(DefineEvent<Flipped>("Game::Flipped").valueKind == EventValueKind::Bool);
+    CHECK(DefineEvent<Picked>("Game::Picked").valueKind == EventValueKind::Int32);
+
+    EventQueue events;
+    EventQueue universal{EventScope::Universal};
+    const EventRoute route{events, universal};
+    REQUIRE(rested.pushValue);
+    rested.pushValue(route, 0.5f);
+    REQUIRE(events.Read<Rested>().size() == 1);
+    CHECK(events.Read<Rested>()[0].value == doctest::Approx(0.5f));
+
+    // Pushed by name, it is default-constructed as any other is.
+    rested.push(route);
+    REQUIRE(events.Read<Rested>().size() == 2);
+    CHECK(events.Read<Rested>()[1].value == doctest::Approx(0.f));
+}
+
+TEST_CASE("EventCatalog: an event no control can fill says so, and one with no value field is plain")
+{
+    const EventDefinition named = DefineEvent<Named>("Game::Named");
+    CHECK(named.valueKind == EventValueKind::Other);
+    CHECK_FALSE(named.pushValue);
+
+    const EventDefinition plain = DefineEvent<QuitRequested>("Game::QuitRequested");
+    CHECK(plain.valueKind == EventValueKind::None);
+    CHECK_FALSE(plain.pushValue);
+    CHECK(plain.push);
 }

@@ -95,11 +95,16 @@ struct CharacterFrame
     float eyeHeight = 0.f;
     /// While riding, seconds before a carrier that stopped holding it lets go.
     float graceRemaining = 0.f;
+    /// CharacterState's counts, put back so a step stepped again does not count
+    /// a jump or a landing the live step already did.
+    std::uint32_t jumps = 0;
+    std::uint32_t landings = 0;
     Stance stance = Stance::Standing;
     /// What it stood on after the step. Read back, never put back: a rewind
     /// finds the ground again where it places the character.
     GroundState ground = GroundState::InAir;
     bool jumpedSinceGrounded = false;
+    bool sprinting = false;
     /// Riding: let go after its next carry; seated by gameplay; moving with
     /// other ground it stands on rather than with its base.
     bool leavingBase = false;

@@ -60,6 +60,16 @@ QuadBuilder &QuadBuilder::Texture(TextureId texture, const Rect &uv)
     return *this;
 }
 
+QuadBuilder &QuadBuilder::NineSlice(const SliceInsets &destination, const SliceInsets &source)
+{
+    QuadInstance &instance = Instance();
+    instance.slice = {PackSliceInsets(destination.left, destination.top),
+                      PackSliceInsets(destination.right, destination.bottom),
+                      PackSliceInsets(source.left, source.top), PackSliceInsets(source.right, source.bottom)};
+    instance.kind = static_cast<uint32_t>(QuadKind::NineSlice);
+    return *this;
+}
+
 QuadBuilder &QuadBuilder::Kind(QuadKind kind)
 {
     Instance().kind = static_cast<uint32_t>(kind);

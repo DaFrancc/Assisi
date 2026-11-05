@@ -70,9 +70,9 @@ struct Run
     ECS::Entity character{ECS::NullEntity};
 };
 
-Physics::Character Tuning()
+Physics::CharacterLocomotion Tuning()
 {
-    Physics::Character tuning{};
+    Physics::CharacterLocomotion tuning{};
     tuning.coyoteTime = 0.1f;
     tuning.jumpBufferTime = 0.1f;
     return tuning;
@@ -90,14 +90,17 @@ void LiveStep(PhysicsTests::TestScene &test, Run &run, glm::vec3 move, Physics::
     run.frames.push_back(test.world.CaptureCharacter(run.character));
 }
 
-/// A character walking off a ledge: crouched for a few steps, then standing,
-/// then a jump pressed just after the floor ends, and a while in the air.
-Run WalkOffLedge(PhysicsTests::TestScene &test)
+/// A character walking off a ledge by @p movement: crouched for a few steps,
+/// then standing, then a jump pressed just after the floor ends, and a while in
+/// the air.
+template <typename Movement = Physics::SourceMovement>
+Run WalkOffLedge(PhysicsTests::TestScene &test, const Movement &movement = Movement{})
 {
     (void)PhysicsTests::AddBody(test.scene, {kLedgeX - 4.f, -0.5f, 0.f},
                                 PhysicsTests::Box({4.f, 0.5f, 4.f}, /*isStatic=*/ true));
     Run run;
-    run.character = PhysicsTests::AddCharacter(test.scene, {kLedgeX - 2.f, 0.f, 0.f}, Tuning());
+    run.character =
+        PhysicsTests::AddCharacter(test.scene, {kLedgeX - 2.f, 0.f, 0.f}, Physics::Character{}, Tuning(), movement);
     test.world.Reconcile();
     REQUIRE(test.world.HasBody(run.character));
     for (int32_t i = 0; i < kSettleSteps; ++i)
@@ -139,6 +142,8 @@ void CheckSameFrame(const Physics::CharacterFrame &replayed, const Physics::Char
     CHECK(replayed.stance == live.stance);
     CHECK(replayed.ground == live.ground);
     CHECK(replayed.jumpedSinceGrounded == live.jumpedSinceGrounded);
+    CHECK(replayed.jumps == live.jumps);
+    CHECK(replayed.landings == live.landings);
 }
 
 /// Steps @p character again, alone, on the intent @p frame's step consumed.
@@ -417,6 +422,12 @@ TEST_CASE("Rewinding to a frame and replaying its intents reproduces the live ru
         const Run run = WalkOffLedge(test);
         const std::size_t jumped = run.frames.size() - static_cast<std::size_t>(kFlightSteps) - 1;
         ReplayFrom(test, run, jumped - 1);
+    }
+    SUBCASE("for a character moving by ArcadeMovement")
+    {
+        PhysicsTests::TestScene test;
+        const Run run = WalkOffLedge(test, Physics::ArcadeMovement{});
+        ReplayFrom(test, run, 0);
     }
 }
 
