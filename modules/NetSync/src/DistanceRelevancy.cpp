@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/DistanceRelevancy.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 
@@ -53,13 +54,15 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
     const double enterSq = static_cast<double>(_config.radius) * static_cast<double>(_config.radius);
     const double exitSq  = static_cast<double>(_config.exitRadius) * static_cast<double>(_config.exitRadius);
 
-    // Anchor positions, resolved once rather than per candidate entity.
+    // Anchor positions, resolved once rather than per candidate entity. In the
+    // world, not under a parent: a camera 1.5 m above its character views from
+    // wherever the character is.
     std::vector<glm::dvec3> origins;
     origins.reserve(query.anchors.size());
     for (const ECS::Entity anchor : query.anchors)
     {
-        if (const ECS::Transform *transform = query.scene->Get<ECS::Transform>(anchor))
-            origins.push_back(transform->position);
+        if (query.scene->Has<ECS::Transform>(anchor))
+            origins.push_back(ECS::WorldTransformOf(*query.scene, anchor).position);
     }
 
     // Every anchor named something without a Transform — a dead handle, an
@@ -77,8 +80,7 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
         if (entity == ECS::NullEntity)
             continue;
 
-        const ECS::Transform *transform = query.scene->Get<ECS::Transform>(entity);
-        if (transform == nullptr)
+        if (!query.scene->Has<ECS::Transform>(entity))
         {
             // Nothing to measure. Included rather than culled: an entity with no
             // position is not far away, it is unplaceable, and silently
@@ -88,10 +90,12 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
             continue;
         }
 
+        // Where the entity stands, which for a child is not its Transform.
+        const glm::dvec3 position = ECS::WorldTransformOf(*query.scene, entity).position;
         double nearestSq = std::numeric_limits<double>::max();
         for (const glm::dvec3 &origin : origins)
         {
-            const glm::dvec3 delta = transform->position - origin;
+            const glm::dvec3 delta = position - origin;
             nearestSq             = std::min(nearestSq, glm::dot(delta, delta));
         }
 

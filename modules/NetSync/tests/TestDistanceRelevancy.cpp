@@ -13,6 +13,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -291,6 +292,51 @@ TEST_CASE("coming back inside the exit radius resets the dwell")
     }
 
     CHECK(harness.server.IsRelevant(harness.serverSide(), wandererId));
+}
+
+TEST_CASE("a child is measured where it stands, not at its place under its parent")
+{
+    // A child's Transform is relative to its parent. Measured as if it were a
+    // place in the world, a camera 1.5 m above its character is 1.5 m from
+    // the origin, and anyone near the origin is sent it wherever it is.
+    Harness harness(Distance(10.f, 12.f, 0));
+
+    const ECS::Entity anchor = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
+    const ECS::Entity holder = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(holder, ECS::Transform{.position = {500.0, 0.0, 0.0}});
+    const ECS::Entity held = SpawnAt(harness.serverScene, {0.f, 1.5f, 0.f});
+    (void)harness.serverScene.Add<ECS::Parent>(held, ECS::Parent{.parent = holder});
+    harness.Step(2);
+
+    const ECS::Entity anchors[] = {anchor};
+    harness.server.SetViewAnchors(harness.serverSide(), anchors);
+    harness.Step(12);
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(held)));
+
+    MoveTo(harness.serverScene, anchor, {500.f, 0.f, 0.f});
+    harness.Step(12);
+    CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(held)));
+}
+
+TEST_CASE("an anchor that is a child views from where it stands")
+{
+    Harness harness(Distance(10.f, 12.f, 0));
+
+    const ECS::Entity body = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(body, ECS::Transform{.position = {500.0, 0.0, 0.0}});
+    const ECS::Entity eye = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(eye, ECS::Transform{.position = {0.0, 1.5, 0.0}});
+    (void)harness.serverScene.Add<ECS::Parent>(eye, ECS::Parent{.parent = body});
+    const ECS::Entity nearOrigin = SpawnAt(harness.serverScene, {1.f, 0.f, 0.f});
+    const ECS::Entity nearEye = SpawnAt(harness.serverScene, {501.f, 0.f, 0.f});
+    harness.Step(2);
+
+    const ECS::Entity anchors[] = {eye};
+    harness.server.SetViewAnchors(harness.serverSide(), anchors);
+    harness.Step(12);
+
+    CHECK(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(nearEye)));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), harness.server.NetIdOf(nearOrigin)));
 }
 
 TEST_CASE("Relevance::Always survives a provider that wants nothing")
