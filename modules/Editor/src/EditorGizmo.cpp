@@ -264,11 +264,23 @@ void EditorApp::DrawTransformGizmo()
     // interaction state and the second Manipulate of a frame overwrites the
     // first's.
     _lightGizmoHeld = false;
+    _splineGizmoHeld = false;
+
+    // A spline node or handle being shaped takes the gizmo first: picking one is
+    // a choice made for this entity, and it wins over the light's aim and the
+    // entity's placement until it is let go of. Its release edge follows the same
+    // rule as the two below.
+    const bool shapingSpline = !instanceMode && DrawSplineGizmo();
+    if (!_splineGizmoHeld)
+    {
+        _splineDrag.Release(_scene, ActiveHistory(), _splineDragComponent);
+    }
+
     // Whether the aim handles *drew*, not whether they are held. Exactly one
     // Manipulate may run per frame — ImGuizmo keeps a single interaction state,
     // and a second call fights the first for it — so a frame in which these drew
     // is a frame the transform handles must sit out entirely.
-    const bool aimingLight = !instanceMode && DrawDirectionalLightGizmo();
+    const bool aimingLight = !instanceMode && !shapingSpline && DrawDirectionalLightGizmo();
 
     // The aim's release edge, on the same terms as the transform drag's below and
     // for the same reason: driven from out here, so that every early return
@@ -280,7 +292,7 @@ void EditorApp::DrawTransformGizmo()
         _lightDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::DirectionalLight>());
     }
 
-    const bool held = !instanceMode && !aimingLight && DrawTransformGizmoHandles();
+    const bool held = !instanceMode && !aimingLight && !shapingSpline && DrawTransformGizmoHandles();
     if (!held)
         _gizmoDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>());
 

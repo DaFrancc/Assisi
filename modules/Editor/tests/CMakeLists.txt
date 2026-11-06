@@ -18,6 +18,7 @@ add_executable(Assisi-Editor-Tests
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
   TestSkeletonOverlay.cpp
+  TestSplineEdit.cpp
   TestSplineFields.cpp
   TestSystemSearch.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
@@ -31,6 +32,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SkeletonOverlay.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SplineEdit.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SplineFields.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SystemSearch.cpp"
 )

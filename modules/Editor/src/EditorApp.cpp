@@ -1331,7 +1331,15 @@ void EditorApp::OnUpdate(float dt)
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
         _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
-        DeleteSelection();
+        // A spline node being shaped is what Delete means while there is one.
+        if (_splineTarget)
+        {
+            DeleteSplineNode();
+        }
+        else
+        {
+            DeleteSelection();
+        }
     }
 
     // --- The frame's safe point ---------------------------------------------

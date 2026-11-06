@@ -20,21 +20,49 @@ The engine gives you two things:
 
 ### Step 2: add nodes
 
-1. In the `Path` component, open **spline**, then **nodes**.
-2. Press **+ Add** three times.
-3. Open each row and type its `position`: `0, 0, 0`, then `5, 0, 0`, then
-   `5, 0, 5`.
+Hold **Alt** and click on the ground three times, in three different places. The
+first click places the first node at the entity's height. Each click after that
+adds a node past the end of the path, at the height of the node before it.
 
-A curve appears through the three nodes. While the entity is selected it draws
-in orange, with a box on each node; the first node's box is larger, so you can
-see which end the path starts from. Other splines draw in magenta.
+A curve appears through the nodes. While the entity is selected it draws in
+orange, with a box on each node; the first node's box is larger, so you can see
+which end the path starts from. The node you added last is white: it is the
+**shaped node**, the one the gizmo now moves. Other splines draw in magenta.
 
-### Step 3: change how a node shapes the curve
+### Step 3: move a node
 
-Set the middle node's `mode` to `Corner`. The curve becomes two straight lines
-meeting at a sharp corner. Set it back to `Smooth` and the corner rounds off.
+Click the middle node's box. It turns white and the move gizmo jumps to it.
+Drag an arrow to move the node, and the curve follows. Press **Escape** to hand
+the gizmo back to the entity.
+
+### Step 4: change how a node shapes the curve
+
+With the middle node still selected, look in the **Inspector**: open **Path**,
+then **spline**, then **nodes**, then the middle row (`[1]`). Set its `mode` to
+`Corner`. The curve becomes two straight lines meeting at a sharp corner. Set it
+back to `Smooth` and the corner rounds off.
 
 To see every mode side by side, open `levels/SplineCheck.alvl`.
+
+## Shaping a spline in the viewport
+
+Select the entity first: click its curve, or pick it in the **Entities** panel.
+
+| To | Do this |
+|---|---|
+| Choose a node to move | Click its box. It turns white, and the gizmo moves it instead of the entity. |
+| Move a Bezier node's handle | Click the small box at the handle's end, then drag the gizmo. The other handle turns with it, so the curve stays smooth. |
+| Add a node on the curve | **Alt+click** on the curve. Between two `Bezier` nodes the curve keeps its exact shape. |
+| Add a node past an end | Select the first or last node, then **Alt+click** where the new one should go. It lands on the flat plane at that node's height; drag it up or down afterwards. |
+| Add the first node | With the entity of an empty spline selected, **Alt+click** where the node should go. It lands on the flat plane at the entity's height. |
+| Remove a node | Select it and press **Delete**. |
+| Go back to moving the entity | Press **Escape**, or click anywhere away from the nodes. |
+
+Hold **Ctrl** while dragging to move a node in half-metre steps. Every drag,
+added node and removed node is one step of undo.
+
+The inspector still works too: each node's `position`, `handleIn` and
+`handleOut` can be typed there.
 
 ## Node modes
 

@@ -51,11 +51,27 @@ void EditorApp::HandleEntityPicking()
         return;
     }
     auto &input = GetInput();
+
+    // Escape lets go of the spline point being shaped, handing the gizmo back to
+    // the entity.
+    if (_splineTarget && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        _splineTarget.reset();
+    }
+
     // A click meant for the gizmo (hovered or dragging) is not a pick: it would
     // reselect whatever is behind the handle.
     if (GetActions().IsActionPressed("Select", input) && !input.IsMouseCaptured() && !ImGuiWantsMouse() &&
         !IsUsingGizmo())
     {
+        // The selected entity's spline nodes before anything else: they sit on
+        // the curve and usually on the ground beneath it. Not while the
+        // eyedropper is armed, which wants an entity, not a point.
+        if (!_eyedropperArmed && HandleSplineClick(input.MousePosition()))
+        {
+            return;
+        }
+
         float entityT = 0.f;
         Assisi::ECS::Entity picked = PickEntity(input.MousePosition(), entityT);
 
@@ -68,6 +84,16 @@ void EditorApp::HandleEntityPicking()
         {
             picked = light;
             entityT = outlineT;
+        }
+
+        // A spline's curve the same way: a Path has no mesh, so its line is the
+        // only thing of it to click.
+        float curveT = 0.f;
+        const Assisi::ECS::Entity curve = PickSplineCurveEntity(input.MousePosition(), curveT);
+        if (curve != Assisi::ECS::NullEntity && curveT < entityT)
+        {
+            picked = curve;
+            entityT = curveT;
         }
 
         // An armed eyedropper consumes the click to fill its EntityRef field; the

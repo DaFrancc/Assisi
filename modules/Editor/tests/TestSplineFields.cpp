@@ -7,6 +7,7 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -89,4 +90,19 @@ TEST_CASE("SplineFields: settling reaches every spline it finds")
     settled(holder.outline);
     settled(holder.extras[1]);
     settled(holder.lanes[1].centre);
+}
+
+TEST_CASE("SplineFields: the path to each spline leads back to it")
+{
+    SplineHolder holder = FilledHolder();
+    std::size_t visited = 0;
+    Editor::ForEachSplinePath(&holder, MetaNamed("SplineHolder").fields,
+                              [&](Spline &spline, std::span<const Editor::FieldStep> path)
+    {
+        std::byte *found =
+            Editor::ResolveFieldPath(reinterpret_cast<std::byte *>(&holder), path);
+        CHECK(found == reinterpret_cast<std::byte *>(&spline));
+        ++visited;
+    });
+    CHECK(visited == 5);
 }

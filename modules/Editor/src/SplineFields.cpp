@@ -3,10 +3,10 @@
 #include <Assisi/Editor/SplineFields.hpp>
 
 #include <cstddef>
+#include <vector>
 
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
-#include <Assisi/Editor/ListEdit.hpp>
 
 ASSISI_REFLECTED_STRUCT(Assisi::Geometry::Spline);
 
@@ -17,55 +17,69 @@ namespace
 
 using Core::Reflect::FieldMeta;
 using Core::Reflect::FieldType;
-using SplineVisitor = std::function<void (Geometry::Spline &)>;
+using SplineVisitor = std::function<void (Geometry::Spline &, std::span<const FieldStep>)>;
 
 const Core::Reflect::StructSpec *SplineSpec()
 {
     return Core::Reflect::StructTraits<Geometry::Spline>::Spec();
 }
 
-void Walk(std::byte *value, const FieldMeta &field, const SplineVisitor &visit);
-
-void WalkFields(std::byte *object, std::span<const FieldMeta> fields, const SplineVisitor &visit)
+/// Walks one level down, with @p path leading to it: a step for each field the
+/// way ResolveFieldPath reads one, and a step for each list row below a field.
+class SplineWalk
 {
-    for (const FieldMeta &field : fields)
-    {
-        Walk(object + field.offset, field, visit);
-    }
-}
+public:
+    explicit SplineWalk(const SplineVisitor &visit) : _visit(visit) {}
 
-/// The spline or splines at @p value, which @p field describes.
-void Walk(std::byte *value, const FieldMeta &field, const SplineVisitor &visit)
-{
-    if (field.structSpec == nullptr)
+    void Fields(std::byte *object, std::span<const FieldMeta> fields)
     {
-        return;
+        for (const FieldMeta &field : fields)
+        {
+            _path.push_back(FieldStep{.offset = field.offset});
+            Value(object + field.offset, field);
+            _path.pop_back();
+        }
     }
-    if (field.container != nullptr)
+
+private:
+    /// The spline or splines at @p value, which @p field describes.
+    void Value(std::byte *value, const FieldMeta &field)
     {
-        const Core::Reflect::ContainerOps &ops = *field.container->ops;
-        if (ops.at == nullptr)
+        if (field.structSpec == nullptr)
         {
             return;
         }
-        const std::size_t count = ops.size(value);
-        for (std::size_t row = 0; row < count; ++row)
+        if (field.container != nullptr)
         {
-            Walk(ops.at(value, row), ElementFieldMeta(field, row), visit);
+            const Core::Reflect::ContainerOps &ops = *field.container->ops;
+            if (ops.at == nullptr)
+            {
+                return;
+            }
+            const std::size_t count = ops.size(value);
+            for (std::size_t row = 0; row < count; ++row)
+            {
+                _path.push_back(FieldStep{.offset = 0, .list = &ops, .row = row});
+                Value(ops.at(value, row), ElementFieldMeta(field, row));
+                _path.pop_back();
+            }
+            return;
         }
-        return;
+        if (field.type != FieldType::Struct)
+        {
+            return;
+        }
+        if (field.structSpec == SplineSpec())
+        {
+            _visit(*static_cast<Geometry::Spline *>(static_cast<void *>(value)), _path);
+            return;
+        }
+        Fields(value, field.structSpec->fields);
     }
-    if (field.type != FieldType::Struct)
-    {
-        return;
-    }
-    if (field.structSpec == SplineSpec())
-    {
-        visit(*static_cast<Geometry::Spline *>(static_cast<void *>(value)));
-        return;
-    }
-    WalkFields(value, field.structSpec->fields, visit);
-}
+
+    const SplineVisitor &_visit;
+    std::vector<FieldStep> _path;
+};
 
 } // namespace
 
@@ -88,18 +102,24 @@ bool HoldsSpline(std::span<const FieldMeta> fields)
     return false;
 }
 
+void ForEachSplinePath(void *object, std::span<const FieldMeta> fields, const SplineVisitor &visit)
+{
+    SplineWalk{visit}.Fields(static_cast<std::byte *>(object), fields);
+}
+
 void ForEachSpline(const void *object, std::span<const FieldMeta> fields,
                    const std::function<void(const Geometry::Spline &)> &visit)
 {
     // Walked through the writable path, which never writes: what it hands on is
     // const again before the caller sees it.
-    std::byte *bytes = static_cast<std::byte *>(const_cast<void *>(object));
-    WalkFields(bytes, fields, [&visit](Geometry::Spline &spline) { visit(spline); });
+    ForEachSplinePath(const_cast<void *>(object), fields,
+                      [&visit](Geometry::Spline &spline, std::span<const FieldStep>) { visit(spline); });
 }
 
 void SettleSplines(void *object, std::span<const FieldMeta> fields)
 {
-    WalkFields(static_cast<std::byte *>(object), fields, [](Geometry::Spline &spline) { Geometry::SettleHandles(spline); });
+    ForEachSplinePath(object, fields,
+                      [](Geometry::Spline &spline, std::span<const FieldStep>) { Geometry::SettleHandles(spline); });
 }
 
 } // namespace Assisi::Editor

@@ -16,6 +16,7 @@
 #include <span>
 
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Geometry/Spline.hpp>
 
 namespace Assisi::Editor
@@ -29,6 +30,11 @@ namespace Assisi::Editor
 ///        describes, in field order.
 void ForEachSpline(const void *object, std::span<const Core::Reflect::FieldMeta> fields,
                    const std::function<void(const Geometry::Spline &)> &visit);
+
+/// @brief Calls @p visit with each spline in @p object and the path to it from
+///        @p object, which ResolveFieldPath follows back to the same spline.
+void ForEachSplinePath(void *object, std::span<const Core::Reflect::FieldMeta> fields,
+                       const std::function<void(Geometry::Spline &, std::span<const FieldStep>)> &visit);
 
 /// @brief Settles every spline in @p object (Geometry::SettleHandles), so each
 ///        Corner and Smooth node stores the handles it draws with.
