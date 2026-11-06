@@ -163,31 +163,47 @@ float FilterLocalGrid(ShadowViewRow view, Receiver receiver, int radius)
     return sum / PcfTapCount(radius);
 }
 
-// CascadeBlockerGap's search, inside one tile. @p texelDepth is one texel of
-// depth at the receiver's distance.
+// One blocker-search tap @p offset from @p receiver's point, clamped to the
+// tile: its depth gap added to @p gapSum and counted in @p blockers where it is
+// a blocker.
+void LocalBlockerTap(ShadowViewRow view, Receiver receiver, vec2 offset, float threshold, inout float gapSum,
+                     inout float blockers)
+{
+    ivec2 size   = textureSize(uShadowAtlas, 0).xy;
+    vec2  tapUv  = clamp(receiver.uv + offset, view.clampUv.xy, view.clampUv.zw);
+    ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
+    vec2  centre = (vec2(texel) + 0.5) / vec2(size);
+    float gap    = ComparedDepth(receiver, centre - receiver.uv) - LocalStoredDepth(texel, HasMovingLayer(view));
+    if (gap > threshold)
+    {
+        gapSum += gap;
+        blockers += 1.0;
+    }
+}
+
+// CascadeBlockerGap's search, inside one tile, probed first the same way.
+// @p texelDepth is one texel of depth at the receiver's distance.
 float LocalBlockerGap(ShadowViewRow view, Receiver receiver, float texelDepth)
 {
     float searchUv  = PcssPenumbraUv(view.pcss.x, receiver.reference, view.pcss.z);
     float threshold = kPcssBlockerMinDepthTexels * texelDepth;
-    ivec2 size      = textureSize(uShadowAtlas, 0).xy;
     vec2  turn      = VogelTurn();
-    bool  moving    = HasMovingLayer(view);
 
     float gapSum   = 0.0;
     float blockers = 0.0;
-    for (uint i = 0u; i < kVogelTaps; ++i)
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        vec2  tapUv  = clamp(receiver.uv + VogelOffset(i, turn, searchUv), view.clampUv.xy, view.clampUv.zw);
-        ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
-        vec2  centre = (vec2(texel) + 0.5) / vec2(size);
-        float gap    = ComparedDepth(receiver, centre - receiver.uv) - LocalStoredDepth(texel, moving);
-        if (gap > threshold)
-        {
-            gapSum += gap;
-            blockers += 1.0;
-        }
+        LocalBlockerTap(view, receiver, VogelOffset(kVogelProbe[i], turn, searchUv), threshold, gapSum, blockers);
     }
-    return blockers > 0.0 ? gapSum / blockers : 0.0;
+    if (blockers == 0.0)
+    {
+        return 0.0;
+    }
+    for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
+    {
+        LocalBlockerTap(view, receiver, VogelOffset(kVogelRest[i], turn, searchUv), threshold, gapSum, blockers);
+    }
+    return gapSum / blockers;
 }
 
 // A local light through @p view, contact-hardened.
