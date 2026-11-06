@@ -230,18 +230,22 @@ class MeshCooker final : public Cooker
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
+        // The model's sidecar holds its import settings, such as splitting sharp
+        // smoothing, so changing one re-cooks the mesh.
+        std::vector<std::string> dependencies{std::string{vpath} + ".aast"};
+
         // A `.gltf` reads its vertex data from a sibling `.bin`, so editing that
         // changes the cooked mesh without touching the file this is keyed on.
         // Named by convention rather than by parsing the document: getting it
         // wrong costs a spurious re-cook, and parsing here would mean reading
         // every mesh twice on every walk.
-        if (!HasExtension(vpath, ".gltf"))
+        if (HasExtension(vpath, ".gltf"))
         {
-            return {};
+            std::string sibling{vpath};
+            sibling.replace(sibling.size() - 5, 5, ".bin");
+            dependencies.push_back(std::move(sibling));
         }
-        std::string sibling{vpath};
-        sibling.replace(sibling.size() - 5, 5, ".bin");
-        return {sibling};
+        return dependencies;
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,

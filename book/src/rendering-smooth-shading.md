@@ -87,10 +87,17 @@ model turns grey. The places the warning is about turn red: dark red where the
 smoothing is just too sharp, bright red where it is far too sharp. Materials
 with `ShadowsFollowSmoothing` off are blue-grey, because they aren't checked.
 
-### Step 2: Fix it in the model
+### Step 2: Fix it
 
-Open the model in Blender and fix each red area in whichever of these ways
-fits it:
+The quickest fix is in the editor: in the asset browser, right-click the model
+and tick **Split sharp smoothing**. Every corner smoothed too sharply gets a
+normal of its own, as if the edges there were marked sharp, and the model is
+imported again. Your model file isn't changed: the setting is kept in the
+model's `.aast` file beside it, and the game's build uses it too. Those edges
+look sharp afterwards; if you wanted them rounded, fix the model instead.
+
+To fix the model itself, open it in Blender and fix each red area in whichever
+of these ways fits it:
 
 1. **Make edges between flat parts sharp.** In Edit Mode, select the edges
    where two parts meet at an angle, such as the rim of a cylinder or the edges
@@ -107,9 +114,9 @@ fits it:
 
 ### Step 3: Check it
 
-Export the model again over the old file. The editor imports it again: the
-warning no longer appears in the log, and the red is gone from the
-**Smoothing** view. Set **Debug View** back to **Off**.
+If you fixed the model in Blender, export it again over the old file; the
+editor imports it again. The warning no longer appears in the log, and the red
+is gone from the **Smoothing** view. Set **Debug View** back to **Off**.
 
 ## What smoothing can't fix
 

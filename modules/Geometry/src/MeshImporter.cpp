@@ -5,6 +5,7 @@
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Geometry/SmoothingCheck.hpp>
 #include "GltfSource.hpp"
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -957,6 +958,20 @@ std::expected<SkinReadNotes, MeshImportError> AppendPrimitiveSkin(const fastgltf
 /// what it found.
 constexpr std::string_view kSmoothShadingPage = "https://dafrancc.github.io/Assisi/rendering-smooth-shading.html";
 
+/* Whether the model's sidecar asks for its sharp smoothing to be split. A model
+   without a readable sidecar has asked for nothing. */
+bool SplitRequested(std::string_view virtualPath)
+{
+    const std::expected<std::string, Core::AssetError> text =
+        Core::AssetSystem::ReadText(std::string{virtualPath} + ".aast");
+    if (!text)
+    {
+        return false;
+    }
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*text);
+    return sidecar.has_value() && sidecar->splitSharpSmoothing;
+}
+
 /// A bulge as a percentage, the unit the warning states it in.
 constexpr float kPercent = 100.f;
 
@@ -1222,6 +1237,14 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         {
             merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, resolveId, warnings));
         }
+    }
+    // Before the check, so a model split as its author asked is not warned about.
+    if (SplitRequested(virtualPath))
+    {
+        const std::size_t split = SplitSharpSmoothing(merged);
+        Core::Log::Info("MeshImporter: '{}': split {} sharply smoothed corner(s) into hard edges, as its import "
+                        "setting asks.",
+                        virtualPath, split);
     }
     WarnSharpSmoothing(merged, virtualPath);
 

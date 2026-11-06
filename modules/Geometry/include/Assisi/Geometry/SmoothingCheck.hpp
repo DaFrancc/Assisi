@@ -20,6 +20,7 @@
 /// against the size of the whole model, is what decides whether it is worth a
 /// warning.
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -64,5 +65,21 @@ struct SharpSmoothing
 /// normal, has no bend to measure and is skipped too. Expects the explicit
 /// submesh tables (EnsureSubMeshTables).
 [[nodiscard]] std::vector<SharpSmoothing> FindSharpSmoothing(const MeshData &mesh);
+
+/// @brief Gives every corner of @p mesh bent past kMaxSmoothingBendDegrees its
+/// own normal, the way marking the edges there sharp would.
+///
+/// The new normal averages the faces around the corner's position that are
+/// within kMaxSmoothingBendDegrees of the corner's own triangle, weighted by
+/// area: a cone's tip takes the slope of the sides beside it, a cylinder's rim
+/// splits into the side's normal and the cap's, a box smoothed all round
+/// becomes flat-faced. Each such corner gets a vertex of its own, shared with
+/// the other corners there that take the same normal; every other corner keeps
+/// the normal it was authored with. Afterwards FindSharpSmoothing finds
+/// nothing. Skips the same submeshes FindSharpSmoothing does, and expects the
+/// same explicit tables.
+///
+/// @return How many corners were given a normal of their own.
+std::size_t SplitSharpSmoothing(MeshData &mesh);
 
 } // namespace Assisi::Geometry

@@ -8,6 +8,7 @@
 #include <Assisi/Math/GLM.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -18,6 +19,7 @@ using Assisi::Geometry::kMajorSmoothingBulge;
 using Assisi::Geometry::kMinorSmoothingBulge;
 using Assisi::Geometry::MeshData;
 using Assisi::Geometry::SharpSmoothing;
+using Assisi::Geometry::SplitSharpSmoothing;
 using Assisi::Geometry::SubMesh;
 using Assisi::Geometry::Vertex;
 
@@ -242,5 +244,101 @@ TEST_CASE("FindSharpSmoothing: each submesh is reported on its own")
     const std::vector<SharpSmoothing> found = FindSharpSmoothing(mesh);
     REQUIRE(found.size() == 1);
     CHECK(found[0].subMesh == 1);
+}
+
+namespace
+{
+/// How close a split normal must come to the one the test works out.
+constexpr float kNormalTolerance = 1e-5f;
+
+/// Every corner's position, in index order: what a split must leave alone.
+std::vector<glm::vec3> CornerPositions(const MeshData &mesh)
+{
+    std::vector<glm::vec3> positions;
+    positions.reserve(mesh.Indices.size());
+    for (const uint32_t index : mesh.Indices)
+    {
+        positions.push_back(mesh.Vertices[index].Position);
+    }
+    return positions;
+}
+
+/// The outward normal of the triangle at @p firstIndex.
+glm::vec3 FaceAt(const MeshData &mesh, std::size_t firstIndex)
+{
+    const glm::vec3 a = mesh.Vertices[mesh.Indices[firstIndex]].Position;
+    const glm::vec3 b = mesh.Vertices[mesh.Indices[firstIndex + 1]].Position;
+    const glm::vec3 c = mesh.Vertices[mesh.Indices[firstIndex + 2]].Position;
+    return glm::normalize(glm::cross(b - a, c - a));
+}
+} // namespace
+
+TEST_CASE("SplitSharpSmoothing leaves a cone smoothed through its tip with nothing to warn about")
+{
+    MeshData cone = AveragedCone();
+    const std::vector<glm::vec3> before = CornerPositions(cone);
+    const std::size_t vertices = cone.Vertices.size();
+
+    // Every tip corner and every corner of the base edge, side and base alike.
+    CHECK(SplitSharpSmoothing(cone) == kConeSides * 2 * 3 - kConeSides);
+    CHECK(FindSharpSmoothing(cone).empty());
+    // The shape is where it was; only normals were given out.
+    CHECK(CornerPositions(cone) == before);
+    CHECK(cone.Vertices.size() > vertices);
+}
+
+TEST_CASE("SplitSharpSmoothing makes a cube smoothed all round flat-faced")
+{
+    // Each face meets its neighbours at a right angle, past the limit, so each
+    // corner takes its own face's normal.
+    MeshData cube = SmoothCube();
+    CHECK(SplitSharpSmoothing(cube) == cube.Indices.size());
+    for (std::size_t index = 0; index < cube.Indices.size(); ++index)
+    {
+        const glm::vec3 face = FaceAt(cube, index - index % 3);
+        CHECK(glm::distance(cube.Vertices[cube.Indices[index]].Normal, face) < kNormalTolerance);
+    }
+    // A face's two triangles share their corners' new vertices: four per face.
+    constexpr std::size_t kCubeCorners = 8;
+    constexpr std::size_t kCornersPerFace = 4;
+    constexpr std::size_t kFaces = 6;
+    CHECK(cube.Vertices.size() == kCubeCorners + kFaces * kCornersPerFace);
+}
+
+TEST_CASE("SplitSharpSmoothing leaves a mesh with nothing too sharp exactly as it was")
+{
+    MeshData cone = SplitCone();
+    const MeshData before = cone;
+    CHECK(SplitSharpSmoothing(cone) == 0u);
+    CHECK(cone.Indices == before.Indices);
+    CHECK(cone.Vertices.size() == before.Vertices.size());
+}
+
+TEST_CASE("SplitSharpSmoothing gives a split vertex the joints of the one it came from")
+{
+    MeshData cone = AveragedCone();
+    cone.Skin.resize(cone.Vertices.size());
+    for (std::size_t vertex = 0; vertex < cone.Skin.size(); ++vertex)
+    {
+        cone.Skin[vertex].Joints = glm::uvec4(static_cast<uint32_t>(vertex), 0u, 0u, 0u);
+    }
+    const std::vector<glm::vec3> before = CornerPositions(cone);
+    const MeshData original = cone;
+
+    SplitSharpSmoothing(cone);
+    REQUIRE(cone.Skin.size() == cone.Vertices.size());
+    for (std::size_t index = 0; index < cone.Indices.size(); ++index)
+    {
+        // The corner's joint is still the one its original vertex was bound to.
+        CHECK(cone.Skin[cone.Indices[index]].Joints[0] == original.Skin[original.Indices[index]].Joints[0]);
+    }
+    CHECK(CornerPositions(cone) == before);
+}
+
+TEST_CASE("SplitSharpSmoothing leaves a material whose shadows do not follow its smoothing alone")
+{
+    MeshData cone = AveragedCone();
+    cone.Materials[cone.SubMeshes[0].MaterialSlot].ShadowsFollowSmoothing = false;
+    CHECK(SplitSharpSmoothing(cone) == 0u);
 }
 

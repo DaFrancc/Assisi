@@ -78,6 +78,16 @@ void EditorApp::DrawModelActionsMenu(const std::string &vpath)
     {
         ImGui::SetTooltip("Writes each of the model's animations beside it as a clip file of its own.");
     }
+    const bool splits = SplitsSharpSmoothing(vpath);
+    if (ImGui::MenuItem("Split sharp smoothing", nullptr, splits))
+    {
+        SetSplitSharpSmoothing(vpath, !splits);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Gives corners smoothed too sharply for their shadows normals of their own, as hard "
+                          "edges.\nThose edges look sharp afterwards. The model file itself is left as it is.");
+    }
     ImGui::Separator();
     DrawUseAsItems(vpath);
     ImGui::EndPopup();

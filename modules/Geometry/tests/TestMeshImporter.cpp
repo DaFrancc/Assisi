@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -933,6 +935,37 @@ TEST_CASE("ImportMesh: a mesh smoothed over corners too sharp for it says so, ho
     CHECK(log.Mentions("badly wrong"));
     CHECK(log.Mentions("Smoothing debug view"));
     CHECK(log.Mentions("https://dafrancc.github.io/Assisi/rendering-smooth-shading.html"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a model whose sidecar asks for its sharp smoothing split imports split, and quietly")
+{
+    const fs::path root = WriteSmoothCube();
+    Assisi::Core::AssetSidecar sidecar =
+        Assisi::Core::AssetSidecar::Leaf(*Assisi::Core::AssetId::Parse("11111111-2222-4333-8444-555555555555"));
+    sidecar.splitSharpSmoothing = true;
+    {
+        std::ofstream file(root / "cube.gltf.aast", std::ios::binary);
+        file << Assisi::Core::SerializeSidecar(sidecar);
+    }
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("cube.gltf");
+    REQUIRE(result.has_value());
+
+    // Every corner of the cube took its own face's normal, so nothing is left to
+    // warn about.
+    CHECK_FALSE(log.Mentions("corners too sharp"));
+    for (std::size_t index = 0; index < result->Indices.size(); index += 3)
+    {
+        const glm::vec3 a = result->Vertices[result->Indices[index]].Position;
+        const glm::vec3 b = result->Vertices[result->Indices[index + 1]].Position;
+        const glm::vec3 c = result->Vertices[result->Indices[index + 2]].Position;
+        const glm::vec3 face = glm::normalize(glm::cross(b - a, c - a));
+        constexpr float kFlat = 0.9999f;
+        CHECK(glm::dot(result->Vertices[result->Indices[index]].Normal, face) > kFlat);
+    }
 
     fs::remove_all(root);
 }
