@@ -95,6 +95,7 @@ private:
     /// @brief The screen-space occlusion section: the switch, the sample count,
     /// the radius and the strength.
     static void DrawAmbientOcclusionSettings(const Frame &frame);
+    static void DrawFogSettings(const Frame &frame);
 
     bool _showOptions = false;
 

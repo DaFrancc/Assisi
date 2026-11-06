@@ -80,6 +80,10 @@ struct OptionsConfig
     /// count bounds a loop over a fixed-size kernel.
     Render::SsaoSettings ambientOcclusion;
 
+    /// @brief Whether the player chose to draw the level's fog, or nullopt to
+    /// leave it on. Read only when the game lets players choose: see FogEnabled.
+    std::optional<bool> fogEnabled;
+
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
     /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
@@ -96,6 +100,15 @@ struct OptionsConfig
     [[nodiscard]] FrameSnap FrameSnapping(const AppConfig &config) const
     {
         return frameSnap ? *frameSnap : config.frameSnap;
+    }
+
+    /// @brief Whether to draw the level's fog: the player's choice when
+    /// @p config lets players choose and they have, on otherwise. Off keeps the
+    /// draw distance the fog sets, so it changes how the edge looks, never what
+    /// is drawn.
+    [[nodiscard]] bool FogEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsFog && fogEnabled ? *fogEnabled : true;
     }
 
     /// @brief The tap interval to run with: the player's when @p config lets

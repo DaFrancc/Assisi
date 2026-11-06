@@ -25,6 +25,7 @@
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
 #include <Assisi/Render/DrawItem.hpp>
+#include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -225,6 +226,9 @@ public:
         /// answer and never asks which provider gave it.
         IndirectConstants indirect;
         ShadowFrameData shadows;
+        /// The level's fog, already resolved against its sky. A default one is
+        /// off, and the shader takes none of it.
+        FogConstants fog;
         /// Whether SetAmbientOcclusion's texture holds this frame's screen-space
         /// occlusion. False leaves the shader reading no texture and taking the
         /// indirect expressions it had before there was any.

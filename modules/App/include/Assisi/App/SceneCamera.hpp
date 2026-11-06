@@ -43,6 +43,10 @@ struct SceneView
 /// rather than an error: a game falls back to a default view, an editor to the
 /// camera the author is flying.
 ///
+/// The camera's farZ comes back shortened to the scene's haze (see
+/// Runtime::SceneDrawDistance), so whatever projects through it agrees with
+/// what was drawn.
+///
 /// A camera on this machine's player looks where the player has turned so far,
 /// every frame, including turning no fixed step has used yet, and is not blended
 /// between steps; it still stands where the blend puts it. Aim then follows the

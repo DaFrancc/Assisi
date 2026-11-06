@@ -114,20 +114,23 @@ screen. Off by default.
 Draws every mesh in view again, this time working out the colour of each pixel:
 it reads the material's maps, adds the light of every directional light and of
 the point and spot lights in the pixel's cluster, looks each one up in its
-shadow map, and adds the sky's ambient light and reflections. This is usually
-the most expensive pass. Its cost grows with the number of pixels, the lights
-reaching each pixel, and the shadow filter.
+shadow map, adds the sky's ambient light and reflections, and last fades the
+result into the level's [fog](rendering-sky.md#fog). This is usually the most
+expensive pass. Its cost grows with the number of pixels, the lights reaching
+each pixel, and the shadow filter.
 
 - **Changed by:** the resolution and MSAA; the number and `radius` of lights;
   the number of directional lights; the shadow `filter` and contact hardening;
-  every material.
+  every material; a `Fog`.
 
 ### 11. Sky (`sky`)
 
 Draws the sky into every pixel that nothing else covered. Only in a level with
-a sky. Its cost grows with how much sky is on screen.
+a sky, or a foggy level with none, where it fills those pixels with the fog's
+colour. With fog on, it draws the horizon's colour below the horizon instead of
+the ground's. Its cost grows with how much sky is on screen.
 
-- **Changed by:** `Skybox`; the resolution.
+- **Changed by:** `Skybox`; `Fog`; the resolution.
 
 ### 12. Post-processing (`post-process`, `post-process-output`)
 
@@ -161,6 +164,7 @@ the editor's own windows are drawn after this.
 | A `PointLight` or `SpotLight` | Light sorting, lit pass, and its shadow if it casts one |
 | A `DirectionalLight` | Lit pass, everywhere; sun shadows if it casts |
 | `Skybox`, `TimeOfDay`, `Sun`, `Moon` | Sky, sky reflections, sun shadows |
+| `Fog` | Lit pass, sky; and, through the draw distance, everything `Camera.farZ` changes |
 | `Camera.farZ` | Light grid; how far the sun shadows reach |
 | A material's `Alpha` set to `Mask` | Prepass, lit pass, shadows |
 | A `SkinnedMesh` | Skinning |

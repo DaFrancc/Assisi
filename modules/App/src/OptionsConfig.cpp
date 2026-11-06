@@ -295,6 +295,12 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.ambientOcclusion = Render::Sanitized(cfg.ambientOcclusion);
         }
 
+        // Present means chosen, as with the tap interval.
+        if (json.contains("fog") && json.at("fog").contains("enabled"))
+        {
+            cfg.fogEnabled = json.at("fog").at("enabled").get<bool>();
+        }
+
         if (json.contains("window"))
         {
             const auto &window = json.at("window");
@@ -525,6 +531,11 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.multiTapSeconds)
     {
         json["controls"]["multiTapSeconds"] = *options.multiTapSeconds;
+    }
+
+    if (options.fogEnabled)
+    {
+        json["fog"]["enabled"] = *options.fogEnabled;
     }
 
     // Only a volume the player set: every other bus follows the game's own

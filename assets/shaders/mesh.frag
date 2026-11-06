@@ -7,6 +7,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 // Each piece may use anything the pieces before it declare.
+#include "sky/fog.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"
@@ -22,6 +23,10 @@ const float kDisplayGamma = 2.2;
 // Floor on a fragment's squared distance to a light, so one exactly on the
 // light normalises a direction rather than dividing by zero.
 const float kMinLightDistanceSq = 1e-8;
+
+// Fog thinner than this moves a pixel a fifth of a percent of the way to the
+// fog's colour, which does not show, so its colour is not worked out.
+const float kMinVisibleFog = 1.0 / 512.0;
 
 // The narrowest penumbra a spot's cone is given, in cosine, so one authored
 // with inner == outer blends over a sliver rather than dividing by zero.
@@ -290,6 +295,20 @@ void main()
     else
     {
         color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+    }
+
+    // The level's fog, over everything the surface sends toward the eye. Its
+    // colour is a sky evaluation, so it is only worked out where enough fog
+    // lies in front of the surface to show.
+    if (uFrame.fog.view.x != 0.0)
+    {
+        vec3  toSurface = vWorldPos - uFrame.cameraPosition.xyz;
+        float distance  = length(toSurface);
+        float opacity   = FogOpacity(uFrame.fog, distance, uFrame.fog.view.y + toSurface.y);
+        if (opacity > kMinVisibleFog)
+        {
+            color = mix(color, FogRadiance(uFrame.fog, toSurface / max(distance, kEps)), opacity);
+        }
     }
 
     // ---- Shadow debug views ----

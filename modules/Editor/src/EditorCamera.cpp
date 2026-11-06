@@ -12,6 +12,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 
 #include <cmath>
 #include <limits>
@@ -21,19 +22,20 @@ namespace Assisi::Editor
 
 namespace
 {
-/// How far the level's first active camera draws, or @p fallback without one.
-/// Quiet, unlike App::ActiveSceneCamera: it runs every frame, and two active
-/// cameras are reported by whatever looks through them.
+/// How far the level's first active camera draws, or @p fallback without one,
+/// never past the level's haze. Quiet, unlike App::ActiveSceneCamera: it runs
+/// every frame, and two active cameras are reported by whatever looks through
+/// them.
 float LevelDrawDistance(Assisi::ECS::Scene &scene, float fallback)
 {
     for (auto [entity, camera] : scene.Query<Assisi::Runtime::Camera>())
     {
         if (camera.isActive && scene.Has<Assisi::ECS::Transform>(entity))
         {
-            return camera.farZ;
+            return Assisi::Runtime::SceneDrawDistance(scene, camera.farZ);
         }
     }
-    return fallback;
+    return Assisi::Runtime::SceneDrawDistance(scene, fallback);
 }
 } // namespace
 

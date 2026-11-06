@@ -87,6 +87,14 @@ public:
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraPosition,
               const SkySun &sun, const SkyMoon &moon, const SkySettings &settings);
 
+    /// @brief What the next Draw does for the level's fog. @p color is read only
+    /// by SkyFogMode::Flat, where it is the whole of what is drawn. A capture
+    /// through DrawInto never takes it.
+    void SetFog(SkyFogMode mode, const glm::vec3 &color)
+    {
+        _fog = glm::vec4(color, static_cast<float>(mode));
+    }
+
     /// @brief Fill every texel of @p target with the sky @p constants describe.
     ///
     /// How a reflection probe captures the sky: the same shader the screen is
@@ -135,6 +143,9 @@ private:
     // DrawInto's: colour only, no depth test. Independent of the scene target,
     // so a render-target change leaves it alone.
     nvrhi::GraphicsPipelineHandle _capturePipeline;
+
+    /// SkyConstants::fog for the next Draw.
+    glm::vec4 _fog{0.0f};
 
     std::string _moonTexturePath;
     /// A white 1x1 until a moon is first drawn, so a binding set always has a

@@ -8,6 +8,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 
 namespace Assisi::App
 {
@@ -76,6 +77,10 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
         found = SceneView{.world = world, .pose = *transform, .camera = sceneCamera, .entity = entity};
     }
 
+    if (found)
+    {
+        found->camera.farZ = Runtime::SceneDrawDistance(scene, found->camera.farZ);
+    }
     return found;
 }
 

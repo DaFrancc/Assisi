@@ -88,6 +88,8 @@ layout(binding = 256) uniform FrameConstants
     vec4  shadowPcss;
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];
+    // mesh.frag's copy goes on to the fog, which this stage never reads. Left
+    // off rather than mirrored: it is last, so leaving it moves nothing above.
 } uFrame;
 
 void main()

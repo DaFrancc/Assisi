@@ -908,6 +908,9 @@ void EditorApp::SetupScene()
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     // And for screen-space occlusion, which holds nothing while it is off.
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    // The author's own choice whatever the game allows its players: the editor
+    // is where fog is compared on and off.
+    _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.

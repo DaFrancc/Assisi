@@ -835,6 +835,48 @@ struct SkyBodyRadiance
     return SkyRadiance(direction, rawSun, SkyMoon{}, rawSettings);
 }
 
+/// @brief Everything the scattered light of the sky depends on, in the lanes
+/// sky/scatter.glsl's SkyScatter reads. The sky pass and the fog both carry it,
+/// so the fog's colour comes off the same numbers the sky behind it is drawn
+/// from.
+struct SkyScatterConstants
+{
+    glm::vec4 sunDirection{0.0f, 1.0f, 0.0f, 0.0f}; ///< xyz = unit direction TO the sun, w unused
+    glm::vec4 sunRadiance{0.0f};                    ///< xyz = colour * intensity, w unused
+    /// xyz = scattering coefficients as authored, w = the optical depth scaling
+    /// them. Not premultiplied: see SkyConstants::airScattering.
+    glm::vec4 airScattering{0.0f};
+    glm::vec4 haze{0.0f};        ///< xyz = how strongly haze scatters, w = its forwardness
+    glm::vec4 groundColor{0.0f}; ///< xyz = linear colour, w = sky exposure
+    glm::vec4 nightColor{0.0f};  ///< xyz = linear colour, w unused
+    glm::vec4 atmosphere{0.0f};  ///< x = multiple scattering, yzw unused
+    glm::vec4 moonDirection{0.0f, 1.0f, 0.0f, 0.0f}; ///< xyz = unit direction TO the moon, w unused
+    glm::vec4 moonRadiance{0.0f};                    ///< xyz = colour * intensity, w unused
+    glm::vec4 moonDiskColor{1.0f};                   ///< xyz unused, w = atmospheric tint
+};
+
+static_assert(sizeof(SkyScatterConstants) == 160, "SkyScatterConstants must match sky/scatter.glsl's SkyScatter");
+
+/// @brief The scattering lanes for one sky, with everything sanitized on the way in.
+[[nodiscard]] inline SkyScatterConstants MakeSkyScatterConstants(const SkySun &rawSun, const SkyMoon &rawMoon,
+                                                                 const SkySettings &rawSettings)
+{
+    const SkySettings settings = Sanitized(rawSettings);
+    const SkySun sun = Sanitized(rawSun);
+    const SkyMoon moon = Sanitized(rawMoon);
+
+    return SkyScatterConstants{.sunDirection = glm::vec4(sun.directionToSun, 0.0f),
+                               .sunRadiance = glm::vec4(sun.color * sun.intensity, 0.0f),
+                               .airScattering = glm::vec4(settings.airScattering, settings.airThickness),
+                               .haze = glm::vec4(settings.hazeScattering, settings.hazeForwardness),
+                               .groundColor = glm::vec4(settings.groundColor, settings.exposure),
+                               .nightColor = glm::vec4(settings.nightColor, 0.0f),
+                               .atmosphere = glm::vec4(settings.skyBounce, 0.0f, 0.0f, 0.0f),
+                               .moonDirection = glm::vec4(moon.directionToMoon, 0.0f),
+                               .moonRadiance = glm::vec4(moon.color * moon.intensity, 0.0f),
+                               .moonDiskColor = glm::vec4(moon.diskColor, moon.atmosphericTint)};
+}
+
 /// @brief The sky pass's constant buffer. Field order, types and packing match
 /// sky.frag's SkyConstants block.
 struct SkyConstants
@@ -868,15 +910,35 @@ struct SkyConstants
     /// moon; w unused. A vector rather than an angle because the frame it comes
     /// from means nothing here — the shader only has to stamp the picture.
     glm::vec4 moonUp{0.0f, 0.0f, -1.0f, 0.0f};
+    /// xyz = the fog's own colour, w = a SkyFogMode. Off in a capture, whose
+    /// lower half is the ground a reflection stands in for.
+    glm::vec4 fog{0.0f};
+};
+
+/// @brief What the sky pass draws for the level's fog. Must match sky.frag's
+/// kSkyFog constants.
+///
+/// Past the draw distance the fog is total, so what the sky pass draws there has
+/// to be what fully fogged ground looks like, or the edge shows.
+enum class SkyFogMode : std::uint8_t
+{
+    /// No fog: the sky as it is, ground below the horizon.
+    Off,
+    /// The horizon's colour carried on below the horizon where the ground's
+    /// would be.
+    BelowHorizon,
+    /// No sky: the fog's own colour behind everything.
+    Flat,
+    Count_,
 };
 
 // std140 packs a mat4 as four vec4s and every vec4 on its own sixteen bytes, so
 // this layout is contiguous with no padding and these offsets are the shader's.
 // Asserted rather than trusted: a lane inserted in the wrong place here reads as
 // a plausible sky with the wrong numbers in it, which nothing on screen names.
-static_assert(sizeof(SkyConstants) == 272, "SkyConstants must match sky.frag's uniform block size");
+static_assert(sizeof(SkyConstants) == 288, "SkyConstants must match sky.frag's uniform block size");
 static_assert(offsetof(SkyConstants, moonDirection) == 208, "moonDirection must follow the ninth vec4");
-static_assert(offsetof(SkyConstants, moonUp) == 256, "moonUp must be the last lane");
+static_assert(offsetof(SkyConstants, fog) == 272, "fog must be the last lane");
 
 /// @brief The constants for one sky draw, with everything sanitized on the way in.
 [[nodiscard]] inline SkyConstants MakeSkyConstants(const glm::mat4 &invViewProjection, const glm::vec3 &cameraPosition,

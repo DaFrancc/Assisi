@@ -48,6 +48,8 @@ layout(binding = 256) uniform FrameConstants
     // offset in world units, w = depth range in world units.
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];
+    // The level's fog; view.x is zero without one.
+    FogConstants fog;
 } uFrame;
 
 // Must match Render::MaterialDebugView.
