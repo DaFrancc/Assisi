@@ -73,13 +73,13 @@ float CascadeBlockerGap(uint cascade, Receiver receiver)
     float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, receiver.reference, uFrame.shadowPcss.y);
     float threshold = kPcssBlockerMinDepthTexels * uFrame.shadowPcss.z;
     vec2  size      = vec2(textureSize(uShadowCascades, 0).xy);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    vec2  turn      = VogelTurn();
 
     float gapSum   = 0.0;
     float blockers = 0.0;
     for (uint i = 0u; i < kVogelTaps; ++i)
     {
-        vec2 tapUv = receiver.uv + VogelOffset(i, phi, searchUv);
+        vec2 tapUv = receiver.uv + VogelOffset(i, turn, searchUv);
         if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
         {
             continue;
@@ -103,27 +103,49 @@ float CascadeBlockerGap(uint cascade, Receiver receiver)
 // probe straddles an edge.
 float FilterCascadeVogel(uint cascade, Receiver receiver, float stepUv)
 {
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-    float sum = 0.0;
+    vec2  turn = VogelTurn();
+    float sum  = 0.0;
     for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv,
+        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelProbe[i], turn, kVogelRadiusSteps * stepUv),
                           receiver);
     }
-    if (sum == 0.0)
+    if (ProbeAgrees(sum, kVogelProbeTaps))
     {
-        return 0.0;
-    }
-    if (sum == float(kVogelProbeTaps))
-    {
-        return 1.0;
+        return sum / float(kVogelProbeTaps);
     }
     for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
     {
-        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv,
+        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelRest[i], turn, kVogelRadiusSteps * stepUv),
                           receiver);
     }
     return sum / float(kVogelTaps);
+}
+
+// The 3x3 or 5x5 grid of @p radius at @p step, probed first at its centre and
+// corners.
+float FilterCascadeGrid(uint cascade, Receiver receiver, float step, int radius)
+{
+    float sum = CascadeTap(cascade, receiver.uv, receiver);
+    for (uint i = 0u; i < kGridProbeTaps - 1u; ++i)
+    {
+        sum += CascadeTap(cascade, receiver.uv + kGridCorners[i] * (float(radius) * step), receiver);
+    }
+    if (ProbeAgrees(sum, kGridProbeTaps))
+    {
+        return sum / float(kGridProbeTaps);
+    }
+    for (int y = -radius; y <= radius; ++y)
+    {
+        for (int x = -radius; x <= radius; ++x)
+        {
+            if (!IsGridProbe(x, y, radius))
+            {
+                sum += CascadeTap(cascade, receiver.uv + vec2(float(x), float(y)) * step, receiver);
+            }
+        }
+    }
+    return sum / PcfTapCount(radius);
 }
 
 // The sun through @p cascade, contact-hardened.
@@ -185,17 +207,7 @@ float SampleCascade(uint cascade, ShadowSurface surface)
     {
         return FilterCascadeVogel(cascade, receiver, step);
     }
-
-    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
-    float sum    = 0.0;
-    for (int y = -radius; y <= radius; ++y)
-    {
-        for (int x = -radius; x <= radius; ++x)
-        {
-            sum += CascadeTap(cascade, uv + vec2(float(x), float(y)) * step, receiver);
-        }
-    }
-    return sum / PcfTapCount(radius);
+    return FilterCascadeGrid(cascade, receiver, step, filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius);
 }
 
 // What the map holds at this fragment's own lookup and what the fragment
