@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -57,6 +58,26 @@ void EditorApp::HandleEntityPicking()
     if (_splineTarget && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
     {
         _splineTarget.reset();
+    }
+
+    // Every press of the select button counts towards a double-click, whatever
+    // it lands on, the gizmo included: the gizmo sits on the node it moves, so a
+    // double-click on that node lands on its handles.
+    if (GetActions().IsActionPressed("Select", input) && !input.IsMouseCaptured() && !ImGuiWantsMouse())
+    {
+        const glm::vec2 cursor = input.MousePosition();
+        const double now =
+            std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool doubled = _selectPresses.Press(now, cursor);
+
+        // Shaping that point when the first press began, so the first press did
+        // not choose it.
+        const bool shapedBefore = _splineTarget.has_value() && _shapingAtLastPress == _splineTarget;
+        _shapingAtLastPress = _splineTarget;
+        if (doubled && shapedBefore && CycleShapedNodeAt(cursor))
+        {
+            return;
+        }
     }
 
     // A click meant for the gizmo (hovered or dragging) is not a pick: it would

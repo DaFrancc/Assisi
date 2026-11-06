@@ -7,6 +7,7 @@ add_executable(Assisi-Editor-Tests
   main.cpp
   TestColliderBlueprint.cpp
   TestColliderPose.cpp
+  TestDoubleClick.cpp
   TestEditHistory.cpp
   TestEditorEvents.cpp
   TestEditorPreferences.cpp
@@ -25,6 +26,7 @@ add_executable(Assisi-Editor-Tests
   TestThickLines.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/DoubleClick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorEvents.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorPreferences.cpp"

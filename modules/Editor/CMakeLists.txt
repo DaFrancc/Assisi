@@ -11,6 +11,7 @@ target_sources(Assisi-Editor
   PUBLIC
     "include/Assisi/Editor/ColliderBlueprint.hpp"
     "include/Assisi/Editor/ColliderPose.hpp"
+    "include/Assisi/Editor/DoubleClick.hpp"
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
     "include/Assisi/Editor/EditorChiaraPanel.hpp"
@@ -34,6 +35,7 @@ target_sources(Assisi-Editor
   PRIVATE
     "src/ColliderBlueprint.cpp"
     "src/ColliderPose.cpp"
+    "src/DoubleClick.cpp"
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
     "src/EditorPreferences.cpp"

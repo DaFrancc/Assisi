@@ -55,6 +55,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
+#include <Assisi/Editor/DoubleClick.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/EditorEvents.hpp>
 #include <Assisi/Editor/EditorPreferences.hpp>
@@ -661,6 +662,16 @@ class EditorApp : public Assisi::App::Application
     ///
     /// @return true when the click was the splines', so nothing else may take it.
     bool HandleSplineClick(glm::vec2 cursor);
+
+    /// @brief A double-click on the node being shaped: steps its mode, as one
+    /// undo step.
+    ///
+    /// Ahead of the gizmo test rather than inside HandleSplineClick, because the
+    /// gizmo sits on the node it moves, so every click on that node lands on the
+    /// gizmo's handles and is kept from the ordinary pick.
+    ///
+    /// @return true when the cursor was on that node and its mode stepped.
+    bool CycleShapedNodeAt(glm::vec2 cursor);
 
     /// @brief The entity whose spline's curve the cursor is on, or NullEntity.
     /// @p tOut is the distance to that point, to weigh against other picks.
@@ -1894,10 +1905,11 @@ class EditorApp : public Assisi::App::Application
     Assisi::Editor::GizmoDrag _splineDrag;
     Assisi::Core::Reflect::ComponentId _splineDragComponent = Assisi::Core::Reflect::kInvalidComponentId;
     bool _splineGizmoHeld = false;
-    // Whether the last click chose the point being shaped, rather than landing on
-    // it again. A double-click only steps a node's mode when the node was chosen
-    // before the double-click began.
-    bool _splineTargetFresh = false;
+    // The select button's presses, for telling a double-click, and the point
+    // being shaped when the previous press began: a double-click steps a node's
+    // mode only when the node was already being shaped before its first press.
+    Assisi::Editor::DoubleClick _selectPresses;
+    std::optional<Assisi::Editor::SplineTarget> _shapingAtLastPress;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

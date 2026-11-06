@@ -378,6 +378,40 @@ void EditorApp::EditSplineOnce(const SplineTarget &target, std::string_view acti
     }
 }
 
+bool EditorApp::CycleShapedNodeAt(glm::vec2 cursor)
+{
+    if (!_splineTarget || _splineTarget->part.kind != SplinePartKind::Node || !_showEditorOverlays ||
+        _playState == PlayState::Playing)
+    {
+        return false;
+    }
+    const SplineTarget target = *_splineTarget;
+    const Geometry::Spline *spline = SplineOf(target);
+    const PickRay ray = BuildPickRay(cursor);
+    if (spline == nullptr || !ray.valid || !IsEditable(target.entity))
+    {
+        return false;
+    }
+
+    // On that node, not merely near the gizmo: the gizmo's arms reach well past
+    // the node, and a double-click out along one is not aimed at the node.
+    const std::optional<SplinePartHit> hit =
+        PickSplinePart(ray, cursor, ModelFor(*_scene, target.entity, ray.measuredFrom), *spline);
+    if (!hit || hit->part != target.part)
+    {
+        return false;
+    }
+
+    const std::size_t node = target.part.node;
+    EditSplineOnce(target, "Change Node Mode",
+                   [node](Geometry::Spline &shaped)
+        {
+            CycleNodeMode(shaped, node);
+            return std::optional<std::size_t>(node);
+        });
+    return true;
+}
+
 bool EditorApp::HandleSplineClick(glm::vec2 cursor)
 {
     // The condition the nodes are drawn under: a marker that is not on screen is
@@ -403,24 +437,6 @@ bool EditorApp::HandleSplineClick(glm::vec2 cursor)
     {
         if (click.Part())
         {
-            const bool already = _splineTarget == click.Part();
-            const bool doubleClick = ImGui::GetIO().MouseDoubleClicked[ImGuiMouseButton_Left];
-
-            // A double-click on the node already being shaped steps its mode. Not
-            // one whose first click picked it: that first click only chose the
-            // node, and a mode changing under a plain double-click to select would
-            // be a surprise.
-            if (already && doubleClick && !_splineTargetFresh && click.Part()->part.kind == SplinePartKind::Node)
-            {
-                const std::size_t node = click.Part()->part.node;
-                EditSplineOnce(*click.Part(), "Change Node Mode",
-                               [node](Geometry::Spline &spline)
-                    {
-                        CycleNodeMode(spline, node);
-                        return std::optional<std::size_t>(node);
-                    });
-            }
-            _splineTargetFresh = !already;
             _splineTarget = click.Part();
             return true;
         }
