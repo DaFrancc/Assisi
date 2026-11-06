@@ -1,0 +1,399 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "farZ": 500.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            14.0,
+            24.0
+          ],
+          "rotation": [
+            0.96593,
+            -0.25882,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "intensity": 2.0,
+          "tintedBySky": true
+        },
+        "Skybox": {
+          "preset": 0
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.44,
+          "bearingDegrees": 200.0,
+          "latitudeDegrees": 45.0
+        },
+        "TimeOfDay": {
+          "hour": 13.5,
+          "paused": true,
+          "seasonsPaused": true
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "911c776f-cfb3-4d45-969e-c35456627e19",
+              "path": "materials/fog_grass.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            60.0,
+            1.0,
+            40.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Corner path",
+      "components": {
+        "Transform": {
+          "position": [
+            -14.0,
+            0.05,
+            0.0
+          ],
+          "rotation": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Path": {
+          "spline": {
+            "closed": false,
+            "nodes": [
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 0,
+                "position": [
+                  -3,
+                  0,
+                  6
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 0,
+                "position": [
+                  2,
+                  0,
+                  3
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 0,
+                "position": [
+                  -2,
+                  0,
+                  -1
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 0,
+                "position": [
+                  3,
+                  0,
+                  -6
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Smooth loop",
+      "components": {
+        "Transform": {
+          "position": [
+            0.0,
+            0.05,
+            0.0
+          ],
+          "rotation": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Path": {
+          "spline": {
+            "closed": true,
+            "nodes": [
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 1,
+                "position": [
+                  0,
+                  0,
+                  -6
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 1,
+                "position": [
+                  5,
+                  0,
+                  -2
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 1,
+                "position": [
+                  3,
+                  0,
+                  5
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 1,
+                "position": [
+                  -2,
+                  0,
+                  4
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  0
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  0
+                ],
+                "mode": 1,
+                "position": [
+                  -5,
+                  0,
+                  -1
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Bezier curve",
+      "components": {
+        "Transform": {
+          "position": [
+            14.0,
+            0.05,
+            0.0
+          ],
+          "rotation": [
+            1,
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Path": {
+          "spline": {
+            "closed": false,
+            "nodes": [
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  2
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  -4
+                ],
+                "mode": 2,
+                "position": [
+                  -3,
+                  0,
+                  6
+                ]
+              },
+              {
+                "handleIn": [
+                  -3,
+                  0,
+                  1
+                ],
+                "handleOut": [
+                  3,
+                  0,
+                  -1
+                ],
+                "mode": 2,
+                "position": [
+                  0,
+                  0,
+                  0
+                ]
+              },
+              {
+                "handleIn": [
+                  0,
+                  0,
+                  4
+                ],
+                "handleOut": [
+                  0,
+                  0,
+                  -2
+                ],
+                "mode": 2,
+                "position": [
+                  3,
+                  0,
+                  -6
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "version": 2
+}

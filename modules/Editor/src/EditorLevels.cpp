@@ -1048,6 +1048,8 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     _instanceGesture.Abandon();
     _gizmoDrag.Abandon();
     _lightDrag.Abandon();
+    _splineDrag.Abandon();
+    _splineTarget.reset();
     _pausedHistory.reset();  // a load ends any play session, scratch history included
     _savedStateToken = 0;    // freshly loaded scene == on disk (empty history, token 0)
     _systemsEdited = false;  // ...and its system list is the one the file named

@@ -26,6 +26,7 @@
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Path.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 
@@ -494,6 +495,44 @@ TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")
     CHECK(t->position.x == doctest::Approx(1.f));
     CHECK(c->fovDegrees == doctest::Approx(42.f));
     CHECK(c->isActive == true);
+}
+
+TEST_CASE("SceneSerializer: a Path's spline survives a round-trip exactly")
+{
+    using Assisi::Geometry::SplineNode;
+    using Assisi::Geometry::SplineNodeMode;
+
+    Assisi::Runtime::Path path;
+    path.spline.closed = true;
+    path.spline.nodes = {
+        SplineNode{.position = {0.1f, -2.f, 3.3f}, .mode = SplineNodeMode::Corner},
+        SplineNode{.position = {4.f, 0.f, 1.f},
+                   .handleIn = {-0.7f, 0.2f, 0.f},
+                   .handleOut = {1.25f, -0.3f, 0.5f},
+                   .mode = SplineNodeMode::Bezier},
+        SplineNode{.position = {7.f, 1.f, -2.f}, .handleIn = {-1.f, 0.f, 0.f}, .handleOut = {1.f, 0.f, 0.f}},
+    };
+
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, path) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+
+    const auto *back = loaded.Get<Assisi::Runtime::Path>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(back != nullptr);
+    CHECK(back->spline.closed);
+    REQUIRE(back->spline.nodes.size() == path.spline.nodes.size());
+    for (std::size_t i = 0; i < path.spline.nodes.size(); ++i)
+    {
+        const SplineNode &want = path.spline.nodes[i];
+        const SplineNode &got = back->spline.nodes[i];
+        CHECK(got.position == want.position);
+        CHECK(got.handleIn == want.handleIn);
+        CHECK(got.handleOut == want.handleOut);
+        CHECK(got.mode == want.mode);
+    }
 }
 
 TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")

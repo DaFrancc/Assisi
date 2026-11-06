@@ -133,6 +133,11 @@ public:
     /// end of the next Render() and then cleared, so callers re-submit each frame.
     void SubmitOverlayLines(std::span<const LineVertex> vertices, bool onTop);
 
+    /// @brief The same, drawn @p widthPixels wide rather than one pixel: a
+    /// LineList of segments, which this widens into triangles as they arrive.
+    /// One pixel or less goes to SubmitOverlayLines.
+    void SubmitThickOverlayLines(std::span<const LineVertex> vertices, bool onTop, float widthPixels);
+
     /// @brief Suppress the billboard for these entities for the next Render()
     /// (something else already marks them — a collider wireframe, say). Consumed
     /// and cleared each Render(), so the caller re-supplies it every frame.
@@ -203,6 +208,8 @@ private:
     /// end of Render() and cleared. Refilled each frame by the caller.
     std::vector<LineVertex> _overlayLinesDepthTested;
     std::vector<LineVertex> _overlayLinesOnTop;
+    std::vector<ThickLineVertex> _thickLinesDepthTested;
+    std::vector<ThickLineVertex> _thickLinesOnTop;
 
     /// Independent silhouette-outline groups queued this frame; each is drawn as
     /// its own edge-detect pass (so a collider and its mesh never merge), then

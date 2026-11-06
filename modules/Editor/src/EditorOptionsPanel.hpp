@@ -10,6 +10,7 @@
 #include <cstdint>
 
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Editor/EditorPreferences.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
 #include <span>
@@ -47,6 +48,8 @@ public:
         const App::AppConfig &config;
         bool &showEditorOverlays;
         bool &showSkeletons;
+        /// The editor's own settings, which the panel edits and the editor saves.
+        EditorPreferences &preferences;
 
         int32_t fps;
         double cpuFrameMs;

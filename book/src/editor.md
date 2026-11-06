@@ -107,6 +107,28 @@ A `*` in the window title means you have unsaved changes.
 
 > There's no **Ctrl+S** yet. Save from the Levels panel.
 
+### Shaping a spline
+
+A spline is a curve through points called nodes, such as a `Path` component's.
+Select its entity by clicking the curve, then:
+
+- **Click a node's arrowhead** to move that node with the gizmo instead of the
+  entity. The arrowheads point the way the spline runs; the start has a disc at
+  its base and the end one at its tip.
+- **Double-click the selected node** to step its mode: `Corner`, `Smooth`,
+  `Bezier`, and round again.
+- **Alt+click on the curve** to add a node there, or, with an end node selected,
+  **Alt+click** where the next node should go.
+- **Delete** removes the selected node, and **Escape** hands the gizmo back to
+  the entity.
+
+To change how splines look, press **F11** and set **Spline Color**, the colour
+of splines on unselected entities, and **Spline Thickness**, how many pixels
+wide every curve is drawn. The editor remembers both in `editor.json`, next to
+the editor's executable; delete that file to go back to the defaults.
+
+[Splines](splines.md) covers the rest, such as handles and node modes.
+
 ## Playing
 
 | Key | Action |

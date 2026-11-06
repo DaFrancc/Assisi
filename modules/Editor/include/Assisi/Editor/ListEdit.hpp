@@ -54,6 +54,8 @@ struct FieldStep
     std::size_t offset = 0;
     const Core::Reflect::ContainerOps *list = nullptr; ///< The field's list, or null when it is no list.
     std::size_t row = 0;
+
+    bool operator==(const FieldStep &) const = default;
 };
 
 /// @brief The address @p path leads to from @p object, or null when a row it

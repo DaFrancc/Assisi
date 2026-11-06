@@ -18,6 +18,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Lifecycle.hpp"
     "include/Assisi/Runtime/LodSelection.hpp"
     "include/Assisi/Runtime/Naming.hpp"
+    "include/Assisi/Runtime/Path.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/ShadowCasterGather.hpp"
@@ -82,6 +83,7 @@ assisi_reflect(
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
     include/Assisi/Runtime/NameComponent.hpp
+    include/Assisi/Runtime/Path.hpp
     include/Assisi/Runtime/SkyComponents.hpp
     include/Assisi/Runtime/TimeOfDay.hpp
 )

@@ -203,6 +203,7 @@ void EditorApp::DrawOptionsWindow()
                                               .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
                                               .showSkeletons = _showSkeletons,
+                                              .preferences = _preferences,
                                               .fps = GetFps(),
                                               .cpuFrameMs = GetCpuFrameMs(),
                                               .gpuFrameMs = GetGpuFrameMs(),
@@ -214,6 +215,15 @@ void EditorApp::DrawOptionsWindow()
     if (applyDisplay)
     {
         ApplyDisplayOptions();
+    }
+
+    // Saved once an edit settles rather than on every frame of a drag. Never by a
+    // restricted viewer, which shares this folder with the editor that started
+    // it.
+    if (_preferences != _savedPreferences && !ImGui::IsAnyItemActive() && !IsRestrictedViewer())
+    {
+        Assisi::Editor::SaveEditorPreferences(_preferences);
+        _savedPreferences = _preferences;
     }
 
     // The per-light shadow report is gathered for two readers and nobody else:
@@ -1015,6 +1025,9 @@ void EditorApp::SetupScene()
     // is where fog is compared on and off.
     _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
 
+    _preferences = Assisi::Editor::LoadEditorPreferences();
+    _savedPreferences = _preferences;
+
     // Only a process with audio has anything to play it on.
     if (GetMixer() != nullptr)
     {
@@ -1115,6 +1128,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Where the benchmark camera will fly, which nothing else in the
         // viewport shows.
         SubmitCameraPathGizmos();
+
+        // Splines have no mesh of their own, so a Path is invisible otherwise.
+        SubmitSplineGizmos();
 
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
@@ -1328,7 +1344,15 @@ void EditorApp::OnUpdate(float dt)
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
         _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
-        DeleteSelection();
+        // A spline node being shaped is what Delete means while there is one.
+        if (_splineTarget)
+        {
+            DeleteSplineNode();
+        }
+        else
+        {
+            DeleteSelection();
+        }
     }
 
     // --- The frame's safe point ---------------------------------------------

@@ -23,6 +23,14 @@ struct LinePushConstants
     glm::mat4 viewProjection;
 };
 
+// The thick lines' vertex-stage push constants (mirrors thick_line.vert). 80
+// bytes, still within the 128-byte floor.
+struct ThickLinePushConstants
+{
+    glm::mat4 viewProjection;
+    glm::vec4 viewport; ///< xy = the framebuffer's size in pixels; zw unused.
+};
+
 // How far a depth-tested line is pulled toward the camera, in the depth
 // format's smallest steps at the line's own depth. Positive is nearer: the
 // scene's depth is reversed (Render/SceneDepth.hpp).
@@ -30,13 +38,15 @@ constexpr int32_t kTowardCameraBias = 256;
 } // namespace
 
 bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
-                          const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath)
+                          const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
+                          const std::string &thickVertexShaderSpvPath)
 {
     _device = device;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShader  = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShader)
+    _thickVertexShader = LoadSpirvShader(device, thickVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    if (!_vertexShader || !_pixelShader || !_thickVertexShader)
     {
         return false;
     }
@@ -64,6 +74,46 @@ bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     nvrhi::BindingSetDesc setDesc;
     setDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(LinePushConstants)));
     _bindingSet = device->createBindingSet(setDesc, _bindingLayout);
+
+    // In thick_line.vert's location order, which is the order here.
+    const nvrhi::VertexAttributeDesc thickAttributes[] = {
+        nvrhi::VertexAttributeDesc()
+        .setName("COLOR")
+        .setFormat(nvrhi::Format::RGBA32_FLOAT)
+        .setOffset(offsetof(ThickLineVertex, color))
+        .setElementStride(sizeof(ThickLineVertex)),
+        nvrhi::VertexAttributeDesc()
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(ThickLineVertex, position))
+        .setElementStride(sizeof(ThickLineVertex)),
+        nvrhi::VertexAttributeDesc()
+        .setName("OTHER")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(ThickLineVertex, other))
+        .setElementStride(sizeof(ThickLineVertex)),
+        nvrhi::VertexAttributeDesc()
+        .setName("SIDE")
+        .setFormat(nvrhi::Format::R32_FLOAT)
+        .setOffset(offsetof(ThickLineVertex, side))
+        .setElementStride(sizeof(ThickLineVertex)),
+        nvrhi::VertexAttributeDesc()
+        .setName("HALFWIDTH")
+        .setFormat(nvrhi::Format::R32_FLOAT)
+        .setOffset(offsetof(ThickLineVertex, halfWidth))
+        .setElementStride(sizeof(ThickLineVertex)),
+    };
+    _thickInputLayout = device->createInputLayout(thickAttributes, static_cast<uint32_t>(std::size(thickAttributes)),
+                                                  _thickVertexShader);
+
+    nvrhi::BindingLayoutDesc thickLayoutDesc;
+    thickLayoutDesc.visibility = nvrhi::ShaderType::All;
+    thickLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ThickLinePushConstants)));
+    _thickBindingLayout = device->createBindingLayout(thickLayoutDesc);
+
+    nvrhi::BindingSetDesc thickSetDesc;
+    thickSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ThickLinePushConstants)));
+    _thickBindingSet = device->createBindingSet(thickSetDesc, _thickBindingLayout);
 
     return BuildPipelines(sceneFramebufferInfo);
 }
@@ -109,7 +159,22 @@ bool LinePass::BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo
     pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
     _onTopPipeline = _device->createGraphicsPipeline(pipelineDesc, sceneFramebufferInfo);
 
-    if (_depthTestedPipeline == nullptr || _onTopPipeline == nullptr)
+    // The thick lines: the same two depth modes over triangles, through their own
+    // vertex stage and layout. The bias stays on the depth-tested one for the
+    // same coplanar edges.
+    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    pipelineDesc.VS = _thickVertexShader;
+    pipelineDesc.inputLayout = _thickInputLayout;
+    // In the one slot the thin pipelines' layout held.
+    pipelineDesc.bindingLayouts[0] = _thickBindingLayout;
+    pipelineDesc.renderState.rasterState.depthBias = kTowardCameraBias;
+    pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
+    _thickDepthTestedPipeline = _device->createGraphicsPipeline(pipelineDesc, sceneFramebufferInfo);
+    pipelineDesc.renderState.rasterState.depthBias = 0;
+    pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
+    _thickOnTopPipeline = _device->createGraphicsPipeline(pipelineDesc, sceneFramebufferInfo);
+
+    if (!IsValid())
     {
         Core::Log::Error("LinePass: failed to create the line pipelines.");
         return false;
@@ -156,6 +221,73 @@ bool LinePass::EnsureVertexCapacity(int32_t slot, uint32_t vertexCount)
     _vertexBuffers[slot]    = grown;
     _vertexCapacities[slot] = newCapacity;
     return true;
+}
+
+bool LinePass::EnsureThickCapacity(int32_t slot, uint32_t cornerCount)
+{
+    if (cornerCount <= _thickCapacities[slot] && _thickBuffers[slot] != nullptr)
+    {
+        return true;
+    }
+
+    // Grown with headroom, as the thin buffers are. Six corners per segment.
+    uint32_t newCapacity = _thickCapacities[slot] == 0 ? 6 * 256 : _thickCapacities[slot];
+    while (newCapacity < cornerCount)
+    {
+        newCapacity *= 2;
+    }
+
+    nvrhi::BufferDesc desc;
+    desc.byteSize         = static_cast<size_t>(newCapacity) * sizeof(ThickLineVertex);
+    desc.isVertexBuffer   = true;
+    desc.initialState     = nvrhi::ResourceStates::VertexBuffer;
+    desc.keepInitialState = true;
+    desc.debugName        = "LinePass::ThickCorners";
+    nvrhi::BufferHandle grown = _device->createBuffer(desc);
+    if (grown == nullptr)
+    {
+        Core::Log::Error("LinePass: failed to grow the thick line buffer to {} corners.", newCapacity);
+        return false;
+    }
+    _thickBuffers[slot]    = grown;
+    _thickCapacities[slot] = newCapacity;
+    return true;
+}
+
+void LinePass::DrawThick(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                         std::span<const ThickLineVertex> corners, bool onTop)
+{
+    const uint32_t cornerCount = static_cast<uint32_t>(corners.size());
+    if (!IsValid() || cornerCount == 0)
+    {
+        return;
+    }
+    const int32_t slot = onTop ? 1 : 0;
+    if (!EnsureThickCapacity(slot, cornerCount))
+    {
+        return;
+    }
+
+    frame.commandList->writeBuffer(_thickBuffers[slot], corners.data(),
+                                   static_cast<size_t>(cornerCount) * sizeof(ThickLineVertex));
+
+    nvrhi::GraphicsState state;
+    state.pipeline    = onTop ? _thickOnTopPipeline : _thickDepthTestedPipeline;
+    state.framebuffer = frame.framebuffer;
+    state.addBindingSet(_thickBindingSet);
+    state.addVertexBuffer(nvrhi::VertexBufferBinding{_thickBuffers[slot], 0, 0});
+    state.viewport.addViewportAndScissorRect(
+        nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+    frame.commandList->setGraphicsState(state);
+
+    ThickLinePushConstants pc;
+    pc.viewProjection = viewProjection;
+    pc.viewport = glm::vec4(static_cast<float>(frame.width), static_cast<float>(frame.height), 0.f, 0.f);
+    frame.commandList->setPushConstants(&pc, sizeof(pc));
+
+    nvrhi::DrawArguments drawArgs;
+    drawArgs.vertexCount = cornerCount;
+    frame.commandList->draw(drawArgs);
 }
 
 void LinePass::Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const LineVertex> vertices,

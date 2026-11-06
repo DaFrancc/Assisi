@@ -55,14 +55,17 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
+#include <Assisi/Editor/DoubleClick.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/EditorEvents.hpp>
+#include <Assisi/Editor/EditorPreferences.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Editor/SourceAssets.hpp>
+#include <Assisi/Editor/SplineEdit.hpp>
 #include <Assisi/Editor/ThumbnailCache.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -613,6 +616,11 @@ class EditorApp : public Assisi::App::Application
     /// path to the next in play order.
     void SubmitCameraPathGizmos();
 
+    /// @brief Draw every spline in the level, found in its components by
+    /// reflection. The selected entity's draw on top in the selection colour,
+    /// with a marker on each node and the handles of each Bezier node.
+    void SubmitSplineGizmos();
+
     /// @brief The light whose outline the cursor is on, or NullEntity.
     ///
     /// The outline, not the volume it encloses: a point light's sphere is where
@@ -644,6 +652,56 @@ class EditorApp : public Assisi::App::Application
     /// @return true when it took the frame's gizmo, which the transform gizmo
     /// checks so the two never draw over each other.
     [[nodiscard]] bool DrawDirectionalLightGizmo();
+
+    /// @brief Takes a click meant for the selected entity's splines: one on a
+    /// node or Bezier handle selects that point, and one with Alt held inserts a
+    /// node on the curve, or adds one past the selected end node.
+    ///
+    /// Ahead of every other pick, because a node sits on the curve it shapes and
+    /// usually on the ground under it too.
+    ///
+    /// @return true when the click was the splines', so nothing else may take it.
+    bool HandleSplineClick(glm::vec2 cursor);
+
+    /// @brief A double-click on the node being shaped: steps its mode, as one
+    /// undo step.
+    ///
+    /// Ahead of the gizmo test rather than inside HandleSplineClick, because the
+    /// gizmo sits on the node it moves, so every click on that node lands on the
+    /// gizmo's handles and is kept from the ordinary pick.
+    ///
+    /// @return true when the cursor was on that node and its mode stepped.
+    bool CycleShapedNodeAt(glm::vec2 cursor);
+
+    /// @brief The entity whose spline's curve the cursor is on, or NullEntity.
+    /// @p tOut is the distance to that point, to weigh against other picks.
+    [[nodiscard]] Assisi::ECS::Entity PickSplineCurveEntity(glm::vec2 cursor, float &tOut);
+
+    /// @brief Draws move handles on the spline node or handle being shaped, in
+    /// place of the transform gizmo, and moves it as they are dragged.
+    ///
+    /// @return true when it took the frame's gizmo; see DrawDirectionalLightGizmo.
+    [[nodiscard]] bool DrawSplineGizmo();
+
+    /// @brief Removes the node being shaped, as one undo step.
+    void DeleteSplineNode();
+
+    /// @brief The spline @p target names, or null when it is gone: its entity,
+    /// its component or the list row on the way to it.
+    [[nodiscard]] Assisi::Geometry::Spline *SplineOf(const Assisi::Editor::SplineTarget &target);
+
+    /// @brief Runs @p edit on the spline @p target names as one undo step called
+    /// @p action, and makes the node it returns the one being shaped; none when
+    /// it returns none.
+    void EditSplineOnce(const Assisi::Editor::SplineTarget &target, std::string_view action,
+                        const std::function<std::optional<std::size_t>(Assisi::Geometry::Spline &)> &edit);
+
+    /// @brief An Alt+click off every curve: a node past the end node being
+    /// shaped, or the first node of @p empty, a spline of the selected entity
+    /// with none. Placed where @p ray meets the level plane at the height of the
+    /// node it extends, or of the entity for a first node.
+    void AddSplineNodeOffCurve(const Assisi::Editor::PickRay &ray, const glm::mat4 &model,
+                               const std::optional<Assisi::Editor::SplineTarget> &empty);
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -1793,6 +1851,18 @@ class EditorApp : public Assisi::App::Application
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;
 
+    // Splines' curves, split as the lights are: the selection on top, the rest
+    // behind the geometry they wind through; drawn at the preferred thickness.
+    // The selection's node markers and handles go on top at one pixel.
+    std::vector<LineVertex> _splineCurvesDepthTested;
+    std::vector<LineVertex> _splineCurvesOnTop;
+    std::vector<LineVertex> _splineMarkers;
+
+    // The editor's own settings (editor.json), and what was last saved, which
+    // is how a change is noticed once it settles.
+    Assisi::Editor::EditorPreferences _preferences;
+    Assisi::Editor::EditorPreferences _savedPreferences;
+
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here
     // survives the call that fills it.
@@ -1827,6 +1897,19 @@ class EditorApp : public Assisi::App::Application
     // and conflating them let the transform gizmo draw a second set of handles
     // over these on every frame a sun was selected and not dragged.
     bool _lightGizmoHeld = false;
+
+    // The spline node or handle the viewport is shaping, if any, and its drag:
+    // the same pair as the light's aim, against whichever component holds the
+    // spline, which the drag remembers so its release commits the right one.
+    std::optional<Assisi::Editor::SplineTarget> _splineTarget;
+    Assisi::Editor::GizmoDrag _splineDrag;
+    Assisi::Core::Reflect::ComponentId _splineDragComponent = Assisi::Core::Reflect::kInvalidComponentId;
+    bool _splineGizmoHeld = false;
+    // The select button's presses, for telling a double-click, and the point
+    // being shaped when the previous press began: a double-click steps a node's
+    // mode only when the node was already being shaped before its first press.
+    Assisi::Editor::DoubleClick _selectPresses;
+    std::optional<Assisi::Editor::SplineTarget> _shapingAtLastPress;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

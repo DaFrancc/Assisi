@@ -7,8 +7,10 @@ add_executable(Assisi-Editor-Tests
   main.cpp
   TestColliderBlueprint.cpp
   TestColliderPose.cpp
+  TestDoubleClick.cpp
   TestEditHistory.cpp
   TestEditorEvents.cpp
+  TestEditorPreferences.cpp
   TestEntityPicking.cpp
   TestGizmoDrag.cpp
   TestInspectorFieldChrome.cpp
@@ -18,18 +20,26 @@ add_executable(Assisi-Editor-Tests
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
   TestSkeletonOverlay.cpp
+  TestSplineEdit.cpp
+  TestSplineFields.cpp
   TestSystemSearch.cpp
+  TestThickLines.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/DoubleClick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorEvents.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorPreferences.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ListEdit.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/Overlay/LineVertices.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SkeletonOverlay.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SplineEdit.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SplineFields.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SystemSearch.cpp"
 )
 
@@ -85,6 +95,8 @@ target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
   $<TARGET_OBJECTS:Assisi-ECS-TestComponents-Generated>
+  # Path holds a Geometry::Spline, whose table Geometry's generated file defines.
+  $<TARGET_OBJECTS:Assisi-Geometry-Generated>
 )
 
 Assisi_add_doctest_tests(Assisi-Editor-Tests NAME Editor)
