@@ -19,6 +19,16 @@ namespace Assisi::Runtime
 {
 namespace
 {
+/// Whether a caster's sphere @p caster reaches into a local light's volume
+/// @p light. A local light is a point with a range, so what can occlude for it
+/// is what stands inside its reach.
+bool SpheresTouch(const Assisi::Geometry::BoundingSphere &caster, const Assisi::Geometry::BoundingSphere &light)
+{
+    const glm::vec3 separation = caster.center - light.center;
+    const float reach = caster.radius + light.radius;
+    return glm::dot(separation, separation) <= reach * reach;
+}
+
 /// @brief Whether @p lhs draws through a pipeline class that sorts before
 /// @p rhs's, or the same class and an earlier geometry.
 ///
@@ -324,16 +334,22 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     _lightVolumes = lightVolumes;
     // A list that does not line up with the lights cannot say which of them
     // rest, so every one of them is taken to want its still casters.
-    _stillRequests = stillRequests.size() == lightVolumes.size() ? stillRequests : std::span<const std::uint8_t>{};
+    const bool requestsFit = stillRequests.size() == lightVolumes.size();
+    _rebakingLights.clear();
+    for (std::uint32_t light = 0; light < lightVolumes.size(); ++light)
+    {
+        if (!requestsFit || stillRequests[light] != 0u)
+        {
+            _rebakingLights.push_back(light);
+        }
+    }
 
     _mobility = &mobility;
     _lodSelector = lodSelector;
     const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
                          const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
                      { AddCaster(entity, Assisi::ECS::MatrixFrom(world, _frame.origin), meshRenderer, mesh); };
-    const bool anyStill = _stillRequests.empty() ||
-                          std::ranges::any_of(_stillRequests, [](std::uint8_t wanted) { return wanted != 0u; });
-    if (anyStill)
+    if (!_rebakingLights.empty())
     {
         ForEachCaster(scene, add);
         return;
@@ -374,17 +390,24 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     // inside of. A still caster is tested only against the lights rebaking
     // this frame, since those are the only rows that draw still casters.
     const std::size_t firstReach = reached.size();
-    for (std::uint32_t light = 0; light < _lightVolumes.size(); ++light)
+    if (still)
     {
-        if (still && !_stillRequests.empty() && _stillRequests[light] == 0u)
+        for (const std::uint32_t light : _rebakingLights)
         {
-            continue;
+            if (SpheresTouch(worldSphere, _lightVolumes[light]))
+            {
+                reached.push_back(light);
+            }
         }
-        const glm::vec3 separation = worldSphere.center - _lightVolumes[light].center;
-        const float reach = worldSphere.radius + _lightVolumes[light].radius;
-        if (glm::dot(separation, separation) <= reach * reach)
+    }
+    else
+    {
+        for (std::uint32_t light = 0; light < _lightVolumes.size(); ++light)
         {
-            reached.push_back(light);
+            if (SpheresTouch(worldSphere, _lightVolumes[light]))
+            {
+                reached.push_back(light);
+            }
         }
     }
     if (reached.size() == firstReach)
