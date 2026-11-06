@@ -27,6 +27,7 @@ struct MaterialRow
 const uint kMatFlagHasNormalTexture        = 1u;
 const uint kMatFlagEnergyPreservingDiffuse = 2u;
 const uint kMatFlagSpecularAntiAliasing    = 4u;
+const uint kMatFlagShadowsFollowSmoothing  = 8u;
 
 layout(std430, binding = 0) readonly buffer Materials
 {
@@ -58,7 +59,8 @@ struct Surface
     float specIor;
     float diffuseRoughness; // OpenPBR base_diffuse_roughness
     bool  eonDiffuse;       // material uses the EON diffuse lobe
-    float alpha;            // base colour alpha; read only by the ASSISI_ALPHA_MASK build
+    bool  followSmoothing;  // shadow lookups lift onto the smooth-shaded curve
+    float alpha;           // base colour alpha; read only by the ASSISI_ALPHA_MASK build
     float alphaCutoff;      // alpha below this kills the fragment; 0 unless masked
 };
 
@@ -89,6 +91,7 @@ Surface SampleMaterial()
     s.specIor = mat.specularColorIor.w;
     s.diffuseRoughness = clamp(mat.openPbrParams.z, 0.0, 1.0);
     s.eonDiffuse = (mat.flags.x & kMatFlagEnergyPreservingDiffuse) != 0u;
+    s.followSmoothing = (mat.flags.x & kMatFlagShadowsFollowSmoothing) != 0u;
 
     // A back face (double-sided pipelines only) faces the viewer with -N.
     vec3 N = normalize(vNormal);

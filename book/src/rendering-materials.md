@@ -178,13 +178,21 @@ as a leaf, a flag or a sheet of paper, and for masked surfaces you can see
 through to their back. Leave it off for closed meshes: their back faces are
 never seen, and drawing them costs time.
 
+## Shadows on smooth-shaded models
+
+`ShadowsFollowSmoothing` (default on) keeps a smooth-shaded low-poly model from
+shadowing itself in stripes where the light turns away from it. Turn it off
+for foliage cards. [Smooth shading and shadows](rendering-smooth-shading.md)
+explains what it does and when to change it.
+
 ## Materials from a model
 
 When you import a model, the editor writes one `.amat` per material in it,
 next to the model file, named after the model and the material: a model
 `Chair.gltf` with a material called `Cushion` gets `Chair_Cushion.amat`. They
 copy the model's colours, metal and roughness, textures, alpha mode and
-double-sided setting.
+double-sided setting, and turn `ShadowsFollowSmoothing` off for masked and
+double-sided materials.
 
 - **Your changes are kept.** The editor never overwrites a material file that
   exists. Edit them freely.

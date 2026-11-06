@@ -27,8 +27,43 @@ const float kMinLightDistanceSq = 1e-8;
 // with inner == outer blends over a sliver rather than dividing by zero.
 const float kMinConeBlend = 1e-4;
 
+// The Smoothing debug view. Must match Geometry::kMaxSmoothingBendDegrees: the
+// import check warns about the same corners this paints red.
+const float kMaxSmoothingBendDegrees = 40.0;
+// The sharpest a normal can bend from its triangle and still face the same way.
+const float kSquareBendDegrees       = 90.0;
+// Grey for smoothing within the limit, lit by how squarely it faces the viewer
+// so the model's shape reads; blue-grey for a material the check skips.
+const vec3  kSmoothingFine           = vec3(0.5);
+const vec3  kSmoothingSkipped        = vec3(0.35, 0.4, 0.55);
+const float kSmoothingFineAmbient    = 0.35;
+// Red from just past the limit to a right angle and beyond.
+const vec3  kSmoothingBentLeast      = vec3(0.35, 0.0, 0.0);
+const vec3  kSmoothingBentMost       = vec3(1.0, 0.0, 0.0);
+
+// What the Smoothing debug view paints this pixel. @p followSmoothing is the
+// material's ShadowsFollowSmoothing.
+vec3 SmoothingDebugColor(bool followSmoothing)
+{
+    vec3  N      = GeometricNormal();
+    vec3  V      = normalize(uFrame.cameraPosition.xyz - vWorldPos);
+    float facing = kSmoothingFineAmbient + (1.0 - kSmoothingFineAmbient) * max(dot(N, V), 0.0);
+    if (!followSmoothing)
+    {
+        return kSmoothingSkipped * facing;
+    }
+    float bend = SmoothingBendDegrees(N, V);
+    if (bend <= kMaxSmoothingBendDegrees)
+    {
+        return kSmoothingFine * facing;
+    }
+    float past = (bend - kMaxSmoothingBendDegrees) / (kSquareBendDegrees - kMaxSmoothingBendDegrees);
+    return mix(kSmoothingBentLeast, kSmoothingBentMost, clamp(past, 0.0, 1.0));
+}
+
 void main()
 {
+    CaptureSurfacePlane();
     Surface surf = SampleMaterial();
 
 #ifdef ASSISI_ALPHA_MASK
@@ -73,6 +108,10 @@ void main()
         {
             outColor = vec4(vec3(uFrame.indirectSpecular.z != 0.0 ? ScreenOcclusion() : 1.0), 1.0);
         }
+        else if (debugMode == kDebugSmoothing)
+        {
+            outColor = vec4(SmoothingDebugColor(surf.followSmoothing), 1.0);
+        }
         else
         {
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -91,6 +130,13 @@ void main()
 
     BrdfContext brdf = MakeBrdfContext(N, V, surf, F0);
 
+    // Shadows are looked up with the geometric normal: the depth map holds
+    // rasterized geometry, not the normal-mapped surface. A surface facing away
+    // by either normal is skipped; one lit only by its normal map is unlit,
+    // since the map knows nothing about it.
+    vec3           Ng       = GeometricNormal();
+    ShadowReceiver receiver = ShadowReceiverAt(Ng, surf.followSmoothing);
+
     // Only the sun casts among directional lights; shadowCounts.y is its index.
     uint shadowCascadeCount = uFrame.shadowCounts.x;
     uint shadowLightIndex   = uFrame.shadowCounts.y;
@@ -105,16 +151,11 @@ void main()
         {
             shadowCascade = SelectCascade(abs(vViewZ));
 
-            // Shadows are looked up with the geometric normal: the depth map holds
-            // rasterized geometry, not the normal-mapped surface. A surface facing
-            // away by either normal is skipped; one lit only by its normal map is
-            // unlit, since the map knows nothing about it.
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SunVisibility(Ng, L, shadowCascade, NgdotL);
+                radiance *= SunVisibility(shadowCascade, ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
             else if (NdotL > 0.0)
             {
@@ -156,12 +197,12 @@ void main()
         // The same two-normal rule as the sun.
         if (localShadows == 1u)
         {
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= PointVisibility(pointLights[li].shadowView.x, lPos, vWorldPos, Ng, NgdotL);
+                radiance *= PointVisibility(pointLights[li].shadowView.x, lPos,
+                                            ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
             else if (NdotL > 0.0)
             {
@@ -200,12 +241,12 @@ void main()
 
         if (localShadows == 1u)
         {
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos, vWorldPos, Ng, NgdotL);
+                radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos,
+                                           ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
             else if (NdotL > 0.0)
             {
@@ -274,9 +315,8 @@ void main()
     //   black  within a millimetre: ambiguous
     if (uFrame.shadowCounts.w == kShadowDebugMargin && shadowCascadeCount > 0u)
     {
-        vec3        Ng    = GeometricNormal();
         vec3        sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
-        ShadowProbe probe = ProbeCascade(shadowCascade, vWorldPos, Ng, dot(Ng, sunL));
+        ShadowProbe probe = ProbeCascade(shadowCascade, ShadowSurfaceToward(Ng, receiver, sunL, dot(Ng, sunL)));
 
         const float kFullScaleMetres = 0.25;
         float margin = (probe.stored - probe.reference) * uFrame.shadowCascade[shadowCascade].w;
@@ -294,7 +334,6 @@ void main()
     // yellow the kernel finding light its centre did not.
     if (uFrame.shadowCounts.w == kShadowDebugTaps && shadowCascadeCount > 0u)
     {
-        vec3  Ng    = GeometricNormal();
         vec3  sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
         float NdotL = dot(Ng, sunL);
 
@@ -305,11 +344,12 @@ void main()
             return;
         }
 
-        ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
-        float       blended  = SunVisibility(Ng, sunL, shadowCascade, NdotL);
-        float       filtered = SampleCascade(shadowCascade, vWorldPos, Ng, NdotL);
-        float       centre   = CascadeTap(
-            shadowCascade, probe.uv, Receiver(probe.uv, CascadeReceiverSlope(shadowCascade, Ng), probe.reference));
+        ShadowSurface sunSurface = ShadowSurfaceToward(Ng, receiver, sunL, NdotL);
+        ShadowProbe   probe      = ProbeCascade(shadowCascade, sunSurface);
+        float         blended    = SunVisibility(shadowCascade, sunSurface);
+        float         filtered   = SampleCascade(shadowCascade, sunSurface);
+        vec2          slope      = CascadeReceiverSlope(shadowCascade, sunSurface.plane);
+        float         centre     = CascadeTap(shadowCascade, probe.uv, Receiver(probe.uv, slope, probe.reference));
 
         color = vec3(blended, filtered, centre);
     }

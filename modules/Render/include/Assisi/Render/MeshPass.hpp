@@ -50,6 +50,11 @@ enum class MaterialDebugView : uint32_t
     /// What screen-space occlusion left open at each pixel; white on a frame it
     /// did not run.
     ScreenOcclusion,
+    /// How far each pixel's smoothed normal bends from its flat triangle: green
+    /// unbent, yellow toward the import check's limit, red past it, where the
+    /// mesh is smoothed over a corner too sharp for its shadows. Grey for a
+    /// material whose shadows do not follow its smoothing.
+    Smoothing,
 };
 
 /// @brief Which of the mesh pass's three pipeline sets a draw goes through.

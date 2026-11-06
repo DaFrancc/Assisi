@@ -120,6 +120,14 @@ struct MaterialData
     /// closed opaque mesh only pays fill for faces it will never show.
     AFIELD() bool DoubleSided = false;
 
+    /// Where light grazes a smooth-shaded surface, test its shadow against the
+    /// curve its vertex normals describe rather than its flat triangles, so the
+    /// edge between light and dark shows no stripe per triangle. Off for cards
+    /// whose normals bend far from their faces, such as foliage: there the curve
+    /// reaches past the neighbouring cards, and light leaks through a canopy's
+    /// own shade. An import turns it off for cutout and double-sided materials.
+    AFIELD() bool ShadowsFollowSmoothing = true;
+
     // --- Texture channels (GUID references; nil = factor-only) ---
     AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
     AFIELD() Assisi::Core::AssetId NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.

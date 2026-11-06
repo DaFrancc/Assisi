@@ -142,12 +142,12 @@ float SampleCascadePcss(uint cascade, Receiver receiver, float NdotL)
     return FilterCascadeVogel(cascade, receiver, stepUv);
 }
 
-// Fraction of the sun reaching @p worldPos through @p cascade: 1 lit, 0 shadowed.
-// @p N is the geometric normal.
-float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+// Fraction of the sun reaching @p surface through @p cascade: 1 lit, 0 shadowed.
+float SampleCascade(uint cascade, ShadowSurface surface)
 {
+    float NdotL     = surface.NdotL;
     float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+    vec3  biasedPos = surface.position + surface.normal * (uFrame.shadowCascade[cascade].z * sinTheta);
 
     vec3 coord = ShadowCoord(cascade, biasedPos);
     vec2 uv    = coord.xy;
@@ -158,7 +158,8 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         return 1.0;
     }
 
-    Receiver receiver = Receiver(uv, CascadeReceiverSlope(cascade, N), coord.z - uFrame.shadowCascade[cascade].y);
+    Receiver receiver =
+        Receiver(uv, CascadeReceiverSlope(cascade, surface.plane), coord.z - uFrame.shadowCascade[cascade].y);
 
     if (uFrame.shadowPcss.x > 0.0)
     {
@@ -207,11 +208,11 @@ struct ShadowProbe
     bool  outside;
 };
 
-ShadowProbe ProbeCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+ShadowProbe ProbeCascade(uint cascade, ShadowSurface surface)
 {
     ShadowProbe probe;
-    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+    float sinTheta  = sqrt(max(0.0, 1.0 - surface.NdotL * surface.NdotL));
+    vec3  biasedPos = surface.position + surface.normal * (uFrame.shadowCascade[cascade].z * sinTheta);
 
     vec3 coord     = ShadowCoord(cascade, biasedPos);
     probe.uv       = coord.xy;
@@ -239,7 +240,7 @@ uint SelectCascade(float viewDepth)
 }
 
 // The sun's visibility, blended over the end of each cascade into the next.
-float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
+float SunVisibility(uint cascade, ShadowSurface surface)
 {
     uint  cascadeCount = uFrame.shadowCounts.x;
     float viewDepth    = abs(vViewZ);
@@ -250,7 +251,7 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
         return 1.0;
     }
 
-    float visibility = SampleCascade(cascade, vWorldPos, N, NdotL);
+    float visibility = SampleCascade(cascade, surface);
 
     float splitFar  = uFrame.shadowCascade[cascade].x;
     float splitNear = cascade == 0u ? 0.0 : uFrame.shadowCascade[cascade - 1u].x;
@@ -264,7 +265,7 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
             // miss occluders, never add them. Nothing to blend below zero.
             if (visibility > 0.0)
             {
-                float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
+                float next = SampleCascade(cascade + 1u, surface);
                 visibility = mix(visibility, min(visibility, next), t);
             }
         }

@@ -1138,8 +1138,8 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // Short-circuits the mesh shader to a single material channel, to look at the
         // PBR inputs directly. Runtime only. **This list is indexed by the enum
         // value** — it must stay in Render::MaterialDebugView's order.
-        static const char *kDebugViewNames[] = {"Off",    "Base Color", "Metallic", "Roughness",
-                                                "Normal", "Occlusion",  "Emissive", "Screen Occlusion"};
+        static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic",         "Roughness", "Normal",
+                                                "Occlusion", "Emissive",   "Screen Occlusion", "Smoothing"};
         int32_t debugViewIndex = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {

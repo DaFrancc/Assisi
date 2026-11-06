@@ -29,6 +29,7 @@ enum MaterialFlagBits : uint32_t
     kMaterialFlagHasNormalTexture = 1u << 0,
     kMaterialFlagEnergyPreservingDiffuse = 1u << 1, ///< EON diffuse; set when BaseDiffuseRoughness > 0.
     kMaterialFlagSpecularAntiAliasing = 1u << 2,    ///< Geometric specular AA; set when the enable is on and the clamp > 0.
+    kMaterialFlagShadowsFollowSmoothing = 1u << 3,  ///< Shadow lookups lift onto the smooth-shaded curve.
 };
 
 /// @brief Per-material constants — one row of the shared material table.

@@ -85,6 +85,133 @@ vec3 GeometricNormal()
     return gl_FrontFacing ? n : -n;
 }
 
+// One pixel's step in world position across the screen in x and in y, which
+// span the plane of the triangle being drawn. Taken by CaptureSurfacePlane at
+// the top of main, while control flow is still uniform and before a masked
+// build can discard: the shadow lookups that read them run inside per-light
+// branches, where derivatives are undefined.
+vec3 gWorldPosDx = vec3(0.0);
+vec3 gWorldPosDy = vec3(0.0);
+
+void CaptureSurfacePlane()
+{
+    gWorldPosDx = dFdx(vWorldPos);
+    gWorldPosDy = dFdy(vWorldPos);
+}
+
+// The normal a lookup takes the receiver's plane from: the drawn triangle's,
+// since a shadow map holds the triangle flat. A smooth-shaded mesh interpolates
+// its normal away from its triangles', most where the light grazes it near the
+// terminator, and a plane from that normal reads the triangle's own texels as a
+// blocker. Either sign gives the same plane. @p N where the triangle is edge-on
+// to the view and the two steps span nothing.
+vec3 ReceiverNormal(vec3 N)
+{
+    vec3  facet    = cross(gWorldPosDx, gWorldPosDy);
+    float lengthSq = dot(facet, facet);
+    return lengthSq > 0.0 ? facet * inversesqrt(lengthSq) : N;
+}
+
+// ---- The shadow terminator ---------------------------------------------------
+//
+// A smooth-shaded mesh is lit as the curve its vertex normals describe, but its
+// shadow map holds the flat triangles. Near the edge between light and dark,
+// where the curve still faces the light, a triangle can face away from it and
+// sit behind its neighbours' depth in the map, a real self-shadow the size of
+// the gap between triangle and curve: a stripe per triangle. Bias does not
+// clear it, because the map holds that depth correctly. Instead the lookup is
+// made from the curved surface: the point is lifted onto it, where it shares
+// a convex mesh's outside with the light, and nothing of its own mesh lies
+// between them.
+
+// The lift from the fragment out to the curved surface: along the interpolated
+// normal, by how far the point lies below each corner's tangent plane, blended
+// as the corners are (mesh.vert). On a convex triangle that is never less than
+// the distance out to the surface the corners' planes describe, so the lifted
+// point is clear of the mesh. Zero where it points into the surface @p N
+// faces, which is a triangle curving inward: lifted, a point there would leave
+// the mesh's own shadow. One interpolated float beside vNormal carries it,
+// where the blended projection itself would take nine. Must match
+// Render::SmoothSurfaceLift.
+vec3 SmoothSurfaceLift(vec3 N)
+{
+    float below = vPlaneDistance - dot(vWorldPos, vNormal);
+    vec3  lift  = below * normalize(vNormal);
+    return dot(lift, N) > 0.0 ? lift : vec3(0.0);
+}
+
+// The cosine to the light below which a lookup starts to lift: about six
+// degrees above the triangle or the interpolated normal's horizon. Must match
+// Render::kTerminatorCutoff.
+const float kTerminatorCutoff = 0.1;
+
+// How much of the lift a lookup toward @p L takes, from 0 to 1: all of it on a
+// triangle facing away from the light, none where both @p N and the triangle's
+// own normal @p facet face it by more than kTerminatorCutoff, blended between.
+// The lift slides contact shadows across the surface by its length over the
+// light's slope, so only the lookups the stripes appear in take it. Must match
+// Render::TerminatorGate.
+float TerminatorGate(vec3 N, vec3 facet, vec3 L)
+{
+    float NdotL     = dot(N, L);
+    float facetDotL = dot(facet, L);
+    return NdotL < kTerminatorCutoff ? clamp(2.0 - (facetDotL + NdotL) / kTerminatorCutoff, 0.0, 1.0)
+                                     : clamp(1.0 - facetDotL / kTerminatorCutoff, 0.0, 1.0);
+}
+
+// How far, in degrees, the smoothed normal @p N bends here from the drawn
+// triangle's own: zero on a flat-shaded mesh, largest at a triangle's corners,
+// past 90 where a normal points into the mesh. The drawn side of a triangle
+// faces the viewer along @p V, and so does its normal.
+float SmoothingBendDegrees(vec3 N, vec3 V)
+{
+    vec3 facet = ReceiverNormal(N);
+    facet      = dot(facet, V) < 0.0 ? -facet : facet;
+    return degrees(acos(clamp(dot(facet, N), -1.0, 1.0)));
+}
+
+// What every shadow lookup from this fragment shares, worked out once rather
+// than per light: the drawn triangle's normal, turned to the side the geometric
+// normal faces, and the SmoothSurfaceLift, zero where nothing is lifted.
+struct ShadowReceiver
+{
+    vec3 facet;
+    vec3 lift;
+    bool lifted;
+};
+
+ShadowReceiver ShadowReceiverAt(vec3 N, bool followSmoothing)
+{
+    vec3 facet = ReceiverNormal(N);
+    facet      = dot(facet, N) < 0.0 ? -facet : facet;
+    vec3 lift  = followSmoothing ? SmoothSurfaceLift(N) : vec3(0.0);
+    return ShadowReceiver(facet, lift, dot(lift, lift) > 0.0);
+}
+
+// The surface a shadow lookup is made from.
+struct ShadowSurface
+{
+    vec3  position; // where the lookup starts, before its normal offset
+    vec3  normal;   // the geometric normal, which the normal offset runs along
+    vec3  plane;    // the normal of the receiver plane the map is compared against
+    float NdotL;    // the geometric normal's cosine to the light
+};
+
+// The surface a lookup toward @p L is made from, for a fragment whose geometric
+// normal is @p N. The receiver plane turns from the triangle's toward the
+// curve's with the lift: a lifted point compared against the triangle's plane
+// extrapolates it below the curve on the light's side and reads the
+// neighbours' triangles as blockers again.
+ShadowSurface ShadowSurfaceToward(vec3 N, ShadowReceiver receiver, vec3 L, float NdotL)
+{
+    float gate = receiver.lifted ? TerminatorGate(N, receiver.facet, L) : 0.0;
+    if (gate == 0.0)
+    {
+        return ShadowSurface(vWorldPos, N, receiver.facet, NdotL);
+    }
+    return ShadowSurface(vWorldPos + receiver.lift * gate, N, normalize(mix(receiver.facet, N, gate)), NdotL);
+}
+
 // A unit vector along the surface @p N faces. Any one will do: the plane is
 // fixed by it and its cross product with @p N.
 vec3 ReceiverTangent(vec3 N)

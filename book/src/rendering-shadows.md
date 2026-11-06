@@ -167,7 +167,9 @@ while a spot or point light does.
 
 A flat surface never shadows itself, however low the light that reaches it:
 the lookup compares each texel it reads against the surface's own slope, so
-the surface beside the pixel is never taken for something in front of it.
+the surface beside the pixel is never taken for something in front of it. A
+smooth-shaded model doesn't either, where its shape matches its smoothing; see
+[Smooth shading and shadows](rendering-smooth-shading.md).
 Three settings, the **biases**, move each lookup slightly to cover what that
 slope can't: curved surfaces, which bend away from it, and the shadow map's
 limited precision. Their defaults suit most levels. Change them only to fix
@@ -175,7 +177,8 @@ one of these:
 
 | What you see | Name | Fix |
 |---|---|---|
-| Stripes or speckles of shadow across a lit surface, most often on a smooth, curved mesh where the light turns away from it. | **Shadow acne**: the surface is shadowing itself. | Raise **Depth Bias**, **Slope Bias** or **Normal Offset** a little. |
+| Stripes or speckles of shadow across a lit surface. | **Shadow acne**: the surface is shadowing itself. | Raise **Depth Bias**, **Slope Bias** or **Normal Offset** a little. |
+| Stripes or misplaced shadow on a smooth-shaded model where the light turns away from it, and a warning in the log when it was imported. | The model is smoothed over corners too sharp for it. | See [When the importer warns about a model](rendering-smooth-shading.md#when-the-importer-warns-about-a-model). |
 | Shadows that start a little away from the object casting them, so the object seems to float. | **Peter-panning**: too much bias. | Lower the same three. |
 | A visible line in the sun's shadows at some distance from the camera. | A cascade boundary. | Raise **Cascade Blend**, or add a cascade. |
 | A lamp has no shadow. | Ranked out, no room in the atlas, or waiting its turn. | Select the light: the inspector shows why (see below). |

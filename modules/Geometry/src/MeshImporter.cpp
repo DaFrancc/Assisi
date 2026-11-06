@@ -3,6 +3,7 @@
 
 #include <Assisi/Geometry/DefaultMeshes.hpp> // ComputeTangents (fallback when a primitive lacks TANGENT)
 #include <Assisi/Geometry/Pose.hpp>
+#include <Assisi/Geometry/SmoothingCheck.hpp>
 #include "GltfSource.hpp"
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -309,6 +310,8 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
                         virtualPath, data.Name);
     }
     data.DoubleSided = material.doubleSided;
+    // Cutout and double-sided materials are the cards foliage is made of.
+    data.ShadowsFollowSmoothing = data.Alpha == AlphaMode::Opaque && !data.DoubleSided;
 
     return data;
 }
@@ -950,6 +953,29 @@ std::expected<SkinReadNotes, MeshImportError> AppendPrimitiveSkin(const fastgltf
     return notes;
 }
 
+/// The book's page on what WarnSharpSmoothing's warning means and how to fix
+/// what it found.
+constexpr std::string_view kSmoothShadingPage = "https://dafrancc.github.io/Assisi/rendering-smooth-shading.html";
+
+/// A bulge as a percentage, the unit the warning states it in.
+constexpr float kPercent = 100.f;
+
+/* Warns, once per submesh, where @p mesh is smoothed over corners too sharp
+   for its shadows to follow, saying how badly: see FindSharpSmoothing. */
+void WarnSharpSmoothing(const MeshData &mesh, std::string_view virtualPath)
+{
+    for (const SharpSmoothing &sharp : FindSharpSmoothing(mesh))
+    {
+        const MaterialData &material = mesh.Materials[mesh.SubMeshes[sharp.subMesh].MaterialSlot];
+        const std::string_view outcome =
+            sharp.bulge >= kMajorSmoothingBulge ? "will look badly wrong" : "may look slightly wrong";
+        Core::Log::Warn("MeshImporter: '{}' (material '{}') is smooth-shaded over corners too sharp for it, so "
+                        "it bulges {:.0f}% of its size off its flat faces and shadows there {}. The editor's "
+                        "Smoothing debug view shows where. How to fix it: {}",
+                        virtualPath, material.Name, sharp.bulge * kPercent, outcome, kSmoothShadingPage);
+    }
+}
+
 } // namespace
 
 std::string_view ToString(MeshImportError error) noexcept
@@ -1197,6 +1223,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
             merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, resolveId, warnings));
         }
     }
+    WarnSharpSmoothing(merged, virtualPath);
 
     // If any primitive shipped without tangents, regenerate them for the whole
     // merged mesh — but only when UVs exist (Lengyel's method needs them).
