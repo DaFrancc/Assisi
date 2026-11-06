@@ -119,52 +119,91 @@ float LocalTap(ShadowViewRow view, vec2 offset, Receiver receiver)
 // runs where the probe straddles an edge.
 float FilterLocalVogel(ShadowViewRow view, Receiver receiver, float stepUv)
 {
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-    float sum = 0.0;
+    vec2  turn = VogelTurn();
+    float sum  = 0.0;
     for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        sum += LocalTap(view, VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv, receiver);
+        sum += LocalTap(view, VogelOffset(kVogelProbe[i], turn, kVogelRadiusSteps * stepUv), receiver);
     }
-    if (sum == 0.0)
+    if (ProbeAgrees(sum, kVogelProbeTaps))
     {
-        return 0.0;
-    }
-    if (sum == float(kVogelProbeTaps))
-    {
-        return 1.0;
+        return sum / float(kVogelProbeTaps);
     }
     for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
     {
-        sum += LocalTap(view, VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv, receiver);
+        sum += LocalTap(view, VogelOffset(kVogelRest[i], turn, kVogelRadiusSteps * stepUv), receiver);
     }
     return sum / float(kVogelTaps);
 }
 
-// CascadeBlockerGap's search, inside one tile. @p texelDepth is one texel of
-// depth at the receiver's distance.
+// The 3x3 or 5x5 grid of @p radius, a texel apart, inside one tile, probed
+// first at its centre and corners.
+float FilterLocalGrid(ShadowViewRow view, Receiver receiver, int radius)
+{
+    float step = view.params.z;
+    float sum  = LocalTap(view, vec2(0.0), receiver);
+    for (uint i = 0u; i < kGridProbeTaps - 1u; ++i)
+    {
+        sum += LocalTap(view, kGridCorners[i] * (float(radius) * step), receiver);
+    }
+    if (ProbeAgrees(sum, kGridProbeTaps))
+    {
+        return sum / float(kGridProbeTaps);
+    }
+    for (int y = -radius; y <= radius; ++y)
+    {
+        for (int x = -radius; x <= radius; ++x)
+        {
+            if (!IsGridProbe(x, y, radius))
+            {
+                sum += LocalTap(view, vec2(float(x), float(y)) * step, receiver);
+            }
+        }
+    }
+    return sum / PcfTapCount(radius);
+}
+
+// One blocker-search tap @p offset from @p receiver's point, clamped to the
+// tile: its depth gap added to @p gapSum and counted in @p blockers where it is
+// a blocker.
+void LocalBlockerTap(ShadowViewRow view, Receiver receiver, vec2 offset, float threshold, inout float gapSum,
+                     inout float blockers)
+{
+    ivec2 size   = textureSize(uShadowAtlas, 0).xy;
+    vec2  tapUv  = clamp(receiver.uv + offset, view.clampUv.xy, view.clampUv.zw);
+    ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
+    vec2  centre = (vec2(texel) + 0.5) / vec2(size);
+    float gap    = ComparedDepth(receiver, centre - receiver.uv) - LocalStoredDepth(texel, HasMovingLayer(view));
+    if (gap > threshold)
+    {
+        gapSum += gap;
+        blockers += 1.0;
+    }
+}
+
+// CascadeBlockerGap's search, inside one tile, probed first the same way.
+// @p texelDepth is one texel of depth at the receiver's distance.
 float LocalBlockerGap(ShadowViewRow view, Receiver receiver, float texelDepth)
 {
     float searchUv  = PcssPenumbraUv(view.pcss.x, receiver.reference, view.pcss.z);
     float threshold = kPcssBlockerMinDepthTexels * texelDepth;
-    ivec2 size      = textureSize(uShadowAtlas, 0).xy;
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-    bool  moving    = HasMovingLayer(view);
+    vec2  turn      = VogelTurn();
 
     float gapSum   = 0.0;
     float blockers = 0.0;
-    for (uint i = 0u; i < kVogelTaps; ++i)
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        vec2  tapUv  = clamp(receiver.uv + VogelOffset(i, phi, searchUv), view.clampUv.xy, view.clampUv.zw);
-        ivec2 texel  = min(ivec2(tapUv * vec2(size)), size - 1);
-        vec2  centre = (vec2(texel) + 0.5) / vec2(size);
-        float gap    = ComparedDepth(receiver, centre - receiver.uv) - LocalStoredDepth(texel, moving);
-        if (gap > threshold)
-        {
-            gapSum += gap;
-            blockers += 1.0;
-        }
+        LocalBlockerTap(view, receiver, VogelOffset(kVogelProbe[i], turn, searchUv), threshold, gapSum, blockers);
     }
-    return blockers > 0.0 ? gapSum / blockers : 0.0;
+    if (blockers == 0.0)
+    {
+        return 0.0;
+    }
+    for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
+    {
+        LocalBlockerTap(view, receiver, VogelOffset(kVogelRest[i], turn, searchUv), threshold, gapSum, blockers);
+    }
+    return gapSum / blockers;
 }
 
 // A local light through @p view, contact-hardened.
@@ -227,17 +266,7 @@ float LocalVisibility(uint viewIndex, ShadowSurface surface, float axisDepth)
     {
         return FilterLocalVogel(view, receiver, view.params.z);
     }
-
-    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
-    float sum    = 0.0;
-    for (int y = -radius; y <= radius; ++y)
-    {
-        for (int x = -radius; x <= radius; ++x)
-        {
-            sum += LocalTap(view, vec2(float(x), float(y)) * view.params.z, receiver);
-        }
-    }
-    return sum / PcfTapCount(radius);
+    return FilterLocalGrid(view, receiver, filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius);
 }
 
 // A spot light's visibility; its view looks down the cone's axis.

@@ -35,6 +35,24 @@ float PcfTapCount(int radius)
     return float(side * side);
 }
 
+// A grid filter's probe: its centre and its four corners. Where all five agree,
+// the taps between them would only agree with them, so the rest of the grid
+// runs only where they don't.
+const uint kGridProbeTaps                    = 5u;
+const vec2 kGridCorners[kGridProbeTaps - 1u] = vec2[](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
+                                                     vec2(1.0, 1.0));
+
+bool IsGridProbe(int x, int y, int radius)
+{
+    return (x == 0 && y == 0) || (abs(x) == radius && abs(y) == radius);
+}
+
+// Whether @p sum over a probe of @p taps is wholly lit or wholly shadowed.
+bool ProbeAgrees(float sum, uint taps)
+{
+    return sum == 0.0 || sum == float(taps);
+}
+
 // The Vogel disk. kVogelRadiusSteps must match Render::kVogelFilterRadiusTaps.
 const uint  kVogelTaps          = 16u;
 const float kVogelRadiusSteps   = 2.5;
@@ -68,12 +86,33 @@ float InterleavedGradientNoise(vec2 position)
     return fract(52.9829189 * fract(dot(position, vec2(0.06711056, 0.00583715))));
 }
 
-// Tap @p i of the Vogel disk of radius @p radius, rotated by @p phi.
-vec2 VogelOffset(uint i, float phi, float radius)
+// Tap @p i of the Vogel disk of radius 1: at the square root of its share of the
+// disk's area out from the centre, and the golden angle round from the tap
+// before. A macro because a constant table can call built-in functions but not
+// the shader's own.
+#define VOGEL_UNIT_TAP(i)                                                                                          \
+    (sqrt((float(i) + 0.5) / float(kVogelTaps)) * vec2(cos(float(i) * kGoldenAngle), sin(float(i) * kGoldenAngle)))
+
+// The disk's taps, computed once by the compiler rather than per tap per pixel.
+const vec2 kVogelDisk[kVogelTaps] = vec2[](
+    VOGEL_UNIT_TAP(0), VOGEL_UNIT_TAP(1), VOGEL_UNIT_TAP(2), VOGEL_UNIT_TAP(3), VOGEL_UNIT_TAP(4), VOGEL_UNIT_TAP(5),
+    VOGEL_UNIT_TAP(6), VOGEL_UNIT_TAP(7), VOGEL_UNIT_TAP(8), VOGEL_UNIT_TAP(9), VOGEL_UNIT_TAP(10), VOGEL_UNIT_TAP(11),
+    VOGEL_UNIT_TAP(12), VOGEL_UNIT_TAP(13), VOGEL_UNIT_TAP(14), VOGEL_UNIT_TAP(15));
+
+// This pixel's turn of the Vogel disk, as its cosine and sine: neighbouring
+// pixels turn it differently, so their taps land in different places and the
+// penumbra's noise is fine-grained rather than banded.
+vec2 VogelTurn()
 {
-    float r     = sqrt((float(i) + 0.5) / float(kVogelTaps)) * radius;
-    float theta = float(i) * kGoldenAngle + phi;
-    return vec2(r * cos(theta), r * sin(theta));
+    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    return vec2(cos(phi), sin(phi));
+}
+
+// Tap @p i of the Vogel disk of radius @p radius, turned by @p turn.
+vec2 VogelOffset(uint i, vec2 turn, float radius)
+{
+    vec2 unit = kVogelDisk[i];
+    return radius * vec2(turn.x * unit.x - turn.y * unit.y, turn.y * unit.x + turn.x * unit.y);
 }
 
 // The rasterized surface's normal, flipped for a back face as the shaded normal

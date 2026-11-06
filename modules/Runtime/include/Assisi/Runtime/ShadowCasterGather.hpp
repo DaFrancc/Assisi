@@ -211,14 +211,17 @@ private:
     std::vector<Assisi::Render::ShadowCaster> _casters;
     ShadowGatherFrame _frame;
 
-    // The gather in progress's lights, and which of them draw still casters
-    // (empty: all of them). Views of the caller's spans, valid during Gather.
+    // The gather in progress's lights: a view of the caller's span, valid
+    // during Gather. And its mobility table and level selector.
     std::span<const Assisi::Geometry::BoundingSphere> _lightVolumes;
-    std::span<const std::uint8_t> _stillRequests;
-    // And its mobility table and level selector.
     Assisi::Render::ShadowCasterMobility *_mobility = nullptr;
     LodSelector *_lodSelector = nullptr;
 
+    // The lights that draw still casters this frame, in index order. A still
+    // caster is tested against these alone: on most frames few lights rebake,
+    // and testing every caster against every light to skip the rest cost more
+    // than the tests that count.
+    std::vector<std::uint32_t> _rebakingLights;
     // Light indices, concatenated: `_casterStart[i]` to `_casterStart[i + 1]` is
     // caster i's row. `_index`'s rows are this, inverted.
     std::vector<std::uint32_t> _reachedLights;

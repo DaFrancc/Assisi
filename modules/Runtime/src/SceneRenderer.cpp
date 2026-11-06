@@ -353,8 +353,17 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
-    Render::MeshPass::ShadowFrameData shadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
-    RenderLocalShadows(frame, scene, camera, cameraInShadow, shadows);
+    // Each half under a scope of its own, so the main thread's time in their
+    // planning and gathers is never left unaccounted between its child scopes.
+    Render::MeshPass::ShadowFrameData shadows;
+    {
+        ASSISI_PROFILE_SCOPE("sun-shadows");
+        shadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
+    }
+    {
+        ASSISI_PROFILE_SCOPE("local-shadows");
+        RenderLocalShadows(frame, scene, camera, cameraInShadow, shadows);
+    }
     // After both, because it reports on both — and outside them, because every
     // early return either of them takes is still a frame with an answer.
     BuildShadowDiagnostics();
