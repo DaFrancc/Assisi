@@ -15,6 +15,7 @@
 #include <span>
 #include <utility>
 
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
@@ -359,6 +360,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     const bool wanted = _shadowSettings.local.enabled && !(spots.empty() && points.empty());
     if (wanted)
     {
+        ASSISI_PROFILE_SCOPE("local-shadow-select");
         const float tanHalfFovY = std::tan(glm::radians(camera.fovDegrees) * 0.5f);
 
         _localCandidates.reserve(spots.size() + points.size());
@@ -466,7 +468,12 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
     // two disagreeing means baking a tile from an empty caster list — which
     // blanks it and leaves that one light with no shadow until something else
     // happens to dirty it again.
-    if (_localShadowPass.PlanFrame(shadowFrame))
+    bool drawsCasters = false;
+    {
+        ASSISI_PROFILE_SCOPE("local-shadow-plan");
+        drawsCasters = _localShadowPass.PlanFrame(shadowFrame);
+    }
+    if (drawsCasters)
     {
         _localShadowCasters.SetFrame(ShadowGatherFrame{.origin = _shadowOrigin, .camera = cameraPosition});
         _localShadowCasters.Gather(scene, _localLightVolumes, _localShadowPass.StillCasterRequests(), _casterMobility,
