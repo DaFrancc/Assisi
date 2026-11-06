@@ -69,6 +69,7 @@ to entities in the editor, but it helps to know what they are.
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
 | `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
+| `Path` | `<Assisi/Runtime/Path.hpp>` | A curve through points you place, for a route something follows. See [Splines](splines.md). |
 
 `Transform` looks like this:
 

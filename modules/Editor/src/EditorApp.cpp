@@ -1116,6 +1116,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // viewport shows.
         SubmitCameraPathGizmos();
 
+        // Splines have no mesh of their own, so a Path is invisible otherwise.
+        SubmitSplineGizmos();
+
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
         // and an unmarked origin is also an unclickable one.

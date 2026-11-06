@@ -613,6 +613,11 @@ class EditorApp : public Assisi::App::Application
     /// path to the next in play order.
     void SubmitCameraPathGizmos();
 
+    /// @brief Draw every spline in the level, found in its components by
+    /// reflection. The selected entity's draw on top in the selection colour,
+    /// with a marker on each node and the handles of each Bezier node.
+    void SubmitSplineGizmos();
+
     /// @brief The light whose outline the cursor is on, or NullEntity.
     ///
     /// The outline, not the volume it encloses: a point light's sphere is where
@@ -1792,6 +1797,11 @@ class EditorApp : public Assisi::App::Application
 
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;
+
+    // Splines, split as the lights are: the selection on top, the rest behind
+    // the geometry they wind through.
+    std::vector<LineVertex> _splineLinesDepthTested;
+    std::vector<LineVertex> _splineLinesOnTop;
 
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here

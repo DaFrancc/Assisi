@@ -18,6 +18,7 @@ add_executable(Assisi-Geometry-Tests
   TestMaterialFile.cpp
   TestMaterialAuthoring.cpp
   TestAssetImport.cpp
+  TestSpline.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Geometry-Tests)

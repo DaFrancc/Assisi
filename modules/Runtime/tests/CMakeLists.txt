@@ -10,6 +10,7 @@ assisi_reflect(
   TARGET Assisi-Runtime-TestComponents
   HEADERS
     support/include/Assisi/Runtime/Tests/RuleComponents.hpp
+    support/include/Assisi/Runtime/Tests/SplineComponents.hpp
 )
 
 add_executable(Assisi-Runtime-Tests
@@ -70,6 +71,8 @@ target_sources(Assisi-Runtime-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
+  # Path holds a Geometry::Spline, whose table Geometry's generated file defines.
+  $<TARGET_OBJECTS:Assisi-Geometry-Generated>
 )
 
 Assisi_add_doctest_tests(Assisi-Runtime-Tests NAME Runtime)

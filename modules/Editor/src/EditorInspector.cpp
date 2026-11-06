@@ -29,6 +29,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
+#include <Assisi/Editor/SplineFields.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -2705,7 +2706,12 @@ void EditorApp::DrawInspector()
             // A no-op for untracked components; for a tracked one (Transform) this
             // is what re-propagates the edit.
             if (edited)
+            {
+                // In the same gesture as the edit, so one undo takes back both:
+                // a moved node changes the handles its neighbours draw with.
+                Assisi::Editor::SettleSplines(const_cast<void *>(compPtr), meta->fields);
                 _scene->MarkChanged(_selectedEntity, meta->id);
+            }
             anyFieldEdited |= edited;
         }
         ImGui::PopID();

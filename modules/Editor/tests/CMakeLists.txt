@@ -18,6 +18,7 @@ add_executable(Assisi-Editor-Tests
   TestOutlinePicking.cpp
   TestPrePlayState.cpp
   TestSkeletonOverlay.cpp
+  TestSplineFields.cpp
   TestSystemSearch.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderBlueprint.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
@@ -30,6 +31,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SkeletonOverlay.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/SplineFields.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/SystemSearch.cpp"
 )
 
@@ -85,6 +87,8 @@ target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-TestComponents-Generated>
   $<TARGET_OBJECTS:Assisi-ECS-TestComponents-Generated>
+  # Path holds a Geometry::Spline, whose table Geometry's generated file defines.
+  $<TARGET_OBJECTS:Assisi-Geometry-Generated>
 )
 
 Assisi_add_doctest_tests(Assisi-Editor-Tests NAME Editor)

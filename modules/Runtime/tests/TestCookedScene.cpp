@@ -40,6 +40,7 @@
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Path.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -269,6 +270,37 @@ TEST_CASE("Every entity, component and value survives the cooked round trip")
     const nlohmann::json before = Runtime::SceneSerializer::Save(source);
     const nlohmann::json after = Runtime::SceneSerializer::Save(rebuilt);
     CHECK(before["entities"] == after["entities"]);
+}
+
+TEST_CASE("A spline's nodes survive the cooked round trip")
+{
+    ECS::Scene source;
+    const ECS::Entity route = source.Create();
+    (void)source.Add<Name>(route, Name{Core::EntityName{"route"}});
+    Runtime::Path path;
+    path.spline.closed = true;
+    path.spline.nodes = {
+        Geometry::SplineNode{.position = {1.5f, 0.f, -2.f}, .mode = Geometry::SplineNodeMode::Corner},
+        Geometry::SplineNode{.position = {3.f, 1.f, 0.5f},
+                             .handleIn = {-0.5f, 0.f, 0.25f},
+                             .handleOut = {0.75f, 0.f, -0.125f},
+                             .mode = Geometry::SplineNodeMode::Bezier},
+        Geometry::SplineNode{.position = {0.f, 2.f, 4.f}},
+    };
+    (void)source.Add<Runtime::Path>(route, path);
+
+    const auto bytes = SaveCookedScene(source, LevelHeader{}, nullptr, CarIdOf);
+    REQUIRE(bytes.has_value());
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+
+    ECS::Scene rebuilt;
+    RebuildFrom(*cooked, rebuilt);
+
+    const nlohmann::json before = Runtime::SceneSerializer::Save(source);
+    const nlohmann::json after = Runtime::SceneSerializer::Save(rebuilt);
+    CHECK(before["entities"] == after["entities"]);
+    CHECK(before["entities"].dump().find("handleOut") != std::string::npos); // the nodes were in the comparison
 }
 
 TEST_CASE("A reference survives the cooked round trip as a reference")
