@@ -187,7 +187,10 @@ TEST_CASE("Resident worlds share one physics thread pool")
     {
         worlds.Create("More");
     }
-    CHECK(ThreadCount() == afterFirst);
+    // No more, rather than exactly as many: a thread an earlier test case in this
+    // process started can still be finishing, and its exit lowers the count. A
+    // pool per world would raise it by a machine's worth of threads.
+    CHECK(ThreadCount() <= afterFirst);
 }
 #endif
 
