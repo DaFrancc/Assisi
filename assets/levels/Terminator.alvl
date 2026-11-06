@@ -1,0 +1,736 @@
+{
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "direction": [
+            0.25488700224417876,
+            -0.17364817766693033,
+            -0.9512512425641977
+          ],
+          "intensity": 1.0
+        }
+      }
+    },
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            11.0,
+            2.5,
+            9.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            11.0,
+            -0.25,
+            -8.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            40.0,
+            0.5,
+            40.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_sphere8",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "3ab47f17-ae8e-54e7-bcc0-38a79a388d8c",
+            "path": "models/terminator/sphere8.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_sphere16",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "8836c583-c29e-58c7-9e32-8683c939c01c",
+            "path": "models/terminator/sphere16.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            2.5,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_sphere32",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "880b3ca5-b613-576c-a86f-f49b550bf59a",
+            "path": "models/terminator/sphere32.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            5.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_cylinder8",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "62f84b70-a092-5245-9928-100ff9470f0d",
+            "path": "models/terminator/cylinder8.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            7.5,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_cylinder16",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "fb1322ca-abe9-556d-81d7-43859e14895d",
+            "path": "models/terminator/cylinder16.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_cylinder32",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "3996d292-8801-5e83-9e6c-f776b92c4925",
+            "path": "models/terminator/cylinder32.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            12.5,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_torus",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "39e6885a-dcfb-53e8-849f-9a654a537795",
+            "path": "models/terminator/torus.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            15.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_cone",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "3256c6e1-ceab-5b92-b74c-708629fb6a83",
+            "path": "models/terminator/cone.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.5,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_cone_averaged",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "5e3cf2b9-d494-5564-80c5-990dce919a06",
+            "path": "models/terminator/cone_averaged.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            20.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun_arm",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "c497313d-5c53-5f90-ad4f-e226881664c9",
+            "path": "models/terminator/arm.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.5,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "SkinnedMesh": {}
+      }
+    },
+    {
+      "name": "Sun_sphere32_bumpy",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "5d46f9cc-6b5b-505d-a6c6-16bd3b9b39a4",
+            "path": "models/terminator/sphere32_bumpy.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            26.25,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Bar",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.9823619097949585,
+            0.5,
+            1.9318516525781366
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            0.1,
+            0.1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Log",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "62f84b70-a092-5245-9928-100ff9470f0d",
+            "path": "models/terminator/cylinder8.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            30.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            0.7071067811865476,
+            0.0,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Block",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            29.0,
+            2.1,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.2,
+            0.2,
+            0.2
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_sphere16",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "8836c583-c29e-58c7-9e32-8683c939c01c",
+            "path": "models/terminator/sphere16.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            -10.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_cylinder8",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "62f84b70-a092-5245-9928-100ff9470f0d",
+            "path": "models/terminator/cylinder8.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            2.5,
+            0.0,
+            -10.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Point_torus",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "39e6885a-dcfb-53e8-849f-9a654a537795",
+            "path": "models/terminator/torus.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            5.0,
+            0.0,
+            -10.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "PointLight",
+      "components": {
+        "PointLight": {
+          "castsShadows": true,
+          "color": [
+            0.4,
+            0.6,
+            1.0
+          ],
+          "intensity": 120.0,
+          "radius": 15.0
+        },
+        "Transform": {
+          "position": [
+            2.5,
+            0.6,
+            -7.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Spot_sphere16",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "8836c583-c29e-58c7-9e32-8683c939c01c",
+            "path": "models/terminator/sphere16.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            -20.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Spot_cylinder8",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "62f84b70-a092-5245-9928-100ff9470f0d",
+            "path": "models/terminator/cylinder8.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            2.5,
+            0.0,
+            -20.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "SpotLight",
+      "components": {
+        "SpotLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            0.7,
+            0.4
+          ],
+          "innerAngle": 40.0,
+          "intensity": 200.0,
+          "outerAngle": 55.0,
+          "radius": 12.0
+        },
+        "Transform": {
+          "position": [
+            1.25,
+            2.5,
+            -20.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ],
+  "systems": [],
+  "version": 2
+}

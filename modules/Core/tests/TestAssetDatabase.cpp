@@ -286,6 +286,25 @@ TEST_CASE("AssetSidecar round-trips a source hash")
     CHECK(*parsed->sourceHash == 0xdeadbeefcafef00dULL);
 }
 
+TEST_CASE("AssetSidecar round-trips a model's split of sharp smoothing, and writes nothing when it is off")
+{
+    const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
+
+    AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
+    sidecar.splitSharpSmoothing = true;
+    const std::expected<AssetSidecar, AssetSidecarError> parsed = DeserializeSidecar(SerializeSidecar(sidecar));
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->splitSharpSmoothing);
+
+    // Off is the default and is left out, so every sidecar that never asked
+    // reads and writes exactly as it did.
+    const std::string off = SerializeSidecar(AssetSidecar::Leaf(meshId));
+    CHECK(off.find("splitSharpSmoothing") == std::string::npos);
+    const std::expected<AssetSidecar, AssetSidecarError> leaf = DeserializeSidecar(off);
+    REQUIRE(leaf.has_value());
+    CHECK_FALSE(leaf->splitSharpSmoothing);
+}
+
 TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMaterial")
 {
     const fs::path root = MakeTree();

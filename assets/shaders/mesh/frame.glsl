@@ -8,6 +8,9 @@ layout(location = 3) in float vViewZ;
 layout(location = 4) in vec3  vTangent;
 layout(location = 5) in float vTangentSign;
 layout(location = 6) in flat uint vMaterialIndex; // row into the material table
+// What SmoothSurfaceLift measures the curved surface from; mesh.vert says what
+// it holds.
+layout(location = 7) in float vPlaneDistance;
 
 layout(location = 0) out vec4 outColor;
 
@@ -56,6 +59,7 @@ const uint kDebugNormal    = 4u;
 const uint kDebugOcclusion = 5u;
 const uint kDebugEmissive  = 6u;
 const uint kDebugScreenOcclusion = 7u;
+const uint kDebugSmoothing       = 8u;
 
 // ---- Clustered lights (mirror Render::ClusterGrid's GPU structs) ------------
 

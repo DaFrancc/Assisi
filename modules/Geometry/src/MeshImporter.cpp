@@ -3,7 +3,9 @@
 
 #include <Assisi/Geometry/DefaultMeshes.hpp> // ComputeTangents (fallback when a primitive lacks TANGENT)
 #include <Assisi/Geometry/Pose.hpp>
+#include <Assisi/Geometry/SmoothingCheck.hpp>
 #include "GltfSource.hpp"
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -309,6 +311,8 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
                         virtualPath, data.Name);
     }
     data.DoubleSided = material.doubleSided;
+    // Cutout and double-sided materials are the cards foliage is made of.
+    data.ShadowsFollowSmoothing = data.Alpha == AlphaMode::Opaque && !data.DoubleSided;
 
     return data;
 }
@@ -950,6 +954,43 @@ std::expected<SkinReadNotes, MeshImportError> AppendPrimitiveSkin(const fastgltf
     return notes;
 }
 
+/// The book's page on what WarnSharpSmoothing's warning means and how to fix
+/// what it found.
+constexpr std::string_view kSmoothShadingPage = "https://dafrancc.github.io/Assisi/rendering-smooth-shading.html";
+
+/* Whether the model's sidecar asks for its sharp smoothing to be split. A model
+   without a readable sidecar has asked for nothing. */
+bool SplitRequested(std::string_view virtualPath)
+{
+    const std::expected<std::string, Core::AssetError> text =
+        Core::AssetSystem::ReadText(std::string{virtualPath} + ".aast");
+    if (!text)
+    {
+        return false;
+    }
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*text);
+    return sidecar.has_value() && sidecar->splitSharpSmoothing;
+}
+
+/// A bulge as a percentage, the unit the warning states it in.
+constexpr float kPercent = 100.f;
+
+/* Warns, once per submesh, where @p mesh is smoothed over corners too sharp
+   for its shadows to follow, saying how badly: see FindSharpSmoothing. */
+void WarnSharpSmoothing(const MeshData &mesh, std::string_view virtualPath)
+{
+    for (const SharpSmoothing &sharp : FindSharpSmoothing(mesh))
+    {
+        const MaterialData &material = mesh.Materials[mesh.SubMeshes[sharp.subMesh].MaterialSlot];
+        const std::string_view outcome =
+            sharp.bulge >= kMajorSmoothingBulge ? "will look badly wrong" : "may look slightly wrong";
+        Core::Log::Warn("MeshImporter: '{}' (material '{}') is smooth-shaded over corners too sharp for it, so "
+                        "it bulges {:.0f}% of its size off its flat faces and shadows there {}. The editor's "
+                        "Smoothing debug view shows where. How to fix it: {}",
+                        virtualPath, material.Name, sharp.bulge * kPercent, outcome, kSmoothShadingPage);
+    }
+}
+
 } // namespace
 
 std::string_view ToString(MeshImportError error) noexcept
@@ -1197,6 +1238,15 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
             merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, resolveId, warnings));
         }
     }
+    // Before the check, so a model split as its author asked is not warned about.
+    if (SplitRequested(virtualPath))
+    {
+        const std::size_t split = SplitSharpSmoothing(merged);
+        Core::Log::Info("MeshImporter: '{}': split {} sharply smoothed corner(s) into hard edges, as its import "
+                        "setting asks.",
+                        virtualPath, split);
+    }
+    WarnSharpSmoothing(merged, virtualPath);
 
     // If any primitive shipped without tangents, regenerate them for the whole
     // merged mesh — but only when UVs exist (Lengyel's method needs them).

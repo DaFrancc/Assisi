@@ -24,6 +24,7 @@
     - [The camera](rendering-camera.md)
     - [Lights](rendering-lights.md)
     - [Shadows](rendering-shadows.md)
+    - [Smooth shading and shadows](rendering-smooth-shading.md)
     - [Sky and time of day](rendering-sky.md)
     - [Detail levels](rendering-lod.md)
     - [Graphics settings](rendering-settings.md)

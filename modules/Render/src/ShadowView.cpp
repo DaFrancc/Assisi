@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace Assisi::Render
 {
@@ -176,6 +177,55 @@ glm::vec2 ReceiverPlaneSlope(const ShadowView &view, const glm::vec3 &position, 
 float ShadowComparedDepth(float reference, const glm::vec2 &offset, const glm::vec2 &slope)
 {
     return reference + std::min(glm::dot(offset, slope), 0.f);
+}
+
+glm::vec3 SmoothSurfaceLift(const ShadedTriangle &triangle, const glm::vec3 &barycentric, const glm::vec3 &facing)
+{
+    // A point p lies (V - p).n below a corner's tangent plane, which is V.n less
+    // p.n. mesh.vert hands mesh.frag each corner's V.n and n, the rasterizer
+    // blends them, and the fragment takes p.n against the blended normal; this
+    // blends them the same way.
+    glm::vec3 position(0.f);
+    glm::vec3 normal(0.f);
+    float planeDistance = 0.f;
+    for (std::size_t corner = 0; corner < triangle.corners.size(); ++corner)
+    {
+        const glm::vec3 cornerNormal = glm::normalize(triangle.normals[corner]);
+        const float weight = barycentric[static_cast<glm::length_t>(corner)];
+        position += weight * triangle.corners[corner];
+        normal += weight * cornerNormal;
+        planeDistance += weight * glm::dot(triangle.corners[corner], cornerNormal);
+    }
+    const glm::vec3 lift = (planeDistance - glm::dot(position, normal)) * glm::normalize(normal);
+    return glm::dot(lift, facing) > 0.f ? lift : glm::vec3(0.f);
+}
+
+float BumpShadowing(const glm::vec3 &geometric, const glm::vec3 &mapped, const glm::vec3 &toLight)
+{
+    const float geometricDotLight = glm::dot(geometric, toLight);
+    const float mappedDotLight = glm::dot(mapped, toLight);
+    const float geometricDotMapped = glm::dot(geometric, mapped);
+    if (geometricDotLight <= 0.f)
+    {
+        return 0.f;
+    }
+    // A bump facing away takes no light anyway, and one bent past the
+    // surface's plane has no gain to measure.
+    if (mappedDotLight <= 0.f || geometricDotMapped <= 0.f)
+    {
+        return 1.f;
+    }
+    const float g = std::min(1.f, geometricDotLight / (mappedDotLight * geometricDotMapped));
+    return g * (1.f + g - g * g);
+}
+
+float TerminatorGate(const glm::vec3 &normal, const glm::vec3 &facet, const glm::vec3 &toLight)
+{
+    const float normalDotLight = glm::dot(normal, toLight);
+    const float facetDotLight = glm::dot(facet, toLight);
+    return normalDotLight < kTerminatorCutoff
+               ? std::clamp(2.f - (facetDotLight + normalDotLight) / kTerminatorCutoff, 0.f, 1.f)
+               : std::clamp(1.f - facetDotLight / kTerminatorCutoff, 0.f, 1.f);
 }
 
 ShadowViewGpu PackShadowView(const ShadowView &view)

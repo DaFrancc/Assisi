@@ -12,8 +12,8 @@
 /// A composite (a glTF) also carries the **manifest** — its `slot → material
 /// GUID` list (`subAssets`) written by the material-explosion pass (S3) — and
 /// the `sourceHash` of the source it was exploded from (S4/D5). A leaf asset
-/// (texture, `.amat`, level) has neither. Import settings (texture color space,
-/// compression) land later; the envelope (`version`/`type`) is
+/// (texture, `.amat`, level) has neither. Import settings live here too, one so
+/// far (a model's `splitSharpSmoothing`); the envelope (`version`/`type`) is
 /// forward-compatible, so older sidecars keep loading as fields are added.
 ///
 /// The `.aast` file is an **editor source artifact** — it does not ship (the
@@ -75,6 +75,13 @@ struct AssetSidecar
     ///        asset, and on any sidecar written before hashing existed. A
     ///        mismatch against the current source marks the composite stale.
     std::optional<std::uint64_t> sourceHash;
+
+    /// @brief A model's import setting: give every corner smoothed more sharply
+    ///        than the import check allows a normal of its own, as if the edges
+    ///        there were marked sharp (Geometry::SplitSharpSmoothing). Off unless
+    ///        the author turns it on, because it changes how the model looks;
+    ///        written only when on.
+    bool splitSharpSmoothing = false;
 
     /// @brief A leaf asset's sidecar: identity only, no manifest and no source
     ///        hash. Every mint site wants this; spelling it

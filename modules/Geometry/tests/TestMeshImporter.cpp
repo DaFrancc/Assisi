@@ -2,17 +2,23 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
+#include <Assisi/Math/GLM.hpp>
 
+#include "GltfFixture.hpp"
 #include "LogCapture.hpp"
 
 using Assisi::Core::AssetSystem;
@@ -860,6 +866,106 @@ TEST_CASE("ImportMesh: a material that does not say doubleSided stays single-sid
     REQUIRE(result->Materials.size() == 1);
 
     CHECK(result->Materials[0].DoubleSided == false);
+    CHECK(result->Materials[0].ShadowsFollowSmoothing == true);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: cutout and double-sided materials do not lift their shadows onto the smoothing")
+{
+    // They are the cards foliage is made of, whose normals bend far from their
+    // faces on purpose; lifted, their lookups would leave the canopy's shade.
+    const fs::path cutout = WriteKhrAssets(MakeAlphaGltf("MASK", ""));
+    const std::expected<MeshData, MeshImportError> masked = ImportMesh("khr.gltf");
+    REQUIRE(masked.has_value());
+    CHECK(masked->Materials[0].ShadowsFollowSmoothing == false);
+    fs::remove_all(cutout);
+
+    const fs::path card = WriteKhrAssets(MakeAlphaGltf("OPAQUE", R"(, "doubleSided": true)"));
+    const std::expected<MeshData, MeshImportError> doubleSided = ImportMesh("khr.gltf");
+    REQUIRE(doubleSided.has_value());
+    CHECK(doubleSided->Materials[0].ShadowsFollowSmoothing == false);
+    fs::remove_all(card);
+}
+
+namespace
+{
+/// A cube smoothed all round, as glTF: eight shared corners, each normal along
+/// its diagonal, and one material named "Body".
+fs::path WriteSmoothCube()
+{
+    std::vector<float> positions;
+    std::vector<float> normals;
+    for (uint32_t corner = 0; corner < 8; ++corner)
+    {
+        const glm::vec3 position((corner & 1u) != 0u ? 1.f : -1.f, (corner & 2u) != 0u ? 1.f : -1.f,
+                                 (corner & 4u) != 0u ? 1.f : -1.f);
+        const glm::vec3 normal = glm::normalize(position);
+        positions.insert(positions.end(), {position.x, position.y, position.z});
+        normals.insert(normals.end(), {normal.x, normal.y, normal.z});
+    }
+    // Two triangles per face, counter-clockwise seen from outside.
+    const std::vector<uint16_t> indices = {0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4,
+                                           2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5};
+
+    GltfFixture::GltfBuffer buffer;
+    const uint32_t position =
+        buffer.Add(positions, GltfFixture::kFloat, "VEC3", R"(,"min":[-1,-1,-1],"max":[1,1,1])");
+    const uint32_t normal = buffer.Add(normals, GltfFixture::kFloat, "VEC3");
+    const uint32_t index = buffer.Add(indices, GltfFixture::kUnsignedShort, "SCALAR");
+    return buffer.Write("assisi_geometry_test_smoothing", "cube",
+                        std::format(R"("scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],)"
+                                    R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{},"NORMAL":{}}},)"
+                                    R"("indices":{},"material":0}}]}}],"materials":[{{"name":"Body"}}])",
+                                    position, normal, index));
+}
+} // namespace
+
+TEST_CASE("ImportMesh: a mesh smoothed over corners too sharp for it says so, how badly, and where to read more")
+{
+    const fs::path root = WriteSmoothCube();
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("cube.gltf");
+    REQUIRE(result.has_value());
+
+    CHECK(log.Mentions("cube.gltf"));
+    CHECK(log.Mentions("'Body'"));
+    CHECK(log.Mentions("corners too sharp"));
+    CHECK(log.Mentions("badly wrong"));
+    CHECK(log.Mentions("Smoothing debug view"));
+    CHECK(log.Mentions("https://dafrancc.github.io/Assisi/rendering-smooth-shading.html"));
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ImportMesh: a model whose sidecar asks for its sharp smoothing split imports split, and quietly")
+{
+    const fs::path root = WriteSmoothCube();
+    Assisi::Core::AssetSidecar sidecar =
+        Assisi::Core::AssetSidecar::Leaf(*Assisi::Core::AssetId::Parse("11111111-2222-4333-8444-555555555555"));
+    sidecar.splitSharpSmoothing = true;
+    {
+        std::ofstream file(root / "cube.gltf.aast", std::ios::binary);
+        file << Assisi::Core::SerializeSidecar(sidecar);
+    }
+    const Assisi::Tests::LogCapture log;
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("cube.gltf");
+    REQUIRE(result.has_value());
+
+    // Every corner of the cube took its own face's normal, so nothing is left to
+    // warn about.
+    CHECK_FALSE(log.Mentions("corners too sharp"));
+    for (std::size_t index = 0; index < result->Indices.size(); index += 3)
+    {
+        const glm::vec3 a = result->Vertices[result->Indices[index]].Position;
+        const glm::vec3 b = result->Vertices[result->Indices[index + 1]].Position;
+        const glm::vec3 c = result->Vertices[result->Indices[index + 2]].Position;
+        const glm::vec3 face = glm::normalize(glm::cross(b - a, c - a));
+        constexpr float kFlat = 0.9999f;
+        CHECK(glm::dot(result->Vertices[result->Indices[index]].Normal, face) > kFlat);
+    }
 
     fs::remove_all(root);
 }

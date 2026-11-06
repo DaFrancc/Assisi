@@ -676,6 +676,13 @@ class EditorApp : public Assisi::App::Application
     /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
     /// rest of it, then reindex and forget what the store loaded.
     void UseFileAs(const std::string &vpath, const std::string &kindName);
+    /// @brief Whether the model at @p vpath has its sharp smoothing split on
+    /// import (its sidecar's splitSharpSmoothing).
+    [[nodiscard]] bool SplitsSharpSmoothing(const std::string &vpath) const;
+    /// @brief Turn the model at @p vpath's sharp-smoothing split on or off in
+    /// its sidecar, keeping the rest of it, then reindex and forget what the
+    /// store loaded so the model imports again.
+    void SetSplitSharpSmoothing(const std::string &vpath, bool split);
     /// @brief Write each animation in the model at @p vpath out as a clip file
     /// beside it, then reindex so the clips appear.
     void ExtractAnimations(const std::string &vpath);

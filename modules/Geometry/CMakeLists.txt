@@ -60,6 +60,7 @@ target_sources(Assisi-GeometryImport
     "include/Assisi/Geometry/MeshImporter.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
     "include/Assisi/Geometry/AnimationImport.hpp"
+    "include/Assisi/Geometry/SmoothingCheck.hpp"
   PRIVATE
     "src/AnimationCooking.cpp"
     "src/AnimationExtract.cpp"
@@ -69,6 +70,7 @@ target_sources(Assisi-GeometryImport
     "src/GltfSource.hpp"
     "src/MeshImporter.cpp"
     "src/AssetImport.cpp"
+    "src/SmoothingCheck.cpp"
 )
 
 target_link_libraries(Assisi-GeometryImport

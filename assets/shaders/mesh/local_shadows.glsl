@@ -182,15 +182,15 @@ float LocalVisibilityPcss(ShadowViewRow view, Receiver receiver, float axisDepth
     return FilterLocalVogel(view, receiver, stepUv);
 }
 
-// Fraction of a local light reaching @p worldPos through view @p viewIndex:
-// 1 lit, 0 shadowed. @p N is the geometric normal; @p axisDepth is the distance
-// along the view's own axis, which is what a texel's footprint scales with.
-float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float axisDepth)
+// Fraction of a local light reaching @p surface through view @p viewIndex:
+// 1 lit, 0 shadowed. @p axisDepth is the distance along the view's own axis,
+// which is what a texel's footprint scales with.
+float LocalVisibility(uint viewIndex, ShadowSurface surface, float axisDepth)
 {
     ShadowViewRow view = shadowViews[viewIndex];
 
-    float sinTheta  = sqrt(max(1.0 - NdotL * NdotL, 0.0));
-    vec3  biasedPos = worldPos + N * (view.params.y * axisDepth * sinTheta);
+    float sinTheta  = sqrt(max(1.0 - surface.NdotL * surface.NdotL, 0.0));
+    vec3  biasedPos = surface.position + surface.normal * (view.params.y * axisDepth * sinTheta);
 
     // Behind the light or outside the frustum this view recorded: nothing is
     // known, so lit.
@@ -210,7 +210,7 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
     vec2 tileUv = ndc.xy * vec2(0.5, -0.5) + 0.5;
     vec2 uv     = tileUv * view.uvScaleOffset.xy + view.uvScaleOffset.zw;
 
-    Receiver receiver = Receiver(uv, LocalReceiverSlope(view, biasedPos, N, axisDepth),
+    Receiver receiver = Receiver(uv, LocalReceiverSlope(view, biasedPos, surface.plane, axisDepth),
                                  ndc.z - view.params.x / max(axisDepth, kMinAxisDepth));
 
     if (uFrame.localShadowCounts.z == 1u)
@@ -241,25 +241,25 @@ float LocalVisibility(uint viewIndex, vec3 worldPos, vec3 N, float NdotL, float 
 }
 
 // A spot light's visibility; its view looks down the cone's axis.
-float SpotVisibility(uint shadowView, vec3 spotDir, vec3 lightPos, vec3 worldPos, vec3 N, float NdotL)
+float SpotVisibility(uint shadowView, vec3 spotDir, vec3 lightPos, ShadowSurface surface)
 {
     if (shadowView == kNoShadowView)
     {
         return 1.0;
     }
-    float axisDepth = max(dot(worldPos - lightPos, spotDir), 0.0);
-    return LocalVisibility(shadowView, worldPos, N, NdotL, axisDepth);
+    float axisDepth = max(dot(surface.position - lightPos, spotDir), 0.0);
+    return LocalVisibility(shadowView, surface, axisDepth);
 }
 
-// A point light's visibility, through the face @p worldPos falls in. That face's
+// A point light's visibility, through the face @p surface falls in. That face's
 // axis is the dominant one, so the largest component of |d| is the depth along it.
-float PointVisibility(uint firstView, vec3 lightPos, vec3 worldPos, vec3 N, float NdotL)
+float PointVisibility(uint firstView, vec3 lightPos, ShadowSurface surface)
 {
     if (firstView == kNoShadowView)
     {
         return 1.0;
     }
-    vec3  d         = worldPos - lightPos;
+    vec3  d         = surface.position - lightPos;
     float axisDepth = max(max(abs(d.x), abs(d.y)), abs(d.z));
-    return LocalVisibility(firstView + PointLightFace(d), worldPos, N, NdotL, axisDepth);
+    return LocalVisibility(firstView + PointLightFace(d), surface, axisDepth);
 }

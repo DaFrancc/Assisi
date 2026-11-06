@@ -33,6 +33,12 @@ layout(location = 3) out float vViewZ;       // view-space Z (negative for geome
 layout(location = 4) out vec3  vTangent;     // world-space tangent (for the normal-map TBN)
 layout(location = 5) out float vTangentSign; // bitangent handedness (glTF TANGENT.w)
 layout(location = 6) out flat uint vMaterialIndex; // row into the material table (per instance)
+// The plane tangent to the surface at this vertex, the one its normal n faces
+// through its position V, as its distance along n from the origin: V.n. A point
+// p lies (V - p).n below it, which is V.n less p.n, so interpolated beside
+// vNormal it gives every fragment the blend of its depths below the three
+// corners' planes (SmoothSurfaceLift).
+layout(location = 7) out float vPlaneDistance;
 #elif defined(ASSISI_ALPHA_MASK)
 // The same locations the lit build writes them at, so mesh_depth.frag reads them
 // where mesh.frag does.
@@ -99,6 +105,10 @@ void main()
     // matrix; inverse() of a 3x3 is cheap.
     mat3 normalMatrix = transpose(inverse(mat3(model)));
     vNormal   = normalize(normalMatrix * inNormal);
+    // In vWorldPos's space, measured from the camera: the fragment shader takes
+    // the difference of terms as large as the distance to it, and a far origin
+    // would leave nothing of the difference but rounding.
+    vPlaneDistance = dot(worldPos.xyz, vNormal);
     // Tangents are directions along the surface, so they transform by the plain
     // model 3x3 (not the inverse-transpose) — the fragment shader re-orthonormalizes
     // against the normal, absorbing any residual skew. w carries handedness.

@@ -63,6 +63,7 @@ material, unlit, so you can check a material's maps are doing what you meant:
 | **Occlusion** | The material's occlusion map: black where it is fully hidden. |
 | **Emissive** | The light each surface gives off itself. Black where it gives none. |
 | **Screen Occlusion** | What ambient occlusion found: dark in creases. White everywhere while ambient occlusion is off. |
+| **Smoothing** | Where a model is smooth-shaded over corners too sharp for its shadows: red, brighter the sharper, on grey. Blue-grey for materials with `ShadowsFollowSmoothing` off. See [Smooth shading and shadows](rendering-smooth-shading.md). |
 
 Bumps that look pushed in where they should stand out usually mean the normal
 map was made for a tool that flips its green channel; flip it back in an image

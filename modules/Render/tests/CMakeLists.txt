@@ -13,6 +13,7 @@ add_executable(Assisi-Render-Tests
   TestShadowImportance.cpp
   TestShadowReceiverPlane.cpp
   TestShadowSettings.cpp
+  TestShadowTerminator.cpp
   TestShadowViews.cpp
   TestSkinScratch.cpp
   TestSky.cpp
