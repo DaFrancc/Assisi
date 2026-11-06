@@ -38,6 +38,10 @@ constexpr const char *kOutlineEdgePixelShader = "editor/shaders/outline_edge.fra
 // Generic overlay-line renderer (see LinePass), used for collider wireframes.
 constexpr const char *kLineVertexShader = "editor/shaders/line.vert.spv";
 constexpr const char *kLinePixelShader = "editor/shaders/line.frag.spv";
+constexpr const char *kThickLineVertexShader = "editor/shaders/thick_line.vert.spv";
+
+/// The width an ordinary line already is, in pixels.
+constexpr float kOnePixel = 1.f;
 
 // Entity-icon billboard (see IconPass). The icon image is authored content
 // dropped at this virtual path; until it exists the pass shows a magenta
@@ -86,7 +90,8 @@ bool OverlayRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::Framebuffe
         Core::Log::Warn("OverlayRenderer: entity icons unavailable (icon pass failed to initialise).");
     }
 
-    if (!_linePass.Initialize(device, overlayFramebufferInfo, kLineVertexShader, kLinePixelShader))
+    if (!_linePass.Initialize(device, overlayFramebufferInfo, kLineVertexShader, kLinePixelShader,
+                              kThickLineVertexShader))
     {
         Core::Log::Warn("OverlayRenderer: overlay lines unavailable (line pass failed to initialise).");
     }
@@ -106,6 +111,18 @@ void OverlayRenderer::SubmitOverlayLines(std::span<const LineVertex> vertices, b
 {
     std::vector<LineVertex> &sink = onTop ? _overlayLinesOnTop : _overlayLinesDepthTested;
     sink.insert(sink.end(), vertices.begin(), vertices.end());
+}
+
+void OverlayRenderer::SubmitThickOverlayLines(std::span<const LineVertex> vertices, bool onTop, float widthPixels)
+{
+    // One pixel or less is an ordinary line, which the rasterizer draws evenly; a
+    // strip that narrow would break up wherever it fell between pixel centres.
+    if (widthPixels <= kOnePixel)
+    {
+        SubmitOverlayLines(vertices, onTop);
+        return;
+    }
+    AppendThickLines(onTop ? _thickLinesOnTop : _thickLinesDepthTested, vertices, widthPixels);
 }
 
 void OverlayRenderer::SetIconSuppressedEntities(std::span<const ECS::Entity> entities)
@@ -196,10 +213,14 @@ void OverlayRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene
         if (_linePass.IsValid())
         {
             _linePass.Draw(frame, viewProjection, _overlayLinesDepthTested, /*onTop=*/ false);
+            _linePass.DrawThick(frame, viewProjection, _thickLinesDepthTested, /*onTop=*/ false);
             _linePass.Draw(frame, viewProjection, _overlayLinesOnTop, /*onTop=*/ true);
+            _linePass.DrawThick(frame, viewProjection, _thickLinesOnTop, /*onTop=*/ true);
         }
         _overlayLinesDepthTested.clear();
         _overlayLinesOnTop.clear();
+        _thickLinesDepthTested.clear();
+        _thickLinesOnTop.clear();
     }
     _iconSuppressed.clear();
 }

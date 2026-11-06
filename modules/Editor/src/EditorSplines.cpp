@@ -45,9 +45,6 @@ namespace Assisi::Editor
 namespace
 {
 
-/// Magenta, which an outdoor level's greens and browns rarely are, and apart
-/// from the cyan of a camera route and the orange of a selection.
-constexpr glm::vec4 kSplineColor{1.0f, 0.35f, 0.85f, 0.9f};
 constexpr glm::vec4 kSelectedColor{kSelectionOutline, 1.0f};
 constexpr glm::vec4 kActiveSelectedColor{kActiveSelectionOutline, 1.0f};
 
@@ -69,11 +66,13 @@ constexpr float kHandleHalfExtent = 0.06f;
 /// the transform gizmo.
 constexpr float kNodeSnapStep = 0.5f;
 
-/// Which batch an entity's splines go in, in what colour, and whether their
-/// nodes show.
+/// Which batches an entity's splines go in, in what colour, and whether their
+/// nodes show. Curves and markers are apart because only curves are drawn at
+/// the preferred thickness.
 struct SplineStyle
 {
-    std::vector<LineVertex> *batch = nullptr;
+    std::vector<LineVertex> *curves = nullptr;
+    std::vector<LineVertex> *markers = nullptr;
     glm::vec4 color{0.f};
     bool detailed = false;
 };
@@ -93,7 +92,7 @@ void AddMarker(const SplineStyle &style, const glm::vec3 &at, float half, bool s
 {
     const glm::vec4 &color = shaping ? kShapingColor : style.color;
     const float size = shaping ? half * kShapingScale : half;
-    AddBoxWireframe(*style.batch, glm::translate(glm::mat4(1.f), at), color, glm::vec3(size));
+    AddBoxWireframe(*style.markers, glm::translate(glm::mat4(1.f), at), color, glm::vec3(size));
 }
 
 /// A box on each node, and the handles of each Bezier node. Placed through
@@ -117,7 +116,7 @@ void AddNodes(const SplineStyle &style, const glm::mat4 &model, const Geometry::
         {
             const SplinePart handle{.node = i, .kind = kind};
             const glm::vec3 tip = Placed(model, PartPosition(spline, handle));
-            AddSegment(*style.batch, identity, style.color, at, tip);
+            AddSegment(*style.markers, identity, style.color, at, tip);
             AddMarker(style, tip, kHandleHalfExtent, shaping == handle);
         }
     }
@@ -130,7 +129,7 @@ void AddSpline(const SplineStyle &style, const glm::mat4 &model, const Geometry:
     const Geometry::SplinePolyline chain = Geometry::FlattenSpline(spline, kSplineDrawTolerance);
     for (std::size_t i = 1; i < chain.points.size(); ++i)
     {
-        AddSegment(*style.batch, model, style.color, chain.points[i - 1], chain.points[i]);
+        AddSegment(*style.curves, model, style.color, chain.points[i - 1], chain.points[i]);
     }
     if (style.detailed)
     {
@@ -232,14 +231,20 @@ void EditorApp::SubmitSplineGizmos()
         return;
     }
 
-    _splineLinesDepthTested.clear();
-    _splineLinesOnTop.clear();
+    _splineCurvesDepthTested.clear();
+    _splineCurvesOnTop.clear();
+    _splineMarkers.clear();
 
     // The selection on top, so a spline being shaped is never lost behind the
-    // ground it lies on.
-    const SplineStyle behind{.batch = &_splineLinesDepthTested, .color = kSplineColor, .detailed = false};
-    const SplineStyle selected{.batch = &_splineLinesOnTop, .color = kSelectedColor, .detailed = true};
-    const SplineStyle active{.batch = &_splineLinesOnTop, .color = kActiveSelectedColor, .detailed = true};
+    // ground it lies on. The rest take the preferred colour.
+    const SplineStyle behind{.curves = &_splineCurvesDepthTested,
+                             .markers = &_splineMarkers,
+                             .color = _preferences.splines.color,
+                             .detailed = false};
+    const SplineStyle selected{
+        .curves = &_splineCurvesOnTop, .markers = &_splineMarkers, .color = kSelectedColor, .detailed = true};
+    const SplineStyle active{
+        .curves = &_splineCurvesOnTop, .markers = &_splineMarkers, .color = kActiveSelectedColor, .detailed = true};
 
     // Told apart by address: the target's path leads to exactly one spline.
     const Geometry::Spline *shaped = _splineTarget ? SplineOf(*_splineTarget) : nullptr;
@@ -268,8 +273,10 @@ void EditorApp::SubmitSplineGizmos()
             });
     }
 
-    _overlays.SubmitOverlayLines(_splineLinesDepthTested, /*onTop=*/ false);
-    _overlays.SubmitOverlayLines(_splineLinesOnTop, /*onTop=*/ true);
+    const float thickness = _preferences.splines.thickness;
+    _overlays.SubmitThickOverlayLines(_splineCurvesDepthTested, /*onTop=*/ false, thickness);
+    _overlays.SubmitThickOverlayLines(_splineCurvesOnTop, /*onTop=*/ true, thickness);
+    _overlays.SubmitOverlayLines(_splineMarkers, /*onTop=*/ true);
 }
 
 Geometry::Spline *EditorApp::SplineOf(const SplineTarget &target)

@@ -1082,6 +1082,13 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // above, which still clears them with the rest.
         ImGui::Checkbox("Skeletons", &frame.showSkeletons);
 
+        // How splines draw: the colour of those on unselected entities, and how
+        // wide every curve is. Kept in editor.json, which the editor writes once
+        // an edit here settles.
+        ImGui::ColorEdit4("Spline Color", &frame.preferences.splines.color[0]);
+        ImGui::SliderFloat("Spline Thickness", &frame.preferences.splines.thickness, kMinSplineThickness,
+                           kMaxSplineThickness, "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+
         // Screen-size LOD selection. Off pins every instance to LOD0, which is
         // what the renderer drew before selection existed and the A/B against
         // the whole feature; the bias is the quality dial, above 1 holding a

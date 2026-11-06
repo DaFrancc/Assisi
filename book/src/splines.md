@@ -27,7 +27,9 @@ adds a node past the end of the path, at the height of the node before it.
 A curve appears through the nodes. While the entity is selected it draws in
 orange, with a box on each node; the first node's box is larger, so you can see
 which end the path starts from. The node you added last is white: it is the
-**shaped node**, the one the gizmo now moves. Other splines draw in magenta.
+**shaped node**, the one the gizmo now moves. Other splines draw in magenta, or
+in the colour and thickness set in the **F11** window's **Spline Color** and
+**Spline Thickness**.
 
 ### Step 3: move a node
 

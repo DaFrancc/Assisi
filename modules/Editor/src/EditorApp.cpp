@@ -203,6 +203,7 @@ void EditorApp::DrawOptionsWindow()
                                               .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
                                               .showSkeletons = _showSkeletons,
+                                              .preferences = _preferences,
                                               .fps = GetFps(),
                                               .cpuFrameMs = GetCpuFrameMs(),
                                               .gpuFrameMs = GetGpuFrameMs(),
@@ -214,6 +215,15 @@ void EditorApp::DrawOptionsWindow()
     if (applyDisplay)
     {
         ApplyDisplayOptions();
+    }
+
+    // Saved once an edit settles rather than on every frame of a drag. Never by a
+    // restricted viewer, which shares this folder with the editor that started
+    // it.
+    if (_preferences != _savedPreferences && !ImGui::IsAnyItemActive() && !IsRestrictedViewer())
+    {
+        Assisi::Editor::SaveEditorPreferences(_preferences);
+        _savedPreferences = _preferences;
     }
 
     // The per-light shadow report is gathered for two readers and nobody else:
@@ -1014,6 +1024,9 @@ void EditorApp::SetupScene()
     // The author's own choice whatever the game allows its players: the editor
     // is where fog is compared on and off.
     _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
+
+    _preferences = Assisi::Editor::LoadEditorPreferences();
+    _savedPreferences = _preferences;
 
     // Only a process with audio has anything to play it on.
     if (GetMixer() != nullptr)

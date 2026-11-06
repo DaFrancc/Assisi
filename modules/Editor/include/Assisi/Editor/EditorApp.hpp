@@ -57,6 +57,7 @@
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/EditorEvents.hpp>
+#include <Assisi/Editor/EditorPreferences.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
@@ -1839,10 +1840,17 @@ class EditorApp : public Assisi::App::Application
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;
 
-    // Splines, split as the lights are: the selection on top, the rest behind
-    // the geometry they wind through.
-    std::vector<LineVertex> _splineLinesDepthTested;
-    std::vector<LineVertex> _splineLinesOnTop;
+    // Splines' curves, split as the lights are: the selection on top, the rest
+    // behind the geometry they wind through; drawn at the preferred thickness.
+    // The selection's node markers and handles go on top at one pixel.
+    std::vector<LineVertex> _splineCurvesDepthTested;
+    std::vector<LineVertex> _splineCurvesOnTop;
+    std::vector<LineVertex> _splineMarkers;
+
+    // The editor's own settings (editor.json), and what was last saved, which
+    // is how a change is noticed once it settles.
+    Assisi::Editor::EditorPreferences _preferences;
+    Assisi::Editor::EditorPreferences _savedPreferences;
 
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here

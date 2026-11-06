@@ -118,6 +118,11 @@ Select its entity by clicking the curve, then:
 - **Delete** removes the selected node, and **Escape** hands the gizmo back to
   the entity.
 
+To change how splines look, press **F11** and set **Spline Color**, the colour
+of splines on unselected entities, and **Spline Thickness**, how many pixels
+wide every curve is drawn. The editor remembers both in `editor.json`, next to
+the editor's executable; delete that file to go back to the defaults.
+
 [Splines](splines.md) covers the rest, such as handles and node modes.
 
 ## Playing
