@@ -23,7 +23,14 @@ sides, not less above and below.
 
 `farZ` is how far the player can see. Geometry past it is cut off, and the sky
 is drawn behind it, so set it to the distance of the furthest thing the player
-should see. It also sets two other limits:
+should see.
+
+A level's [`Fog`](rendering-sky.md#fog) can shorten it: the camera then draws
+to the nearer of `farZ` and the fog's `hazeVisibility`, and everything fades
+into the fog before that edge. A camera in one level can draw 2 km while the
+same camera in a hazier level draws 800 m.
+
+The draw distance also sets two other limits:
 
 - **The sun's shadows** reach no further than `farZ`, or than the player's
   shadow distance setting if that is shorter. See

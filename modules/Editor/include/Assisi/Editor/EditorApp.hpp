@@ -352,6 +352,15 @@ class EditorApp : public Assisi::App::Application
 
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
+
+    /// F1 shows and hides the editor; F2 saves a screenshot of what is on
+    /// screen, with a shutter sound. Read before the panels, which F1 can stop
+    /// drawing.
+    void HandleViewKeys();
+
+    /// Plays F2's shutter on the UI bus, or nothing in a process without audio or
+    /// while the sound is still loading.
+    void PlayScreenshotSound();
     void UpdateCamera(float dt);
     /// @brief Recomputes _cameraWorld from _cameraTransform. The camera is
     /// parentless, so world == local; call before reading the view matrix.
@@ -1931,6 +1940,28 @@ class EditorApp : public Assisi::App::Application
     // or a screenshot. Purely editor-side (it skips the submissions); whether the
     // passes exist at all is EditorConfig::enableEditorVisuals.
     bool _showEditorOverlays = true;
+
+    // F1: hides every panel, gizmo and overlay, leaving the scene as the game
+    // draws it. Selection by clicking is off with them, so nothing unseen changes.
+    bool _editorHidden = false;
+
+    // Which second the last screenshot was named for, and how many were named
+    // in it. Kept because a screenshot's file is written a frame or more after
+    // F2, so a second press in the same second would not find it on disk yet.
+    struct ScreenshotCount
+    {
+        std::string stamp;
+        uint32_t taken = 0;
+    };
+    ScreenshotCount _screenshotCount;
+
+    // F2's shutter, decoded once at start; null in a process without audio.
+    std::shared_ptr<const Assisi::Audio::PcmClip> _screenshotClip;
+    // Every shutter still playing, oldest first: each F2 starts its own over
+    // the ones before, up to a cap.
+    // A mixer releases a sound nobody holds each frame, so HandleViewKeys holds
+    // these until each finishes.
+    std::vector<Assisi::Audio::SoundHandle> _screenshotSounds;
 
     // F11 "Skeletons" checkbox: draws skinned meshes' skeletons. Under the
     // overlays switch above, so that one still clears everything.

@@ -9,6 +9,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/Celestial.hpp"
     "include/Assisi/Render/DrawItem.hpp"
     "include/Assisi/Render/EnvironmentSettings.hpp"
+    "include/Assisi/Render/Fog.hpp"
     "include/Assisi/Render/FrameCapture.hpp"
     "include/Assisi/Render/Frustum.hpp"
     "include/Assisi/Render/GpuLayout.hpp"

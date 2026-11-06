@@ -67,6 +67,7 @@ to entities in the editor, but it helps to know what they are.
 | `Character` | `<Assisi/Physics/PhysicsComponents.hpp>` | A player or NPC the character controller moves. |
 | `ArcadeMovement`, `SourceMovement` | `<Assisi/Physics/PhysicsComponents.hpp>` | How a character speeds up, slows down and steers in the air. See [The character controller](physics-character.md). |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
+| `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
 
 `Transform` looks like this:

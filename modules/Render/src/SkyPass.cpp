@@ -197,7 +197,8 @@ void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, co
         LoadMoonTexture();
     }
 
-    const SkyConstants constants = MakeSkyConstants(glm::inverse(viewProjection), cameraPosition, sun, moon, settings);
+    SkyConstants constants = MakeSkyConstants(glm::inverse(viewProjection), cameraPosition, sun, moon, settings);
+    constants.fog = _fog;
     Submit(frame.commandList, frame.framebuffer, _pipeline,
            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)), constants);
 }

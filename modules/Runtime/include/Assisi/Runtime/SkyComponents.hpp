@@ -16,9 +16,13 @@
 ///
 /// Everything the sky's look needs is here and saved with the level, so a world
 /// is authored in the editor rather than in engine code.
+///
+/// The Fog component is here too: it takes its colour from this sky, but it is
+/// not placed by it and works in a level with none.
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/Sky.hpp>
 
 #include <array>
@@ -195,6 +199,64 @@ struct Skybox
     AFIELD() glm::vec3 minimumAmbientColor{0.35f, 0.45f, 0.7f};
     /// @}
 };
+
+/// @brief The level's fog: a haze that thickens with distance, and a mist that
+/// lies low in the valleys.
+///
+/// One per level, on any entity; with more than one, the first found is used
+/// and the log says so. Without one a level has no fog and pays nothing for it.
+///
+/// The colour comes from the sky in the direction each pixel looks, so the fog
+/// is warm toward a sunset and dark at night with nothing more authored. Only a
+/// level with no Skybox reads @ref color.
+///
+/// The haze's @ref hazeVisibility is also the draw distance: nothing past it is
+/// drawn, and the camera's farZ is shortened to it. Whatever limits the draw
+/// distance, everything fades into the fog's colour before it, so the edge of
+/// the world never shows as a wall.
+ACOMP()
+struct Fog
+{
+    /// The fog's colour where the level has no sky to take one from.
+    AFIELD() glm::vec3 color = Assisi::Render::kDefaultFogColor;
+
+    /// @name The haze
+    /// @{
+    /// How far you can see through the haze where it is thickest, in metres.
+    /// Nothing past it is drawn. Zero is no haze.
+    AFIELD(min = 0) float hazeVisibility = 0.f;
+    /// Below this world height the haze is at its thickest.
+    AFIELD() float hazeHeight = 0.f;
+    /// How many metres above @ref hazeHeight the haze takes to thin to about a
+    /// third. Zero keeps it the same at every height.
+    AFIELD(min = 0) float hazeFalloff = 0.f;
+    /// @}
+
+    /// @name The mist
+    /// @{
+    /// How far you can see through the mist where it is thickest, in metres.
+    /// Zero is no mist. Unlike the haze, it never limits the draw distance.
+    AFIELD(min = 0) float mistVisibility = 0.f;
+    /// Below this world height the mist is at its thickest: the valley floor
+    /// it fills.
+    AFIELD() float mistHeight = 0.f;
+    /// How many metres above @ref mistHeight the mist takes to thin to about a
+    /// third. Small values give it a visible top.
+    AFIELD(min = 0) float mistFalloff = 0.f;
+    /// @}
+};
+
+/// @brief The component as the render side wants it.
+[[nodiscard]] inline Assisi::Render::FogSettings ToFogSettings(const Fog &fog)
+{
+    return Assisi::Render::FogSettings{.color = fog.color,
+                                       .hazeVisibility = fog.hazeVisibility,
+                                       .hazeHeight = fog.hazeHeight,
+                                       .hazeFalloff = fog.hazeFalloff,
+                                       .mistVisibility = fog.mistVisibility,
+                                       .mistHeight = fog.mistHeight,
+                                       .mistFalloff = fog.mistFalloff};
+}
 
 /// @brief Every preset, already built, in the order @ref SkyPreset declares them.
 ///

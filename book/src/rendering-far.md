@@ -93,7 +93,9 @@ front of another at 10 km does not flicker.
 
 There is still a far plane: the camera's `farZ`, its draw distance. Nothing
 past it is drawn. Set it to how far the player should see; see
-[Choosing `farZ`](rendering-camera.md#choosing-farz).
+[Choosing `farZ`](rendering-camera.md#choosing-farz). A level's
+[`Fog`](rendering-sky.md#fog) can bring it nearer, and fades everything out
+before it.
 
 `assets/levels/DepthRange.alvl` puts an orange panel just in front of a
 checkered one at distances from 1 m to 20 km, for checking that nothing fights

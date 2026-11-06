@@ -1071,8 +1071,13 @@ void Application::Run()
     // "destroy ... currently in use by VkCommandBuffer", then a crash).
     if (_presentationInitialized)
     {
-        if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        {
             vulkanContext->GetDevice()->waitForIdle();
+            // Before the process ends without waiting for workers: a screenshot
+            // taken just before quitting is still written in full.
+            FinishScreenshots(vulkanContext->GetDevice());
+        }
     }
 
     OnShutdown();
@@ -1287,6 +1292,14 @@ void Application::RenderFrame()
         OnRenderUi(*frame);
     }
 
+    // What reaches the screen, debug UI and all. After the UI, which is also
+    // where a request for one is made, so the shot is of the frame that asked.
+    Render::FrameCapture screenshot;
+    std::string screenshotPath;
+    screenshotPath.swap(_screenshotPath);
+    const bool screenshotRecorded =
+        !screenshotPath.empty() && screenshot.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
+
     {
         ASSISI_PROFILE_SCOPE("end-frame");
         vulkanContext->EndFrame();
@@ -1303,6 +1316,59 @@ void Application::RenderFrame()
     {
         (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
     }
+    // Read back frames later rather than now: waiting here would stall this
+    // frame on the GPU, and the PNG encode is a worker's job.
+    if (screenshotRecorded)
+    {
+        if (screenshot.MarkSubmitted(vulkanContext->GetDevice()))
+        {
+            _pendingScreenshots.push_back(
+                PendingScreenshot{.capture = std::move(screenshot), .path = std::move(screenshotPath)});
+        }
+        else
+        {
+            (void)screenshot.Write(vulkanContext->GetDevice(), screenshotPath);
+        }
+    }
+    CollectScreenshots(vulkanContext->GetDevice());
+}
+
+void Application::CollectScreenshots(nvrhi::IDevice *device)
+{
+    std::erase_if(_screenshotWrites, [](const Core::Task<bool> &write) { return write.IsComplete(); });
+    for (std::size_t i = 0; i < _pendingScreenshots.size();)
+    {
+        PendingScreenshot &pending = _pendingScreenshots[i];
+        if (!pending.capture.Ready(device))
+        {
+            ++i;
+            continue;
+        }
+        if (std::optional<Render::CapturedImage> image = pending.capture.Read(device))
+        {
+            _screenshotWrites.push_back(
+                _jobs.Run(Core::Pool::Worker, [image = std::move(*image), path = std::move(pending.path)]
+                          { return Render::FrameCapture::WritePng(image, path); }));
+        }
+        _pendingScreenshots.erase(_pendingScreenshots.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+
+void Application::FinishScreenshots(nvrhi::IDevice *device)
+{
+    for (PendingScreenshot &pending : _pendingScreenshots)
+    {
+        if (const std::optional<Render::CapturedImage> image = pending.capture.Read(device))
+        {
+            (void)Render::FrameCapture::WritePng(*image, pending.path);
+        }
+    }
+    _pendingScreenshots.clear();
+    for (Core::Task<bool> &write : _screenshotWrites)
+    {
+        write.Wait();
+    }
+    _screenshotWrites.clear();
 }
 
 void Application::InitializeAudio()

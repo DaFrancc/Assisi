@@ -244,4 +244,27 @@ SkyResolution ResolveSky(ECS::Scene &scene)
     return resolution;
 }
 
+FogResolution ResolveFog(ECS::Scene &scene)
+{
+    FogResolution resolution;
+    for (auto [entity, fog] : scene.Query<Fog>())
+    {
+        (void)entity;
+        if (resolution.present)
+        {
+            resolution.several = true;
+            break;
+        }
+        resolution.settings = Render::Sanitized(ToFogSettings(fog));
+        resolution.present = true;
+    }
+    return resolution;
+}
+
+float SceneDrawDistance(ECS::Scene &scene, float farZ)
+{
+    const FogResolution fog = ResolveFog(scene);
+    return fog.present ? Render::FogDrawDistance(farZ, fog.settings) : farZ;
+}
+
 } // namespace Assisi::Runtime

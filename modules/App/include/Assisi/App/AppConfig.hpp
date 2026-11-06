@@ -143,6 +143,11 @@ struct AppConfig
     /// multiTapSeconds. Off holds every player to the standard.
     AFIELD() bool playerSetsMultiTap = true;
 
+    /// @brief Whether a player may turn the level's fog off from their options.
+    /// Off, the fog is always drawn. Fog can hide things a game relies on, so
+    /// letting players remove it is the game's decision, and it starts closed.
+    AFIELD() bool playerSetsFog = false;
+
     /// @brief Whether the pointer moving over a UI node focuses it, so the keys
     /// act on what is pointed at. Off leaves focus where the keys or a click put it.
     AFIELD() bool uiHoverFocuses = false;

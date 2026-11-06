@@ -13,6 +13,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/Sky.hpp>
 
 #include <bitset>
@@ -163,5 +164,29 @@ struct SkyResolution
 /// component stores where the light goes, and a sky is described by where the sun
 /// is.
 [[nodiscard]] SkyResolution ResolveSky(ECS::Scene &scene);
+
+/// @brief What ResolveFog found.
+struct FogResolution
+{
+    /// Sanitized. Meaningful only when @ref present.
+    Render::FogSettings settings;
+    /// Whether the scene has a Fog at all.
+    bool present = false;
+    /// More than one Fog; the first found is the one in @ref settings.
+    bool several = false;
+};
+
+/// @brief Find the scene's fog: the first Fog component, on any entity.
+///
+/// Separate from ResolveSky because the fog needs no sky: a cave with no sun can
+/// still be foggy, in the colour its Fog gives.
+[[nodiscard]] FogResolution ResolveFog(ECS::Scene &scene);
+
+/// @brief How far a camera that would draw to @p farZ draws in @p scene: never
+/// past the haze its Fog sets.
+///
+/// Every place that picks the camera a scene is seen through applies this, so
+/// the drawing, the editor's picking and its overlays share one far plane.
+[[nodiscard]] float SceneDrawDistance(ECS::Scene &scene, float farZ);
 
 } // namespace Assisi::Runtime

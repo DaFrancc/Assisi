@@ -32,11 +32,12 @@ The main settings file:
 | `startupScene` | The level the game opens when it starts. **Required**: without it the game refuses to start. |
 | `width`, `height` | The window size on first launch. After that, the size the player picked wins. |
 | `physicsHz` | How many physics steps run per second. This is also how often `FixedUpdate` systems run. |
-| `clearColor` | The background color where nothing is drawn: red, green, blue, alpha, from 0 to 1. |
+| `clearColor` | The background color where nothing is drawn: red, green, blue, alpha, from 0 to 1. A level with a sky draws the sky there instead, and a foggy level with no sky draws its fog's colour. |
 | `keepLogs` | How many old log files to keep. `0` keeps only the current one. |
 | `keepDumps` | How many old crashes' files to keep: each crash's crash log and minidump. |
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
 | `frameSnap` | `"Snapped"` (default): a frame that took almost exactly one, two or more display refreshes counts as exactly that, so at a steady frame rate the same number of `FixedUpdate` steps runs every frame. `"Unsnapped"`: the frame's measured time is used as it is. The player can override this. |
+| `playerSetsFog` | Whether a player may turn the level's fog off from their options. `false` (default): fog is always drawn. See [Fog](rendering-settings.md#fog). |
 | `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [Lengths](ui-layout.md#lengths). |
 
 Any setting you leave out keeps its default.
@@ -74,6 +75,8 @@ The player's settings are saved in `options.json`, next to the executable:
   window edits these; [Graphics settings](rendering-settings.md) lists each
   one. Frame snapping is `frameSync.snap` in `options.json`: `"game"` follows
   your `frameSnap`, and `"snapped"` or `"unsnapped"` overrides it.
+- Fog, only if your `playerSetsFog` allows it. See
+  [Fog](rendering-settings.md#fog).
 - Rebound keys.
 - Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 

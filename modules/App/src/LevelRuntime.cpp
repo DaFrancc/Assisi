@@ -52,6 +52,13 @@ void FinishLoad(World &world, const LevelServices &services, AssetCacheReset res
     services.renderer.OnSceneReplaced();
 
     RebindSceneAssetsAndPhysics(world.scene, services.cache, world.physics);
+
+    // The resolve above only asked for the assets; what it drew with is
+    // placeholders. Marked streaming so the next upgrade pass resolves again
+    // even when every load finished before it looked: a level whose materials
+    // have no textures loads them within a frame, and without this keeps the
+    // fallback white until something else happens to load.
+    world.streamingPending = true;
 }
 
 } // namespace

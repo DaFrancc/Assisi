@@ -28,7 +28,7 @@ editor's **F11** window, and what it costs.
   screen can change them through `ctx.settings->Options()` and save them with
   `ctx.settings->Save()`, as the [audio volumes](audio.md#volumes-the-player-sets)
   are. Tone mapping and the frame rate settings take effect at once. Shadows,
-  sky reflections and ambient occlusion take effect the next time the game
+  sky reflections, ambient occlusion and fog take effect the next time the game
   starts. Anti-aliasing takes effect the next time the game starts or its window
   changes size.
 
@@ -270,6 +270,32 @@ sky. It doesn't darken light from the sun or lamps. It is off by default.
 
 On, it adds three passes over the whole screen every frame. Their cost grows
 with the screen's resolution and with `samples`.
+
+## Fog
+
+Whether a level's [`Fog`](rendering-sky.md#fog) is drawn. Fog can hide things
+a game relies on, such as mist covering a valley, so whether players may turn
+it off is your game's choice. It is closed unless you open it: set
+`playerSetsFog` to `true` in [`game.json`](game-settings.md#gamejson).
+
+```json
+"fog": {
+    "enabled": false
+}
+```
+
+| Key | F11 name | Values | Default |
+|---|---|---|---|
+| `enabled` | **Fog** | `true`, `false` | `true` |
+
+- **Read only when your game allows it.** With `playerSetsFog` off, fog is
+  always drawn, whatever this says. The file only holds it once a player has
+  chosen; your own settings screen sets it through `ctx.settings->Options()`.
+- **Off draws no fog** and saves its cost. The draw distance the level's `Fog`
+  sets still holds, so turning it off changes how the edge of the world looks,
+  a hard cut instead of a fade, never what is drawn.
+- **In the editor**, F11's **Fog** checkbox works whatever `playerSetsFog` says,
+  so you can compare a level with and without its fog.
 
 ## Frame rate
 

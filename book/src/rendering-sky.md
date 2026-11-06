@@ -252,3 +252,82 @@ corners and creases, which helps.
 **Without a `Skybox`**, every surface gets a dim, flat white ambient light, the
 same from every direction, and nothing is reflected. An indoor level lit only by
 its lamps has this.
+
+## Fog
+
+Real air is never perfectly clear: the further away a hill is, the more of the
+air's own light lies between you and it, so it fades towards the colour of the
+sky. That fading is what makes distance read as distance. The `Fog` component,
+in `<Assisi/Runtime/SkyComponents.hpp>`, gives a level two kinds of it:
+
+- **Haze**: a thin fog over the whole level that builds up with distance. Far
+  hills turn blue-grey; near ones stay clear.
+- **Mist**: a thicker fog that lies low, filling valleys and canyons while the
+  ground above it stays clear.
+
+A level has at most one `Fog`. It can go on any entity; the sun's entity is a
+good place for it. Without one, a level has no fog and pays nothing for it.
+
+### Try it: haze and mist
+
+Open the editor on `levels/FogCheck.alvl`: a plateau, a canyon, trees on the far
+rim and mountains behind.
+
+1. Select the `Fog` entity. Its haze lets you see 30 km, and a mist fills the
+   canyon below a height of −200 m.
+2. Drag `mistHeight` up towards `0`. The mist rises out of the canyon until it
+   covers the plateau too.
+3. Set `hazeVisibility` to `3000`. The mountains, 4 to 5 km away, disappear into
+   the haze, and nothing past 3 km is drawn at all.
+4. Press **F1** to hide the editor and see the level as the game would.
+
+### `Fog` fields
+
+| Field | Meaning |
+|---|---|
+| `hazeVisibility` | How far you can see through the haze, in metres, where it is thickest. At this distance the haze hides almost everything behind it. **Nothing past it is drawn.** `0` (the default) is no haze. |
+| `hazeHeight` | Below this world height the haze is at its thickest. |
+| `hazeFalloff` | How many metres above `hazeHeight` the haze takes to thin to about a third. Mountaintops then stand clearer than the valleys at the same distance. `0` keeps the haze the same at every height. |
+| `mistVisibility` | How far you can see through the mist where it is thickest, in metres. `0` (the default) is no mist. Unlike the haze, it never limits how far is drawn. |
+| `mistHeight` | Below this world height the mist is at its thickest: set it to the height of the valley floor it fills. |
+| `mistFalloff` | How many metres above `mistHeight` the mist takes to thin to about a third. A small value gives the mist a visible top. |
+| `color` | The fog's colour in a level with no `Skybox`. With a sky, it is not used. |
+
+### How much fog a pixel gets
+
+Fog depends on **how much of it lies between the camera and what you're looking
+at**, not on where that thing is. Standing inside the mist, a rock 2 m away is
+still clear, because there are only 2 m of mist in front of it; the same rock
+300 m away, seen through 300 m of mist, is hidden. The heights decide how thick
+the fog is at each point along the way, and the distance decides how much of it
+you look through.
+
+### Its colour
+
+With a `Skybox`, the fog takes the colour of the sky in the direction you are
+looking, without the sun's or the moon's disk. It is pale blue at noon, glows
+warm towards a low sun, and goes dark at night, all without anything to author.
+Looking down, it takes the colour of the horizon in that direction.
+
+Without a `Skybox`, the fog is `color`, and the background where nothing is
+drawn is the same colour, so the fog fades into it. A foggy cave or interior
+works this way.
+
+### The draw distance
+
+A `Fog` with haze also sets how far the camera draws: the nearer of the camera's
+`farZ` and `hazeVisibility`. Whichever is nearer, everything fades fully into
+the fog's colour over the last fifth of that distance, so the edge of the world
+is never a visible wall.
+
+With fog on, the sky below the horizon is drawn in the horizon's colour rather
+than the ground's. Past the draw distance there is nothing left to see but fog,
+and that is what fully fogged ground looks like, so the far edge of the terrain
+meets it without a seam.
+
+### What it costs
+
+Fog is worked out for every pixel in the lit pass. Its colour is a sky
+calculation, done only where enough fog lies in front of a surface to show, so
+the near ground pays almost nothing. A player can be allowed to turn fog off;
+see [Fog](rendering-settings.md#fog) in the graphics settings.

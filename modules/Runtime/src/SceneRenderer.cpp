@@ -76,6 +76,19 @@ constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 // has asked for, and a path in a level file is a path that can rot there.
 constexpr const char *kMoonTexture = "textures/moon.jpg";
 
+// The frame's fog constants, coloured by @p sky when the scene has one and by
+// the fog's own colour when it does not.
+Render::FogConstants FrameFog(const Render::FogSettings &fog, const SkyResolution &sky, float cameraHeight,
+                              float drawDistance)
+{
+    if (sky.status != SkyStatus::Ready)
+    {
+        return Render::MakeFogConstants(fog, cameraHeight, drawDistance, nullptr);
+    }
+    const Render::SkyScatterConstants scatter = Render::MakeSkyScatterConstants(sky.sun, sky.moon, sky.settings);
+    return Render::MakeFogConstants(fog, cameraHeight, drawDistance, &scatter);
+}
+
 // The blueprint instance @p camera belongs to, or none for a camera in no
 // instance or no camera at all.
 ECS::InstanceId ViewerInstance(const ECS::Scene &scene, ECS::Entity camera)
@@ -277,12 +290,25 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
 }
 
 void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
-                           const Camera &camera, uint64_t &propagationTick)
+                           const Camera &viewCamera, uint64_t &propagationTick)
 {
     if (!_meshPass.IsValid())
     {
         return;
     }
+
+    // Before anything is built from the camera: the fog says how far it draws.
+    const FogResolution fog = ResolveFog(scene);
+    Camera camera = viewCamera;
+    if (fog.present)
+    {
+        camera.farZ = Render::FogDrawDistance(viewCamera.farZ, fog.settings);
+    }
+    if (fog.several && !_severalFogsWarned)
+    {
+        Core::Log::Warn("SceneRenderer: more than one Fog in the scene; the first found is used.");
+    }
+    _severalFogsWarned = fog.several;
 
     // Refresh world matrices before anything reads them (view matrix, draw). Only
     // entities whose transform changed since last frame are recomputed; the tick
@@ -337,6 +363,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Before the mesh pass reads it, and off the same sky the frame is lit by.
     const SpecularProbe probe = UpdateSkyProbe(frame, sky);
 
+    const bool fogged = _fogEnabled && fog.present;
+    const Render::FogConstants fogConstants =
+        fogged ? FrameFog(fog.settings, sky, static_cast<float>(_viewOrigin.y), camera.farZ) : Render::FogConstants{};
+
     // Gathered but not yet uploaded: the local-light atlas decides which lights
     // hold tiles and stamps each winner's view index into the light record, and
     // that stamp has to happen before the lights reach the GPU.
@@ -386,6 +416,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .debugView = _debugView,
                                                                     .indirect = ResolveIndirect(sky, _ambient, probe),
                                                                     .shadows = shadows,
+                                                                    .fog = fogConstants,
                                                                     .screenOcclusion = occlusion};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
@@ -430,10 +461,20 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // halves of it come from the scene — the sun from a directional light, the
     // look from the Skybox component on that same entity — so a level authors its
     // own world and a light that moves takes the sky with it.
+    //
+    // A foggy level with no sky still draws the pass, in the fog's own colour,
+    // so that what the fog fades into is what is behind it.
     if (sky.status == SkyStatus::Ready)
     {
+        _skyPass.SetFog(fogged ? Render::SkyFogMode::BelowHorizon : Render::SkyFogMode::Off, fog.settings.color);
         _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), sky.sun, sky.moon,
                       sky.settings);
+    }
+    else if (fogged)
+    {
+        _skyPass.SetFog(Render::SkyFogMode::Flat, fog.settings.color);
+        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), Render::SkySun{},
+                      Render::SkyMoon{}, Render::SkySettings{});
     }
     // Said once, because silently dropping the sky sends someone reading shader
     // code, and saying it every frame is its own kind of unreadable.

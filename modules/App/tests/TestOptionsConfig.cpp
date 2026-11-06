@@ -223,6 +223,37 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
     CHECK(read.ambientOcclusion == SsaoSettings{});
 }
 
+TEST_CASE("A player's fog choice survives a write and a read, and is stored only once made")
+{
+    OptionsConfig written;
+    CHECK(written.ToJsonText().find("\"fog\"") == std::string::npos);
+    CHECK_FALSE(OptionsConfig::FromJsonText(written.ToJsonText()).fogEnabled.has_value());
+
+    written.fogEnabled = false;
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    REQUIRE(read.fogEnabled.has_value());
+    CHECK_FALSE(*read.fogEnabled);
+}
+
+TEST_CASE("Fog is drawn unless the game lets players choose and they turned it off")
+{
+    AppConfig closed;
+    closed.playerSetsFog = false;
+    AppConfig open;
+    open.playerSetsFog = true;
+
+    OptionsConfig off;
+    off.fogEnabled = false;
+    CHECK(off.FogEnabled(closed));
+    CHECK_FALSE(off.FogEnabled(open));
+
+    const OptionsConfig unchosen;
+    CHECK(unchosen.FogEnabled(open));
+    CHECK(unchosen.FogEnabled(closed));
+    // Closed is the default: a game opts its players in.
+    CHECK_FALSE(AppConfig{}.playerSetsFog);
+}
+
 TEST_CASE("Every setting is written, defaults included, so the file shows what there is to change")
 {
     const std::string text = OptionsConfig{}.ToJsonText();

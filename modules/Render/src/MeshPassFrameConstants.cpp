@@ -115,6 +115,8 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
             glm::vec4(sunPcss.penumbraUvPerDepth, sunPcss.maxReachUv, sunPcss.texelDepth, kMaxPenumbraWorld);
     }
 
+    constants.fog = params.fog;
+
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 

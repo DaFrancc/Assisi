@@ -112,8 +112,12 @@ public:
     /// several worlds resident stores the bookmark in the world
     /// (App::World::propagationTick) and passes it here; the overload above
     /// keeps the renderer's own for the single-scene case.
+    ///
+    /// The scene's Fog shortens @p viewCamera's far plane to its haze, as
+    /// SceneDrawDistance does, so a caller that forgot to still draws nothing
+    /// past it.
     void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
-                const Camera &camera, uint64_t &propagationTick);
+                const Camera &viewCamera, uint64_t &propagationTick);
 
     /// @brief The point the last Render measured the lit pass from: the camera.
     /// A matrix measured from it, ECS::MatrixFrom(world, ViewOrigin()), is in
@@ -258,6 +262,15 @@ public:
     /// lit pass through its own pipelines — and holds no texture of it.
     void SetSsaoSettings(const Render::SsaoSettings &settings) { _ssaoSettings = Render::Sanitized(settings); }
     [[nodiscard]] const Render::SsaoSettings &SsaoSettings() const { return _ssaoSettings; }
+
+    /// @brief Whether the level's Fog is drawn: the player's choice. Applied on
+    /// the next Render().
+    ///
+    /// Off draws no fog, and the sky's ground below the horizon. The draw
+    /// distance the Fog sets still holds, so turning it off changes how the
+    /// edge of the world looks, never what is drawn.
+    void SetFogEnabled(bool enabled) { _fogEnabled = enabled; }
+    [[nodiscard]] bool FogEnabled() const { return _fogEnabled; }
 
     /// @brief The probe as the most recent Render() left it: its face size and
     /// mips (both zero while it holds nothing), and how its bakes have gone.
@@ -591,6 +604,9 @@ private:
     // frame rate. Cleared when the scene stops having several suns, so fixing it
     // and breaking it again is reported both times.
     bool _multipleSunsWarned = false;
+    // The same for a scene with several Fogs.
+    bool _severalFogsWarned = false;
+    bool _fogEnabled = true;
     // Set once the prepass pipelines have failed to build, so the failure is
     // said once and every later frame is lit directly without retrying.
     bool _prepassFailed = false;

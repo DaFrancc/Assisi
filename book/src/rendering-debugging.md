@@ -119,6 +119,19 @@ With **Editor Overlays** on, the editor draws:
 - The orange **outline** of the selection, and **icons** for entities you
   couldn't otherwise see or click, such as lights.
 
+## Seeing the frame without the editor
+
+Two keys help when you are judging how a level looks:
+
+| Key | Action |
+|---|---|
+| **F1** | Hide the editor: every panel, the gizmo, and all the shapes above. You see the frame as the game draws it. **F1** again brings them back. |
+| **F2** | Save a screenshot of the window as it is, panels included if they're showing, to `screenshots/` next to the editor's executable. |
+
+Hide the editor with **F1**, then press **F2**, to keep a picture of the frame
+alone, for example to compare a setting on and off. See
+[Seeing the level without the editor](editor.md#seeing-the-level-without-the-editor).
+
 ## Common problems
 
 | What you see | Likely cause |

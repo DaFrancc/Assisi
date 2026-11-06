@@ -22,6 +22,7 @@
 #include <Assisi/Mondrian/Engine/QuadPass.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
+#include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -36,6 +37,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace Assisi::App
 {
@@ -367,6 +369,12 @@ protected:
     /// request before that frame replaces the first.
     void CaptureNextFrame(std::string path) { _frameImagePath = std::move(path); }
 
+    /// @brief Write the frame being drawn to @p path as a PNG, exactly as it
+    /// reaches the screen: debug UI included. Asked for during the UI, it is
+    /// that same frame. Waits for the GPU that frame. A second request before it
+    /// replaces the first.
+    void ScreenshotNextFrame(std::string path) { _screenshotPath = std::move(path); }
+
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
     void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
@@ -604,6 +612,28 @@ private:
 
     /// See CaptureNextFrame. Empty when no picture is asked for.
     std::string _frameImagePath;
+
+    /// See ScreenshotNextFrame. Empty when none is asked for.
+    std::string _screenshotPath;
+
+    /// A screenshot copied on the GPU, waiting for the GPU to finish the copy.
+    struct PendingScreenshot
+    {
+        Render::FrameCapture capture;
+        std::string path;
+    };
+    std::vector<PendingScreenshot> _pendingScreenshots;
+    /// PNG encodes running on workers. Waited for at shutdown, which ends the
+    /// process without waiting for workers, so none is lost half-written.
+    std::vector<Core::Task<bool>> _screenshotWrites;
+
+    /// Hands each screenshot whose copy the GPU has finished to a worker to
+    /// encode and write. Never waits for the GPU.
+    void CollectScreenshots(nvrhi::IDevice *device);
+
+    /// Writes every screenshot still pending and waits for those being written.
+    /// Called at shutdown with the GPU idle.
+    void FinishScreenshots(nvrhi::IDevice *device);
 
     /// Resolution a capture or SetExactResolution asked to render at, 0 when
     /// nothing asked. Applied in InitializePresentation rather than when set,

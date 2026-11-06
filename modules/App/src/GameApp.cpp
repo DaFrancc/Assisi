@@ -17,6 +17,7 @@
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <algorithm>
@@ -219,6 +220,7 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     _sceneRenderer.SetShadowSettings(options.shadows);
     _sceneRenderer.SetEnvironmentSettings(options.environment);
     _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
+    _sceneRenderer.SetFogEnabled(true);
 
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -313,6 +315,7 @@ bool GameApp::SetupRenderer()
     _sceneRenderer.SetShadowSettings(GetOptions().shadows);
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer.SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
     return true;
 }
 
@@ -528,7 +531,9 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
     const ECS::WorldMatrix benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : ECS::WorldMatrix{};
     const ECS::WorldMatrix &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
-    const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
+    // The fallback is held to the level's haze as the scene's own camera is.
+    Runtime::Camera camera = view ? view->camera : _fallbackCamera;
+    camera.farZ = Runtime::SceneDrawDistance(_world->scene, camera.farZ);
 
     // The game's own render systems, through the world's registry. After
     // propagation and before the scene draw, so the matrices they are handed are

@@ -965,3 +965,54 @@ TEST_CASE("A jump shows up in the resolution, and a plain advance does not")
     CHECK(Assisi::Runtime::JumpForwardTo(*scene.GetMut<TimeOfDay>(entity), 6.0));
     CHECK(ResolveSky(scene).jumpSerial == before + 1);
 }
+
+TEST_CASE("A scene with no Fog has none, and draws as far as its camera")
+{
+    ECS::Scene scene;
+    (void)AddSun(scene);
+    const Runtime::FogResolution fog = Runtime::ResolveFog(scene);
+    CHECK_FALSE(fog.present);
+    CHECK_FALSE(fog.several);
+    CHECK(Runtime::SceneDrawDistance(scene, 750.f) == 750.f);
+}
+
+TEST_CASE("A Fog needs no sky, and its haze shortens the draw distance")
+{
+    ECS::Scene scene;
+    const ECS::Entity holder = scene.Create();
+    (void)scene.Add<Runtime::Fog>(holder, Runtime::Fog{.hazeVisibility = 1200.f, .mistVisibility = 90.f});
+
+    const Runtime::FogResolution fog = Runtime::ResolveFog(scene);
+    CHECK(fog.present);
+    CHECK(fog.settings.hazeVisibility == doctest::Approx(1200.f));
+    CHECK(fog.settings.mistVisibility == doctest::Approx(90.f));
+    CHECK(Runtime::SceneDrawDistance(scene, 5000.f) == doctest::Approx(1200.f));
+    CHECK(Runtime::SceneDrawDistance(scene, 300.f) == doctest::Approx(300.f));
+}
+
+TEST_CASE("Two Fogs say so, and the first found is the one used")
+{
+    ECS::Scene scene;
+    (void)scene.Add<Runtime::Fog>(scene.Create(), Runtime::Fog{.hazeVisibility = 800.f});
+    (void)scene.Add<Runtime::Fog>(scene.Create(), Runtime::Fog{.hazeVisibility = 3000.f});
+
+    const Runtime::FogResolution fog = Runtime::ResolveFog(scene);
+    CHECK(fog.present);
+    CHECK(fog.several);
+    CHECK((fog.settings.hazeVisibility == doctest::Approx(800.f) ||
+           fog.settings.hazeVisibility == doctest::Approx(3000.f)));
+    CHECK(Runtime::SceneDrawDistance(scene, 5000.f) == doctest::Approx(fog.settings.hazeVisibility));
+}
+
+TEST_CASE("A hand-typed Fog is sanitized before it reaches a shader")
+{
+    ECS::Scene scene;
+    (void)scene.Add<Runtime::Fog>(scene.Create(),
+                                  Runtime::Fog{.hazeVisibility = -40.f, .hazeFalloff = 0.2f, .mistFalloff = -3.f});
+    const Runtime::FogResolution fog = Runtime::ResolveFog(scene);
+    CHECK(fog.settings.hazeVisibility == 0.f);
+    CHECK(fog.settings.hazeFalloff == doctest::Approx(Render::kMinFogFalloff));
+    CHECK(fog.settings.mistFalloff == 0.f);
+    // No haze, so nothing shortens the camera.
+    CHECK(Runtime::SceneDrawDistance(scene, 5000.f) == 5000.f);
+}

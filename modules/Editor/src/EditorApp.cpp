@@ -13,9 +13,11 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/App/WorldFrame.hpp>
+#include <Assisi/Audio/Clip.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/TrivialString.hpp>
@@ -49,17 +51,118 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <filesystem>
+#include <format>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 namespace Assisi::Editor
 {
+
+namespace
+{
+/// Where F2 screenshots go: a folder beside the executable, with the options.
+constexpr std::string_view kScreenshotFolder = "screenshots";
+/// Screenshots taken in the same second are told apart by a count after the
+/// time. Pressing F2 more often than this in one second is not humanly done.
+constexpr uint32_t kMaxScreenshotsPerSecond = 100;
+/// F2's shutter. Read by path: editor content is outside the asset database, so
+/// it has no id to load by and is never cooked into a game.
+constexpr std::string_view kScreenshotSoundPath = "editor/sounds/camera_shutter.wav";
+/// The bus editor feedback plays on, so the UI volume governs it.
+constexpr std::string_view kScreenshotSoundBus = "UI";
+/// The most shutters that play at once. A press past it fades the oldest out,
+/// so every screenshot is still heard.
+constexpr std::size_t kMaxScreenshotSounds = 5;
+
+/// The shutter, decoded, or null with the reason logged.
+std::shared_ptr<const Assisi::Audio::PcmClip> LoadScreenshotSound()
+{
+    const std::expected<std::filesystem::path, Assisi::Core::AssetError> resolved =
+        Assisi::Core::AssetSystem::Resolve(kScreenshotSoundPath);
+    if (!resolved)
+    {
+        Assisi::Core::Log::Warn("Screenshot: '{}' not found; F2 is silent.", kScreenshotSoundPath);
+        return nullptr;
+    }
+    std::ifstream file(*resolved, std::ios::binary | std::ios::ate);
+    const std::streamsize size = file ? static_cast<std::streamsize>(file.tellg()) : -1;
+    std::vector<std::byte> bytes(size > 0 ? static_cast<std::size_t>(size) : 0u);
+    file.seekg(0);
+    if (size <= 0 || !file.read(reinterpret_cast<char *>(bytes.data()), size))
+    {
+        Assisi::Core::Log::Warn("Screenshot: could not read '{}'; F2 is silent.", resolved->string());
+        return nullptr;
+    }
+    std::expected<Assisi::Audio::PcmClip, Assisi::Audio::AudioError> clip = Assisi::Audio::DecodeClip(bytes);
+    if (!clip)
+    {
+        Assisi::Core::Log::Warn("Screenshot: could not decode '{}' ({}); F2 is silent.", resolved->string(),
+                                Assisi::Audio::ToString(clip.error()));
+        return nullptr;
+    }
+    return std::make_shared<const Assisi::Audio::PcmClip>(std::move(*clip));
+}
+
+/// Now, to the second, as YYYY-MM-DD-HH-MM-SS: local time, or UTC on a system
+/// without time zone data. Ordered fields, so the names sort in the order taken,
+/// and no colons, which Windows refuses in a file name.
+std::string ScreenshotStamp()
+{
+    const std::chrono::sys_seconds now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (const std::chrono::time_zone *zone = Assisi::Core::LocalZone(); zone != nullptr)
+    {
+        return std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
+    }
+    return std::format("{:%Y-%m-%d-%H-%M-%S}", now);
+}
+
+/// A screenshot path named for now and not yet taken, or empty when the folder
+/// cannot be made or this second is full; either says why in the log. @p stamp
+/// and @p taken are the second the last name was for and how many were named in
+/// it, updated here.
+std::string NextScreenshotPath(std::string &stamp, uint32_t &taken)
+{
+    const std::filesystem::path folder = Assisi::Core::AssetSystem::GetUserRoot() / kScreenshotFolder;
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    if (error)
+    {
+        Assisi::Core::Log::Error("Screenshot: could not make '{}' ({}).", folder.string(), error.message());
+        return {};
+    }
+    if (const std::string now = ScreenshotStamp(); now != stamp)
+    {
+        stamp = now;
+        taken = 0;
+    }
+    // Past the ones already named this second, and past any file already there.
+    for (uint32_t shot = taken + 1; shot <= kMaxScreenshotsPerSecond; ++shot)
+    {
+        const std::string name =
+            shot == 1 ? std::format("screenshot-{}.png", stamp) : std::format("screenshot-{}-{}.png", stamp, shot);
+        const std::filesystem::path candidate = folder / name;
+        if (!std::filesystem::exists(candidate, error))
+        {
+            taken = shot;
+            return candidate.string();
+        }
+    }
+    Assisi::Core::Log::Error("Screenshot: more than {} taken this second; this one is skipped.",
+                             kMaxScreenshotsPerSecond);
+    return {};
+}
+} // namespace
 
 EditorApp::EditorApp(EditorConfig config)
     : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
@@ -908,6 +1011,15 @@ void EditorApp::SetupScene()
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     // And for screen-space occlusion, which holds nothing while it is off.
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    // The author's own choice whatever the game allows its players: the editor
+    // is where fog is compared on and off.
+    _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
+
+    // Only a process with audio has anything to play it on.
+    if (GetMixer() != nullptr)
+    {
+        _screenshotClip = LoadScreenshotSound();
+    }
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
@@ -1049,7 +1161,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
 {
-    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene)
+    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene || _editorHidden)
     {
         return;
     }
@@ -1719,7 +1831,7 @@ void EditorApp::DrawDiagnosticsWindow()
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
-    ImGui::TextDisabled("F11: graphics settings  |  F9: performance capture");
+    ImGui::TextDisabled("F1: hide editor  |  F2: screenshot  |  F11: graphics settings  |  F9: performance capture");
     ImGui::End();
 }
 
@@ -1821,10 +1933,18 @@ void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
     // `ui-panels` is the editor's own panel code, and `ui-render` is building and
     // recording the draw data, which scales with how much got drawn rather than
     // with how much code ran.
+    HandleViewKeys();
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-begin");
         Assisi::Debug::DebugUI::BeginFrame(frame);
     }
+    if (_editorHidden)
+    {
+        // Nothing is being edited while nothing can be: the capture sweep reads
+        // this, and DrawPanels is what would have reset it.
+        _captureEditingActive = false;
+    }
+    else
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-panels");
         DrawPanels();
@@ -1833,6 +1953,69 @@ void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-render");
         Assisi::Debug::DebugUI::EndFrame(frame);
     }
+}
+
+void EditorApp::HandleViewKeys()
+{
+    // Including consumed input, like the editor's other keys: a game screen
+    // holding the keyboard must not be able to keep the editor hidden. Not while
+    // a text field is being typed in.
+    if (Assisi::Audio::SoundOutput *mixer = GetMixer(); mixer != nullptr)
+    {
+        std::erase_if(_screenshotSounds,
+                      [mixer](Assisi::Audio::SoundHandle sound) { return mixer->IsFinished(sound); });
+        for (const Assisi::Audio::SoundHandle sound : _screenshotSounds)
+        {
+            mixer->Hold(sound);
+        }
+    }
+
+    Assisi::Window::InputContext &input = GetInput();
+    if (ImGuiWantsTextInput())
+    {
+        return;
+    }
+    if (input.IsKeyPressed(Assisi::Window::Key::F1, Assisi::Window::ConsumedInput::Include))
+    {
+        _editorHidden = !_editorHidden;
+    }
+    if (input.IsKeyPressed(Assisi::Window::Key::F2, Assisi::Window::ConsumedInput::Include))
+    {
+        if (std::string path = NextScreenshotPath(_screenshotCount.stamp, _screenshotCount.taken); !path.empty())
+        {
+            ScreenshotNextFrame(std::move(path));
+            PlayScreenshotSound();
+        }
+    }
+}
+
+void EditorApp::PlayScreenshotSound()
+{
+    Assisi::Audio::SoundOutput *mixer = GetMixer();
+    if (mixer == nullptr || _screenshotClip == nullptr)
+    {
+        return;
+    }
+    const std::optional<Assisi::Audio::BusId> bus = mixer->FindBus(kScreenshotSoundBus);
+    if (!bus)
+    {
+        return;
+    }
+    if (_screenshotSounds.size() >= kMaxScreenshotSounds)
+    {
+        mixer->Stop(_screenshotSounds.front());
+        _screenshotSounds.erase(_screenshotSounds.begin());
+    }
+    const std::expected<Assisi::Audio::SoundHandle, Assisi::Audio::AudioError> claimed =
+        mixer->Claim(_screenshotClip, *bus);
+    if (!claimed)
+    {
+        Assisi::Core::Log::Warn("Screenshot: the shutter sound could not play ({}).",
+                                Assisi::Audio::ToString(claimed.error()));
+        return;
+    }
+    mixer->Play(*claimed);
+    _screenshotSounds.push_back(*claimed);
 }
 
 void EditorApp::DrawPanels()

@@ -782,6 +782,21 @@ void EditorOptionsPanel::DrawAmbientOcclusionSettings(const Frame &frame)
     }
 }
 
+// The level's fog. Off is the A/B against the fog alone: the draw distance the
+// level's Fog sets still holds, so what is drawn stays the same.
+void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
+{
+    bool enabled = frame.renderer.FogEnabled();
+    ImGui::TextUnformatted("Fog");
+    if (ImGui::Checkbox("Fog", &enabled))
+    {
+        frame.renderer.SetFogEnabled(enabled);
+        frame.options.fogEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
+}
+
 bool EditorOptionsPanel::Draw(const Frame &frame)
 {
     bool applyDisplay = false;
@@ -1159,6 +1174,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         DrawAmbientOcclusionSettings(frame);
+
+        ImGui::Separator();
+
+        DrawFogSettings(frame);
 
         ImGui::Separator();
 
