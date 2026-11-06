@@ -200,6 +200,25 @@ glm::vec3 SmoothSurfaceLift(const ShadedTriangle &triangle, const glm::vec3 &bar
     return glm::dot(lift, facing) > 0.f ? lift : glm::vec3(0.f);
 }
 
+float BumpShadowing(const glm::vec3 &geometric, const glm::vec3 &mapped, const glm::vec3 &toLight)
+{
+    const float geometricDotLight = glm::dot(geometric, toLight);
+    const float mappedDotLight = glm::dot(mapped, toLight);
+    const float geometricDotMapped = glm::dot(geometric, mapped);
+    if (geometricDotLight <= 0.f)
+    {
+        return 0.f;
+    }
+    // A bump facing away takes no light anyway, and one bent past the
+    // surface's plane has no gain to measure.
+    if (mappedDotLight <= 0.f || geometricDotMapped <= 0.f)
+    {
+        return 1.f;
+    }
+    const float g = std::min(1.f, geometricDotLight / (mappedDotLight * geometricDotMapped));
+    return g * (1.f + g - g * g);
+}
+
 float TerminatorGate(const glm::vec3 &normal, const glm::vec3 &facet, const glm::vec3 &toLight)
 {
     const float normalDotLight = glm::dot(normal, toLight);

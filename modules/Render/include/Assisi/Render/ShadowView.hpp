@@ -244,6 +244,20 @@ struct ShadedTriangle
 /// mesh.frag gates the same way.
 [[nodiscard]] float TerminatorGate(const glm::vec3 &normal, const glm::vec3 &facet, const glm::vec3 &toLight);
 
+/// @brief How much of a light along @p toLight a normal-mapped surface keeps,
+/// from 0 to 1, for a surface whose own normal is @p geometric and whose mapped
+/// normal is @p mapped.
+///
+/// A bump tilted toward the light can face it while the surface under it faces
+/// away. Lit by the bump alone, the light would stop dead at the surface's
+/// horizon, in a hard line broken up by the bumps; the shadow map has nothing
+/// to say past it either. This fades the light to zero there instead: one over
+/// the light the bump gains on the surface, (Ng.L) / ((N.L)(Ng.N)), capped at
+/// 1 and softened as g + g^2 - g^3 so it leaves the light smoothly. It is 1
+/// wherever the bump gains nothing, so an unmapped surface keeps all its light,
+/// and it never adds any. mesh.frag fades the same way.
+[[nodiscard]] float BumpShadowing(const glm::vec3 &geometric, const glm::vec3 &mapped, const glm::vec3 &toLight);
+
 /// @brief One view's record in the table the GPU reads, std430-packed.
 ///
 /// The array slice rides in a float lane because that is the form the array

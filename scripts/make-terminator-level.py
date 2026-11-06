@@ -5,9 +5,11 @@ The level checks how smooth-shaded low-poly models take shadows where the light
 turns away from them: spheres and cylinders of 8, 16 and 32 sides, a torus, a
 cone made to be smooth-shaded and one smoothed through its tip (which the
 importer warns about), and an arm skinned to two joints whose rest pose bends
-it at the elbow. One row is lit by a low sun, one by a point light and one by a
-spot light; a bar throws its shadow across a sphere, and a small block rests on
-a large eight-sided log lying on its side.
+it at the elbow. A 32-sided sphere with a normal map of bumps shows how a
+normal-mapped surface fades out where the light leaves it. One row is lit by a
+low sun, one by a point light and one by a spot light; a bar throws its shadow
+across a sphere, and a small block rests on a large eight-sided log lying on
+its side.
 
     python3 scripts/make-terminator-level.py [sun elevation in degrees]
 
@@ -28,6 +30,7 @@ import pathlib
 import struct
 import sys
 import uuid
+import zlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 ASSETS = REPO / "assets"
@@ -52,6 +55,13 @@ IDENTITY = [1.0, 0.0, 0.0, 0.0]
 GLB_MAGIC, GLB_VERSION, GLB_JSON, GLB_BIN = 0x46546C67, 2, 0x4E4F534A, 0x004E4942
 FLOAT, UNSIGNED_BYTE, UNSIGNED_INT = 5126, 5121, 5125
 
+# The bump map: a square of so many texels, with so many bumps along each side,
+# each sloping at most so steeply (rise over run, in texture space).
+BUMP_TEXELS = 256
+BUMPS_ACROSS = 8
+BUMP_SLOPE = 0.5
+BUMP_MAP = "bumps.png"
+
 # The arm: a tube along +X from the shoulder at the origin, bent at the elbow.
 ARM_LENGTH = 2.0
 ARM_RADIUS = 0.15
@@ -67,14 +77,16 @@ def norm(v):
 class Mesh:
     def __init__(self):
         self.positions, self.normals, self.indices = [], [], []
-        self.joints, self.weights = [], []
+        self.joints, self.weights, self.uvs = [], [], []
 
-    def vertex(self, position, normal, joint=None, weight=None):
+    def vertex(self, position, normal, joint=None, weight=None, uv=None):
         self.positions.append(list(position))
         self.normals.append(norm(normal))
         if joint is not None:
             self.joints.append(joint)
             self.weights.append(weight)
+        if uv is not None:
+            self.uvs.append(list(uv))
         return len(self.positions) - 1
 
     def triangle(self, a, b, c, inside):
@@ -113,6 +125,57 @@ def uv_sphere(segments, rings, radius=0.5):
             if r != rings - 1:
                 m.triangle(b, d, c, centre)
     return m
+
+
+def mapped_sphere(segments, rings, radius=0.5):
+    """A UV sphere with texture coordinates, its seam split so the map wraps."""
+    m = Mesh()
+    centre = [0, radius, 0]
+    grid = []
+    for r in range(rings + 1):
+        polar = math.pi * r / rings
+        row = []
+        for s in range(segments + 1):
+            azimuth = 2 * math.pi * s / segments
+            n = [math.sin(polar) * math.cos(azimuth), math.cos(polar), math.sin(polar) * math.sin(azimuth)]
+            row.append(m.vertex([radius * n[0], radius + radius * n[1], radius * n[2]], n,
+                                uv=[s / segments, r / rings]))
+        grid.append(row)
+    for r in range(rings):
+        for s in range(segments):
+            a, b = grid[r][s], grid[r][s + 1]
+            c, d = grid[r + 1][s], grid[r + 1][s + 1]
+            if r != 0:
+                m.triangle(a, b, c, centre)
+            if r != rings - 1:
+                m.triangle(b, d, c, centre)
+    return m
+
+
+def png(width, height, rgb_rows):
+    """An 8-bit RGB PNG of the given rows, each a bytes of width * 3."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    raw = b"".join(b"\x00" + row for row in rgb_rows)
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+
+
+def bump_map():
+    """A tangent-space normal map of a grid of round bumps: the slope of
+    sin(u) sin(v) at each texel, as glTF stores normals."""
+    rows = []
+    frequency = 2 * math.pi * BUMPS_ACROSS / BUMP_TEXELS
+    for y in range(BUMP_TEXELS):
+        row = bytearray()
+        for x in range(BUMP_TEXELS):
+            du = BUMP_SLOPE * math.cos(frequency * x) * math.sin(frequency * y)
+            dv = BUMP_SLOPE * math.sin(frequency * x) * math.cos(frequency * y)
+            n = norm([-du, -dv, 1.0])
+            row += bytes(round((c * 0.5 + 0.5) * 255) for c in n)
+        rows.append(bytes(row))
+    return png(BUMP_TEXELS, BUMP_TEXELS, rows)
 
 
 def cylinder(sides, radius=0.5, height=1.0):
@@ -219,7 +282,7 @@ def arm(sides=12, rings=20):
     return m
 
 
-def glb(name, mesh, skinned):
+def glb(name, mesh, skinned, normal_map=None):
     blob = bytearray()
     views, accessors = [], []
 
@@ -245,15 +308,22 @@ def glb(name, mesh, skinned):
         attributes["JOINTS_0"] = add([c for j in mesh.joints for c in j], "B", UNSIGNED_BYTE, "VEC4",
                                      len(mesh.joints))
         attributes["WEIGHTS_0"] = add([c for w in mesh.weights for c in w], "f", FLOAT, "VEC4", len(mesh.weights))
+    if mesh.uvs:
+        attributes["TEXCOORD_0"] = add([c for uv in mesh.uvs for c in uv], "f", FLOAT, "VEC2", len(mesh.uvs))
     indices = add(mesh.indices, "I", UNSIGNED_INT, "SCALAR", len(mesh.indices))
 
+    material = {"name": "Shape", "pbrMetallicRoughness": {"baseColorFactor": GREY, "metallicFactor": 0.0,
+                                                           "roughnessFactor": ROUGHNESS}}
     gltf = {
         "asset": {"version": "2.0", "generator": "scripts/make-terminator-level.py"},
         "scene": 0,
         "meshes": [{"name": name, "primitives": [{"attributes": attributes, "indices": indices, "material": 0}]}],
-        "materials": [{"name": "Shape", "pbrMetallicRoughness": {"baseColorFactor": GREY, "metallicFactor": 0.0,
-                                                                  "roughnessFactor": ROUGHNESS}}],
+        "materials": [material],
     }
+    if normal_map is not None:
+        material["normalTexture"] = {"index": 0}
+        gltf["textures"] = [{"source": 0}]
+        gltf["images"] = [{"uri": normal_map}]
     if skinned:
         # Bound straight: the shoulder at the origin, the elbow a metre along.
         # The elbow's rest pose turns it a right angle, so the arm loads bent.
@@ -285,10 +355,10 @@ def mesh_id(name):
     return str(uuid.uuid5(ID_NAMESPACE, name))
 
 
-def write_mesh(name, mesh, skinned=False):
+def write_mesh(name, mesh, skinned=False, normal_map=None):
     path = ASSETS / MODELS / f"{name}.glb"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(glb(name, mesh, skinned))
+    path.write_bytes(glb(name, mesh, skinned, normal_map))
     sidecar = path.with_name(path.name + ".aast")
     if not sidecar.exists():
         sidecar.write_text(json.dumps({"guid": mesh_id(name), "type": "AssetSidecar", "uses": [{"kind": "mesh"}],
@@ -334,6 +404,7 @@ def level(elevation_degrees):
     for index, shape in enumerate(shapes):
         entities.append(model(f"Sun_{shape}", shape, (index * SPACING, 0.0, 0.0)))
     entities.append(model("Sun_arm", "arm", (len(shapes) * SPACING, 0.0, 0.0), skinned=True))
+    entities.append(model("Sun_sphere32_bumpy", "sphere32_bumpy", ((len(shapes) + 1.5) * SPACING, 0.0, 0.0)))
 
     # A bar between the sun and the 16-sided sphere, whose shadow crosses the
     # sphere where the light turns away from it.
@@ -371,6 +442,8 @@ def main():
     write_mesh("cone", cone())
     write_mesh("cone_averaged", cone(averaged=True))
     write_mesh("arm", arm(), skinned=True)
+    (ASSETS / MODELS / BUMP_MAP).write_bytes(bump_map())
+    write_mesh("sphere32_bumpy", mapped_sphere(32, 16), normal_map=BUMP_MAP)
     LEVEL.write_text(json.dumps(level(elevation), indent=2) + "\n")
     print(f"wrote {LEVEL.relative_to(REPO)} and the meshes in assets/{MODELS}/")
 

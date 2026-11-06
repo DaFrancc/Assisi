@@ -381,6 +381,36 @@
       }
     },
     {
+      "name": "Sun_sphere32_bumpy",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "mesh": {
+            "guid": "5d46f9cc-6b5b-505d-a6c6-16bd3b9b39a4",
+            "path": "models/terminator/sphere32_bumpy.glb"
+          }
+        },
+        "Transform": {
+          "position": [
+            26.25,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
       "name": "Bar",
       "components": {
         "MeshRenderer": {

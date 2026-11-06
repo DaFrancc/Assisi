@@ -131,9 +131,10 @@ void main()
     BrdfContext brdf = MakeBrdfContext(N, V, surf, F0);
 
     // Shadows are looked up with the geometric normal: the depth map holds
-    // rasterized geometry, not the normal-mapped surface. A surface facing away
-    // by either normal is skipped; one lit only by its normal map is unlit,
-    // since the map knows nothing about it.
+    // rasterized geometry, not the normal-mapped surface, and has nothing to
+    // say where that geometry faces away from the light. A normal-mapped
+    // surface's light fades to nothing on the way there (BumpShadowing), so no
+    // light needs a lookup past it.
     vec3           Ng       = GeometricNormal();
     ShadowReceiver receiver = ShadowReceiverAt(Ng, surf.followSmoothing);
 
@@ -157,11 +158,8 @@ void main()
             {
                 radiance *= SunVisibility(shadowCascade, ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
-            }
         }
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -204,12 +202,9 @@ void main()
                 radiance *= PointVisibility(pointLights[li].shadowView.x, lPos,
                                             ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
-            }
         }
 
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -248,12 +243,9 @@ void main()
                 radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos,
                                            ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
-            }
         }
 
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 

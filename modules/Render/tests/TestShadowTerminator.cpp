@@ -235,3 +235,81 @@ TEST_CASE("TerminatorGate fades in without a step")
     }
     CHECK(previous == 1.f);
 }
+
+namespace
+{
+/// A light @p elevation radians above the horizon of a surface facing +Y, coming
+/// from +X.
+glm::vec3 LightAt(float elevation)
+{
+    return glm::vec3(std::cos(elevation), std::sin(elevation), 0.f);
+}
+
+/// A bump's normal: +Y tilted @p tilt radians toward +X, toward the light.
+glm::vec3 BumpTowardLight(float tilt)
+{
+    return glm::vec3(std::sin(tilt), std::cos(tilt), 0.f);
+}
+
+/// Steps the light takes from overhead to the horizon in the fade tests.
+constexpr int kElevationSteps = 1000;
+/// The tilt of the bump the fade tests light: steep for a normal map.
+constexpr float kBumpTiltRadians = 0.4f;
+/// The most one step of the light may change what the surface keeps.
+constexpr float kLargestFadeStep = 0.02f;
+} // namespace
+
+TEST_CASE("BumpShadowing leaves a surface without a normal map all of its light")
+{
+    const glm::vec3 up(0.f, 1.f, 0.f);
+    for (int step = 0; step < kElevationSteps; ++step)
+    {
+        const float elevation = glm::half_pi<float>() * static_cast<float>(step + 1) / kElevationSteps;
+        CAPTURE(step);
+        CHECK(BumpShadowing(up, up, LightAt(elevation)) == 1.f);
+    }
+}
+
+TEST_CASE("BumpShadowing gives a bump no light once the surface under it faces away")
+{
+    // The bump still faces the light; the surface, and the shadow map with it,
+    // does not.
+    const glm::vec3 up(0.f, 1.f, 0.f);
+    const glm::vec3 bump = BumpTowardLight(kBumpTiltRadians);
+    CHECK(BumpShadowing(up, bump, LightAt(0.f)) == 0.f);
+    CHECK(BumpShadowing(up, bump, LightAt(-0.1f)) == 0.f);
+    CHECK(glm::dot(bump, LightAt(-0.1f)) > 0.f);
+}
+
+TEST_CASE("BumpShadowing fades a bump's light out toward the surface's horizon without a step")
+{
+    // Lowering the light from overhead to the horizon, what the bump keeps
+    // never rises, never jumps, stays between 0 and 1, and is all of it while
+    // the light is high.
+    const glm::vec3 up(0.f, 1.f, 0.f);
+    const glm::vec3 bump = BumpTowardLight(kBumpTiltRadians);
+    float previous = 1.f;
+    for (int step = 0; step <= kElevationSteps; ++step)
+    {
+        const float elevation = glm::half_pi<float>() * (1.f - static_cast<float>(step) / kElevationSteps);
+        const float kept = BumpShadowing(up, bump, LightAt(elevation));
+        CAPTURE(step);
+        CHECK(kept >= 0.f);
+        CHECK(kept <= 1.f);
+        CHECK(kept <= previous);
+        CHECK(previous - kept < kLargestFadeStep);
+        previous = kept;
+    }
+    CHECK(previous == 0.f);
+    CHECK(BumpShadowing(up, bump, LightAt(glm::half_pi<float>())) == 1.f);
+}
+
+TEST_CASE("BumpShadowing leaves a bump tilted away from the light all of it")
+{
+    // Such a bump gains nothing on the surface, so there is nothing to fade;
+    // its own shading already darkens it.
+    const glm::vec3 up(0.f, 1.f, 0.f);
+    const glm::vec3 away = BumpTowardLight(-kBumpTiltRadians);
+    constexpr float kLowLight = 0.6f;
+    CHECK(BumpShadowing(up, away, LightAt(kLowLight)) == 1.f);
+}

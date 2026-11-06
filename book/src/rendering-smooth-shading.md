@@ -117,5 +117,14 @@ warning no longer appears in the log, and the red is gone from the
   inside of a ring, are followed less exactly than round ones. On a very coarse
   ring under a very low light, a faint stripe can remain there. More sides
   remove it.
-- **Normal maps** add bumps the shadow map knows nothing about, so a bumpy
-  surface can still show a thin dark fringe at the edge of the light.
+
+## Normal maps at the edge of the light
+
+A [normal map](rendering-materials.md#texture-maps) tilts each pixel's normal to
+draw bumps, so near the edge of the light a bump can face the light while the
+surface under it already faces away. The shadow map holds only the surface, so
+it can't shadow those bumps, and lighting them anyway would end the light in a
+hard line broken up by the bumps. Instead, a normal-mapped surface's light
+fades out smoothly as the surface itself turns away from the light, reaching
+nothing exactly where it faces away. Surfaces without a normal map aren't
+affected, and there is nothing to set.
