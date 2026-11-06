@@ -58,6 +58,19 @@ function(assisi_reflect)
 
     set(_generated_sources "")
 
+    # Where the generator finds the headers a reflected header includes. A
+    # compiled target keeps them in INCLUDE_DIRECTORIES. An INTERFACE library
+    # compiles nothing and leaves that empty: what it has is what it hands its
+    # users, its own directories and those of everything it links, which is
+    # INTERFACE_INCLUDE_DIRECTORIES. Reading the empty one left a game's
+    # components unable to name any engine struct or enum.
+    get_target_property(_target_type ${_ARG_TARGET} TYPE)
+    if(_target_type STREQUAL "INTERFACE_LIBRARY")
+        set(_include_property INTERFACE_INCLUDE_DIRECTORIES)
+    else()
+        set(_include_property INCLUDE_DIRECTORIES)
+    endif()
+
     set(_array_args "")
     if(NOT ASSISI_FORBID_C_ARRAYS)
         set(_array_args --allow-c-arrays)
@@ -99,7 +112,7 @@ function(assisi_reflect)
                     "${_abs}"
                     --outdir "${_outdir}"
                     --depfile "${_out}.d"
-                    "$<LIST:TRANSFORM,$<TARGET_PROPERTY:${_ARG_TARGET},INCLUDE_DIRECTORIES>,PREPEND,--include-dir=>"
+                    "$<LIST:TRANSFORM,$<TARGET_PROPERTY:${_ARG_TARGET},${_include_property}>,PREPEND,--include-dir=>"
                     ${_include_args}
                     ${_array_args}
             DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
