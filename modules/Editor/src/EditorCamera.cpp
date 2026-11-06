@@ -45,6 +45,11 @@ float LevelDrawDistance(Assisi::ECS::Scene &scene, float fallback)
 
 void EditorApp::HandleEntityPicking()
 {
+    // With the editor hidden a click would change a selection nobody can see.
+    if (_editorHidden)
+    {
+        return;
+    }
     auto &input = GetInput();
     // A click meant for the gizmo (hovered or dragging) is not a pick: it would
     // reselect whatever is behind the handle.

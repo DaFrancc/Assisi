@@ -122,6 +122,19 @@ play. Changes made while playing aren't kept.
 The **Game** panel also lets you play as a multiplayer host, with extra client
 windows. See [Multiplayer basics](multiplayer.md).
 
+## Seeing the level without the editor
+
+| Key | Action |
+|---|---|
+| **F1** | Hide every panel, gizmo and editor icon, so you see the level as the game draws it. Press again to bring them back. While hidden, clicking doesn't select anything. |
+| **F2** | Save a screenshot of the window as it looks now, with the panels in it if they're showing. A camera shutter plays on the UI bus to say it was taken. |
+
+Screenshots go in a `screenshots` folder next to the editor's executable, named
+for the date and time they were taken, such as
+`screenshot-2026-11-06-14-31-05.png`, so they sort in the order you took them.
+Two taken in the same second get `-2`, `-3` and so on after the time. The log
+says where each one went.
+
 ## Other windows
 
 - **F11** opens **Options**: frame times and graphics settings like shadows,

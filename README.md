@@ -706,16 +706,9 @@ appreciated.
 
 ### Third-party assets
 
-Assets in `assets/` that were not made for this engine, with their source and
-the credit their terms ask for. Add a line here for every asset brought in from
-outside; a file with no entry is a file nobody has checked.
-
-- `assets/textures/moon.jpg` — Moon albedo — NASA's Scientific Visualization
-  Studio (Ernie Wright), Moon Phase and Libration, 2026:
-  https://svs.gsfc.nasa.gov/5587/
-  LROC WAC colour mosaic: NASA/GSFC/Arizona State University.
-  Not subject to copyright in the US; credit given as requested. Nothing here
-  implies NASA endorsement, and the NASA insignia and worm are not used.
+Assets in `assets/` that were not made for this engine, with their source and the
+credit their licences ask for, are listed in the book's
+[Attributions](book/src/attributions.md) page.
 
 ### AI notice
 
