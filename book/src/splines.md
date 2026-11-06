@@ -56,7 +56,8 @@ Select the entity first: click its curve, or pick it in the **Entities** panel.
 |---|---|
 | Choose a node to move | Click its arrowhead. It turns white, and the gizmo moves it instead of the entity. |
 | Move a Bezier node's handle | Click the small box at the handle's end, then drag the gizmo. The other handle turns with it, so the curve stays smooth. |
-| Add a node on the curve | **Alt+click** on the curve. Between two `Bezier` nodes the curve keeps its exact shape. |
+| Change a node's mode | Select the node, then double-click it. Each double-click steps it to the next mode: `Corner`, `Smooth`, `Bezier`, and round to `Corner`. |
+| Add a node on the curve | **Alt+click** on the curve. The new node takes the mode of the node before it. Between two `Bezier` nodes the curve keeps its exact shape. |
 | Add a node past an end | Select the first or last node, then **Alt+click** where the new one should go. It lands on the flat plane at that node's height; drag it up or down afterwards. |
 | Add the first node | With the entity of an empty spline selected, **Alt+click** where the node should go. It lands on the flat plane at the entity's height. |
 | Remove a node | Select it and press **Delete**. |

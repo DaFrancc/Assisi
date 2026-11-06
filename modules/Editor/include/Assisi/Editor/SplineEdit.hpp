@@ -106,6 +106,8 @@ struct SplineTarget
     SplinePart part;
     ECS::Entity entity;
     Core::Reflect::ComponentId component;
+
+    bool operator==(const SplineTarget &) const = default;
 };
 
 /// @brief Where a click on a curve landed.
@@ -148,11 +150,19 @@ void MovePart(Geometry::Spline &spline, SplinePart part, const glm::vec3 &positi
 
 /// @brief Adds a node at @p parameter and gives its index.
 ///
-/// Between two Bezier nodes the piece is split exactly, the neighbours' facing
-/// handles shortened to match, so the curve keeps its shape and the new node is
-/// Bezier too. Anywhere else the new node is Smooth, and the curve near it
-/// follows the usual rule for one.
+/// The new node takes the mode of the node before it. A Bezier one splits the
+/// piece exactly, the neighbours' facing handles shortened to match, so between
+/// two Bezier nodes the curve keeps its shape.
 std::size_t InsertSplineNode(Geometry::Spline &spline, float parameter);
+
+/// @brief The mode after @p mode in the order a double-click steps through:
+///        Corner, Smooth, Bezier, and round to Corner.
+[[nodiscard]] Geometry::SplineNodeMode NextMode(Geometry::SplineNodeMode mode);
+
+/// @brief Steps node @p index of @p spline to its next mode (NextMode). A node
+///        becoming Bezier starts from the handles it drew with, so the curve
+///        does not move.
+void CycleNodeMode(Geometry::Spline &spline, std::size_t index);
 
 /// @brief Adds a node at @p position past the first node when @p atStart, or
 ///        past the last otherwise, and gives its index.

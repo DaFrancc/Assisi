@@ -115,6 +115,8 @@ Select its entity by clicking the curve, then:
 - **Click a node's arrowhead** to move that node with the gizmo instead of the
   entity. The arrowheads point the way the spline runs; the start has a disc at
   its base and the end one at its tip.
+- **Double-click the selected node** to step its mode: `Corner`, `Smooth`,
+  `Bezier`, and round again.
 - **Alt+click on the curve** to add a node there, or, with an end node selected,
   **Alt+click** where the next node should go.
 - **Delete** removes the selected node, and **Escape** hands the gizmo back to

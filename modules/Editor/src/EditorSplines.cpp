@@ -403,6 +403,24 @@ bool EditorApp::HandleSplineClick(glm::vec2 cursor)
     {
         if (click.Part())
         {
+            const bool already = _splineTarget == click.Part();
+            const bool doubleClick = ImGui::GetIO().MouseDoubleClicked[ImGuiMouseButton_Left];
+
+            // A double-click on the node already being shaped steps its mode. Not
+            // one whose first click picked it: that first click only chose the
+            // node, and a mode changing under a plain double-click to select would
+            // be a surprise.
+            if (already && doubleClick && !_splineTargetFresh && click.Part()->part.kind == SplinePartKind::Node)
+            {
+                const std::size_t node = click.Part()->part.node;
+                EditSplineOnce(*click.Part(), "Change Node Mode",
+                               [node](Geometry::Spline &spline)
+                    {
+                        CycleNodeMode(spline, node);
+                        return std::optional<std::size_t>(node);
+                    });
+            }
+            _splineTargetFresh = !already;
             _splineTarget = click.Part();
             return true;
         }

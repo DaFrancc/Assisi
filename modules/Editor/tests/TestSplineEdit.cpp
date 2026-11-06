@@ -239,6 +239,42 @@ TEST_CASE("SplineEdit: inserting between two Bezier nodes keeps the curve's shap
     }
 }
 
+TEST_CASE("SplineEdit: an inserted node takes the mode of the node before it")
+{
+    Spline spline = Arch(SplineNodeMode::Smooth);
+    spline.nodes[0].mode = SplineNodeMode::Corner;
+    spline.nodes[1].mode = SplineNodeMode::Bezier;
+
+    // After the corner: a corner.
+    const std::size_t afterCorner = Editor::InsertSplineNode(spline, 0.5f);
+    CHECK(spline.nodes[afterCorner].mode == SplineNodeMode::Corner);
+
+    // After the Bezier node, now index 2, with a Smooth one past it: Bezier, and
+    // still on the curve that was there.
+    const glm::vec3 onCurve = Geometry::SplinePoint(spline, 2.5f);
+    const std::size_t afterBezier = Editor::InsertSplineNode(spline, 2.5f);
+    CHECK(spline.nodes[afterBezier].mode == SplineNodeMode::Bezier);
+    CheckNear(spline.nodes[afterBezier].position, onCurve);
+}
+
+TEST_CASE("SplineEdit: a node's mode steps Corner, Smooth, Bezier and round, without moving the curve into Bezier")
+{
+    CHECK(Editor::NextMode(SplineNodeMode::Corner) == SplineNodeMode::Smooth);
+    CHECK(Editor::NextMode(SplineNodeMode::Smooth) == SplineNodeMode::Bezier);
+    CHECK(Editor::NextMode(SplineNodeMode::Bezier) == SplineNodeMode::Corner);
+
+    // Moved by code after it was settled, so the handles it keeps are stale.
+    Spline spline = Arch(SplineNodeMode::Smooth);
+    spline.nodes[1].position = glm::vec3(0.5f, 2.f, -10.f);
+    const glm::vec3 before = Geometry::SplinePoint(spline, 0.7f);
+    Editor::CycleNodeMode(spline, 1);
+    CHECK(spline.nodes[1].mode == SplineNodeMode::Bezier);
+    CheckNear(Geometry::SplinePoint(spline, 0.7f), before);
+
+    Editor::CycleNodeMode(spline, 1);
+    CHECK(spline.nodes[1].mode == SplineNodeMode::Corner);
+}
+
 TEST_CASE("SplineEdit: inserting on a closed spline's last stretch adds the node at the end")
 {
     Spline loop;

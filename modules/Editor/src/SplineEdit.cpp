@@ -254,21 +254,27 @@ std::size_t InsertSplineNode(Geometry::Spline &spline, float parameter)
     Geometry::SplineNode &start = spline.nodes[segment];
     Geometry::SplineNode &end = spline.nodes[(segment + 1) % spline.nodes.size()];
 
-    Geometry::SplineNode added{.position = Geometry::SegmentPoint(piece, t), .mode = Geometry::SplineNodeMode::Smooth};
-    if (start.mode == Geometry::SplineNodeMode::Bezier && end.mode == Geometry::SplineNodeMode::Bezier)
+    // The node before it decides what the new one is, so a run of corners stays
+    // corners and a run of Bezier nodes stays Bezier.
+    Geometry::SplineNode added{.position = Geometry::SegmentPoint(piece, t), .mode = start.mode};
+    if (added.mode == Geometry::SplineNodeMode::Bezier)
     {
         // The piece split where it is cut, by de Casteljau: the two halves are
-        // exactly the curve that was there, so nothing moves.
+        // exactly the curve that was there. Only a Bezier end keeps the handle
+        // the split gives it; any other works its handle out again from its new
+        // neighbour, so the half beside it may shift.
         const glm::vec3 ab = glm::mix(piece.start, piece.startPull, t);
         const glm::vec3 bc = glm::mix(piece.startPull, piece.endPull, t);
         const glm::vec3 cd = glm::mix(piece.endPull, piece.end, t);
         const glm::vec3 abc = glm::mix(ab, bc, t);
         const glm::vec3 bcd = glm::mix(bc, cd, t);
         start.handleOut = ab - piece.start;
-        end.handleIn = cd - piece.end;
+        if (end.mode == Geometry::SplineNodeMode::Bezier)
+        {
+            end.handleIn = cd - piece.end;
+        }
         added.handleIn = abc - added.position;
         added.handleOut = bcd - added.position;
-        added.mode = Geometry::SplineNodeMode::Bezier;
     }
 
     // After the last node for a closed spline's joining piece, which is where
@@ -277,6 +283,30 @@ std::size_t InsertSplineNode(Geometry::Spline &spline, float parameter)
     spline.nodes.insert(spline.nodes.begin() + static_cast<std::ptrdiff_t>(index), added);
     Geometry::SettleHandles(spline);
     return index;
+}
+
+Geometry::SplineNodeMode NextMode(Geometry::SplineNodeMode mode)
+{
+    switch (mode)
+    {
+    case Geometry::SplineNodeMode::Corner:
+        return Geometry::SplineNodeMode::Smooth;
+    case Geometry::SplineNodeMode::Smooth:
+        return Geometry::SplineNodeMode::Bezier;
+    case Geometry::SplineNodeMode::Bezier:
+    case Geometry::SplineNodeMode::Count_:
+        break;
+    }
+    return Geometry::SplineNodeMode::Corner;
+}
+
+void CycleNodeMode(Geometry::Spline &spline, std::size_t index)
+{
+    // Settled first, so a node becoming Bezier starts from the handles it drew
+    // with and the curve does not move.
+    Geometry::SettleHandles(spline);
+    spline.nodes[index].mode = NextMode(spline.nodes[index].mode);
+    Geometry::SettleHandles(spline);
 }
 
 std::size_t ExtendSpline(Geometry::Spline &spline, bool atStart, const glm::vec3 &position)

@@ -1894,6 +1894,10 @@ class EditorApp : public Assisi::App::Application
     Assisi::Editor::GizmoDrag _splineDrag;
     Assisi::Core::Reflect::ComponentId _splineDragComponent = Assisi::Core::Reflect::kInvalidComponentId;
     bool _splineGizmoHeld = false;
+    // Whether the last click chose the point being shaped, rather than landing on
+    // it again. A double-click only steps a node's mode when the node was chosen
+    // before the double-click began.
+    bool _splineTargetFresh = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
