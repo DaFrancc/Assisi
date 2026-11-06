@@ -112,7 +112,9 @@ A `*` in the window title means you have unsaved changes.
 A spline is a curve through points called nodes, such as a `Path` component's.
 Select its entity by clicking the curve, then:
 
-- **Click a node's box** to move that node with the gizmo instead of the entity.
+- **Click a node's arrowhead** to move that node with the gizmo instead of the
+  entity. The arrowheads point the way the spline runs; the start has a disc at
+  its base and the end one at its tip.
 - **Alt+click on the curve** to add a node there, or, with an end node selected,
   **Alt+click** where the next node should go.
 - **Delete** removes the selected node, and **Escape** hands the gizmo back to

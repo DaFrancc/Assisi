@@ -72,7 +72,52 @@ std::optional<float> PixelsTo(const PickRay &ray, glm::vec2 cursor, const glm::v
     return glm::length(cursor - projected->screen);
 }
 
+/// Whether @p ray passes through the cube of half side @p halfExtent about
+/// @p point, in the overlay's space.
+bool RayThroughMarker(const PickRay &ray, const glm::vec3 &point, float halfExtent)
+{
+    const Geometry::Aabb cube{.min = glm::vec3(-halfExtent), .max = glm::vec3(halfExtent)};
+    float t = 0.f;
+    return RayAabbIntersect(ray.origin, ray.direction, cube, glm::translate(glm::mat4(1.f), point), t);
+}
+
 } // namespace
+
+SplineMarker MarkerOf(const Geometry::Spline &spline, SplinePart part)
+{
+    if (part.kind != SplinePartKind::Node)
+    {
+        return SplineMarker::Handle;
+    }
+    if (part.node == 0)
+    {
+        return SplineMarker::Start;
+    }
+    // A closed spline runs on through its last node back to the first, so its
+    // last node is one more on the way.
+    if (!spline.closed && part.node + 1 == spline.nodes.size())
+    {
+        return SplineMarker::End;
+    }
+    return SplineMarker::Middle;
+}
+
+float MarkerHalfExtent(SplineMarker marker)
+{
+    switch (marker)
+    {
+    case SplineMarker::Start:
+    case SplineMarker::End:
+        // The disc reaches further across than the arrowhead does along.
+        return std::max(kEndDiscRadius, kArrowheadHalfLength);
+    case SplineMarker::Middle:
+        return kArrowheadHalfLength;
+    case SplineMarker::Handle:
+    case SplineMarker::Count_:
+        break;
+    }
+    return kHandleHalfExtent;
+}
 
 glm::vec3 PartPosition(const Geometry::Spline &spline, SplinePart part)
 {
@@ -120,12 +165,15 @@ std::optional<SplinePartHit> PickSplinePart(const PickRay &ray, glm::vec2 cursor
     }
 
     std::optional<SplinePartHit> nearest;
-    float nearestPixels = kSplinePartPickPixels;
+    float nearestPixels = std::numeric_limits<float>::max();
     const auto consider = [&](SplinePart part)
                           {
-                              const std::optional<float> pixels =
-                                  PixelsTo(ray, cursor, Placed(model, PartPosition(spline, part)));
-                              if (pixels && *pixels <= nearestPixels)
+                              const glm::vec3 point = Placed(model, PartPosition(spline, part));
+                              const std::optional<float> pixels = PixelsTo(ray, cursor, point);
+                              const bool grabbed =
+                                  pixels && (*pixels <= kSplinePartPickPixels ||
+                                             RayThroughMarker(ray, point, MarkerHalfExtent(MarkerOf(spline, part))));
+                              if (grabbed && *pixels < nearestPixels)
                               {
                                   nearestPixels = *pixels;
                                   nearest = SplinePartHit{.part = part, .pixels = *pixels};

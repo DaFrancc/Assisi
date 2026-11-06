@@ -55,6 +55,37 @@ struct SplinePart
     bool operator==(const SplinePart &) const = default;
 };
 
+/// @brief What a node or handle is drawn as. Every node is an arrowhead along
+///        the way the curve travels, so the direction reads at each one; the
+///        ends add a flat disc, at the base for the start and at the tip for
+///        the end, the way a line is closed off.
+enum class SplineMarker : std::uint8_t
+{
+    Start,  ///< The first node: an arrowhead with a disc at its base.
+    Middle, ///< Any node between: a plain arrowhead.
+    End,    ///< The last node of an open spline: an arrowhead with a disc at its tip.
+    Handle, ///< The tip of a Bezier node's handle: a small box.
+    Count_
+};
+
+/// @brief Half an arrowhead's length, in the spline's world units.
+inline constexpr float kArrowheadHalfLength = 0.18f;
+
+/// @brief The radius of an end's disc: wider than the arrowhead's rim, so the
+///        disc shows round it from any side.
+inline constexpr float kEndDiscRadius = 0.27f;
+
+/// @brief Half the side of a handle's box.
+inline constexpr float kHandleHalfExtent = 0.08f;
+
+/// @brief Which marker @p part of @p spline is drawn as.
+[[nodiscard]] SplineMarker MarkerOf(const Geometry::Spline &spline, SplinePart part);
+
+/// @brief Half the side of the cube about its point that @p marker fits in,
+///        which is what a click is tested against, so what is drawn is what is
+///        clickable.
+[[nodiscard]] float MarkerHalfExtent(SplineMarker marker);
+
 /// @brief A node or handle a click landed on, and how far from it on screen.
 struct SplinePartHit
 {
@@ -94,11 +125,14 @@ struct SplineCurveHit
 /// the curve stays smooth through the node. The spline is settled afterwards.
 void MovePart(Geometry::Spline &spline, SplinePart part, const glm::vec3 &position);
 
-/// @brief The node or Bezier handle tip of @p spline under @p cursor, if one is
-///        within kSplinePartPickPixels; the nearest on screen when several are.
+/// @brief The node or Bezier handle tip of @p spline under @p cursor: one whose
+///        marker the ray passes through, or whose point is within
+///        kSplinePartPickPixels on screen; the nearest on screen when several are.
 ///
-/// Only Bezier nodes offer their handles, since only theirs are drawn and only
-/// theirs mean anything.
+/// The marker is the whole of what is drawn, so a node up close is clickable
+/// all over it; the pixels are for one far away, whose marker is smaller than a
+/// cursor can aim at. Only Bezier nodes offer their handles, since only theirs
+/// are drawn and only theirs mean anything.
 [[nodiscard]] std::optional<SplinePartHit> PickSplinePart(const PickRay &ray, glm::vec2 cursor,
                                                           const glm::mat4 &model, const Geometry::Spline &spline);
 

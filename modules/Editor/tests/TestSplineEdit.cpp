@@ -64,6 +64,15 @@ PickRay Camera()
     return ray;
 }
 
+/// The camera's ray through @p world, as the editor builds one through the
+/// cursor over that point.
+PickRay RayThrough(glm::vec3 world)
+{
+    PickRay ray = Camera();
+    ray.direction = glm::normalize(world);
+    return ray;
+}
+
 glm::vec2 Screen(const PickRay &ray, glm::vec3 world)
 {
     const glm::vec4 clip = ray.viewProjection * glm::vec4(world, 1.f);
@@ -108,6 +117,51 @@ TEST_CASE("SplineEdit: a click on a node's marker picks the node")
 
     const glm::vec2 away = Screen(ray, spline.nodes[1].position) + glm::vec2(0.f, kWellAway);
     CHECK_FALSE(PickSplinePart(ray, away, identity, spline).has_value());
+}
+
+TEST_CASE("SplineEdit: the start, the end and every node between have their own markers")
+{
+    Spline spline = Arch(SplineNodeMode::Smooth);
+    CHECK(Editor::MarkerOf(spline, SplinePart{.node = 0}) == Editor::SplineMarker::Start);
+    CHECK(Editor::MarkerOf(spline, SplinePart{.node = 1}) == Editor::SplineMarker::Middle);
+    CHECK(Editor::MarkerOf(spline, SplinePart{.node = 2}) == Editor::SplineMarker::End);
+    CHECK(Editor::MarkerOf(spline, SplinePart{.node = 1, .kind = SplinePartKind::HandleOut}) ==
+          Editor::SplineMarker::Handle);
+
+    // A loop runs on through its last node, so it has no end.
+    spline.closed = true;
+    CHECK(Editor::MarkerOf(spline, SplinePart{.node = 2}) == Editor::SplineMarker::Middle);
+}
+
+TEST_CASE("SplineEdit: a click anywhere on a nearby node's marker picks it, not only near its centre")
+{
+    // Two metres out, where a marker spans far more than the pixel tolerance.
+    Spline spline;
+    spline.nodes = {SplineNode{.position = {-1.f, 0.f, -2.f}}, SplineNode{.position = {0.f, 0.f, -2.f}},
+                    SplineNode{.position = {1.f, 0.f, -2.f}}};
+    const glm::mat4 identity(1.f);
+
+    // Inside the middle node's arrowhead, but well past the pixel tolerance.
+    const glm::vec3 onArrowhead = spline.nodes[1].position + glm::vec3(0.f, Editor::kArrowheadHalfLength * 0.8f, 0.f);
+    const PickRay onRay = RayThrough(onArrowhead);
+    REQUIRE(glm::length(Screen(onRay, onArrowhead) - Screen(onRay, spline.nodes[1].position)) >
+            Editor::kSplinePartPickPixels);
+    const std::optional<SplinePartHit> hit = PickSplinePart(onRay, Screen(onRay, onArrowhead), identity, spline);
+    REQUIRE(hit.has_value());
+    CHECK(hit->part.node == 1);
+
+    // As far out from the middle node as an end's disc reaches: past its arrowhead.
+    const glm::vec3 discReach = glm::vec3(0.f, Editor::kEndDiscRadius * 0.9f, 0.f);
+    const PickRay pastMiddle = RayThrough(spline.nodes[1].position + discReach);
+    CHECK_FALSE(PickSplinePart(pastMiddle, Screen(pastMiddle, spline.nodes[1].position + discReach), identity, spline)
+                .has_value());
+
+    // The start's disc reaches that far, so it is picked there.
+    const PickRay onDisc = RayThrough(spline.nodes[0].position + discReach);
+    const std::optional<SplinePartHit> start =
+        PickSplinePart(onDisc, Screen(onDisc, spline.nodes[0].position + discReach), identity, spline);
+    REQUIRE(start.has_value());
+    CHECK(start->part.node == 0);
 }
 
 TEST_CASE("SplineEdit: a node is picked where its entity puts it")

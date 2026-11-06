@@ -25,15 +25,17 @@ first click places the first node at the entity's height. Each click after that
 adds a node past the end of the path, at the height of the node before it.
 
 A curve appears through the nodes. While the entity is selected it draws in
-orange, with a box on each node; the first node's box is larger, so you can see
-which end the path starts from. The node you added last is white: it is the
+orange, with an arrowhead on each node pointing the way the path runs. The first
+node's arrowhead has a flat disc at its base and the last node's has one at its
+tip, so you can see where the path starts and stops. The node you added last is
+white: it is the
 **shaped node**, the one the gizmo now moves. Other splines draw in magenta, or
 in the colour and thickness set in the **F11** window's **Spline Color** and
 **Spline Thickness**.
 
 ### Step 3: move a node
 
-Click the middle node's box. It turns white and the move gizmo jumps to it.
+Click the middle node's arrowhead. It turns white and the move gizmo jumps to it.
 Drag an arrow to move the node, and the curve follows. Press **Escape** to hand
 the gizmo back to the entity.
 
@@ -52,7 +54,7 @@ Select the entity first: click its curve, or pick it in the **Entities** panel.
 
 | To | Do this |
 |---|---|
-| Choose a node to move | Click its box. It turns white, and the gizmo moves it instead of the entity. |
+| Choose a node to move | Click its arrowhead. It turns white, and the gizmo moves it instead of the entity. |
 | Move a Bezier node's handle | Click the small box at the handle's end, then drag the gizmo. The other handle turns with it, so the curve stays smooth. |
 | Add a node on the curve | **Alt+click** on the curve. Between two `Bezier` nodes the curve keeps its exact shape. |
 | Add a node past an end | Select the first or last node, then **Alt+click** where the new one should go. It lands on the flat plane at that node's height; drag it up or down afterwards. |

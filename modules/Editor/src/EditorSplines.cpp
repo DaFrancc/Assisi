@@ -52,15 +52,16 @@ constexpr glm::vec4 kActiveSelectedColor{kActiveSelectionOutline, 1.0f};
 constexpr glm::vec4 kShapingColor{1.0f, 1.0f, 1.0f, 1.0f};
 constexpr float kShapingScale = 1.5f;
 
-/// Half the side of the box on each node of a selected spline.
-constexpr float kNodeHalfExtent = 0.12f;
+/// An arrowhead's half-angle: narrow enough that its rim stays inside the cube
+/// a click on it is tested against (MarkerHalfExtent).
+constexpr float kArrowheadHalfAngleDegrees = 25.f;
 
-/// The first node's box is this much larger, so which end a route starts from
-/// shows.
-constexpr float kFirstNodeScale = 2.f;
+/// Which way an arrowhead points where the curve gives no direction: a lone
+/// node, or two nodes in one place.
+constexpr glm::vec3 kNoDirection = kAxisY;
 
-/// Half the side of the box at the tip of each handle of a Bezier node.
-constexpr float kHandleHalfExtent = 0.06f;
+/// Shorter than this, a direction has no length to point along.
+constexpr float kMinDirectionLength = 1e-6f;
 
 /// What a node moves by with Ctrl held: half a metre, as an entity does under
 /// the transform gizmo.
@@ -86,18 +87,64 @@ glm::vec3 Placed(const glm::mat4 &model, const glm::vec3 &local)
     return glm::vec3(model * glm::vec4(local, 1.f));
 }
 
-/// One marker box, in the shaping colour and size when it is the point being
-/// shaped.
-void AddMarker(const SplineStyle &style, const glm::vec3 &at, float half, bool shaping)
+/// A flat disc square to @p normal: a ring and two diameters across it, so it
+/// reads as a plate from the side rather than as a hoop.
+void AddDisc(std::vector<LineVertex> &out, const glm::vec4 &color, const glm::vec3 &centre, const glm::vec3 &normal,
+             float radius)
 {
-    const glm::vec4 &color = shaping ? kShapingColor : style.color;
-    const float size = shaping ? half * kShapingScale : half;
-    AddBoxWireframe(*style.markers, glm::translate(glm::mat4(1.f), at), color, glm::vec3(size));
+    // AimAlong carries -Y onto the normal, so X and Z span the disc.
+    const glm::mat4 basis = glm::translate(glm::mat4(1.f), centre) * AimAlong(normal);
+    AddArc(out, basis, color, glm::vec3(0.f), kAxisX, kAxisZ, radius, 0.f, glm::two_pi<float>(), kCircleSegments);
+    AddSegment(out, basis, color, kAxisX * radius, -kAxisX * radius);
+    AddSegment(out, basis, color, kAxisZ * radius, -kAxisZ * radius);
 }
 
-/// A box on each node, and the handles of each Bezier node. Placed through
-/// @p model but not scaled by it, so a node reads the same size on any entity.
-/// @p shaping is the point being shaped, when it is on this spline.
+/// A node's arrowhead at @p at, pointing along @p direction, with the disc an
+/// end has: at the base for the start, at the tip for the end.
+void AddArrowhead(const SplineStyle &style, const glm::vec3 &at, const glm::vec3 &direction, SplineMarker marker,
+                  bool shaping)
+{
+    const glm::vec4 &color = shaping ? kShapingColor : style.color;
+    const float scale = shaping ? kShapingScale : 1.f;
+    const float half = kArrowheadHalfLength * scale;
+    const glm::vec3 tip = at + direction * half;
+
+    // The cone opens along -Y from its apex; aimed backwards, it opens from the
+    // tip back over the node.
+    AddConeWireframe(*style.markers, glm::translate(glm::mat4(1.f), tip) * AimAlong(-direction), color,
+                     kArrowheadHalfAngleDegrees, 2.f * half, /*drawAxis=*/ false);
+    if (marker == SplineMarker::Start)
+    {
+        AddDisc(*style.markers, color, at - direction * half, direction, kEndDiscRadius * scale);
+    }
+    else if (marker == SplineMarker::End)
+    {
+        AddDisc(*style.markers, color, tip, direction, kEndDiscRadius * scale);
+    }
+}
+
+/// The way the curve travels at node @p index, in the overlay's space, or
+/// kNoDirection where it does not move.
+glm::vec3 DirectionAt(const glm::mat4 &model, const Geometry::Spline &spline, std::size_t index)
+{
+    const glm::vec3 local = Geometry::SplineDirection(spline, static_cast<float>(index));
+    const glm::vec3 placed = glm::vec3(model * glm::vec4(local, 0.f));
+    const float length = glm::length(placed);
+    return length < kMinDirectionLength ? kNoDirection : placed / length;
+}
+
+/// A handle's box, in the shaping colour and size when it is the point being
+/// shaped.
+void AddHandleBox(const SplineStyle &style, const glm::vec3 &at, bool shaping)
+{
+    const glm::vec4 &color = shaping ? kShapingColor : style.color;
+    const float half = shaping ? kHandleHalfExtent * kShapingScale : kHandleHalfExtent;
+    AddBoxWireframe(*style.markers, glm::translate(glm::mat4(1.f), at), color, glm::vec3(half));
+}
+
+/// An arrowhead on each node, and the handles of each Bezier node. Placed
+/// through @p model but not scaled by it, so a node reads the same size on any
+/// entity. @p shaping is the point being shaped, when it is on this spline.
 void AddNodes(const SplineStyle &style, const glm::mat4 &model, const Geometry::Spline &spline,
               std::optional<SplinePart> shaping)
 {
@@ -105,9 +152,9 @@ void AddNodes(const SplineStyle &style, const glm::mat4 &model, const Geometry::
     for (std::size_t i = 0; i < spline.nodes.size(); ++i)
     {
         const Geometry::SplineNode &node = spline.nodes[i];
+        const SplinePart self{.node = i, .kind = SplinePartKind::Node};
         const glm::vec3 at = Placed(model, node.position);
-        const float half = i == 0 ? kNodeHalfExtent * kFirstNodeScale : kNodeHalfExtent;
-        AddMarker(style, at, half, shaping == SplinePart{.node = i, .kind = SplinePartKind::Node});
+        AddArrowhead(style, at, DirectionAt(model, spline, i), MarkerOf(spline, self), shaping == self);
         if (node.mode != Geometry::SplineNodeMode::Bezier)
         {
             continue;
@@ -117,7 +164,7 @@ void AddNodes(const SplineStyle &style, const glm::mat4 &model, const Geometry::
             const SplinePart handle{.node = i, .kind = kind};
             const glm::vec3 tip = Placed(model, PartPosition(spline, handle));
             AddSegment(*style.markers, identity, style.color, at, tip);
-            AddMarker(style, tip, kHandleHalfExtent, shaping == handle);
+            AddHandleBox(style, tip, shaping == handle);
         }
     }
 }
