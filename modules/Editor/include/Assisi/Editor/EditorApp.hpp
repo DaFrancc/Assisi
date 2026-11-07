@@ -163,6 +163,10 @@ struct EditorConfig
     /// here so the two can be A/B'd by a capture run rather than only by
     /// clicking the F11 checkbox, which is not something a measurement can do.
     bool gpuCulling = false;
+
+    /// Check the device with the Vulkan validation layer in any build and fail
+    /// on any error it reports: see Application::RequireVulkanValidation.
+    bool vulkanValidation = false;
 };
 
 class EditorOptionsPanel;
@@ -271,6 +275,9 @@ class EditorApp : public Assisi::App::Application
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
     void OnShutdown() override;
+    /// Compares the capture's picture with the one accepted for the level on
+    /// this GPU, when the capture names a directory for them.
+    [[nodiscard]] bool CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName) override;
 
     /// @brief Every panel of the editor's chrome, drawn inside the ImGui frame
     /// OnRenderUi opened. Split out so the frame's lifetime and its contents are

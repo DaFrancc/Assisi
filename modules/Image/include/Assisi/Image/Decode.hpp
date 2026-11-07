@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -32,6 +33,13 @@ namespace Assisi::Image
 ///         decoded.
 [[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath,
                                                                         ColorSpace colorSpace) noexcept;
+
+/// @brief Decode the image file at @p file, a path on disk rather than an
+/// asset, into a single RGBA8 level in sRGB: for files that live outside the
+/// asset tree, such as a test's reference pictures.
+///
+/// @return the image, or FileReadFailed if the file cannot be read or decoded.
+[[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeImageFile(const std::filesystem::path &file) noexcept;
 
 /// @brief An image's size in pixels.
 struct ImageExtent

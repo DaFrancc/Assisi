@@ -149,6 +149,44 @@ alone, for example to compare a setting on and off. See
 | Edges are jagged. | Anti-aliasing is off; it is off by default. See [Anti-aliasing](rendering-settings.md#anti-aliasing). |
 | Shadows appear a few frames after the camera jumps. | Spot and point light shadows are drawn a few at a time. See [Spot and point light shadows](rendering-shadows.md#spot-and-point-light-shadows). |
 
+## Checking the renderer automatically
+
+`./assisi test --gpu` runs the **GPU tests**. They open every level in
+`assets/levels` in the editor, one at a time, each in a small window for a
+second or two, and check two things about each:
+
+- **The Vulkan validation layer found nothing wrong.** The validation layer is
+  part of the Vulkan SDK. It checks every request the renderer makes of the
+  graphics card, including whether two pieces of work that use the same memory
+  wait for each other. A mistake there can look fine on your machine and break
+  on someone else's, so any error the layer reports fails the test. Install the
+  layer first: it comes with the Vulkan SDK, or as a package such as
+  `vulkan-validation-layers`.
+- **The picture is the one you last accepted.** Each test takes a picture of the
+  level and compares it with the one kept for your graphics card in
+  `out/golden/<your GPU>/`. If more than a few pixels are visibly different, the
+  test fails. It then saves a copy of the expected picture with the different
+  pixels in red, as `<level>.diff.png` in `out/build/<build>/apps/game/gpu/`,
+  next to the new picture.
+
+One more test, `Gpu-BasePasses`, opens the empty level `PerfBlank` with every
+feature switched off and checks that the frame runs only the
+[passes](rendering-frame.md) it can't do without. A feature that still runs
+when it is switched off fails it.
+
+The first run on a machine has nothing to compare with, so it keeps the
+pictures it takes. When you change how things look on purpose, look at the
+failing tests' pictures, then accept the new ones:
+
+```bash
+./assisi test --gpu --accept
+```
+
+The pictures stay on your machine and never go into git: they change every time
+the look changes, and every graphics card draws them slightly differently. A
+plain `./assisi test` leaves the GPU tests out, because they open windows. To
+run one level's test, name it: `./assisi test --gpu -- -R BloomCheck`.
+
 ## Measuring a level
 
 Always measure in a **ship** build. A debug build is slow in different places
@@ -259,6 +297,8 @@ measured is what the game draws.
 | `--capture-options <path>` | Use this options file instead of `options.json`, which is left alone. |
 | `--capture-out <path>` | Also write the report as JSON to this file. |
 | `--capture-image <path>` | Save a PNG of the frame after the last one measured. |
+| `--capture-golden <dir>` | Compare that PNG with the picture accepted for this level on this graphics card, in `<dir>/<GPU>/<level>.png`, and fail if they differ. This is what the GPU tests do. |
 | `--capture-passes` | Also time each pass. |
+| `--vulkan-validation` | Check every request to the graphics card with the Vulkan validation layer, in any build, and fail if it finds an error. |
 
 Run `Assisi-GameEditor -h` for the full list.

@@ -126,6 +126,12 @@ public:
     /// machine's or another day's. Must be called before Initialize().
     void SetExactResolution(int32_t width, int32_t height);
 
+    /// @brief Checks the device with the Vulkan validation layer, synchronisation
+    /// checks included, in any build, and fails Initialize() when the layer is
+    /// not installed. Any error the layer reports makes the run exit with a
+    /// failure. Must be called before Initialize().
+    void RequireVulkanValidation() { _vulkanValidationRequired = true; }
+
     /// @brief Whether this process is a capture run.
     [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
 
@@ -249,6 +255,17 @@ protected:
     virtual void OnQuitRequested() { RequestClose(); }
 
     virtual void OnShutdown() {}
+
+    /// @brief Checks the picture a capture took, once it is written, on the GPU
+    /// named @p deviceName. Returning false fails the run. The editor compares
+    /// it with the picture accepted for the level; the image decoder that needs
+    /// stays out of a shipped game.
+    [[nodiscard]] virtual bool CheckCaptureImage(const Render::CapturedImage & /*image*/,
+                                                 const std::string & /*deviceName*/)
+    {
+        return true;
+    }
+
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
     /// @brief Called after the anti-aliasing mode/MSAA sample count changes
@@ -619,6 +636,11 @@ private:
     /// in Initialize, which is what loads the options.
     std::string _captureImagePath;
     std::string _captureOptionsPath;
+    /// The capture's picture could not be written or CheckCaptureImage refused
+    /// it, which fails the run.
+    bool _captureFailed = false;
+    /// See RequireVulkanValidation.
+    bool _vulkanValidationRequired = false;
 
     /// See CaptureNextFrame. Empty when no picture is asked for.
     std::string _frameImagePath;
@@ -644,6 +666,10 @@ private:
     /// Writes every screenshot still pending and waits for those being written.
     /// Called at shutdown with the GPU idle.
     void FinishScreenshots(nvrhi::IDevice *device);
+
+    /// Writes the capture's picture recorded in @p capture and hands it to
+    /// CheckCaptureImage. Either failing fails the run.
+    void FinishCaptureImage(Render::Vulkan::VulkanContext &context, Render::FrameCapture &capture);
 
     /// Resolution a capture or SetExactResolution asked to render at, 0 when
     /// nothing asked. Applied in InitializePresentation rather than when set,

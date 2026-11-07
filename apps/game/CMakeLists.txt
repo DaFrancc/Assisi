@@ -228,6 +228,62 @@ if (ASSISI_BUILD_TESTS)
   set_tests_properties(GameEditorRefusedStart PROPERTIES WILL_FAIL TRUE)
 endif()
 
+# Every level drawn by the editor under the Vulkan validation layer, failing on
+# any error the layer reports and on a picture that differs from the one last
+# accepted on this GPU. Labelled gpu, which ./assisi test leaves out unless asked
+# with --gpu: each opens a window, and the accepted pictures live on this
+# machine alone, under out/golden, so a fresh clone accepts its first run.
+# RESOURCE_LOCK keeps them one at a time, since they share the one GPU and a
+# window per test.
+if (ASSISI_BUILD_TESTS)
+  # Frames before the picture: pipelines compiled, textures uploaded, shadow
+  # cascades drawn and automatic exposure settled.
+  set(_gpu_warmup_frames 30)
+  # Frames measured before the picture, which the capture needs at least one of.
+  set(_gpu_frames 5)
+  # Small enough that thirty levels take seconds, big enough to see a change.
+  set(_gpu_size 640x360)
+  # A level that never reaches its picture fails rather than hanging the run.
+  set(_gpu_timeout_seconds 300)
+  set(_gpu_dir "${CMAKE_CURRENT_BINARY_DIR}/gpu")
+  # Every option at its default, whatever the developer's own options.json says.
+  file(WRITE "${_gpu_dir}/options.json" "{}\n")
+  file(GLOB _gpu_levels CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/assets/levels/*.alvl")
+  foreach (_level IN LISTS _gpu_levels)
+    cmake_path(GET _level STEM _name)
+    # Without the editor's overlays: the picture is the game's, and the overlays'
+    # thin lines move a pixel between builds that round their ends differently.
+    add_test(NAME Gpu-${_name}
+      COMMAND Assisi-GameEditor -l "levels/${_name}.alvl" --no-editor-visuals --vulkan-validation
+              --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}
+              --capture-options "${_gpu_dir}/options.json"
+              --capture-image "${_gpu_dir}/${_name}.png"
+              --capture-golden "${CMAKE_SOURCE_DIR}/out/golden"
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-GameEditor>"
+    )
+    set_tests_properties(Gpu-${_name} PROPERTIES LABELS gpu RESOURCE_LOCK gpu TIMEOUT ${_gpu_timeout_seconds})
+  endforeach()
+
+  # The empty level with every feature switched off and no editor overlays
+  # records only the passes no frame can do without. A feature whose pass still
+  # runs when it is off shows up here and nowhere else.
+  file(WRITE "${_gpu_dir}/everything-off.json"
+       "{\"ambientOcclusion\": {\"enabled\": false}, \"antiAliasing\": {\"mode\": \"none\"}, "
+       "\"bloom\": {\"enabled\": false}, \"environment\": {\"enabled\": false}, \"fog\": {\"enabled\": false}, "
+       "\"shadows\": {\"local\": {\"enabled\": false}, \"sun\": {\"enabled\": false}}}\n")
+  set(_gpu_base_passes "clear-targets,depth-prepass,draw-scene,lighting,post-process,post-process-output,ui")
+  add_test(NAME Gpu-BasePasses
+    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/check-passes.py"
+            --report "${_gpu_dir}/base-passes.json" --expect "${_gpu_base_passes}" --
+            "$<TARGET_FILE:Assisi-GameEditor>" -l levels/PerfBlank.alvl --no-editor-visuals --vulkan-validation
+            --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}
+            --capture-options "${_gpu_dir}/everything-off.json" --capture-passes
+            --capture-out "${_gpu_dir}/base-passes.json"
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-GameEditor>"
+  )
+  set_tests_properties(Gpu-BasePasses PROPERTIES LABELS gpu RESOURCE_LOCK gpu TIMEOUT ${_gpu_timeout_seconds})
+endif()
+
 # The Game target boots, steps, and exits on its own. Headless because a build
 # machine has no display, and tick-limited because a windowed run ends when
 # somebody closes the window. What it proves is that the no-editor link is a real

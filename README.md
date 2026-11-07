@@ -185,6 +185,7 @@ Install the equivalents of the package groups below — they are the whole list.
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+| Vulkan validation layers | **Optional.** Debug builds check every Vulkan call with them when they are installed, and the GPU tests (`./assisi test --gpu`) require them. Fedora's `vulkan-validation-layers`, Arch's `vulkan-validation-layers`, Debian's `vulkan-validationlayers`, or the Vulkan SDK on Windows. |
 | mold | **Optional.** A linker several times faster than the default one; every edit relinks a few large executables, so it saves seconds on each build. The build uses it whenever it is installed. |
 | podman or docker | **Optional**, only for the Steam Runtime build (`./assisi package ship --steam-runtime`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
 

@@ -30,8 +30,10 @@ public:
     /// @brief Initializes the Vulkan/NVRHI backend against the given window.
     ///
     /// @param window  A valid, current WindowContext.
+    /// @param validation  Whether the validation layer checks the device.
     /// @return true on success, false on any error.
-    [[nodiscard]] static bool Initialize(const Assisi::Window::WindowContext &window)
+    [[nodiscard]] static bool Initialize(const Assisi::Window::WindowContext &window,
+                                         Vulkan::Validation validation = Vulkan::Validation::BuildDefault)
     {
         if (!window.IsValid())
         {
@@ -39,7 +41,7 @@ public:
             return false;
         }
 
-        s_vulkanContext = Vulkan::VulkanContext::Create(window);
+        s_vulkanContext = Vulkan::VulkanContext::Create(window, validation);
         return s_vulkanContext != nullptr;
     }
 

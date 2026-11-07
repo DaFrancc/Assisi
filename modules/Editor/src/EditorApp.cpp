@@ -26,6 +26,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/EditorChiaraPanel.hpp>
+#include <Assisi/Editor/GoldenImage.hpp>
 #include <Assisi/Editor/TextureFile.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
@@ -175,6 +176,10 @@ EditorApp::EditorApp(EditorConfig config)
     // Application reads these during Initialize(), which runs before OnStart, so
     // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
+    if (_editorConfig.vulkanValidation)
+    {
+        RequireVulkanValidation();
+    }
     if (_editorConfig.perfCapture.frames > 0)
     {
         SetPerfCapture(_editorConfig.perfCapture);
@@ -1626,6 +1631,17 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
            { ApplyEditRebind(entity, id, present); };
+}
+
+bool EditorApp::CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName)
+{
+    const App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
+    if (capture.goldenDirectory.empty())
+    {
+        return true;
+    }
+    return CheckGoldenImage(image, GoldenImagePath(capture.goldenDirectory, deviceName, capture.levelPath),
+                            DiffImagePath(capture.imagePath), capture.acceptGolden);
 }
 
 void EditorApp::OnShutdown()

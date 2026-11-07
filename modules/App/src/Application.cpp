@@ -351,7 +351,9 @@ bool Application::InitializePresentation()
     _window->OnFramebufferSize([this](int32_t width, int32_t height) { HandleFramebufferResize(width, height); });
     _window->OnWindowRefresh([this]() { RenderFrame(); });
 
-    if (!Render::RenderSystem::Initialize(*_window))
+    if (!Render::RenderSystem::Initialize(*_window, _vulkanValidationRequired
+                                                        ? Render::Vulkan::Validation::Required
+                                                        : Render::Vulkan::Validation::BuildDefault))
     {
         Core::Log::Fatal("Failed to initialize render system.");
         return false;
@@ -549,6 +551,23 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _capturePerPassTiming = config.perPassTiming;
     _captureImagePath = config.imagePath;
     _captureOptionsPath = config.optionsPath;
+}
+
+void Application::FinishCaptureImage(Render::Vulkan::VulkanContext &context, Render::FrameCapture &capture)
+{
+    nvrhi::IDevice *device = context.GetDevice();
+    device->waitForIdle();
+    const std::optional<Render::CapturedImage> image = capture.Read(device);
+    if (!image || !Render::FrameCapture::WritePng(*image, _captureImagePath))
+    {
+        Core::Log::Error("PerfCapture: the picture could not be written to '{}'.", _captureImagePath);
+        _captureFailed = true;
+        return;
+    }
+    if (!CheckCaptureImage(*image, context.GetDeviceName()))
+    {
+        _captureFailed = true;
+    }
 }
 
 void Application::SetExactResolution(int32_t width, int32_t height)
@@ -1093,6 +1112,14 @@ void Application::Run()
     // Shuts Steam down, which the destructors skipped below never would.
     _steam.reset();
 
+    // A run the validation layer found errors in fails, so a test that drives it
+    // cannot pass on a log nobody read.
+    const uint32_t validationErrors = Render::Vulkan::VulkanContext::ValidationErrorCount();
+    if (validationErrors > 0u)
+    {
+        Core::Log::Error("Application: this run raised {} Vulkan validation errors.", validationErrors);
+    }
+
     // The process ends here instead of unwinding. Workers may be mid-way through a
     // texture encode that takes seconds, and waiting for it makes a closed window
     // hang; tearing down around it instead has workers call into objects already
@@ -1102,7 +1129,7 @@ void Application::Run()
     std::cout.flush();
     std::cerr.flush();
     std::fflush(nullptr);
-    std::_Exit(_startupFailed ? EXIT_FAILURE : EXIT_SUCCESS);
+    std::_Exit(_startupFailed || _captureFailed || validationErrors > 0u ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
 namespace
@@ -1325,7 +1352,7 @@ void Application::RenderFrame()
     // stays set so the capture's report is not written a second time.
     if (captureImage)
     {
-        (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
+        FinishCaptureImage(*vulkanContext, frameCapture);
         RequestClose();
     }
     if (requestedImage)
