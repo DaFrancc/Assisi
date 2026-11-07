@@ -102,6 +102,9 @@ struct MeshPassFrameConstants
     /// shader then takes none of it. After the cascades so mesh.vert's copy,
     /// which never reads it, can stop short of it.
     FogConstants fog;
+    /// The placed fog volumes: x = how many (zero skips them), y = screen
+    /// square columns, z = rows, w = a square's side in pixels.
+    glm::uvec4 fogVolumes{0u};
 };
 
 // std140, not std430 — this is a uniform block. The two agree on everything this
@@ -132,6 +135,7 @@ ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowPcss, shadowParams);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowCascade, shadowPcss);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowViewProjection, shadowCascade);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fog, shadowViewProjection);
-ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, fog);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fogVolumes, fog);
+ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, fogVolumes);
 
 } // namespace Assisi::Render

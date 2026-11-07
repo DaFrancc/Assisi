@@ -1,0 +1,53 @@
+{
+  "entities": [
+    {"name": "Camera", "components": {
+      "Camera": {"farZ": 3000.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+      "Transform": {"position": [0.0, 6.0, 30.0], "rotation": [0.99756, -0.06976, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+    {"name": "Sun", "components": {
+      "DirectionalLight": {"castsShadows": true, "intensity": 2.0, "tintedBySky": true},
+      "Skybox": {"preset": 0},
+      "Sun": {"axialTiltDegrees": 23.44, "bearingDegrees": 200.0, "latitudeDegrees": 45.0},
+      "TimeOfDay": {"hour": 13.5, "paused": true, "seasonsPaused": true}}},
+    {"name": "Fog", "components": {
+      "Fog": {"hazeVisibility": 3000.0, "hazeHeight": 0.0, "hazeFalloff": 500.0}}},
+
+    {"name": "Ground", "components": {
+      "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [0.0, -0.5, -40.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [300.0, 1.0, 300.0]}}},
+
+    {"name": "Pillar 1", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [-24.0, 4.0, -14.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Pillar 2", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [-14.0, 4.0, -6.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Pillar 3", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [-6.0, 4.0, -36.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Pillar 4", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [6.0, 4.0, -36.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Pillar 5", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [16.0, 4.0, -8.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Pillar 6", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}}, "Transform": {"position": [24.0, 4.0, -16.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.5, 8.0, 1.5]}}},
+    {"name": "Tree 1", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}}, "Transform": {"position": [-20.0, 3.0, -24.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [4.0, 6.0, 4.0]}}},
+    {"name": "Tree 2", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}}, "Transform": {"position": [20.0, 3.0, -26.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [4.0, 6.0, 4.0]}}},
+    {"name": "Tree 3", "components": {"MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}}, "Transform": {"position": [0.0, 3.0, -48.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [5.0, 6.0, 5.0]}}},
+
+    {"name": "Mist box", "components": {
+      "FogBox": {"size": [16.0, 6.0, 14.0], "visibility": 12.0, "edgeSoftness": 2.0, "color": [1.0, 1.0, 1.0], "litBySky": true},
+      "Transform": {"position": [-18.0, 0.0, -12.0], "rotation": [0.98481, 0.0, 0.17365, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+    {"name": "Mist sphere", "components": {
+      "FogSphere": {"radius": 6.0, "visibility": 15.0, "edgeSoftness": 3.0, "color": [0.8, 0.9, 1.0], "litBySky": true},
+      "Transform": {"position": [0.0, 4.0, -32.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [2.0, 1.0, 1.2]}}},
+    {"name": "Swamp", "components": {
+      "FogOutline": {"height": 3.0, "visibility": 10.0, "edgeSoftness": 2.0, "color": [0.75, 0.9, 0.6], "litBySky": true,
+        "outline": {"closed": true, "nodes": [
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [-8.0, 0.0, -3.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [-2.0, 0.0, -6.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [6.0, 0.0, -5.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [8.0, 0.0, 0.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [4.0, 0.0, 5.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [-1.0, 0.0, 2.0]},
+          {"handleIn": [0, 0, 0], "handleOut": [0, 0, 0], "mode": 1, "position": [-6.0, 0.0, 4.0]}]}},
+      "Transform": {"position": [18.0, 0.0, -12.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+    {"name": "Smoke", "components": {
+      "FogBox": {"size": [8.0, 10.0, 8.0], "visibility": 8.0, "edgeSoftness": 2.0, "color": [0.3, 0.15, 0.1], "litBySky": false},
+      "Transform": {"position": [9.0, 5.0, -50.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+    {"name": "Cloud", "components": {
+      "FogSphere": {"radius": 5.0, "visibility": 10.0, "edgeSoftness": 4.0, "color": [1.0, 1.0, 1.0], "litBySky": true},
+      "Transform": {"position": [-12.0, 20.0, -50.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [2.0, 1.0, 1.0]}}}
+  ],
+  "version": 2
+}

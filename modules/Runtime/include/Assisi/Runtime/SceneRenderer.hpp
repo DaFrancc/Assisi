@@ -24,6 +24,8 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/FogVolume.hpp>
+#include <Assisi/Render/FogVolumeBuffers.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/MeshSkinner.hpp>
@@ -562,6 +564,10 @@ private:
     glm::dvec3 _viewOrigin{0.0};
     glm::dvec3 _shadowOrigin{0.0};
     std::optional<glm::ivec3> _shadowCell;
+    // The placed fog volumes, gathered each frame into _fogVolumeFrame and read
+    // by both the mesh pass and the sky pass.
+    Render::FogVolumeBuffers _fogVolumeBuffers;
+    Render::FogVolumeFrame _fogVolumeFrame;
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear. See SkyPass for why that ordering is the cheap one.
     Render::SkyPass _skyPass;
@@ -606,6 +612,8 @@ private:
     bool _multipleSunsWarned = false;
     // The same for a scene with several Fogs.
     bool _severalFogsWarned = false;
+    // The same for fog volumes past what a frame draws.
+    bool _droppedFogVolumesWarned = false;
     bool _fogEnabled = true;
     // Set once the prepass pipelines have failed to build, so the failure is
     // said once and every later frame is lit directly without retrying.

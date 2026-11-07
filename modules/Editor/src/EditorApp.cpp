@@ -1125,6 +1125,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // actually covers.
         SubmitLightGizmos();
 
+        // A fog volume's soft edges hide where its shape ends.
+        SubmitFogVolumeGizmos();
+
         // Where the benchmark camera will fly, which nothing else in the
         // viewport shows.
         SubmitCameraPathGizmos();

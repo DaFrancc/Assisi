@@ -8,6 +8,7 @@
 
 // Each piece may use anything the pieces before it declare.
 #include "sky/fog.glsl"
+#include "sky/fog_volumes.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"
@@ -300,16 +301,22 @@ void main()
     // The level's fog, over everything the surface sends toward the eye. Its
     // colour is a sky evaluation, so it is only worked out where enough fog
     // lies in front of the surface to show.
+    vec3  toSurface = vWorldPos - uFrame.cameraPosition.xyz;
+    float distance  = length(toSurface);
+    vec3  viewRay   = toSurface / max(distance, kEps);
     if (uFrame.fog.view.x != 0.0)
     {
-        vec3  toSurface = vWorldPos - uFrame.cameraPosition.xyz;
-        float distance  = length(toSurface);
-        float opacity   = FogOpacity(uFrame.fog, distance, uFrame.fog.view.y + toSurface.y);
+        float opacity = FogOpacity(uFrame.fog, distance, uFrame.fog.view.y + toSurface.y);
         if (opacity > kMinVisibleFog)
         {
-            color = mix(color, FogRadiance(uFrame.fog, toSurface / max(distance, kEps)), opacity);
+            color = mix(color, FogRadiance(uFrame.fog, viewRay), opacity);
         }
     }
+
+    // Placed fog volumes over that, each taking the haze in front of it into
+    // its own colour.
+    color = ApplyFogVolumes(color, uFrame.fogVolumes, uFrame.fog, uFrame.cameraPosition.xyz, viewRay, distance,
+                            gl_FragCoord.xy);
 
     // ---- Shadow debug views ----
 

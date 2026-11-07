@@ -331,3 +331,90 @@ Fog is worked out for every pixel in the lit pass. Its colour is a sky
 calculation, done only where enough fog lies in front of a surface to show, so
 the near ground pays almost nothing. A player can be allowed to turn fog off;
 see [Fog](rendering-settings.md#fog) in the graphics settings.
+
+## Fog volumes
+
+`Fog` covers the whole level. A **fog volume** puts fog in one place only:
+mist over one swamp, fog filling a hollow, smoke in a room, steam in a cave.
+It has its own colour and thickness, thins out towards its edges, and leaves
+everything outside it clear.
+
+There is one component per shape, all in `<Assisi/Runtime/FogVolume.hpp>`:
+
+| Component | Shape |
+|---|---|
+| `FogBox` | A box of `size` metres, centred on the entity. |
+| `FogSphere` | A sphere of `radius` metres, centred on the entity. Scale the entity to stretch it into an ellipsoid. |
+| `FogOutline` | A closed curve you draw on the ground, filled from the entity's origin up to `height` metres. The curve is a spline, shaped in the viewport like any other; see [Splines](splines.md). |
+
+Each moves, turns and scales with its entity, and an entity may hold more than
+one. A volume works with or without a `Fog` in the level.
+
+### Try it: mist in three shapes
+
+Open the editor on `levels/FogVolumeCheck.alvl`: pillars and trees on a meadow,
+with a box of mist on the left, an ellipsoid of mist in the middle and a swamp
+on the right.
+
+1. Select **Mist box**. A faint wireframe shows where its box is; the mist
+   fades out well inside it, because its edges are soft.
+2. Set its `edgeSoftness` to `0`. The mist now ends sharply at the box's faces.
+   Set it back to `2`.
+3. Drag its `visibility` down to `4`. The feet of the pillars standing in it
+   all but disappear.
+4. Select **Swamp**. Its outline is drawn on the ground. Drag one of its nodes
+   outwards, and the mist follows. Raise `height` to `6`.
+5. Select **Smoke**. Its **Lit by sky** is off, so it keeps its dark colour.
+   Turn it on: it becomes a dark tint over the sky's light.
+
+### Fog volume fields
+
+Every fog volume has these four:
+
+| Field | Meaning |
+|---|---|
+| `visibility` | How far you can see through it where it is thickest, in metres. A pillar this far into it is all but hidden. `0` is no fog. |
+| `edgeSoftness` | How many metres it takes to thin from full to nothing at its edges, so it has no hard border. `0` gives hard edges. |
+| `color` | Its colour. See below for how **Lit by sky** changes it. |
+| `litBySky` | **Lit by sky**, on by default. Turn it off for caves and rooms the sky does not reach. |
+
+And each shape has its own size: `size` for a `FogBox`, `radius` for a
+`FogSphere`, and the `outline` curve and its `height` for a `FogOutline`. An
+outline always closes, from its last node back to its first; only where its
+nodes are across matters, not their height.
+
+### Its colour
+
+With **Lit by sky** on, `color` tints the light the level's haze takes from the
+sky in that direction. White matches the haze exactly, and changes with the time
+of day as the haze does. In a level with no `Skybox`, it tints the `Fog`'s
+`color` instead, or is drawn as it is if the level has no `Fog` either.
+
+A white volume lit by the sky does not show against the sky itself, because the
+light it takes from the sky is the sky's own colour. For mist that stands out
+against the sky, tint it, or turn **Lit by sky** off.
+
+With **Lit by sky** off, `color` is drawn exactly as set, at every hour.
+
+### How it is drawn
+
+Each pixel works out how much of each volume lies between the camera and what
+the pixel shows, less what the soft edges thin away, and fogs it by that much.
+Standing inside a volume, things near you are clear and far ones fade; the sky
+behind a volume is fogged the same way. Where volumes overlap, their fog adds up
+and their colours mix.
+
+Fog volumes are not lit by the sun directly and nothing casts a shadow into
+them, so they show no light shafts.
+
+### What fog volumes cost
+
+The screen is cut into squares 64 pixels wide, and each square lists the volumes
+that may cover it. A pixel works only on its own square's volumes, so a volume
+costs in proportion to how much of the screen it covers, and a level with none
+pays nothing. A `FogOutline` costs more per pixel than a box or a sphere, and
+more the more its curve bends, because a pixel checks each straight piece of it.
+
+The player's fog setting turns fog volumes off along with the level's `Fog`. One
+frame draws at most 256 fog volumes on screen; past that, the rest are left out
+and the log says so once.

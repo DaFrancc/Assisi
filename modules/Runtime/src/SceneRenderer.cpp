@@ -14,6 +14,7 @@
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
+#include <Assisi/Runtime/FogVolumeGather.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
@@ -77,16 +78,29 @@ constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 constexpr const char *kMoonTexture = "textures/moon.jpg";
 
 // The frame's fog constants, coloured by @p sky when the scene has one and by
-// the fog's own colour when it does not.
-Render::FogConstants FrameFog(const Render::FogSettings &fog, const SkyResolution &sky, float cameraHeight,
+// the fog's own colour when it does not. Off unless @p drawn, but coloured all
+// the same: a lit fog volume takes the haze's colour whether or not the level
+// has a Fog, and in a level with neither a sky nor a Fog that colour is white,
+// so the volume shows its own.
+Render::FogConstants FrameFog(const FogResolution &fog, bool drawn, const SkyResolution &sky, float cameraHeight,
                               float drawDistance)
 {
+    const Render::FogSettings settings = fog.present ? fog.settings : Render::FogSettings{.color = glm::vec3(1.f)};
+    Render::FogConstants constants;
     if (sky.status != SkyStatus::Ready)
     {
-        return Render::MakeFogConstants(fog, cameraHeight, drawDistance, nullptr);
+        constants = Render::MakeFogConstants(settings, cameraHeight, drawDistance, nullptr);
     }
-    const Render::SkyScatterConstants scatter = Render::MakeSkyScatterConstants(sky.sun, sky.moon, sky.settings);
-    return Render::MakeFogConstants(fog, cameraHeight, drawDistance, &scatter);
+    else
+    {
+        const Render::SkyScatterConstants scatter = Render::MakeSkyScatterConstants(sky.sun, sky.moon, sky.settings);
+        constants = Render::MakeFogConstants(settings, cameraHeight, drawDistance, &scatter);
+    }
+    if (!drawn)
+    {
+        constants.view.x = 0.f;
+    }
+    return constants;
 }
 
 // The blueprint instance @p camera belongs to, or none for a camera in no
@@ -152,6 +166,14 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: local-light shadows unavailable (the depth pass failed to initialise).");
     }
 
+    // Before both passes that read them, which name the buffers in their binding
+    // sets.
+    if (!_fogVolumeBuffers.Initialize(_device))
+    {
+        Core::Log::Error("SceneRenderer: failed to create the fog volume buffers.");
+        return false;
+    }
+
     if (!_meshPass.Initialize(
             Render::MeshPass::InitParams{.device = _device,
                                          .framebufferInfo = params.framebufferInfo,
@@ -163,6 +185,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                          .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
                                          .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
                                          .clusterGrid = &_lighting.Grid(),
+                                         .fogVolumes = &_fogVolumeBuffers,
                                          .bindlessLayout = params.bindlessLayout,
                                          .bindlessTable = params.bindlessTable,
                                          .materialTable = params.materialTable}))
@@ -179,7 +202,8 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                          .framebufferInfo = params.framebufferInfo,
                                                          .vertexShaderSpvPath = kSkyVertexShader,
                                                          .pixelShaderSpvPath = kSkyPixelShader,
-                                                         .moonTexturePath = kMoonTexture}))
+                                                         .moonTexturePath = kMoonTexture,
+                                                         .fogVolumes = &_fogVolumeBuffers}))
     {
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
     }
@@ -365,7 +389,27 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     const bool fogged = _fogEnabled && fog.present;
     const Render::FogConstants fogConstants =
-        fogged ? FrameFog(fog.settings, sky, static_cast<float>(_viewOrigin.y), camera.farZ) : Render::FogConstants{};
+        FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
+
+    // The placed fog volumes, which the player's fog setting turns off with
+    // the level's own fog.
+    _fogVolumeFrame.Clear();
+    if (_fogEnabled)
+    {
+        ASSISI_PROFILE_SCOPE("fog-volumes");
+        const FogVolumeGatherResult gathered = GatherFogVolumes(scene,
+                                                                FogVolumeView{.viewProjection = projection * view,
+                                                                              .origin = _viewOrigin,
+                                                                              .width = frame.width,
+                                                                              .height = frame.height},
+                                                                _fogVolumeFrame);
+        if (gathered.dropped > 0u && !_droppedFogVolumesWarned)
+        {
+            Core::Log::Warn("SceneRenderer: {} fog volumes past what one frame draws are left out.", gathered.dropped);
+        }
+        _droppedFogVolumesWarned = gathered.dropped > 0u;
+    }
+    const glm::uvec4 fogVolumeLanes = _fogVolumeFrame.Lanes();
 
     // Gathered but not yet uploaded: the local-light atlas decides which lights
     // hold tiles and stamps each winner's view index into the light record, and
@@ -399,6 +443,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     BuildShadowDiagnostics();
 
     _lighting.Upload(frame.commandList, view);
+    _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
     const bool prepass = PrepareDepthPrepass(frame);
@@ -417,6 +462,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .indirect = ResolveIndirect(sky, _ambient, probe),
                                                                     .shadows = shadows,
                                                                     .fog = fogConstants,
+                                                                    .fogVolumes = fogVolumeLanes,
                                                                     .screenOcclusion = occlusion};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
@@ -464,6 +510,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     //
     // A foggy level with no sky still draws the pass, in the fog's own colour,
     // so that what the fog fades into is what is behind it.
+    _skyPass.SetFogVolumes(fogConstants, fogVolumeLanes);
     if (sky.status == SkyStatus::Ready)
     {
         _skyPass.SetFog(fogged ? Render::SkyFogMode::BelowHorizon : Render::SkyFogMode::Off, fog.settings.color);
@@ -500,6 +547,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("render/batches", static_cast<double>(_lastDrawStats.batches));
     ASSISI_PROFILE_COUNTER("render/drawn-items", static_cast<double>(_lastDrawStats.drawnItems));
     ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
+    // Fog volumes on screen, which the lit pass and the sky test per pixel.
+    ASSISI_PROFILE_COUNTER("render/fog-volumes", static_cast<double>(_fogVolumeFrame.volumes.size()));
 
     // The shadow pass on its own tracks, for the same reason: a jump in
     // `shadow-cascades` is explained by one of these or by none of them, and

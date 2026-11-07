@@ -7,8 +7,24 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
+#include <cstdint>
+#include <utility>
+
 namespace Assisi::Render
 {
+namespace
+{
+// Where each constant block sits. Must match sky.frag's layout(binding = …),
+// less the backend's constant-buffer offset.
+enum class ConstantSlot : std::uint8_t
+{
+    Sky = 0,
+    Fog = 1,
+};
+
+// The moon's texture and its sampler, each first in its own register space.
+constexpr uint32_t kMoonSlot = 0u;
+} // namespace
 
 bool SkyPass::Initialize(const InitParams &params)
 {
@@ -33,6 +49,20 @@ bool SkyPass::Initialize(const InitParams &params)
         Core::Log::Error("SkyPass: failed to create the constants buffer.");
         return false;
     }
+
+    nvrhi::BufferDesc fogDesc;
+    fogDesc.byteSize = sizeof(SkyFogConstants);
+    fogDesc.isConstantBuffer = true;
+    fogDesc.debugName = "SkyPass::FogConstants";
+    fogDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
+    fogDesc.keepInitialState = true;
+    _fogConstantsBuffer = _device->createBuffer(fogDesc);
+    if (_fogConstantsBuffer == nullptr)
+    {
+        Core::Log::Error("SkyPass: failed to create the fog constants buffer.");
+        return false;
+    }
+    _fogVolumeBuffers = params.fogVolumes;
 
     _moonTexturePath = params.moonTexturePath;
 
@@ -68,9 +98,16 @@ bool SkyPass::Initialize(const InitParams &params)
     // view-projection, the pixel shader for everything else.
     nvrhi::BindingLayoutDesc layoutDesc;
     layoutDesc.visibility = nvrhi::ShaderType::All;
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
-    layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(std::to_underlying(ConstantSlot::Sky)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(std::to_underlying(ConstantSlot::Fog)));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(kMoonSlot));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(kMoonSlot));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(
+                           std::to_underlying(FogVolumeBuffers::Slot::Volumes)));
+    layoutDesc.addItem(
+        nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Edges)));
+    layoutDesc.addItem(
+        nvrhi::BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Tiles)));
     _bindingLayout = _device->createBindingLayout(layoutDesc);
     if (_bindingLayout == nullptr)
     {
@@ -89,9 +126,16 @@ bool SkyPass::Initialize(const InitParams &params)
 bool SkyPass::BuildBindingSet()
 {
     nvrhi::BindingSetDesc setDesc;
-    setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _constantsBuffer));
-    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, _moon.NativeTexture()));
-    setDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _moonSampler));
+    setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(std::to_underlying(ConstantSlot::Sky), _constantsBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(std::to_underlying(ConstantSlot::Fog), _fogConstantsBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(kMoonSlot, _moon.NativeTexture()));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(kMoonSlot, _moonSampler));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Volumes),
+                                                                _fogVolumeBuffers->Volumes().NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Edges),
+                                                                _fogVolumeBuffers->Edges().NativeBuffer()));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Tiles),
+                                                                _fogVolumeBuffers->Tiles().NativeBuffer()));
     _bindingSet = _device->createBindingSet(setDesc, _bindingLayout);
     if (_bindingSet == nullptr)
     {
@@ -200,7 +244,8 @@ void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, co
     SkyConstants constants = MakeSkyConstants(glm::inverse(viewProjection), cameraPosition, sun, moon, settings);
     constants.fog = _fog;
     Submit(frame.commandList, frame.framebuffer, _pipeline,
-           nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)), constants);
+           nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)), constants,
+           _fogVolumes);
 }
 
 void SkyPass::DrawInto(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target, const SkyConstants &constants)
@@ -230,14 +275,16 @@ void SkyPass::DrawInto(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *ta
     }
     const nvrhi::FramebufferInfoEx &info = target->getFramebufferInfo();
     Submit(commandList, target, _capturePipeline,
-           nvrhi::Viewport(static_cast<float>(info.width), static_cast<float>(info.height)), constants);
+           nvrhi::Viewport(static_cast<float>(info.width), static_cast<float>(info.height)), constants,
+           SkyFogConstants{});
 }
 
 void SkyPass::Submit(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target,
                      nvrhi::IGraphicsPipeline *pipeline, const nvrhi::Viewport &viewport,
-                     const SkyConstants &constants)
+                     const SkyConstants &constants, const SkyFogConstants &fog)
 {
     commandList->writeBuffer(_constantsBuffer, &constants, sizeof(constants));
+    commandList->writeBuffer(_fogConstantsBuffer, &fog, sizeof(fog));
 
     nvrhi::GraphicsState state;
     state.pipeline = pipeline;

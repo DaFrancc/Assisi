@@ -291,9 +291,11 @@ it off is your game's choice. It is closed unless you open it: set
 - **Read only when your game allows it.** With `playerSetsFog` off, fog is
   always drawn, whatever this says. The file only holds it once a player has
   chosen; your own settings screen sets it through `ctx.settings->Options()`.
-- **Off draws no fog** and saves its cost. The draw distance the level's `Fog`
-  sets still holds, so turning it off changes how the edge of the world looks,
-  a hard cut instead of a fade, never what is drawn.
+- **Off draws no fog**, neither the level's `Fog` nor its
+  [fog volumes](rendering-sky.md#fog-volumes), and saves their cost. The draw
+  distance the level's `Fog` sets still holds, so turning it off changes how
+  the edge of the world looks, a hard cut instead of a fade, never what is
+  drawn.
 - **In the editor**, F11's **Fog** checkbox works whatever `playerSetsFog` says,
   so you can compare a level with and without its fog.
 

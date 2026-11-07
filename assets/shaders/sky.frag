@@ -13,6 +13,7 @@
 
 #include "sky/scatter.glsl"
 #include "sky/fog.glsl"
+#include "sky/fog_volumes.glsl"
 
 layout(binding = 256) uniform SkyConstants
 {
@@ -33,9 +34,20 @@ layout(binding = 256) uniform SkyConstants
     vec4 fog;             // xyz = the fog's own colour, w = what to draw for it
 } uSky;
 
+// Mirrors Render::SkyFogConstants: the placed fog volumes in front of the sky,
+// and the level's fog they are seen through.
+layout(binding = 257) uniform SkyFogVolumes
+{
+    FogConstants fog;
+    uvec4        volumes; // Render::FogVolumeFrame::Lanes; zero in a capture
+} uSkyFog;
+
 // Must match Render::SkyFogMode.
 const uint kSkyFogBelowHorizon = 1u;
 const uint kSkyFogFlat         = 2u;
+
+// How far away the sky is, for the volumes in front of it: past any of them.
+const float kSkyDistance = 3.0e38;
 
 // The moon's albedo: an orthographic photograph of the one hemisphere a tidally
 // locked moon ever shows. Loaded sRGB, so the view decodes it to linear here.
@@ -103,16 +115,19 @@ vec3 MoonDisk(vec3 ray, vec3 toMoon, vec3 toSun, float radius)
 
 void main()
 {
+    vec3 eye = uSky.cameraPosition.xyz;
+    vec3 ray = normalize(vRayPoint.xyz / vRayPoint.w - eye);
+
     // A foggy level with no sky: behind everything is the colour the fog fades
     // into, as authored, and nothing for the sky's exposure to scale.
     uint fogMode = uint(uSky.fog.w);
     if (fogMode == kSkyFogFlat)
     {
-        outColor = vec4(max(uSky.fog.rgb, vec3(0.0)), 1.0);
+        vec3 flatFog = max(uSky.fog.rgb, vec3(0.0));
+        outColor = vec4(ApplyFogVolumes(flatFog, uSkyFog.volumes, uSkyFog.fog, eye, ray, kSkyDistance,
+                                        gl_FragCoord.xy), 1.0);
         return;
     }
-
-    vec3 ray = normalize(vRayPoint.xyz / vRayPoint.w - uSky.cameraPosition.xyz);
 
     SkyScatter scatter = SkyScatter(uSky.sunDirection, uSky.sunRadiance, uSky.airScattering, uSky.haze,
                                     uSky.groundColor, uSky.nightColor, uSky.atmosphere, uSky.moonDirection,
@@ -155,5 +170,7 @@ void main()
         radiance += air.moonBeam * uSky.moonDiskColor.rgb * face * (moonDiskIntensity * profile * skyward);
     }
 
-    outColor = vec4(max(radiance * uSky.groundColor.w, vec3(0.0)), 1.0);
+    vec3 sky = max(radiance * uSky.groundColor.w, vec3(0.0));
+    outColor = vec4(ApplyFogVolumes(sky, uSkyFog.volumes, uSkyFog.fog, eye, ray, kSkyDistance, gl_FragCoord.xy),
+                    1.0);
 }
