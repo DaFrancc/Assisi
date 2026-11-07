@@ -306,11 +306,12 @@ private:
     float _lastGpuFrameMs = 0.0f;
     double _lastGpuWaitMs = 0.0;
 
-    // Per-pass timing. Capacity is fixed and generous against the ~8 passes the
-    // frame records today; a pass past it is dropped with one warning rather
-    // than growing the pool mid-frame, since allocating a query between
-    // BeginFrame and EndFrame would be a hitch inside the thing being measured.
-    static constexpr uint32_t kMaxTimedPasses = 24;
+    // Per-pass timing. Capacity is fixed, well above the timers the editor's
+    // frame opens with every feature on; a pass past it is dropped with
+    // one warning rather than growing the pool mid-frame, since allocating a
+    // query between BeginFrame and EndFrame would be a hitch inside the thing
+    // being measured. A query is two timestamps, so the headroom costs nothing.
+    static constexpr uint32_t kMaxTimedPasses = 64;
 
     struct PassTimerSlot
     {
