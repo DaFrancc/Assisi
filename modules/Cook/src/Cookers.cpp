@@ -322,6 +322,15 @@ class TextureCooker final : public Cooker
                static_cast<std::uint64_t>(context.textureQuality);
     }
 
+    [[nodiscard]] std::uint64_t AssetKeyVariant(Core::AssetId id, const CookContext &context) const override
+    {
+        // How it is stored rather than which channel binds it: channels stored
+        // alike share one blob. The colour space fits in the low byte.
+        constexpr std::uint32_t kSpaceBits = 8;
+        const Geometry::MaterialChannelFormat storage = StorageOf(id, context);
+        return (static_cast<std::uint64_t>(storage.format) << kSpaceBits) | static_cast<std::uint64_t>(storage.space);
+    }
+
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
                                                                         const CookContext &context) const override
     {
@@ -343,11 +352,7 @@ class TextureCooker final : public Cooker
             }
         }
 
-        // Unbound textures are loaded straight from their path — the sky's moon —
-        // and are colour. A normal map reaches the GPU through a material slot or
-        // not at all, so there is no unbound one to get wrong.
-        const Geometry::MaterialChannelFormat wanted =
-            Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
+        const Geometry::MaterialChannelFormat wanted = StorageOf(id, context);
 
         std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(vpath, wanted.space);
         if (!decoded)
@@ -370,6 +375,18 @@ class TextureCooker final : public Cooker
         Image::WriteCookedTexture(writer, *compressed);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+
+  private:
+    /// The format and colour space the channel binding @p id stores it in.
+    /// Unbound textures are loaded straight from their path — the sky's moon —
+    /// and are colour. A normal map reaches the GPU through a material slot or
+    /// not at all, so there is no unbound one to get wrong.
+    [[nodiscard]] static Geometry::MaterialChannelFormat StorageOf(Core::AssetId id, const CookContext &context)
+    {
+        const std::optional<Geometry::MaterialChannel> channel =
+            context.roles != nullptr ? context.roles->ChannelOf(id) : std::nullopt;
+        return Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
     }
 };
 

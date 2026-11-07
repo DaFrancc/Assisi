@@ -594,6 +594,33 @@ TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
     CHECK(fast->skipped == best->cooked - kFixtureTextures);
 }
 
+TEST_CASE("A texture a material rebinds to a channel stored differently is re-cooked")
+{
+    // The channel decides the texture's format, and the image file does not
+    // change when a material rebinds it. Left out of the cache key, the colour
+    // map's blob would be kept and read as a normal map.
+    const ScratchDir source("rebind-source");
+    const ScratchDir out("rebind-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    const std::expected<CookReport, Assisi::Cook::CookError> asColour = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asColour.has_value(), Explain(asColour));
+
+    {
+        std::ofstream material(source.Path() / "materials/checker.amat", std::ios::trunc);
+        material << R"({"version": 1, "type": "MaterialData", "NormalTexture": )"
+                 << R"({"guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d", "path": "textures/checker.png"}})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> asNormal = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asNormal.has_value(), Explain(asNormal));
+
+    // The material, whose file changed, and the texture, whose did not.
+    constexpr std::size_t kRebound = 2;
+    CHECK(asNormal->cooked == kRebound);
+}
+
 namespace
 {
 

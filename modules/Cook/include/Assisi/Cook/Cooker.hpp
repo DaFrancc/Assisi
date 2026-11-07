@@ -88,6 +88,17 @@ public:
     /// cooked under the old setting marked current.
     [[nodiscard]] virtual std::uint64_t KeyVariant(const CookContext & /*context*/) const { return 0; }
 
+    /// @brief What besides its source changes asset @p id's output, folded into
+    ///        its cache key.
+    ///
+    /// Zero for a cooker whose assets cook from their own bytes alone. A texture
+    /// is the case it exists for: the materials that bind it decide its format,
+    /// and rebinding it touches no byte of the image.
+    [[nodiscard]] virtual std::uint64_t AssetKeyVariant(Core::AssetId /*id*/, const CookContext & /*context*/) const
+    {
+        return 0;
+    }
+
     /// @brief Other files the cooked bytes depend on, as virtual paths.
     ///
     /// Folded into the cache key, so editing a `.gltf`'s external `.bin` re-cooks
