@@ -1,0 +1,423 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "farZ": 20000.0,
+          "fovDegrees": 70.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            30.0,
+            0.0
+          ],
+          "rotation": [
+            0.99452,
+            0.10453,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "intensity": 2.0,
+          "tintedBySky": true
+        },
+        "Skybox": {
+          "preset": 0
+        },
+        "Clouds": {
+          "preset": 1,
+          "windSpeed": 0.0,
+          "windBearingDegrees": 90.0,
+          "changeRate": 0.0
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.44,
+          "bearingDegrees": 200.0,
+          "latitudeDegrees": 45.0
+        },
+        "TimeOfDay": {
+          "hour": 15.0,
+          "paused": true,
+          "seasonsPaused": true
+        }
+      }
+    },
+    {
+      "name": "Plain",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "911c776f-cfb3-4d45-969e-c35456627e19",
+              "path": "materials/fog_grass.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -1.0,
+            -8000.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            20000.0,
+            2.0,
+            20000.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 1",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -60.0,
+            6.0,
+            -120.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            8.0,
+            12.0,
+            8.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 2",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -20.0,
+            8.4,
+            -180.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            11.200000000000001,
+            16.8,
+            11.200000000000001
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 3",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            30.0,
+            7.199999999999999,
+            -140.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            9.600000000000001,
+            14.399999999999999,
+            9.600000000000001
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 4",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            80.0,
+            9.6,
+            -220.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            12.8,
+            19.2,
+            12.8
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 5",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -120.0,
+            10.799999999999999,
+            -300.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            14.4,
+            21.599999999999998,
+            14.4
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tree 6",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "59190885-1678-40b2-8405-f644ab59459e",
+              "path": "materials/fog_foliage.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            150.0,
+            12.0,
+            -420.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            16.0,
+            24.0,
+            16.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Rock",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "47468be6-0ab9-4642-83f0-42a55ec5c042",
+              "path": "materials/fog_rock.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -14.0,
+            0.0,
+            -40.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            6.0,
+            3.0,
+            5.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Hill 1",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "911c776f-cfb3-4d45-969e-c35456627e19",
+              "path": "materials/fog_grass.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -3000.0,
+            -100.0,
+            -9000.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2500.0,
+            1200.0,
+            2000.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Hill 2",
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "911c776f-cfb3-4d45-969e-c35456627e19",
+              "path": "materials/fog_grass.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000009",
+            "path": "prim://icosphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            2500.0,
+            -100.0,
+            -11000.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3000.0,
+            1600.0,
+            2400.0
+          ]
+        }
+      }
+    }
+  ],
+  "version": 2
+}

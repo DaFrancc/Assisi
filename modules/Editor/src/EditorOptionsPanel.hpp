@@ -99,6 +99,9 @@ private:
     /// the radius and the strength.
     static void DrawAmbientOcclusionSettings(const Frame &frame);
     static void DrawFogSettings(const Frame &frame);
+    /// @brief The clouds section: the switch, the tier buttons, the sky map's
+    /// size and the steps along each ray.
+    static void DrawCloudSettings(const Frame &frame);
     /// @brief The bloom section: the switch, the intensity and the scatter.
     static void DrawBloomSettings(const Frame &frame);
 

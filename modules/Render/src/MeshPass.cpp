@@ -55,6 +55,7 @@ enum class ResourceSlot : std::uint8_t
     Environment = 10,
     BrdfTable = 11,
     ScreenOcclusion = 12,
+    CloudShadow = 16,
     FogVolumes = std::to_underlying(FogVolumeBuffers::Slot::Volumes),
     FogEdges = std::to_underlying(FogVolumeBuffers::Slot::Edges),
     FogTiles = std::to_underlying(FogVolumeBuffers::Slot::Tiles),
@@ -167,6 +168,7 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Clamp)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::CloudShadow)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles)));
@@ -447,6 +449,11 @@ void MeshPass::SetAmbientOcclusion(nvrhi::ITexture *occlusion)
     _ambientOcclusion = occlusion;
 }
 
+void MeshPass::SetCloudShadow(nvrhi::ITexture *shadow)
+{
+    _cloudShadow = shadow;
+}
+
 bool MeshPass::CreateBrdfTable()
 {
     nvrhi::TextureDesc tableDesc;
@@ -489,7 +496,7 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
         _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
         _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube &&
-        _globalSetAmbientOcclusion == _ambientOcclusion)
+        _globalSetAmbientOcclusion == _ambientOcclusion && _globalSetCloudShadow == _cloudShadow)
     {
         return _globalBindingSet;
     }
@@ -507,6 +514,9 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     nvrhi::ITexture *const environment = _environmentCube != nullptr ? _environmentCube : _noEnvironmentCube.Get();
     nvrhi::ITexture *const occlusion =
         _ambientOcclusion != nullptr ? _ambientOcclusion : _noAmbientOcclusion.Get();
+    // The empty occlusion texture stands in for the clouds' shadow too: on a
+    // frame with no clouds the shader reads neither.
+    nvrhi::ITexture *const cloudShadow = _cloudShadow != nullptr ? _cloudShadow : _noAmbientOcclusion.Get();
     bindingSetDesc.addItem(
         BindingSetItem::ConstantBuffer(std::to_underlying(ConstantBufferSlot::Frame), _frameConstantsBuffer));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Material), _sampler));
@@ -533,6 +543,7 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable), _brdfTable));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Clamp), _clampSampler));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion), occlusion));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::CloudShadow), cloudShadow));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes),
                                                                 _fogVolumes->Volumes().NativeBuffer()));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges),
@@ -546,6 +557,7 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     _globalSetShadowViewTable = _shadowViewTable;
     _globalSetEnvironmentCube = _environmentCube;
     _globalSetAmbientOcclusion = _ambientOcclusion;
+    _globalSetCloudShadow = _cloudShadow;
     return _globalBindingSet;
 }
 

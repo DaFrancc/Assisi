@@ -23,6 +23,7 @@
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Sky.hpp>
 #include <Assisi/Render/SkyProbeInputs.hpp>
 #include <Assisi/Render/SpecularIbl.hpp>
@@ -328,6 +329,27 @@ inline constexpr float kGoldenAngle = 2.39996323f;
 [[nodiscard]] inline SkyAmbient AmbientFromSky(const SkySun &sun, const SkySettings &rawSettings)
 {
     return AmbientFromSky(sun, SkyMoon{}, rawSettings);
+}
+
+/// @brief The sky's ambient light under clouds of @p cover (see CloudCover).
+///
+/// Clouds take everything a level surface receives under a clear sky, the
+/// sky's light and the sun's and the moon's (@p directAbove, see
+/// DirectLightFromAbove), and let kOvercastTransmission of it through as grey
+/// light from the whole sky: no sun in it, so nothing has a lit side. The ground
+/// below sends back the same share of what it did.
+[[nodiscard]] inline SkyAmbient CloudyAmbient(const SkyAmbient &clear, float cover, const glm::vec3 &directAbove)
+{
+    // Everything a surface facing up receives under a clear sky.
+    const glm::vec3 clearAbove = glm::vec3(clear.sky) + directAbove;
+    const glm::vec3 overcastSky(glm::dot(clearAbove, kCloudLuminanceWeights) * kOvercastTransmission);
+    // The ground gets the same share of the light it got before, so it sends
+    // back that share of what it did.
+    const glm::vec3 overcastGround = glm::vec3(clear.ground) * kOvercastTransmission;
+
+    const float c = std::clamp(cover, 0.0f, 1.0f);
+    return SkyAmbient{.sky = glm::mix(glm::vec3(clear.sky), overcastSky, c),
+                      .ground = glm::mix(glm::vec3(clear.ground), overcastGround, c)};
 }
 
 } // namespace Assisi::Render

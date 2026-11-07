@@ -38,6 +38,7 @@ The main settings file:
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
 | `frameSnap` | `"Snapped"` (default): a frame that took almost exactly one, two or more display refreshes counts as exactly that, so at a steady frame rate the same number of `FixedUpdate` steps runs every frame. `"Unsnapped"`: the frame's measured time is used as it is. The player can override this. |
 | `playerSetsFog` | Whether a player may turn the level's fog off from their options. `false` (default): fog is always drawn. See [Fog](rendering-settings.md#fog). |
+| `playerSetsClouds` | Whether a player may turn a level's clouds off from their options. `false` (default): clouds are always drawn. See [Clouds](rendering-settings.md#clouds). |
 | `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [Lengths](ui-layout.md#lengths). |
 
 Any setting you leave out keeps its default.
@@ -71,12 +72,14 @@ The player's settings are saved in `options.json`, next to the executable:
 
 - Window size.
 - Graphics: shadows, anti-aliasing, tone mapping, bloom, sky reflections,
-  ambient occlusion, VSync, frame rate limit, frame snapping. The editor's **F11**
+  ambient occlusion, cloud quality, VSync, frame rate limit, frame snapping. The editor's **F11**
   window edits these; [Graphics settings](rendering-settings.md) lists each
   one. Frame snapping is `frameSync.snap` in `options.json`: `"game"` follows
   your `frameSnap`, and `"snapped"` or `"unsnapped"` overrides it.
 - Fog, only if your `playerSetsFog` allows it. See
   [Fog](rendering-settings.md#fog).
+- Clouds on or off, only if your `playerSetsClouds` allows it. See
+  [Clouds](rendering-settings.md#clouds).
 - Rebound keys.
 - Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 

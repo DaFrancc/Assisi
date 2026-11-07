@@ -28,6 +28,7 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Path.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 
 // Private to the serializer's own translation units: the nesting tests at the
@@ -1210,4 +1211,42 @@ TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level 
     CHECK(loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);
 
     fs::remove_all(root, ec);
+}
+
+TEST_CASE("SceneSerializer: clouds round-trip, preset and fields both")
+{
+    using Assisi::Runtime::CloudPreset;
+    using Assisi::Runtime::Clouds;
+
+    // Every value off its default, so a field that never serialized reads back as
+    // the default and fails rather than passing by coincidence.
+    const Clouds clouds{.preset = CloudPreset::Custom,
+                        .coverage = 0.8f,
+                        .height = 2200.f,
+                        .thickness = 900.f,
+                        .density = 0.11f,
+                        .puffiness = 0.35f,
+                        .changeRate = 2.5f,
+                        .windSpeed = 17.f,
+                        .windBearingDegrees = 215.f,
+                        .seed = 4000000123u};
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, clouds) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+    const Clouds *read = loaded.Get<Clouds>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(read != nullptr);
+    CHECK(read->preset == CloudPreset::Custom);
+    CHECK(read->coverage == doctest::Approx(0.8f));
+    CHECK(read->height == doctest::Approx(2200.f));
+    CHECK(read->thickness == doctest::Approx(900.f));
+    CHECK(read->density == doctest::Approx(0.11f));
+    CHECK(read->puffiness == doctest::Approx(0.35f));
+    CHECK(read->changeRate == doctest::Approx(2.5f));
+    CHECK(read->windSpeed == doctest::Approx(17.f));
+    CHECK(read->windBearingDegrees == doctest::Approx(215.f));
+    // Past 2^31, so a seed read back through a signed or float type fails.
+    CHECK(read->seed == 4000000123u);
 }

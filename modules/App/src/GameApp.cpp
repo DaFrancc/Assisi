@@ -217,10 +217,13 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     options.shadows = Render::TierSettings(Render::ShadowTier::Ultra);
     options.environment = Render::EnvironmentSettings{};
     options.ambientOcclusion = Render::SsaoSettings{};
+    options.clouds = Render::CloudTierSettings(Render::CloudTier::Ultra);
     _sceneRenderer.SetShadowSettings(options.shadows);
     _sceneRenderer.SetEnvironmentSettings(options.environment);
     _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
     _sceneRenderer.SetFogEnabled(true);
+    _sceneRenderer.SetCloudQuality(options.clouds);
+    _sceneRenderer.SetCloudsEnabled(true);
 
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -316,6 +319,8 @@ bool GameApp::SetupRenderer()
     _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
     _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
     _sceneRenderer.SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
+    _sceneRenderer.SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer.SetCloudsEnabled(GetOptions().CloudsEnabled(GetConfig()));
     return true;
 }
 

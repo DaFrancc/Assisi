@@ -53,6 +53,8 @@ layout(binding = 256) uniform FrameConstants
     // The placed fog volumes: x = how many (zero skips them), y = screen square
     // columns, z = rows, w = a square's side in pixels.
     uvec4 fogVolumes;
+    // The clouds' shadow on the ground; area.w is zero without one.
+    CloudShadowConstants cloudShadow;
 } uFrame;
 
 // Must match Render::MaterialDebugView.

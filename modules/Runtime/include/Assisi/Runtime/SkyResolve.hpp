@@ -13,6 +13,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/Sky.hpp>
 
@@ -37,6 +38,8 @@ enum class SkyWarning : std::uint8_t
     MoonWithoutSun,
     /// A Sun with no TimeOfDay in the scene; it stands at noon on an equinox.
     SunWithoutClock,
+    /// Clouds on a light with no Skybox; they are not drawn.
+    CloudsWithoutSkybox,
     Count_,
 };
 
@@ -99,6 +102,15 @@ struct CelestialLight
     LightingBody body = LightingBody::None;
 };
 
+/// @brief The clouds in the sky, if it has any.
+struct CloudResolution
+{
+    /// Sanitized. Meaningful only when @ref present.
+    Render::CloudSettings settings;
+    /// A Clouds beside the sky's Skybox.
+    bool present = false;
+};
+
 /// @brief What ResolveSky found.
 ///
 /// @ref sun, @ref moon and @ref settings are meaningful when @ref status is
@@ -111,6 +123,8 @@ struct SkyResolution
     Render::SkySun sun;
     Render::SkyMoon moon;
     Render::SkySettings settings;
+    /// Present only when @ref status is Ready: clouds are part of a sky.
+    CloudResolution clouds;
 
     CelestialLight light;
 

@@ -269,7 +269,8 @@ if (ASSISI_BUILD_TESTS)
   # runs when it is off shows up here and nowhere else.
   file(WRITE "${_gpu_dir}/everything-off.json"
        "{\"ambientOcclusion\": {\"enabled\": false}, \"antiAliasing\": {\"mode\": \"none\"}, "
-       "\"bloom\": {\"enabled\": false}, \"environment\": {\"enabled\": false}, \"fog\": {\"enabled\": false}, "
+       "\"bloom\": {\"enabled\": false}, \"clouds\": {\"enabled\": false}, \"environment\": {\"enabled\": false}, "
+       "\"fog\": {\"enabled\": false}, "
        "\"shadows\": {\"local\": {\"enabled\": false}, \"sun\": {\"enabled\": false}}}\n")
   set(_gpu_base_passes "clear-targets,depth-prepass,draw-scene,lighting,post-process,post-process-output,ui")
   add_test(NAME Gpu-BasePasses

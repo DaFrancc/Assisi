@@ -9,6 +9,7 @@
 #include <array>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -105,6 +106,9 @@ struct MeshPassFrameConstants
     /// The placed fog volumes: x = how many (zero skips them), y = screen
     /// square columns, z = rows, w = a square's side in pixels.
     glm::uvec4 fogVolumes{0u};
+    /// The clouds' shadow on the ground (see CloudShadowConstants); area.w is
+    /// zero without one, and the shader then reads no map.
+    CloudShadowConstants cloudShadow;
 };
 
 // std140, not std430 — this is a uniform block. The two agree on everything this
@@ -136,6 +140,7 @@ ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowCascade, shadowPcss);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowViewProjection, shadowCascade);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fog, shadowViewProjection);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fogVolumes, fog);
-ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, fogVolumes);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, cloudShadow, fogVolumes);
+ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, cloudShadow);
 
 } // namespace Assisi::Render

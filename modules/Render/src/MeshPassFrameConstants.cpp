@@ -117,6 +117,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
 
     constants.fog = params.fog;
     constants.fogVolumes = params.fogVolumes;
+    constants.cloudShadow = params.cloudShadow;
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

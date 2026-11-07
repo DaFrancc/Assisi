@@ -73,6 +73,15 @@ constexpr const char *kSkyPixelShader = "shaders/sky.frag.spv";
 // through the sky shaders above.
 constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 
+// The clouds (see Render::CloudPass): their noise, drawn once, and the sky map
+// and shadow map, drawn every frame.
+constexpr const char *kCloudNoiseShader = "shaders/cloud_noise.comp.spv";
+constexpr const char *kCloudNoiseDownsampleShader = "shaders/cloud_noise_downsample.comp.spv";
+constexpr const char *kCloudWeatherShader = "shaders/cloud_weather.comp.spv";
+constexpr const char *kCloudMapShader = "shaders/cloud_map.comp.spv";
+constexpr const char *kCloudMapResolveShader = "shaders/cloud_map_resolve.comp.spv";
+constexpr const char *kCloudShadowShader = "shaders/cloud_shadow.comp.spv";
+
 // The moon's albedo, stamped on its disk. An engine constant rather than a field
 // on the Moon component: authoring a second moon's texture is a feature nobody
 // has asked for, and a path in a level file is a path that can rot there.
@@ -214,6 +223,19 @@ bool SceneRenderer::Initialize(const InitParams &params)
     if (!_skyProbe.Initialize(_device, kSkyPrefilterShader))
     {
         Core::Log::Warn("SceneRenderer: sky reflections unavailable (the prefilter failed to initialise).");
+    }
+
+    // Non-fatal: without it a sky has no clouds, which is what every sky had
+    // before there were any. Its ambient light still follows a level's clouds.
+    if (!_cloudPass.Initialize(Render::CloudPass::InitParams{.device = _device,
+                                                             .noiseSpvPath = kCloudNoiseShader,
+                                                             .noiseDownsampleSpvPath = kCloudNoiseDownsampleShader,
+                                                             .weatherSpvPath = kCloudWeatherShader,
+                                                             .mapSpvPath = kCloudMapShader,
+                                                             .mapResolveSpvPath = kCloudMapResolveShader,
+                                                             .shadowSpvPath = kCloudShadowShader}))
+    {
+        Core::Log::Warn("SceneRenderer: clouds unavailable (their compute pipelines failed to initialise).");
     }
 
     // Non-fatal: without it no screen-space feature runs, and the frame is the
@@ -396,12 +418,15 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lastSky = ResolveSky(scene);
     const SkyResolution &sky = _lastSky;
 
-    // Before the mesh pass reads it, and off the same sky the frame is lit by.
-    const SpecularProbe probe = UpdateSkyProbe(frame, sky);
-
     const bool fogged = _fogEnabled && fog.present;
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
+
+    // Before the probe, whose bake shows them, and seen through the same fog.
+    const Render::CloudShadowConstants cloudShadow = UpdateClouds(frame, sky, fogConstants);
+
+    // Before the mesh pass reads it, and off the same sky the frame is lit by.
+    const SpecularProbe probe = UpdateSkyProbe(frame, sky);
 
     // The placed fog volumes, which the player's fog setting turns off with
     // the level's own fog.
@@ -475,7 +500,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .shadows = shadows,
                                                                     .fog = fogConstants,
                                                                     .fogVolumes = fogVolumeLanes,
-                                                                    .screenOcclusion = occlusion};
+                                                                    .screenOcclusion = occlusion,
+                                                                    .cloudShadow = cloudShadow};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
     // With a prepass, this draws depth alone: the same extract, cull and sort as
@@ -638,7 +664,17 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
         return SpecularProbe{};
     }
 
-    const Render::SkyProbeInputs inputs = Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings);
+    Render::SkyProbeInputs inputs = Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings);
+    // The clouds as drawn this frame, if they are: the bake shows them, so it
+    // goes stale as they drift.
+    if (_cloudPass.MapTexture() != nullptr)
+    {
+        inputs.clouds = Render::SkyProbeClouds{
+            .settings = sky.clouds.settings,
+            .across = glm::dvec2(_viewOrigin.x, _viewOrigin.z) - _cloudMotion.drift,
+            .heightAbove = static_cast<float>(static_cast<double>(sky.clouds.settings.baseHeight) - _viewOrigin.y),
+            .present = true};
+    }
     if (_skyProbe.NeedsBake(inputs, sky.jumpSerial))
     {
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "sky-probe");
@@ -656,6 +692,62 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
     }
     _meshPass.SetEnvironment(_skyProbe.SpecularTexture());
     return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
+}
+
+Render::CloudShadowConstants SceneRenderer::UpdateClouds(const Render::RenderFrame &frame, const SkyResolution &sky,
+                                                         const Render::FogConstants &fog)
+{
+    // The textures exist exactly while the sky has clouds and the player draws
+    // them. Released rather than kept otherwise — pay for what you place.
+    const bool wanted = _cloudsEnabled && sky.status == SkyStatus::Ready && sky.clouds.present &&
+                        _cloudPass.IsValid() && _skyPass.IsValid();
+    if (wanted && !_cloudPass.Configure(_cloudQuality))
+    {
+        Core::Log::Warn("SceneRenderer: clouds disabled (their textures failed to allocate).");
+        _cloudsEnabled = false;
+    }
+    if (!wanted || !_cloudsEnabled)
+    {
+        _cloudMotionTime.reset();
+        _cloudPass.Release();
+        _skyPass.SetClouds(nullptr);
+        _meshPass.SetCloudShadow(nullptr);
+        return Render::CloudShadowConstants{};
+    }
+
+    const Render::CloudSettings &settings = sky.clouds.settings;
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    if (_cloudMotionTime)
+    {
+        _cloudMotion = Render::AdvanceClouds(_cloudMotion, settings,
+                                             std::chrono::duration<double>(now - *_cloudMotionTime).count());
+    }
+    _cloudMotionTime = now;
+
+    // The fog's constants carry the sky's scatter whenever there is a sky,
+    // with or without a Fog, and the clouds are seen against that sky.
+    Render::CloudMapConstants map{.clouds = Render::PlaceClouds(settings, _viewOrigin, _cloudMotion,
+                                                                _cloudQuality.steps, _cloudQuality.resolution),
+                                  .fog = fog};
+    Render::LightClouds(map.clouds, sky.sun, sky.moon, sky.settings);
+    const Render::SkyAmbient clear = Render::AmbientFromSky(sky.sun, sky.moon, sky.settings);
+    Render::AmbientLightClouds(map.clouds, glm::vec3(clear.sky), glm::vec3(clear.ground));
+
+    const Render::CloudShadowPlacement placement =
+        Render::PlaceCloudShadow(settings, _viewOrigin, sky.light.direction);
+    const Render::CloudShadowMapConstants shadow{
+        .clouds = map.clouds,
+        .area = glm::vec4(placement.centre, Render::kCloudShadowWidth, static_cast<float>(Render::kCloudShadowSteps)),
+        .light = glm::vec4(placement.light, 0.0f)};
+    {
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "clouds");
+        _cloudPass.Render(frame.commandList, map, shadow);
+    }
+    // After Render: a reallocation swaps the textures, and each pass rebuilds
+    // its binding set when it notices.
+    _skyPass.SetClouds(_cloudPass.MapTexture());
+    _meshPass.SetCloudShadow(_cloudPass.ShadowTexture());
+    return Render::MakeCloudShadowConstants(settings, placement, static_cast<float>(_viewOrigin.y));
 }
 
 bool SceneRenderer::PrepareDepthPrepass(const Render::RenderFrame &frame)

@@ -2,6 +2,7 @@ add_executable(Assisi-Render-Tests
   main.cpp
   TestBloom.cpp
   TestCelestial.cpp
+  TestClouds.cpp
   TestExposure.cpp
   TestFog.cpp
   TestFogVolume.cpp

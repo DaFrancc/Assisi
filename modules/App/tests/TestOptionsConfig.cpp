@@ -447,3 +447,33 @@ TEST_CASE("What the player changed survives a restart")
 
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("The clouds' quality survives a write and a read, and is brought into range on load")
+{
+    OptionsConfig written;
+    written.clouds = CloudQuality{.resolution = 512, .steps = 96};
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    CHECK(read.clouds == written.clouds);
+    CHECK_FALSE(read.cloudsEnabled.has_value());
+
+    const OptionsConfig wild =
+        OptionsConfig::FromJsonText(R"({"clouds": {"resolution": 100000, "steps": 0, "enabled": false}})");
+    CHECK(wild.clouds.resolution == kMaxCloudMapResolution);
+    CHECK(wild.clouds.steps == kMinCloudSteps);
+    REQUIRE(wild.cloudsEnabled.has_value());
+    CHECK_FALSE(*wild.cloudsEnabled);
+}
+
+TEST_CASE("Clouds are drawn unless the game lets players choose and they turned them off")
+{
+    AppConfig closed;
+    AppConfig open;
+    open.playerSetsClouds = true;
+
+    OptionsConfig off;
+    off.cloudsEnabled = false;
+    CHECK(off.CloudsEnabled(closed));
+    CHECK_FALSE(off.CloudsEnabled(open));
+    CHECK(OptionsConfig{}.CloudsEnabled(open));
+    CHECK_FALSE(AppConfig{}.playerSetsClouds);
+}
