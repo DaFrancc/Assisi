@@ -45,6 +45,7 @@
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/SceneResources.hpp>
 #include <Assisi/Runtime/ShadowCasterGather.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
@@ -433,31 +434,29 @@ private:
     void ForgetKeptShadows();
 
     /// @brief Hold the sky probe for @p sky, baking it into @p frame's command
-    /// list when the sky has moved enough to see, and point the mesh pass at
-    /// the result. Releases it while there is no sky to reflect, a pinned
-    /// ambient, or the setting is off.
+    /// list, with @p clouds in it, when the sky has moved enough to see.
+    /// Releases it while there is no sky to reflect, a pinned ambient, or the
+    /// setting is off.
     ///
     /// Before UpdateFrameConstants, which is told through the returned value
     /// whether an environment answers this frame.
-    [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
+    [[nodiscard]] SkyReflections UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky,
+                                                const CloudMap &clouds);
 
-    /// @brief Draw this frame's clouds into their sky map and shadow map, and
-    /// point the sky pass and the mesh pass at them; or release both and point
-    /// the passes at none while the sky has no clouds or the player has them
-    /// off.
+    /// @brief Draw this frame's clouds into their sky map and shadow map, or
+    /// release both while the sky has no clouds or the player has them off.
     ///
     /// Before UpdateSkyProbe, whose bake reads the sky map, and before
     /// UpdateFrameConstants, which takes the returned shadow's constants.
-    [[nodiscard]] Render::CloudShadowConstants UpdateClouds(const Render::RenderFrame &frame,
-                                                            const SkyResolution &sky,
-                                                            const Render::FogConstants &fog);
+    [[nodiscard]] CloudMap UpdateClouds(const Render::RenderFrame &frame, const SkyResolution &sky,
+                                        const Render::FogConstants &fog);
 
     /// @brief Hold the scene distance target and occlusion's targets for
-    /// @p frame, and point the mesh pass at the result. Releases all of it while
-    /// the setting is off, and turns the setting off if any of it fails.
+    /// @p frame. Releases all of it while the setting is off, and turns the
+    /// setting off if any of it fails.
     ///
-    /// @return whether this frame runs occlusion.
-    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
+    /// @return the occlusion's texture, empty when this frame runs none.
+    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(const Render::RenderFrame &frame);
 
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
@@ -466,19 +465,20 @@ private:
     /// Called after LightingSystem::Gather, which is where the shadow-casting
     /// sun comes from, and before UpdateFrameConstants, which borrows the fit.
     /// @p cameraInShadow is the camera measured from the shadow origin.
-    [[nodiscard]] Render::MeshPass::ShadowFrameData RenderSunShadows(const Render::RenderFrame &frame,
-                                                                     ECS::Scene &scene, const Camera &camera,
-                                                                     const glm::mat4 &cameraInShadow);
+    [[nodiscard]] SunShadows RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
+                                              const Camera &camera, const glm::mat4 &cameraInShadow);
 
-    /// @brief Choose which local lights hold atlas tiles, draw their faces, and
-    /// stamp each winner's view index into the light record the shader reads.
-    ///
-    /// Between LightingSystem::Gather and LightingSystem::Upload, which is the
-    /// only window in which that stamp reaches the GPU. Fills in @p shadows'
-    /// local half. @p cameraInShadow is the camera measured from the shadow
-    /// origin.
-    void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                            const glm::mat4 &cameraInShadow, Render::MeshPass::ShadowFrameData &shadows);
+    /// @brief Choose which local lights hold atlas tiles and draw their faces.
+    /// Returns the tiles, which UploadLights stamps into the light records, and
+    /// what the mesh shader needs to sample the atlas. @p cameraInShadow is the
+    /// camera measured from the shadow origin.
+    [[nodiscard]] LocalShadows RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
+                                                  const Camera &camera, const glm::mat4 &cameraInShadow);
+
+    /// @brief Stamp each light @p localShadows served with where its views
+    /// landed, then upload the frame's lights and sort them into clusters for
+    /// @p view.
+    void UploadLights(const Render::RenderFrame &frame, const glm::mat4 &view, const LocalShadows &localShadows);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world

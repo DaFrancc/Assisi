@@ -210,41 +210,43 @@ public:
     ///
     /// A null @ref fit — or one whose count is zero — means no shadowing sun
     /// this frame, and the shader skips the lookup on a frame constant rather
-    /// than sampling a map that holds nothing. @ref localActive is the same
-    /// switch for the local half, and the two are independent: a scene may have
-    /// a shadowed sun and no shadowed lamp, or the reverse.
-    struct ShadowFrameData
+    /// than sampling a map that holds nothing. The sun and the local lights are
+    /// independent halves: a scene may have a shadowed sun and no shadowed
+    /// lamp, or the reverse.
+    struct SunShadowFrame
     {
         /// This frame's fitted cascades. Not retained past the call.
         const CascadeFit *fit = nullptr;
+        /// The knobs the fit was made with; the filter, blend band and biases
+        /// ride into the shader from here.
+        SunShadowSettings settings;
         /// Where the lit pass's origin, the camera, is in the frame the cascades
         /// were fitted in. Each cascade's matrix is handed to the shader moved by
         /// it, so a position the lit pass measures from the camera finds its
         /// texel.
         glm::vec3 sampledFrom{0.f};
-        /// The knobs the fit was made with; the filter, blend band and biases
-        /// ride into the shader from here.
-        SunShadowSettings settings;
         /// Which directional light the cascades belong to, as an index into the
         /// buffer the shader reads. Only that light's radiance is shadowed.
         uint32_t sunLightIndex = 0;
-        /// Which diagnostic overlay the shadow lookup draws, if any.
-        ShadowDebugView debugView = ShadowDebugView::None;
+        /// Whether the lookup sizes its kernel from a blocker search, as
+        /// PcssShadesSun resolves it, so the pass never re-derives which setting
+        /// names which half.
+        bool pcss = false;
+    };
 
-        /// Whether any local light holds an atlas tile this frame. False leaves
-        /// both light loops taking no lookup at all, which is what a scene with
-        /// no shadowed lamp in it pays.
-        bool localActive = false;
+    /// @brief What the mesh shader needs to sample the local-light atlas.
+    struct LocalShadowFrame
+    {
         /// The knobs the atlas was drawn with. Only the filter reaches the
         /// shader from here — every bias is per tile, because a demoted tile is
         /// biased differently from a full-size one, and rides in the view table.
-        LocalShadowSettings localSettings;
-
-        /// Whether each half's lookup sizes its kernel from a blocker search.
-        /// Resolved by the caller (PcssShadesSun, PcssShadesLocals), so the pass
-        /// never re-derives which setting names which half.
-        bool sunPcss = false;
-        bool localPcss = false;
+        LocalShadowSettings settings;
+        /// Whether any local light holds an atlas tile this frame. False leaves
+        /// both light loops taking no lookup at all, which is what a scene with
+        /// no shadowed lamp in it pays.
+        bool active = false;
+        /// As SunShadowFrame::pcss, resolved by PcssShadesLocals.
+        bool pcss = false;
     };
 
     /// @brief Everything the per-frame constant buffer carries. Grouped so the
@@ -259,11 +261,14 @@ public:
         float farZ = 0.f;
         uint32_t dirLightCount = 0;
         MaterialDebugView debugView = MaterialDebugView::None;
+        /// Which diagnostic overlay the shadow lookups draw, if any.
+        ShadowDebugView shadowDebugView = ShadowDebugView::None;
         /// What reaches a surface from everything that is not a light, as the
         /// frame's indirect-lighting provider answered it. The pass carries the
         /// answer and never asks which provider gave it.
         IndirectConstants indirect;
-        ShadowFrameData shadows;
+        SunShadowFrame sunShadows;
+        LocalShadowFrame localShadows;
         /// The level's fog, already resolved against its sky. A default one is
         /// off, and the shader takes none of it.
         FogConstants fog;
@@ -285,16 +290,17 @@ public:
     /// leaves the GPU.
     void UpdateFrameConstants(nvrhi::ICommandList *commandList, const FrameConstantsParams &params) const;
 
-    /// @brief Point the shader at the sun's cascade array (ShadowPass owns it).
+    /// @brief Point the shader at the sun's cascade array (ShadowPass owns it),
+    /// or at none.
     ///
-    /// Never null in practice — the shadow pass keeps a one-texel empty array
-    /// bound while it is inactive, so the binding set never has a hole in it.
-    /// A different handle invalidates the cached set, which is what a resolution
-    /// or cascade-count change produces.
+    /// Null binds a one-texel placeholder, because a binding set may not have
+    /// a hole in it; the shader reads the cascades only on a frame whose
+    /// constants say they hold something. A different handle invalidates the
+    /// cached set, which is what a resolution or cascade-count change produces.
     void SetShadowMap(nvrhi::ITexture *cascades);
 
     /// @brief Point the shader at the local-light atlas (LocalShadowPass owns
-    /// it), on the same terms as the cascade array above.
+    /// it), or at none, on the same terms as the cascade array above.
     void SetShadowAtlas(nvrhi::ITexture *atlas);
 
     /// @brief Point the shader at the frame's shadow view table
@@ -575,9 +581,15 @@ private:
     mutable IndirectDrawInputs _lastIndirect;
     nvrhi::BufferHandle _frameConstantsBuffer;
 
-    // The sun's cascade array (ShadowPass owns it). Non-owning: a reallocation
-    // swaps the handle, which invalidates the cached global set.
+    // The sun's cascade array (ShadowPass owns it), or null for none.
+    // Non-owning: a reallocation swaps the handle, which invalidates the cached
+    // global set.
     nvrhi::ITexture *_shadowMap = nullptr;
+    // Bound in the cascade array's and the atlas's places while there is none:
+    // one depth texel each, never sampled, because the shader reads a map only
+    // on a frame whose constants say it holds something.
+    nvrhi::TextureHandle _noShadowCascades;
+    nvrhi::TextureHandle _noShadowAtlas;
 
     // The AssetCache's bindless material-texture table + its layout, and its
     // material table (stage D). Non-owning: the AssetCache owns them and keeps the

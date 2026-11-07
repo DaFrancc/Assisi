@@ -48,13 +48,7 @@ bool ShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
     _depthRenderer = params.depthRenderer;
-    // First, so the mesh pass has a texture to bind even when the pass can
-    // never draw.
-    if (_device == nullptr || !CreateNoCascadesTexture())
-    {
-        return false;
-    }
-    if (_depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
     {
         return false;
     }
@@ -75,37 +69,11 @@ bool ShadowPass::Initialize(const InitParams &params)
     return true;
 }
 
-bool ShadowPass::CreateNoCascadesTexture()
-{
-    nvrhi::TextureDesc desc;
-    desc.width = 1;
-    desc.height = 1;
-    desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
-    desc.format = nvrhi::Format::D32;
-    desc.isShaderResource = true;
-    // Never drawn into, but a depth-format image is sampled from the depth
-    // read-only layout, and Vulkan admits an image to that layout only if it
-    // was created usable as a depth attachment.
-    desc.isRenderTarget = true;
-    desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    desc.keepInitialState = true;
-    desc.debugName = "ShadowPass::NoCascades";
-    _noCascadesTexture = _device->createTexture(desc);
-    if (_noCascadesTexture == nullptr)
-    {
-        Core::Log::Error("ShadowPass: failed to create the empty cascade texture.");
-        return false;
-    }
-    _cascadeTexture = _noCascadesTexture;
-    return true;
-}
-
 void ShadowPass::ReleaseTargets()
 {
     _cascadeFramebuffers.clear();
     _stillFramebuffers.clear();
-    _cascadeTexture = _noCascadesTexture;
+    _cascadeTexture = nullptr;
     _stillTexture = nullptr;
     _restoreSet = nullptr;
     _restorePipeline = nullptr;

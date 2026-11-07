@@ -91,6 +91,26 @@ constexpr uint32_t kInitialInstanceCapacity = 1024u;
 static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
               "DrawIndexedIndirectArguments must match VkDrawIndexedIndirectCommand's packed layout.");
 
+/// A one-texel depth array, bound in a shadow map's place while there is none.
+nvrhi::TextureHandle CreateEmptyShadowMap(nvrhi::IDevice *device, const char *debugName)
+{
+    nvrhi::TextureDesc desc;
+    desc.width = 1;
+    desc.height = 1;
+    desc.arraySize = 1;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+    desc.format = nvrhi::Format::D32;
+    desc.isShaderResource = true;
+    // Never drawn into, but a depth-format image is sampled from the depth
+    // read-only layout, and Vulkan admits an image to that layout only if it
+    // was created usable as a depth attachment.
+    desc.isRenderTarget = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    desc.debugName = debugName;
+    return device->createTexture(desc);
+}
+
 } // namespace
 
 bool MeshPass::Initialize(const InitParams &params)
@@ -280,6 +300,14 @@ bool MeshPass::Initialize(const InitParams &params)
     if (_frameConstantsBuffer == nullptr)
     {
         Core::Log::Error("MeshPass: failed to create the frame-constants buffer.");
+        return false;
+    }
+
+    _noShadowCascades = CreateEmptyShadowMap(device, "MeshPass::NoShadowCascades");
+    _noShadowAtlas = CreateEmptyShadowMap(device, "MeshPass::NoShadowAtlas");
+    if (_noShadowCascades == nullptr || _noShadowAtlas == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the empty shadow maps.");
         return false;
     }
 
@@ -497,6 +525,8 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(CachedBindingSet &cach
     // The empty occlusion texture stands in for the clouds' shadow too: on a
     // frame with no clouds the shader reads neither.
     nvrhi::ITexture *const cloudShadow = _cloudShadow != nullptr ? _cloudShadow : _noAmbientOcclusion.Get();
+    nvrhi::ITexture *const cascades = _shadowMap != nullptr ? _shadowMap : _noShadowCascades.Get();
+    nvrhi::ITexture *const atlas = _shadowAtlas != nullptr ? _shadowAtlas : _noShadowAtlas.Get();
     bindingSetDesc.addItem(
         BindingSetItem::ConstantBuffer(std::to_underlying(ConstantBufferSlot::Frame), _frameConstantsBuffer));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Material), _sampler));
@@ -514,10 +544,10 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(CachedBindingSet &cach
                                                                 _clusterGrid->LightGridBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
         BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Instances), instanceBuffer));
-    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades), _shadowMap));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades), cascades));
     bindingSetDesc.addItem(
         BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::ShadowViews), shadowViews));
-    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas), _shadowAtlas));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas), atlas));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Shadow), _shadowSampler));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::Environment), environment));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable), _brdfTable));

@@ -51,13 +51,7 @@ bool LocalShadowPass::Initialize(const InitParams &params)
 {
     _device = params.device;
     _depthRenderer = params.depthRenderer;
-    // First, so the mesh pass has a texture to bind even when the pass can
-    // never draw.
-    if (_device == nullptr || !CreateNoAtlasTexture())
-    {
-        return false;
-    }
-    if (_depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
     {
         return false;
     }
@@ -72,37 +66,11 @@ bool LocalShadowPass::Initialize(const InitParams &params)
     return true;
 }
 
-bool LocalShadowPass::CreateNoAtlasTexture()
-{
-    nvrhi::TextureDesc desc;
-    desc.width = 1;
-    desc.height = 1;
-    desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
-    desc.format = nvrhi::Format::D32;
-    desc.isShaderResource = true;
-    // Never drawn into, but a depth-format image is sampled from the depth
-    // read-only layout, and Vulkan admits an image to that layout only if it
-    // was created usable as a depth attachment.
-    desc.isRenderTarget = true;
-    desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    desc.keepInitialState = true;
-    desc.debugName = "LocalShadowPass::NoAtlas";
-    _noAtlasTexture = _device->createTexture(desc);
-    if (_noAtlasTexture == nullptr)
-    {
-        Core::Log::Error("LocalShadowPass: failed to create the empty atlas texture.");
-        return false;
-    }
-    _atlasTexture = _noAtlasTexture;
-    return true;
-}
-
 void LocalShadowPass::ReleaseTargets()
 {
     _atlasFramebuffer = nullptr;
     _moverFramebuffer = nullptr;
-    _atlasTexture = _noAtlasTexture;
+    _atlasTexture = nullptr;
     _tileResetPipeline = nullptr;
     _builtResolution = 0;
     _builtCacheEnabled = false;

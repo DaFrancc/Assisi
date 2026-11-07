@@ -13,9 +13,8 @@
 /// format and cull side imply.
 ///
 /// Nothing here is allocated until a shadow-casting sun exists. Configure(...,
-/// active = false) drops the array, the framebuffers and the pipeline, leaving
-/// a one-texel empty array so the mesh pass's binding set still has something to
-/// point at. A scene with no sun therefore pays a single texel and no pass.
+/// active = false) drops the array, the framebuffers and the pipeline, so a
+/// scene with no sun pays no texture and no pass.
 
 #include <array>
 #include <cstdint>
@@ -53,11 +52,10 @@ public:
         std::string restorePixelShaderSpvPath;
     };
 
-    /// @brief Bind to the device and the shared renderer, and create the empty
-    /// cascade texture. The pipeline and the real array wait for Configure().
-    /// @return false if the renderer is unusable or the empty texture failed to
-    /// allocate — either leaves the pass permanently inactive rather than
-    /// failing the renderer.
+    /// @brief Bind to the device and the shared renderer. The pipeline and the
+    /// array wait for Configure().
+    /// @return false if the renderer is unusable, which leaves the pass
+    /// permanently inactive rather than failing the renderer.
     [[nodiscard]] bool Initialize(const InitParams &params);
 
     /// @brief Bring the pass in line with @p settings.
@@ -130,9 +128,8 @@ public:
     /// cascade's commands to produce it. Cheap is not the same as free.
     void SetCascadeCountsEnabled(bool enabled) { _cascadeCounts = enabled; }
 
-    /// @brief The cascade array the mesh shader samples. Never null after a
-    /// successful Initialize() — it is the one-texel empty array while the pass
-    /// is inactive, so the mesh pass's binding set never has a hole in it.
+    /// @brief The cascade array the mesh shader samples, or null while the pass
+    /// is inactive.
     [[nodiscard]] nvrhi::ITexture *CascadeTexture() const { return _cascadeTexture; }
 
     /// @brief Index of this pass's first cascade in the frame's view table.
@@ -155,8 +152,6 @@ private:
     /// @brief The handles as the renderer wants them, one per pipeline class.
     [[nodiscard]] ShadowPipelines PipelineSet() const;
     void ReleaseTargets();
-    /// @brief Create the one-texel array bound while the pass is inactive.
-    [[nodiscard]] bool CreateNoCascadesTexture();
     /// @brief Write back from the still layer every tile of @p cascade's read
     /// slice a mover was last drawn into, and forget them.
     void RestoreMoverTiles(nvrhi::ICommandList *commandList, std::uint32_t cascade) const;
@@ -193,13 +188,9 @@ private:
     nvrhi::BindingLayoutHandle _restoreLayout;
     nvrhi::BindingSetHandle _restoreSet;
     nvrhi::GraphicsPipelineHandle _restorePipeline;
-    // Bound while the pass is inactive, so the mesh pass always has a texture to
-    // sample. Permanent, not scaffolding: a scene with no sun never leaves it.
-    nvrhi::TextureHandle _noCascadesTexture;
 
     SunShadowSettings _settings;
-    // Whether Initialize succeeded; without it the pass only ever binds the
-    // empty texture.
+    // Whether Initialize succeeded; without it the pass never draws.
     bool _canDraw = false;
     bool _active = false;
     // Whether Stats::cascadeCasters is filled. See SetCascadeCountsEnabled.

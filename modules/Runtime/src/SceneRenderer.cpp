@@ -143,11 +143,8 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
     _clusterProjection = projection;
 
-    // Before the mesh pass: it binds both shadow maps into every binding set it
-    // builds, and each pass keeps a one-texel empty texture there until
-    // something wants shadows. A failure is non-fatal — the scene renders
-    // unshadowed rather than not at all. Each pass initialises even when the
-    // depth renderer failed, since that is what creates its empty texture.
+    // A failure is non-fatal — the scene renders unshadowed rather than not at
+    // all.
     const bool depthRendererOk = _shadowDepthRenderer.Initialize(
         Render::ShadowDepthRenderer::InitParams{.device = _device,
                                                 .vertexShaderSpvPath = kShadowVertexShader,
@@ -202,8 +199,6 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
     }
-    _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
-    _meshPass.SetShadowAtlas(_localShadowPass.AtlasTexture());
 
     // The sky. Non-fatal: without it the scene target keeps its clear colour,
     // which is what every scene looked like before there was a sky at all.
@@ -365,10 +360,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         propagationTick = ECS::PropagateTransforms(scene, propagationTick);
     }
 
-    // Before every pass that draws geometry: the shadows and the main pass both
-    // read the posed vertices.
-    SkinPosedInstances(frame, scene);
-
     PlaceOrigins(cameraWorld);
 
     // The look the volumes give where the camera stands.
@@ -391,21 +382,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
     const glm::mat4 view = ViewMatrix(cameraInView);
 
-    // Keep the froxel grid aligned with the render projection; a drift (window
-    // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
-    // it and shows rectangular lighting artifacts.
-    if (projection != _clusterProjection && _meshPass.IsValid())
-    {
-        // Scoped even though it is rare: it is a full grid rebuild, so the one
-        // frame that pays it should say so rather than look like a random spike.
-        // Recorded into the frame's own list, which is what the scope times, and
-        // so an animated FOV or far plane submits nothing extra.
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "cluster-rebuild");
-        _lighting.Resize(frame.commandList, static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height),
-                         camera.nearZ, camera.farZ, projection);
-        _clusterProjection = projection;
-    }
-
     // The scene's sky, which lights the geometry, is drawn behind it, and says
     // where the sun and the moon are this frame.
     //
@@ -420,12 +396,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     const bool fogged = _fogEnabled && fog.present;
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
-
-    // Before the probe, whose bake shows them, and seen through the same fog.
-    const Render::CloudShadowConstants cloudShadow = UpdateClouds(frame, sky, fogConstants);
-
-    // Before the mesh pass reads it, and off the same sky the frame is lit by.
-    const SpecularProbe probe = UpdateSkyProbe(frame, sky);
 
     // The placed fog volumes, which the player's fog setting turns off with
     // the level's own fog.
@@ -446,13 +416,14 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         _droppedFogVolumesWarned = gathered.dropped > 0u;
     }
     const glm::uvec4 fogVolumeLanes = _fogVolumeFrame.Lanes();
+    // Uploaded now, ahead of every pass: only the lit pass and the sky read it.
+    _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
 
-    // Gathered but not yet uploaded: the local-light atlas decides which lights
-    // hold tiles and stamps each winner's view index into the light record, and
-    // that stamp has to happen before the lights reach the GPU.
+    // The frame's lights. The shadow passes choose from them, and the light
+    // upload stamps each one with where its shadow views landed.
     _lighting.Gather(scene, &sky.light, LightFrame{.view = _viewOrigin, .shadow = _shadowOrigin});
 
-    // Before either half draws, because both are invalidated against it and the
+    // Before either shadow half, because both are invalidated against it and the
     // change ticks may only be consumed once a frame.
     UpdateShadowMovers(scene);
 
@@ -463,43 +434,81 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
-    // Each half under a scope of its own, so the main thread's time in their
-    // planning and gathers is never left unaccounted between its child scopes.
-    Render::MeshPass::ShadowFrameData shadows;
-    {
-        ASSISI_PROFILE_SCOPE("sun-shadows");
-        shadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
-    }
-    {
-        ASSISI_PROFILE_SCOPE("local-shadows");
-        RenderLocalShadows(frame, scene, camera, cameraInShadow, shadows);
-    }
-    // After both, because it reports on both — and outside them, because every
-    // early return either of them takes is still a frame with an answer.
-    BuildShadowDiagnostics();
-
-    _lighting.Upload(frame.commandList, view);
-    _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
+    // Opens the frame's shadow view table, which every kind of shadow map
+    // appends to, so it belongs to none of them.
+    _shadowDepthRenderer.BeginFrame(Math::TranslationOf(cameraInShadow));
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const bool occlusion = PrepareScreenOcclusion(frame);
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(frame);
+
+    // The passes, in order. Each hands its result to the ones after it.
+
+    // Before every pass that draws geometry: the shadows and the main pass both
+    // read the posed vertices.
+    SkinPosedInstances(frame, scene);
+
+    // Keep the froxel grid aligned with the render projection; a drift (window
+    // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
+    // it and shows rectangular lighting artifacts.
+    if (projection != _clusterProjection)
+    {
+        // Scoped even though it is rare: it is a full grid rebuild, so the one
+        // frame that pays it should say so rather than look like a random spike.
+        // Recorded into the frame's own list, which is what the scope times, and
+        // so an animated FOV or far plane submits nothing extra.
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "cluster-rebuild");
+        _lighting.Resize(frame.commandList, static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height),
+                         camera.nearZ, camera.farZ, projection);
+        _clusterProjection = projection;
+    }
+
+    // Before the probe, whose bake shows them, and seen through the same fog.
+    const CloudMap clouds = UpdateClouds(frame, sky, fogConstants);
+
+    // Before the mesh pass reads it, and off the same sky the frame is lit by.
+    const SkyReflections reflections = UpdateSkyProbe(frame, sky, clouds);
+
+    // Each half under a scope of its own, so the main thread's time in their
+    // planning and gathers is never left unaccounted between its child scopes.
+    SunShadows sunShadows;
+    {
+        ASSISI_PROFILE_SCOPE("sun-shadows");
+        sunShadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
+    }
+    LocalShadows localShadows;
+    {
+        ASSISI_PROFILE_SCOPE("local-shadows");
+        localShadows = RenderLocalShadows(frame, scene, camera, cameraInShadow);
+    }
+
+    UploadLights(frame, view, localShadows);
 
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
-        const Render::MeshPass::FrameConstantsParams frameConstants{.viewProjection = projection * view,
-                                                                    .view = view,
-                                                                    .screenWidth = frame.width,
-                                                                    .screenHeight = frame.height,
-                                                                    .nearZ = camera.nearZ,
-                                                                    .farZ = camera.farZ,
-                                                                    .dirLightCount = _lighting.DirLightCount(),
-                                                                    .debugView = _debugView,
-                                                                    .indirect = ResolveIndirect(sky, _ambient, probe),
-                                                                    .shadows = shadows,
-                                                                    .fog = fogConstants,
-                                                                    .fogVolumes = fogVolumeLanes,
-                                                                    .screenOcclusion = occlusion,
-                                                                    .cloudShadow = cloudShadow};
+        // The producers' results, bound where the mesh pass's frame begins.
+        _meshPass.SetShadowMap(sunShadows.cascades);
+        _meshPass.SetShadowAtlas(localShadows.atlas);
+        _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
+        _meshPass.SetEnvironment(reflections.specularCube);
+        _meshPass.SetAmbientOcclusion(occlusion.texture);
+        _meshPass.SetCloudShadow(clouds.shadow);
+        const Render::MeshPass::FrameConstantsParams frameConstants{
+            .viewProjection = projection * view,
+            .view = view,
+            .screenWidth = frame.width,
+            .screenHeight = frame.height,
+            .nearZ = camera.nearZ,
+            .farZ = camera.farZ,
+            .dirLightCount = _lighting.DirLightCount(),
+            .debugView = _debugView,
+            .shadowDebugView = _shadowDebugView,
+            .indirect = ResolveIndirect(sky, _ambient, reflections.probe),
+            .sunShadows = sunShadows.frame,
+            .localShadows = localShadows.frame,
+            .fog = fogConstants,
+            .fogVolumes = fogVolumeLanes,
+            .screenOcclusion = occlusion.texture != nullptr,
+            .cloudShadow = clouds.shadowConstants};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
     // The depth prepass: the extract, cull and sort, kept for the lit pass below
@@ -522,7 +531,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                   .viewerInstance = ViewerInstance(scene, _viewingCamera),
                                   .blendedItems = &_blendedItems});
 
-    if (occlusion)
+    if (occlusion.texture != nullptr)
     {
         _sceneDistancePass.Render(frame.commandList, projection);
         _ssaoPass.Render(frame.commandList,
@@ -541,6 +550,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     //
     // A foggy level with no sky still draws the pass, in the fog's own colour,
     // so that what the fog fades into is what is behind it.
+    _skyPass.SetClouds(clouds.sky);
     _skyPass.SetFogVolumes(fogConstants, fogVolumeLanes);
     if (sky.status == SkyStatus::Ready)
     {
@@ -564,6 +574,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         _lastDrawStats.batches += blended.batches;
         _lastDrawStats.drawCalls += blended.drawCalls;
     }
+
+    // After both shadow halves, because it reports on both — and outside them,
+    // because every early return either of them takes is still a frame with an
+    // answer.
+    BuildShadowDiagnostics();
+
     // Said once, because silently dropping the sky sends someone reading shader
     // code, and saying it every frame is its own kind of unreadable.
     if (sky.status == SkyStatus::MultipleDirectionalLights)
@@ -647,7 +663,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     ASSISI_PROFILE_COUNTER("sky-probe/age", static_cast<double>(probeStats.ageFrames));
 }
 
-SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky)
+SkyReflections SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky,
+                                             const CloudMap &clouds)
 {
     // The probe is the sky's, so it exists exactly while a sky lights the
     // scene: a pinned ambient answers instead of the sky, and a scene with no
@@ -663,14 +680,14 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
     if (!wanted || !_environmentSettings.enabled)
     {
         _skyProbe.Release();
-        _meshPass.SetEnvironment(nullptr);
-        return SpecularProbe{};
+        return SkyReflections{};
     }
 
     Render::SkyProbeInputs inputs = Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings);
     // The clouds as drawn this frame, if they are: the bake shows them, so it
     // goes stale as they drift.
-    if (_cloudPass.MapTexture() != nullptr)
+    _skyPass.SetClouds(clouds.sky);
+    if (clouds.sky != nullptr)
     {
         inputs.clouds = Render::SkyProbeClouds{
             .settings = sky.clouds.settings,
@@ -690,15 +707,14 @@ SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, co
 
     if (!_skyProbe.IsReady())
     {
-        _meshPass.SetEnvironment(nullptr);
-        return SpecularProbe{};
+        return SkyReflections{};
     }
-    _meshPass.SetEnvironment(_skyProbe.SpecularTexture());
-    return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
+    return SkyReflections{.specularCube = _skyProbe.SpecularTexture(),
+                          .probe = SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()}};
 }
 
-Render::CloudShadowConstants SceneRenderer::UpdateClouds(const Render::RenderFrame &frame, const SkyResolution &sky,
-                                                         const Render::FogConstants &fog)
+CloudMap SceneRenderer::UpdateClouds(const Render::RenderFrame &frame, const SkyResolution &sky,
+                                     const Render::FogConstants &fog)
 {
     // The textures exist exactly while the sky has clouds and the player draws
     // them. Released rather than kept otherwise — pay for what you place.
@@ -713,9 +729,7 @@ Render::CloudShadowConstants SceneRenderer::UpdateClouds(const Render::RenderFra
     {
         _cloudMotionTime.reset();
         _cloudPass.Release();
-        _skyPass.SetClouds(nullptr);
-        _meshPass.SetCloudShadow(nullptr);
-        return Render::CloudShadowConstants{};
+        return CloudMap{};
     }
 
     const Render::CloudSettings &settings = sky.clouds.settings;
@@ -746,14 +760,15 @@ Render::CloudShadowConstants SceneRenderer::UpdateClouds(const Render::RenderFra
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "clouds");
         _cloudPass.Render(frame.commandList, map, shadow);
     }
-    // After Render: a reallocation swaps the textures, and each pass rebuilds
-    // its binding set when it notices.
-    _skyPass.SetClouds(_cloudPass.MapTexture());
-    _meshPass.SetCloudShadow(_cloudPass.ShadowTexture());
-    return Render::MakeCloudShadowConstants(settings, placement, static_cast<float>(_viewOrigin.y));
+    // After Render: a reallocation swaps the textures, and each pass that reads
+    // them rebuilds its binding set when it notices.
+    return CloudMap{
+        .shadowConstants = Render::MakeCloudShadowConstants(settings, placement, static_cast<float>(_viewOrigin.y)),
+        .sky = _cloudPass.MapTexture(),
+        .shadow = _cloudPass.ShadowTexture()};
 }
 
-bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
+ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
 {
     // Released rather than kept while off — pay for what you place.
     const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
@@ -770,13 +785,31 @@ bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
     {
         _ssaoPass.Release();
         _sceneDistancePass.Release();
-        _meshPass.SetAmbientOcclusion(nullptr);
-        return false;
+        return ScreenOcclusion{};
     }
     // After Configure: a reallocation swaps the texture handle, and the mesh
     // pass rebuilds its binding set when it notices.
-    _meshPass.SetAmbientOcclusion(_ssaoPass.OcclusionTexture());
-    return true;
+    return ScreenOcclusion{.texture = _ssaoPass.OcclusionTexture()};
+}
+
+void SceneRenderer::UploadLights(const Render::RenderFrame &frame, const glm::mat4 &view,
+                                 const LocalShadows &localShadows)
+{
+    // Stamp each served light with where its views landed. A light the atlas
+    // could not serve has no tile and keeps the kNoShadowView the gather left,
+    // so it lights unshadowed rather than sampling someone else's depth.
+    for (const Render::LocalShadowPass::Tile &tile : localShadows.tiles)
+    {
+        if (tile.kind == Render::LocalLightKind::Point)
+        {
+            _lighting.SetPointShadowView(tile.lightIndex, tile.firstView);
+        }
+        else
+        {
+            _lighting.SetSpotShadowView(tile.lightIndex, tile.firstView);
+        }
+    }
+    _lighting.Upload(frame.commandList, view);
 }
 
 void SceneRenderer::OnSceneReplaced()

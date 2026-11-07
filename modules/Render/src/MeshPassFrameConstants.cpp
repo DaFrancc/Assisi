@@ -65,16 +65,17 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     // Shadows. A zero cascade count is the whole of "nothing shadows this frame"
     // as far as the shader is concerned: it takes no lookup, so an unshadowed
     // scene pays one comparison against a constant.
-    const ShadowFrameData &shadows = params.shadows;
+    const SunShadowFrame &shadows = params.sunShadows;
+    const LocalShadowFrame &local = params.localShadows;
     const uint32_t cascadeCount = shadows.fit != nullptr ? shadows.fit->count : 0u;
     constants.shadowCounts = glm::uvec4(cascadeCount, shadows.sunLightIndex,
                                         static_cast<uint32_t>(shadows.settings.filter),
-                                        static_cast<uint32_t>(shadows.debugView));
+                                        static_cast<uint32_t>(params.shadowDebugView));
     // The local half switches on its own flag rather than on the cascade count:
     // a scene may have shadowed lamps and no sun, or a sun and no shadowed lamp,
     // and neither should pay for the other's lookup.
-    constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(shadows.localSettings.filter),
-                                             shadows.localActive ? 1u : 0u, shadows.localPcss ? 1u : 0u, 0u);
+    constants.localShadowCounts = glm::uvec4(static_cast<uint32_t>(local.settings.filter), local.active ? 1u : 0u,
+                                             local.pcss ? 1u : 0u, 0u);
     for (uint32_t i = 0; i < kMaxShadowCascades; ++i)
     {
         constants.shadowCascade[i] = glm::vec4(0.f);
@@ -108,7 +109,7 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
                                        cappedStepNumerator, contactStepNumerator);
 
     constants.shadowPcss = glm::vec4(0.f);
-    if (shadows.sunPcss)
+    if (shadows.pcss)
     {
         const SunPcssConstants sunPcss = SunPcssFrameConstants(shadows.settings);
         constants.shadowPcss =

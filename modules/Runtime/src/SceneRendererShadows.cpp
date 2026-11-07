@@ -170,11 +170,11 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
                            _dynamicCasters, _casterInvalidations);
 }
 
-Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
-                                                                  const Camera &camera, const glm::mat4 &cameraInShadow)
+SunShadows SceneRenderer::RenderSunShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
+                                           const glm::mat4 &cameraInShadow)
 {
-    Render::MeshPass::ShadowFrameData shadows;
-    shadows.sampledFrom = Math::TranslationOf(cameraInShadow);
+    SunShadows shadows;
+    shadows.frame.sampledFrom = Math::TranslationOf(cameraInShadow);
     _lastShadowStats = Render::ShadowPass::Stats{};
     _cascadeFit = Render::CascadeFit{};
 
@@ -188,9 +188,6 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         Core::Log::Warn("SceneRenderer: sun shadows disabled (the cascade targets failed to rebuild).");
         _shadowSettings.sun.enabled = false;
     }
-    // After Configure: a reallocation swaps the texture handle, and the mesh
-    // pass rebuilds its binding set when it notices.
-    _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
 
     if (!_shadowPass.IsActive() || !sun.has_value())
     {
@@ -200,10 +197,6 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
         _sunCadence.Forget();
         return shadows;
     }
-
-    // Opens the frame's shadow view table. Every kind of shadow map appends to
-    // one table, so this belongs here rather than inside any one of them.
-    _shadowDepthRenderer.BeginFrame(shadows.sampledFrom);
 
     // Fitted, snapped and kept in the shadow origin's frame, which holds still
     // while the camera moves: a cascade fitted from the camera would slide its
@@ -296,7 +289,7 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
             }
         }
         _lodSelector.SetShadowViews(std::span<const float>(viewExtents.data(), views));
-        _shadowCasters.SetFrame(ShadowGatherFrame{.origin = _shadowOrigin, .camera = shadows.sampledFrom});
+        _shadowCasters.SetFrame(ShadowGatherFrame{.origin = _shadowOrigin, .camera = shadows.frame.sampledFrom});
         _shadowCasters.SetViews(std::span<const Geometry::BoundingSphere>(viewVolumes.data(), views),
                                 static_cast<std::uint32_t>(redraw.size()), sun->direction);
         _shadowCasters.Gather(scene, _casterMobility, &_lodSelector);
@@ -304,11 +297,13 @@ Render::MeshPass::ShadowFrameData SceneRenderer::RenderSunShadows(const Render::
 
     _lastShadowStats = _shadowPass.Render(frame.commandList, _sunCadencePlan, _shadowCasters.Result().casters);
 
-    shadows.fit = &_cascadeFit;
-    shadows.settings = _shadowPass.Settings();
-    shadows.sunLightIndex = sun->index;
-    shadows.debugView = _shadowDebugView;
-    shadows.sunPcss = Render::PcssShadesSun(_shadowSettings);
+    // After Render: a reallocation swaps the texture handle, and the mesh pass
+    // rebuilds its binding set when it notices.
+    shadows.cascades = _shadowPass.CascadeTexture();
+    shadows.frame.fit = &_cascadeFit;
+    shadows.frame.settings = _shadowPass.Settings();
+    shadows.frame.sunLightIndex = sun->index;
+    shadows.frame.pcss = Render::PcssShadesSun(_shadowSettings);
     return shadows;
 }
 
@@ -334,8 +329,8 @@ float SceneRenderer::LocalLightScreenCoverage(const glm::vec3 &position, float r
     return std::min(range / (distance * tanHalfFovY), 1.f);
 }
 
-void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                                       const glm::mat4 &cameraInShadow, Render::MeshPass::ShadowFrameData &shadows)
+LocalShadows SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene,
+                                               const Camera &camera, const glm::mat4 &cameraInShadow)
 {
     // The lights and their tiles are measured from the shadow origin, so the
     // camera they are scored against is too.
@@ -395,10 +390,6 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         Core::Log::Warn("SceneRenderer: local-light shadows disabled (the atlas failed to rebuild).");
         _shadowSettings.local.enabled = false;
     }
-    // After Configure: a reallocation swaps the texture handle, and the mesh
-    // pass rebuilds its binding set when it notices.
-    _meshPass.SetShadowAtlas(_localShadowPass.AtlasTexture());
-    _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
 
     if (!_localShadowPass.IsActive())
     {
@@ -408,14 +399,7 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
         // mobility table stays: the sun's still layers are kept by it too, and
         // an atlas coming back cuts every tile afresh whatever it says.
         _localShadowSelector.Forget();
-        return;
-    }
-
-    // The sun opens the frame's view table when it draws. With no sun, nothing
-    // has, and the local views would append to last frame's.
-    if (!_shadowPass.IsActive())
-    {
-        _shadowDepthRenderer.BeginFrame(cameraPosition);
+        return LocalShadows{};
     }
 
     // Back to the light each winner names, for the geometry its views are built
@@ -488,26 +472,12 @@ void SceneRenderer::RenderLocalShadows(const Render::RenderFrame &frame, ECS::Sc
 
     _lastLocalShadowStats = _localShadowPass.Render(frame.commandList, shadowFrame);
 
-    // Stamp each served light with where its views landed. A light the atlas
-    // could not serve has no tile and keeps the kNoShadowView the gather left,
-    // so it lights unshadowed rather than sampling someone else's depth.
-    for (const Render::LocalShadowPass::Tile &tile : _localShadowPass.Tiles())
-    {
-        if (tile.kind == Render::LocalLightKind::Point)
-        {
-            _lighting.SetPointShadowView(tile.lightIndex, tile.firstView);
-        }
-        else
-        {
-            _lighting.SetSpotShadowView(tile.lightIndex, tile.firstView);
-        }
-    }
-
-    // Re-read after the draw: the table grew, which swapped its handle.
-    _meshPass.SetShadowViewTable(_shadowDepthRenderer.ViewTable());
-    shadows.localActive = _lastLocalShadowStats.lights > 0;
-    shadows.localSettings = _localShadowPass.Settings();
-    shadows.localPcss = Render::PcssShadesLocals(_shadowSettings);
+    return LocalShadows{.tiles = _localShadowPass.Tiles(),
+                        .atlas = _localShadowPass.AtlasTexture(),
+                        .frame = Render::MeshPass::LocalShadowFrame{
+                            .settings = _localShadowPass.Settings(),
+                            .active = _lastLocalShadowStats.lights > 0,
+                            .pcss = Render::PcssShadesLocals(_shadowSettings)}};
 }
 
 void SceneRenderer::BuildShadowDiagnostics()
