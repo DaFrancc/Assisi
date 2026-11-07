@@ -51,8 +51,10 @@ square pixels. **Anti-aliasing** smooths it.
 
 - **MSAA**, multisample anti-aliasing, checks several points inside each pixel
   along the edges of triangles and blends them. It smooths the edges of
-  geometry cleanly, but not jagged detail inside a texture or a sparkling
-  highlight. Its memory and drawing time grow with `msaaSamples`. If the
+  geometry cleanly, and the cut edges of
+  [masked materials](rendering-materials.md#masked-materials) such as leaves and
+  grass, but not jagged detail inside a texture or a sparkling highlight. Its
+  memory and drawing time grow with `msaaSamples`. If the
   graphics card can't do the number asked for, the most it can do is used, and
   the log says so.
 - **FXAA**, fast approximate anti-aliasing, looks for edges in the finished

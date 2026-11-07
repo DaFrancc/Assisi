@@ -482,7 +482,8 @@ public:
     }
 
     [[nodiscard]] std::expected<Image::DecodedImage, Render::AssetLoadError>
-    LoadTexture(const Core::AssetId & /*id*/, Image::ColorSpace /*space*/, Image::PixelFormat /*format*/) const override
+    LoadTexture(const Core::AssetId & /*id*/, Image::ColorSpace /*space*/, Image::PixelFormat /*format*/,
+                float /*alphaCutoff*/) const override
     {
         return std::unexpected(Render::AssetLoadError::UnknownAsset);
     }

@@ -41,7 +41,8 @@ public:
     LoadMaterial(const Core::AssetId &id) const override;
 
     [[nodiscard]] std::expected<Image::DecodedImage, Render::AssetLoadError>
-    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format) const override;
+    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format,
+                float alphaCutoff) const override;
 
     [[nodiscard]] std::expected<std::vector<std::byte>, Render::AssetLoadError>
     LoadShader(std::string_view vpath) const override;

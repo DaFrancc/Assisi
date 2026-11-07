@@ -203,7 +203,8 @@ std::expected<TextureRoles, CookError> GatherTextureRoles(const std::vector<std:
         {
             // A false here is a conflict, which is reported when that texture is
             // cooked — that is where the path is known.
-            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath);
+            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath,
+                             Geometry::AlphaUseOf(*material, channel));
         }
     }
     return roles;

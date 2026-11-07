@@ -18,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
@@ -97,6 +98,31 @@ struct MaterialChannelFormat
     // drops whatever texture the material bound to it.
     default:
         return {};
+    }
+}
+
+/// @brief How @p material reads the alpha of @p channel's texture, which decides
+///        that texture's mips.
+///
+/// Nothing when it reads none: only the base colour carries alpha, and an opaque
+/// material ignores it. Zero when it blends with it, which wants alpha's plain
+/// average. The cutoff when it cuts with it, which wants each mip to keep the
+/// share of texels the cutoff keeps (Image::PreserveAlphaCoverage).
+[[nodiscard]] constexpr std::optional<float> AlphaUseOf(const MaterialData &material, MaterialChannel channel)
+{
+    if (channel != MaterialChannel::BaseColor)
+    {
+        return std::nullopt;
+    }
+    switch (material.Alpha)
+    {
+    case AlphaMode::Mask:
+        return material.AlphaCutoff;
+    case AlphaMode::Blend:
+        return 0.f;
+    case AlphaMode::Opaque:
+    default:
+        return std::nullopt;
     }
 }
 

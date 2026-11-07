@@ -199,7 +199,7 @@ void SkyPass::LoadMoonTexture()
     const std::expected<Core::AssetId, AssetLoadError> id =
         source != nullptr ? source->Resolve(_moonTexturePath) : std::unexpected(AssetLoadError::UnknownAsset);
     std::expected<Image::DecodedImage, AssetLoadError> image =
-        id ? source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Rgba8)
+        id ? source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Rgba8, /*alphaCutoff=*/ 0.f)
            : std::unexpected(id.error());
 
     Texture loaded;

@@ -96,15 +96,18 @@ public:
     ///        becomes free.
     void EndSkinFrame();
 
-    /// @brief Resolves a texture id in an explicit colour space and format. The
-    /// cache is keyed on all three, so the same image can be resident as an sRGB
-    /// colour map and as a linear data map, and as BC5 for one channel and BC7 for
-    /// another, without any of them clobbering the others.
+    /// @brief Resolves a texture id in an explicit colour space and format, its
+    /// mips keeping their coverage at @p alphaCutoff when that is not zero (see
+    /// AssetSource::LoadTexture). The cache is keyed on all four, so the same
+    /// image can be resident as an sRGB colour map and as a linear data map, as
+    /// BC5 for one channel and BC7 for another, and cut at two cutoffs, without
+    /// any of them clobbering the others.
     /// A nil id returns null; one that fails to load draws the error pattern (after
     /// a warning). The reserved solid-colour textures (white / white-linear /
     /// flat-normal) resolve here too, in their own fixed colour space and always
     /// uncompressed. A successful pointer stays valid until Clear().
-    const Texture *ResolveTexture(const Core::AssetId &id, Image::ColorSpace colorSpace, Image::PixelFormat format);
+    const Texture *ResolveTexture(const Core::AssetId &id, Image::ColorSpace colorSpace, Image::PixelFormat format,
+                                  float alphaCutoff);
 
     /// @brief Resolves a `.amat` material id to a cached Material. The `.amat` is
     /// parsed on the main thread; its **images decode on a worker thread**, so the
@@ -257,7 +260,8 @@ private:
     /// The synchronous load. @p format is what the channel asked for, after
     /// EffectiveFormat has had its say.
     std::expected<void, AssetLoadError> LoadTexture(Texture &texture, const Core::AssetId &id,
-                                                    Image::ColorSpace colorSpace, Image::PixelFormat format);
+                                                    Image::ColorSpace colorSpace, Image::PixelFormat format,
+                                                    float alphaCutoff);
 
     /// @brief How to name @p id in a log line, through the installed source.
     [[nodiscard]] std::string Describe(const Core::AssetId &id) const;
@@ -280,14 +284,14 @@ private:
     /// it on first use, or null if @p id names no known primitive.
     const MeshBuffer *ResolvePrimitive(const Core::AssetId &id);
 
-    /// @brief Resolves channel @p channelIndex's id @p channelId (or, if
-    /// nil/failed, that channel's `prim://` default) returning the texture's slot
-    /// in the bindless descriptor table. Sets @p *outPresent to whether the real
+    /// @brief Resolves the texture @p data binds to @p channel (or, if nil/failed,
+    /// that channel's `prim://` default) returning the texture's slot in the
+    /// bindless descriptor table. Sets @p *outPresent to whether the real
     /// (non-fallback) texture was used.
     ///
-    /// Takes the channel's index rather than its colour space and fallback, so the
-    /// two cannot be passed from different rows of the channel table.
-    uint32_t ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+    /// Takes the material and the channel rather than an id, a colour space and a
+    /// cutoff, so none of them can be passed from a different row or material.
+    uint32_t ResolveChannel(const Geometry::MaterialData &data, Geometry::MaterialChannel channel,
                             bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
@@ -326,14 +330,18 @@ private:
     // The format is part of it, not just the colour space. A normal map and a
     // metallic-roughness map are both linear but want different formats, so a key
     // without the format would hand whichever resolved first to both channels.
+    // The cutoff too: a cutout material's colour map keeps its coverage at that
+    // cutoff, and a blended or opaque one's is the plain average, zero.
     struct TextureKey
     {
         Core::AssetId id;
+        float alphaCutoff = 0.f;
         Image::ColorSpace space;
         Image::PixelFormat format;
         bool operator==(const TextureKey &other) const
         {
-            return space == other.space && format == other.format && id == other.id;
+            return space == other.space && format == other.format && alphaCutoff == other.alphaCutoff &&
+                   id == other.id;
         }
     };
     struct TextureKeyHash
@@ -341,7 +349,8 @@ private:
         std::size_t operator()(const TextureKey &key) const
         {
             return std::hash<Core::AssetId>{}(key.id) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u)
-                   ^ (static_cast<std::size_t>(key.format) * 0x85ebca6bu);
+                   ^ (static_cast<std::size_t>(key.format) * 0x85ebca6bu)
+                   ^ (std::hash<float>{}(key.alphaCutoff) * 0xc2b2ae35u);
         }
     };
 

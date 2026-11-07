@@ -314,7 +314,7 @@ std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *
     // Asked for as colour, which is how the cook encodes an image no material
     // binds, and how a source image is encoded to match.
     std::expected<Image::DecodedImage, Render::AssetLoadError> image =
-        source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7);
+        source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
     if (!image)
     {
         Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", vpath, Render::ToString(image.error()));

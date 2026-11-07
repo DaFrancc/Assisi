@@ -15,7 +15,11 @@
 #include <webp/decode.h>
 #include <webp/demux.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -67,6 +71,101 @@ void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generate
             return;
         }
         image.mips[level] = std::move(mip);
+    }
+}
+
+namespace
+{
+/// How many values an 8-bit channel takes.
+constexpr std::size_t kAlphaLevels = 256;
+/// The largest 8-bit channel value, as a float.
+constexpr float kAlphaMax = 255.f;
+/// Bytes per RGBA8 texel, and where its alpha sits.
+constexpr std::size_t kRgbaStride = 4;
+constexpr std::size_t kAlphaOffset = 3;
+/// Halvings of the scale's range: 24 leave it known to one part in sixteen
+/// million of the widest range, far finer than an 8-bit alpha can show.
+constexpr int kScaleSearchSteps = 24;
+
+using AlphaHistogram = std::array<std::uint32_t, kAlphaLevels>;
+
+/// How many of @p mip's texels hold each alpha value.
+AlphaHistogram HistogramOf(const std::vector<unsigned char> &mip)
+{
+    AlphaHistogram histogram{};
+    for (std::size_t i = kAlphaOffset; i < mip.size(); i += kRgbaStride)
+    {
+        ++histogram[mip[i]];
+    }
+    return histogram;
+}
+
+/// Alpha byte @p value scaled by @p scale, as the byte stored.
+unsigned char ScaledAlpha(std::size_t value, float scale)
+{
+    return static_cast<unsigned char>(std::min(std::round(static_cast<float>(value) * scale), kAlphaMax));
+}
+
+/// The share of @p histogram's texels whose alpha, scaled by @p scale, is at
+/// or above @p cutoff: kept rather than cut, as the alpha test decides it.
+float CoverageAt(const AlphaHistogram &histogram, float cutoff, float scale)
+{
+    std::uint64_t kept = 0;
+    std::uint64_t total = 0;
+    for (std::size_t value = 0; value < kAlphaLevels; ++value)
+    {
+        total += histogram[value];
+        if (static_cast<float>(ScaledAlpha(value, scale)) / kAlphaMax >= cutoff)
+        {
+            kept += histogram[value];
+        }
+    }
+    return total == 0 ? 0.f : static_cast<float>(kept) / static_cast<float>(total);
+}
+} // namespace
+
+void PreserveAlphaCoverage(DecodedImage &image, float cutoff)
+{
+    if (cutoff <= 0.f || image.format != PixelFormat::Rgba8 || image.mips.empty() || image.mips[0].empty())
+    {
+        return;
+    }
+    const float wanted = CoverageAt(HistogramOf(image.mips[0]), cutoff, 1.f);
+    if (wanted <= 0.f || wanted >= 1.f)
+    {
+        return;
+    }
+
+    for (std::size_t level = 1; level < image.mips.size(); ++level)
+    {
+        std::vector<unsigned char> &mip = image.mips[level];
+        const AlphaHistogram histogram = HistogramOf(mip);
+        // Coverage only grows with the scale, so it is found by halving. Up to
+        // the scale that lifts the faintest alpha a byte holds past any cutoff.
+        float low = 0.f;
+        float high = kAlphaMax;
+        for (int step = 0; step < kScaleSearchSteps; ++step)
+        {
+            const float middle = 0.5f * (low + high);
+            if (CoverageAt(histogram, cutoff, middle) < wanted)
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        // Coverage moves in steps, one per alpha value the level holds, so the
+        // nearer of the two ends is the closer answer.
+        const float scale = std::abs(CoverageAt(histogram, cutoff, low) - wanted) <
+                            std::abs(CoverageAt(histogram, cutoff, high) - wanted)
+                                ? low
+                                : high;
+        for (std::size_t i = kAlphaOffset; i < mip.size(); i += kRgbaStride)
+        {
+            mip[i] = ScaledAlpha(mip[i], scale);
+        }
     }
 }
 
@@ -137,6 +236,17 @@ std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath
     BuildMipChain(image, data, /*generateMips=*/true);
 
     stbi_image_free(data);
+    return image;
+}
+
+std::expected<DecodedImage, Core::AssetError> DecodeTexture(std::string_view vpath, ColorSpace colorSpace,
+                                                            float alphaCutoff) noexcept
+{
+    std::expected<DecodedImage, Core::AssetError> image = DecodeImage(vpath, colorSpace);
+    if (image)
+    {
+        PreserveAlphaCoverage(*image, alphaCutoff);
+    }
     return image;
 }
 
