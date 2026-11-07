@@ -14,6 +14,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring> // std::strcmp — device-extension and validation-layer name comparisons
 #include <vector>
@@ -31,8 +32,24 @@ namespace Assisi::Render::Vulkan
 namespace
 {
 
-#ifndef NDEBUG
 constexpr const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
+
+#ifdef NDEBUG
+constexpr bool kValidateByDefault = false;
+#else
+constexpr bool kValidateByDefault = true;
+#endif
+
+// GPU markers need VK_EXT_debug_utils too, whether or not anything validates.
+#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
+constexpr bool kDebugUtilsByDefault = true;
+#else
+constexpr bool kDebugUtilsByDefault = false;
+#endif
+
+// Errors the validation layer and NVRHI have reported. Atomic: the layer
+// reports from whichever thread made the offending call.
+std::atomic<uint32_t> g_validationErrors{0u};
 
 // Routes every validation message into Core::Log. Returns VK_FALSE so the
 // offending Vulkan call is NOT aborted — we want to observe, not intercept.
@@ -41,11 +58,18 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBits
                                              const VkDebugUtilsMessengerCallbackDataEXT *data, void * /*userData*/)
 {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    {
+        g_validationErrors.fetch_add(1u, std::memory_order_relaxed);
         Core::Log::Error("[Vulkan] {}", data->pMessage);
+    }
     else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+    {
         Core::Log::Warn("[Vulkan] {}", data->pMessage);
+    }
     else
+    {
         Core::Log::Info("[Vulkan] {}", data->pMessage);
+    }
     return VK_FALSE;
 }
 
@@ -73,9 +97,45 @@ bool IsValidationLayerAvailable()
             return true;
     return false;
 }
-#endif // !NDEBUG
 
-VkInstance CreateInstance()
+// What the instance is created with.
+struct InstanceFeatures
+{
+    // The Khronos validation layer.
+    bool validation = false;
+    // Hazards between commands on top of the layer's usual checks. Slow, so only
+    // where a check was asked for.
+    bool synchronizationValidation = false;
+    // VK_EXT_debug_utils, which the layer reports through and GPU markers need.
+    bool debugUtils = false;
+};
+
+// The features @p validation asks for, or nullopt when it requires the layer
+// and the layer is not installed.
+std::optional<InstanceFeatures> ChooseInstanceFeatures(Validation validation)
+{
+    const bool required = validation == Validation::Required;
+    const bool wanted = required || kValidateByDefault;
+    const bool available = wanted && IsValidationLayerAvailable();
+    if (wanted && !available)
+    {
+        if (required)
+        {
+            Core::Log::Error("VulkanContext: validation is required, but the validation layer '{}' is not "
+                             "installed; install the Vulkan SDK or your distribution's Vulkan validation layers.",
+                             kValidationLayer);
+            return std::nullopt;
+        }
+        Core::Log::Warn("VulkanContext: validation layer '{}' not available; "
+                        "install the Vulkan SDK to enable GPU debug output.",
+                        kValidationLayer);
+    }
+    return InstanceFeatures{.validation = available,
+                            .synchronizationValidation = available && required,
+                            .debugUtils = available || kDebugUtilsByDefault};
+}
+
+VkInstance CreateInstance(const InstanceFeatures &features)
 {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -96,32 +156,34 @@ VkInstance CreateInstance()
     createInfo.pApplicationInfo = &appInfo;
 
     // VK_EXT_debug_utils carries two unrelated things: the validation messenger
-    // (expensive, debug-only) and command-buffer labels (free, and what
-    // RenderDoc/Nsight read to show engine pass names instead of anonymous draws).
-    // Hence the two independent conditions — nvrhi's beginMarker() is a silent
-    // no-op without the extension, so an optimized marker build needs it too.
-#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
-    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
+    // (expensive) and command-buffer labels (free, and what RenderDoc/Nsight
+    // read to show engine pass names instead of anonymous draws). Hence the two
+    // independent conditions — nvrhi's beginMarker() is a silent no-op without
+    // the extension, so an optimized marker build needs it too.
+    if (features.debugUtils)
+    {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
 
-#ifndef NDEBUG
-    // Enable the Khronos validation layer in debug builds so spec violations
-    // become log messages instead of silent UB. Chaining the messenger
-    // create-info onto pNext also captures issues raised during
-    // vkCreateInstance / vkDestroyInstance themselves.
+    // The layer turns spec violations into log messages instead of silent UB.
+    // Chaining the messenger create-info onto pNext also captures issues raised
+    // during vkCreateInstance / vkDestroyInstance themselves.
     VkDebugUtilsMessengerCreateInfoEXT debugInfo = MakeDebugMessengerCreateInfo();
-    if (IsValidationLayerAvailable())
+    const VkValidationFeatureEnableEXT synchronization = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+    VkValidationFeaturesEXT validationFeatures{};
+    if (features.validation)
     {
         layers.push_back(kValidationLayer);
         createInfo.pNext = &debugInfo;
     }
-    else
+    if (features.synchronizationValidation)
     {
-        Core::Log::Warn("VulkanContext: validation layer '{}' not available; "
-                        "install the Vulkan SDK to enable GPU debug output.",
-                        kValidationLayer);
+        extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+        validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+        validationFeatures.enabledValidationFeatureCount = 1u;
+        validationFeatures.pEnabledValidationFeatures = &synchronization;
+        debugInfo.pNext = &validationFeatures;
     }
-#endif
 
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
@@ -516,6 +578,9 @@ public:
             break;
         case nvrhi::MessageSeverity::Error:
         case nvrhi::MessageSeverity::Fatal:
+            // NVRHI's own checks, counted with the layer's: a binding set that
+            // does not match its layout is as wrong as a missing barrier.
+            g_validationErrors.fetch_add(1u, std::memory_order_relaxed);
             Core::Log::Error("[NVRHI] {}", messageText);
             break;
         }
@@ -526,7 +591,12 @@ NvrhiMessageLog g_nvrhiMessageLog;
 
 } // namespace
 
-std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::WindowContext &window)
+uint32_t VulkanContext::ValidationErrorCount()
+{
+    return g_validationErrors.load(std::memory_order_relaxed);
+}
+
+std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::WindowContext &window, Validation validation)
 {
     // Bootstrap the dynamic dispatcher: load vulkan-1.dll ourselves and resolve
     // vkGetInstanceProcAddr from it, since there's no SDK import lib to link.
@@ -541,7 +611,19 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
 
     auto context = std::unique_ptr<VulkanContext>(new VulkanContext());
 
-    context->_instance = CreateInstance();
+    const std::optional<InstanceFeatures> features = ChooseInstanceFeatures(validation);
+    if (!features)
+    {
+        return nullptr;
+    }
+    context->_validating = features->validation;
+    context->_debugUtils = features->debugUtils;
+    if (features->validation)
+    {
+        Core::Log::Info("VulkanContext: the validation layer checks this device{}.",
+                        features->synchronizationValidation ? ", synchronisation included" : "");
+    }
+    context->_instance = CreateInstance(*features);
     if (context->_instance == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateInstance failed.");
@@ -581,6 +663,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     VkPhysicalDeviceProperties chosenProps{};
     VKD.vkGetPhysicalDeviceProperties(context->_physicalDevice, &chosenProps);
     Core::Log::Info("VulkanContext: selected device {}", chosenProps.deviceName);
+    context->_deviceName = chosenProps.deviceName;
     LogDeviceDetails(context->_physicalDevice, chosenProps);
 
     // Anisotropic filtering: enable it only if the device supports it, and clamp
@@ -624,9 +707,10 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     // omitting this makes every GPU marker a no-op with no diagnostic anywhere.
     // Must stay in step with the extensions CreateInstance() actually enables.
     std::vector<const char *> instanceExtensions;
-#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
-    instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
+    if (context->_debugUtils)
+    {
+        instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
 
     nvrhi::vulkan::DeviceDesc nvrhiDeviceDesc;
     nvrhiDeviceDesc.instance = context->_instance;
@@ -1383,17 +1467,18 @@ void VulkanContext::EndFrame()
 
 void VulkanContext::CreateDebugMessenger()
 {
-#ifndef NDEBUG
-    // Null when the debug-utils extension wasn't enabled (validation layer
-    // absent) — the dispatcher only loads the entry point if the instance
-    // advertised the extension.
-    if (!VKD.vkCreateDebugUtilsMessengerEXT)
+    // The entry point is null when the debug-utils extension wasn't enabled —
+    // the dispatcher only loads it if the instance advertised the extension.
+    if (!_validating || !VKD.vkCreateDebugUtilsMessengerEXT)
+    {
         return;
+    }
 
     VkDebugUtilsMessengerCreateInfoEXT info = MakeDebugMessengerCreateInfo();
     if (VKD.vkCreateDebugUtilsMessengerEXT(_instance, &info, nullptr, &_debugMessenger) != VK_SUCCESS)
+    {
         Core::Log::Warn("VulkanContext: vkCreateDebugUtilsMessengerEXT failed.");
-#endif
+    }
 }
 
 VulkanContext::~VulkanContext()

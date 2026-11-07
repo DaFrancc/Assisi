@@ -89,6 +89,28 @@ std::expected<ImageExtent, Core::AssetError> ReadImageExtent(std::span<const std
     return ImageExtent{.width = static_cast<std::uint32_t>(width), .height = static_cast<std::uint32_t>(height)};
 }
 
+std::expected<DecodedImage, Core::AssetError> DecodeImageFile(const std::filesystem::path &file) noexcept
+{
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    unsigned char *data =
+        stbi_load(file.string().c_str(), &width, &height, &channels, static_cast<int>(kRgba8BytesPerTexel));
+    if (data == nullptr)
+    {
+        Core::Log::Error("Image: could not read the image file '{}'", file.string());
+        return std::unexpected(Core::AssetErrorCode::FileReadFailed);
+    }
+
+    DecodedImage image;
+    image.width = static_cast<std::uint32_t>(width);
+    image.height = static_cast<std::uint32_t>(height);
+    BuildMipChain(image, data, /*generateMips=*/ false);
+
+    stbi_image_free(data);
+    return image;
+}
+
 std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath, ColorSpace colorSpace) noexcept
 {
     const auto resolved = Core::AssetSystem::Resolve(vpath);

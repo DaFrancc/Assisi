@@ -10,6 +10,7 @@ add_executable(Assisi-Editor-Tests
   TestDoubleClick.cpp
   TestEditHistory.cpp
   TestEditorEvents.cpp
+  TestGoldenImage.cpp
   TestEditorPreferences.cpp
   TestEntityPicking.cpp
   TestGizmoDrag.cpp
@@ -31,6 +32,7 @@ add_executable(Assisi-Editor-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorEvents.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditorPreferences.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/GoldenImage.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ListEdit.cpp"
@@ -83,6 +85,8 @@ target_link_libraries(Assisi-Editor-Tests
     Assisi-Runtime-TestComponents
     # Poem, a component holding lists of structs, for the list edits.
     Assisi-ECS-TestComponents
+    # The PNG decoder the golden-picture check reads accepted pictures with.
+    Assisi::ImageImport
 )
 
 # EditHistory walks ComponentRegistry, populated by the static initializers

@@ -186,6 +186,11 @@ struct PerfCaptureConfig
     /// can still say what it measured.
     std::string levelPath;
 
+    /// Where the pictures accepted on each GPU are kept: imagePath's picture is
+    /// compared with <goldenDirectory>/<GPU>/<level>.png, and a difference fails
+    /// the run. Empty compares nothing.
+    std::string goldenDirectory;
+
     /// Resolution to render at, overriding both the shipped size and the
     /// player's. 0 leaves the configured
     /// size alone. The ledger wants both 1440p (the dev machine) and 1080p (the
@@ -209,6 +214,9 @@ struct PerfCaptureConfig
     /// from a run with this off; turn it on for the separate, more invasive run
     /// that answers "which pass moved".
     bool perPassTiming = false;
+
+    /// Accept the picture as the golden one instead of comparing with it.
+    bool acceptGolden = false;
 };
 
 /// @brief Accumulates a capture run and reports on it.
