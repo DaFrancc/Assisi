@@ -53,11 +53,14 @@ glm::vec3 Grade(glm::vec3 v, float contrast, float saturation)
 /// Radiance in, display-encoded colour out. The grade sits between the sigmoid
 /// and the outset matrix, which is where AgX intends a look to go: the outset
 /// restores saturation *after* the look has had its say.
-glm::vec3 AgxDisplay(glm::vec3 radiance, const TonemapSettings &settings)
+glm::vec3 AgxDisplay(glm::vec3 radiance, const PostProcessSettings &scene, const TonemapSettings &settings = {})
 {
-    const TonemapConstants pc = MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
+    const TonemapConstants pc =
+        MakeTonemapConstants(settings, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
 
-    glm::vec3 v = radiance * pc.exposureScale;
+    const glm::mat3 balance(glm::vec3(pc.whiteBalance[0]), glm::vec3(pc.whiteBalance[1]),
+                            glm::vec3(pc.whiteBalance[2]));
+    glm::vec3 v = balance * radiance * std::exp2(pc.manualStops + pc.brightnessStops);
     v = kInset * v;
     v = glm::clamp(glm::log2(v), glm::vec3(kMinEv), glm::vec3(kMaxEv));
     v = (v - kMinEv) / (kMaxEv - kMinEv);
@@ -67,8 +70,7 @@ glm::vec3 AgxDisplay(glm::vec3 radiance, const TonemapSettings &settings)
 }
 
 /// The curve with no grade on top, for the tests that are about the curve.
-constexpr TonemapSettings kUngraded{
-    .op = TonemapOperator::AgX, .exposureStops = 0.0f, .contrast = 1.0f, .saturation = 1.0f};
+constexpr PostProcessSettings kUngraded{.contrast = 1.0f, .saturation = 1.0f};
 
 /// Perceptual mid-grey, the value every tone curve is judged at first.
 constexpr float kMidGrey = 0.18f;
@@ -88,21 +90,38 @@ TEST_CASE("Exposure is a power of two applied before the curve")
 
     // A stop of exposure and twice the radiance are the same picture — that
     // equivalence is what makes the slider mean "stops" rather than "a number".
-    const TonemapSettings oneStopUp{
-        .op = TonemapOperator::AgX, .exposureStops = 1.0f, .contrast = 1.0f, .saturation = 1.0f};
-    const glm::vec3 exposed = AgxDisplay(glm::vec3(kMidGrey), oneStopUp);
+    const TonemapSettings brighter{.op = TonemapOperator::AgX, .exposureStops = 1.0f};
+    const glm::vec3 exposed = AgxDisplay(glm::vec3(kMidGrey), kUngraded, brighter);
     const glm::vec3 doubled = AgxDisplay(glm::vec3(kMidGrey * 2.0f), kUngraded);
     CHECK(exposed.x == doctest::Approx(doubled.x).epsilon(1e-4));
     CHECK(exposed.y == doctest::Approx(doubled.y).epsilon(1e-4));
     CHECK(exposed.z == doctest::Approx(doubled.z).epsilon(1e-4));
 }
 
+TEST_CASE("The player's brightness adds to the level's exposure")
+{
+    // A level drawn a stop down, and a player who wants it a stop up, see it
+    // as the level's lighting with no exposure at all.
+    PostProcessSettings darker = kUngraded;
+    darker.exposure.manualStops = -1.0f;
+    const TonemapSettings brighter{.op = TonemapOperator::AgX, .exposureStops = 1.0f};
+    const TonemapConstants pc = MakeTonemapConstants(brighter, darker, 0.0f, false);
+    CHECK(pc.manualStops == doctest::Approx(-1.0f));
+    CHECK(pc.brightnessStops == doctest::Approx(1.0f));
+    CHECK(AgxDisplay(glm::vec3(kMidGrey), darker, brighter).x ==
+          doctest::Approx(AgxDisplay(glm::vec3(kMidGrey), kUngraded).x).epsilon(1e-4));
+
+    PostProcessSettings automatic = kUngraded;
+    automatic.exposure.automatic = 0.25f;
+    CHECK(MakeTonemapConstants(TonemapSettings{}, automatic, 0.0f, false).automatic == doctest::Approx(0.25f));
+}
+
 TEST_CASE("Out-of-range and non-finite settings cannot reach the shader")
 {
     // options.json is hand-editable and a NaN in any lane takes the frame to
     // black, which reads as a driver fault rather than as a typo in a config.
-    CHECK(ExposureScale(1000.0f) == doctest::Approx(std::exp2(kMaxExposureStops)));
-    CHECK(ExposureScale(-1000.0f) == doctest::Approx(std::exp2(kMinExposureStops)));
+    CHECK(ExposureScale(1000.0f) == doctest::Approx(std::exp2(kMaxExposureSettingStops)));
+    CHECK(ExposureScale(-1000.0f) == doctest::Approx(std::exp2(kMinExposureSettingStops)));
     // NaN and infinity are junk rather than an extreme, so both fall back to the
     // default rather than to the end of the slider: a config that says nothing
     // usable should look like one that says nothing.
@@ -112,39 +131,55 @@ TEST_CASE("Out-of-range and non-finite settings cannot reach the shader")
     TonemapSettings hostile;
     hostile.op = static_cast<TonemapOperator>(99u);
     hostile.exposureStops = std::nanf("");
-    hostile.contrast = -5.0f;
-    hostile.saturation = std::numeric_limits<float>::infinity();
-
     const TonemapSettings safe = Sanitized(hostile);
     CHECK(static_cast<std::uint32_t>(safe.op) < kTonemapOperatorCount);
     CHECK(safe.exposureStops == doctest::Approx(0.0f));
-    CHECK(safe.contrast >= kMinContrast);
-    CHECK(safe.contrast <= kMaxContrast);
-    CHECK(safe.saturation >= kMinSaturation);
-    CHECK(safe.saturation <= kMaxSaturation);
+
+    PostProcessSettings scene;
+    scene.contrast = -5.0f;
+    scene.saturation = std::numeric_limits<float>::infinity();
+    scene.whiteBalanceKelvin = std::nanf("");
+    scene.exposure.manualStops = 1000.0f;
+    const PostProcessSettings sane = Sanitized(scene);
+    CHECK(sane.contrast >= kMinContrast);
+    CHECK(sane.contrast <= kMaxContrast);
+    CHECK(sane.saturation >= kMinSaturation);
+    CHECK(sane.saturation <= kMaxSaturation);
+    CHECK(sane.whiteBalanceKelvin == kNeutralWhiteBalanceKelvin);
+    CHECK(sane.exposure.manualStops == kMaxExposureSettingStops);
+    CHECK(Sanitized(sane) == sane);
 }
 
-TEST_CASE("A copy-through step neither exposes nor grades")
+TEST_CASE("A copy-through step neither balances, exposes nor grades")
 {
     // The Blit runs this same shader over an image the tone map has already
     // mapped, and the debug views hand it channel values rather than radiance.
     // Applying exposure or the grade again would restate both.
-    TonemapSettings loud;
-    loud.exposureStops = 4.0f;
-    loud.contrast = 2.0f;
-    loud.saturation = 0.0f;
+    const TonemapSettings loud{.op = TonemapOperator::AgX, .exposureStops = 4.0f};
+    PostProcessSettings scene;
+    scene.contrast = 2.0f;
+    scene.saturation = 0.0f;
+    scene.whiteBalanceKelvin = 3000.0f;
+    scene.exposure.manualStops = 1.0f;
 
-    const TonemapConstants copy = MakeTonemapConstants(loud, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true);
+    const TonemapConstants copy = MakeTonemapConstants(loud, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true);
     CHECK(copy.passthrough != 0u);
-    CHECK(copy.exposureScale == doctest::Approx(1.0f));
+    CHECK(copy.manualStops == doctest::Approx(0.0f));
+    CHECK(copy.brightnessStops == doctest::Approx(0.0f));
     CHECK(copy.contrast == doctest::Approx(1.0f));
     CHECK(copy.saturation == doctest::Approx(1.0f));
+    CHECK(copy.whiteBalance[0].x == doctest::Approx(1.0f));
+    CHECK(copy.whiteBalance[2].z == doctest::Approx(1.0f));
 
-    const TonemapConstants mapped = MakeTonemapConstants(loud, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
+    const TonemapConstants mapped =
+        MakeTonemapConstants(loud, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
     CHECK(mapped.passthrough == 0u);
-    CHECK(mapped.exposureScale == doctest::Approx(16.0f));
+    CHECK(mapped.manualStops == doctest::Approx(1.0f));
+    CHECK(mapped.brightnessStops == doctest::Approx(4.0f));
     CHECK(mapped.contrast == doctest::Approx(2.0f));
     CHECK(mapped.saturation == doctest::Approx(0.0f));
+    // 3000 K balanced to white cools the picture: blue gains on red.
+    CHECK(mapped.whiteBalance[2].z > mapped.whiteBalance[0].x);
 }
 
 TEST_CASE("The curve is monotonic, and black stays black")
@@ -223,27 +258,21 @@ TEST_CASE("The grade is what puts contrast back")
     const glm::vec3 grey(kMidGrey);
 
     // Identity: the knobs at 1 leave the curve exactly as it came.
-    const TonemapSettings identity{
-        .op = TonemapOperator::AgX, .exposureStops = 0.0f, .contrast = 1.0f, .saturation = 1.0f};
+    const PostProcessSettings identity{.contrast = 1.0f, .saturation = 1.0f};
     CHECK(AgxDisplay(grey, identity).x == doctest::Approx(AgxDisplay(grey, kUngraded).x));
 
     // Contrast above 1 deepens the shadows — the whole reason the default is not 1.
-    const TonemapSettings punchy{.op = TonemapOperator::AgX,
-                                 .exposureStops = 0.0f,
-                                 .contrast = kPunchyContrast,
-                                 .saturation = kPunchySaturation};
+    const PostProcessSettings punchy{.contrast = kPunchyContrast, .saturation = kPunchySaturation};
     CHECK(AgxDisplay(grey, punchy).x < AgxDisplay(grey, identity).x);
 
     // Saturation at 0 is greyscale, whatever went in.
-    const TonemapSettings grey0{
-        .op = TonemapOperator::AgX, .exposureStops = 0.0f, .contrast = 1.0f, .saturation = 0.0f};
+    const PostProcessSettings grey0{.contrast = 1.0f, .saturation = 0.0f};
     const glm::vec3 drained = AgxDisplay(glm::vec3(0.6f, 0.2f, 0.05f), grey0);
     CHECK(drained.x == doctest::Approx(drained.y).epsilon(0.02));
     CHECK(drained.y == doctest::Approx(drained.z).epsilon(0.02));
 
     // And saturation above 1 pushes the channels apart rather than together.
-    const TonemapSettings rich{
-        .op = TonemapOperator::AgX, .exposureStops = 0.0f, .contrast = 1.0f, .saturation = 1.8f};
+    const PostProcessSettings rich{.contrast = 1.0f, .saturation = 1.8f};
     const glm::vec3 colour(0.6f, 0.2f, 0.05f);
     const glm::vec3 plain = AgxDisplay(colour, identity);
     const glm::vec3 loud = AgxDisplay(colour, rich);
@@ -257,8 +286,15 @@ TEST_CASE("The defaults are the punchy look, on AgX")
     const TonemapSettings defaults;
     CHECK(defaults.op == TonemapOperator::AgX);
     CHECK(defaults.exposureStops == doctest::Approx(0.0f));
-    CHECK(defaults.contrast > 1.0f);
-    CHECK(defaults.saturation > 1.0f);
+    const PostProcessSettings scene;
+    CHECK(scene.contrast > 1.0f);
+    CHECK(scene.saturation > 1.0f);
+    // And a scene with no volumes is drawn as it was before levels set their
+    // own look: no exposure, no white balance.
+    CHECK(scene.exposure.manualStops == 0.0f);
+    CHECK(scene.exposure.automatic == 0.0f);
+    CHECK(scene.whiteBalanceKelvin == kNeutralWhiteBalanceKelvin);
+    CHECK(scene.whiteBalanceTint == 0.0f);
 }
 
 TEST_CASE("Dithered, a block of pixels between two display steps averages to its true value")
@@ -306,13 +342,14 @@ TEST_CASE("Dither moves a pixel by less than one display step either way")
 TEST_CASE("Only a mapped image is dithered, and only while dithering is on")
 {
     TonemapSettings settings;
+    const PostProcessSettings scene;
     CHECK(settings.dither);
-    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale ==
+    CHECK(MakeTonemapConstants(settings, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale ==
           doctest::Approx(1.0f / kDisplaySteps));
 
     // A copy through moves an image this shader already dithered.
-    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true).ditherScale == 0.0f);
+    CHECK(MakeTonemapConstants(settings, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true).ditherScale == 0.0f);
 
     settings.dither = false;
-    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale == 0.0f);
+    CHECK(MakeTonemapConstants(settings, scene, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale == 0.0f);
 }

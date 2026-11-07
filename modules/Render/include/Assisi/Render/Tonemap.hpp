@@ -2,17 +2,20 @@
 #pragma once
 
 /// @file Tonemap.hpp
-/// @brief The look the post chain ends on: exposure, a tone curve, and a grade.
+/// @brief The look the post chain ends on: white balance, exposure, a tone
+/// curve, and a grade.
 ///
 /// The curves themselves are in tonemap.frag. What lives here is everything the
 /// CPU has to agree with that shader about — the operator's wire value, the push
 /// constants, the ranges a value is allowed to take, and the rule that a
 /// copy-through step neither exposes nor grades.
 
-#include <Assisi/Math/Float.hpp>
+#include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/PostProcessSettings.hpp>
 
-#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace Assisi::Render
@@ -41,48 +44,23 @@ enum class TonemapOperator : std::uint8_t
 
 inline constexpr std::uint32_t kTonemapOperatorCount = 3;
 
-/// @brief Stops of exposure. Beyond this range every scene is either black or
-/// white, so the slider stops being a comparison tool.
+/// @brief Stops of the player's brightness offset. Beyond this range every
+/// scene is either black or white, so the slider stops being a comparison tool.
 inline constexpr float kMinExposureStops = -8.0f;
 inline constexpr float kMaxExposureStops = 8.0f;
 
-/// @brief Exponent on the curve's output. Below 1 flattens toward grey; above
-/// 2.5 crushes everything but the highlights to black.
-inline constexpr float kMinContrast = 0.5f;
-inline constexpr float kMaxContrast = 2.5f;
-
-/// @brief Scale on each channel's distance from the pixel's luma. 0 is
-/// greyscale; past 2 the primaries clip and hue stops meaning anything.
-inline constexpr float kMinSaturation = 0.0f;
-inline constexpr float kMaxSaturation = 2.0f;
-
-/// @brief The grade AgX is designed to be finished with — flat is what its
-/// neutrality costs, and this is what buys the contrast back. Applied whichever
-/// operator is selected, so switching to ACES stacks it on a curve that already
-/// has an opinion.
-inline constexpr float kPunchyContrast = 1.35f;
-inline constexpr float kPunchySaturation = 1.4f;
-
-/// @brief The look, as the user edits it.
+/// @brief The player's part of the look: the curve, a brightness offset, and
+/// dither. The level's part is PostProcessSettings.
 struct TonemapSettings
 {
     TonemapOperator op = TonemapOperator::AgX;
+    /// Stops added on top of the exposure the level sets, manual or automatic:
+    /// the player's brightness.
     float exposureStops = 0.0f;
-    float contrast = kPunchyContrast;
-    float saturation = kPunchySaturation;
     /// Noise of up to one display step before the 8-bit write, which turns the
     /// bands a slow fade steps through into an even grain. See DisplayDither.
     bool dither = true;
 };
-
-/// @brief Clamps to [low, high], substituting `fallback` for a non-finite value.
-///
-/// std::clamp alone returns NaN unchanged — both of its comparisons are false —
-/// and a NaN in any of these lanes takes the whole frame to black.
-[[nodiscard]] inline float ClampFinite(float value, float low, float high, float fallback)
-{
-    return Math::IsFinite(value) ? std::clamp(value, low, high) : fallback;
-}
 
 /// @brief The same settings with every lane inside its range. options.json is
 /// hand-editable, so nothing downstream may assume the values are sane.
@@ -94,22 +72,28 @@ struct TonemapSettings
         settings.op = defaults.op;
     }
     settings.exposureStops = ClampFinite(settings.exposureStops, kMinExposureStops, kMaxExposureStops, 0.0f);
-    settings.contrast = ClampFinite(settings.contrast, kMinContrast, kMaxContrast, defaults.contrast);
-    settings.saturation = ClampFinite(settings.saturation, kMinSaturation, kMaxSaturation, defaults.saturation);
     return settings;
 }
 
-/// @brief The linear multiplier exposure applies to radiance before the curve.
+/// @brief The linear multiplier @p stops of exposure apply to radiance before
+/// the curve.
 [[nodiscard]] inline float ExposureScale(float stops)
 {
-    return std::exp2(ClampFinite(stops, kMinExposureStops, kMaxExposureStops, 0.0f));
+    return std::exp2(ClampFinite(stops, kMinExposureSettingStops, kMaxExposureSettingStops, 0.0f));
 }
 
 /// @brief The tone map's push constants. Field order and types match
 /// tonemap.frag's PushConstants block.
 struct TonemapConstants
 {
-    float exposureScale = 1.0f;
+    /// The white balance matrix's columns, in xyz; w unused.
+    std::array<glm::vec4, 3> whiteBalance{glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f),
+                                          glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
+    /// The picture is drawn at mix(manualStops, the adapted automatic stops,
+    /// automatic) + brightnessStops.
+    float manualStops = 0.0f;
+    float automatic = 0.0f;
+    float brightnessStops = 0.0f;
     float contrast = 1.0f;
     float saturation = 1.0f;
     std::uint32_t op = static_cast<std::uint32_t>(TonemapOperator::AgX);
@@ -120,6 +104,10 @@ struct TonemapConstants
     /// 0 reads no glow at all.
     float bloomIntensity = 0.0f;
 };
+
+/// @brief The most bytes of push constants every device takes.
+inline constexpr std::size_t kMaxPushConstantBytes = 128u;
+static_assert(sizeof(TonemapConstants) <= kMaxPushConstantBytes);
 
 /// @brief The steps an 8-bit display target has above black.
 inline constexpr float kDisplaySteps = 255.0f;
@@ -163,15 +151,17 @@ inline constexpr float kDisplaySteps = 255.0f;
     return first + second - 1.0f;
 }
 
-/// @brief The constants for one tone map draw, mixing in @p bloomIntensity of
-/// the bloom's glow: zero when no glow was drawn.
+/// @brief The constants for one tone map draw: the player's @p settings over
+/// the scene's @p scene, mixing in @p bloomIntensity of the bloom's glow, zero
+/// when no glow was drawn.
 ///
 /// `copyThrough` covers the two steps that must move an image without restating
 /// it: the Blit, whose input this same shader already mapped, and the material
 /// debug views, whose scene target holds channel values rather than radiance.
-/// Both come out as an identity copy — exposing, grading, dithering or adding
-/// glow to either would apply the look a second time.
-[[nodiscard]] inline TonemapConstants MakeTonemapConstants(const TonemapSettings &settings, float bloomIntensity,
+/// Both come out as an identity copy — balancing, exposing, grading, dithering
+/// or adding glow to either would apply the look a second time.
+[[nodiscard]] inline TonemapConstants MakeTonemapConstants(const TonemapSettings &settings,
+                                                           const PostProcessSettings &scene, float bloomIntensity,
                                                            bool copyThrough)
 {
     if (copyThrough)
@@ -180,13 +170,19 @@ inline constexpr float kDisplaySteps = 255.0f;
     }
 
     const TonemapSettings safe = Sanitized(settings);
-    return TonemapConstants{.exposureScale = ExposureScale(safe.exposureStops),
-                            .contrast = safe.contrast,
-                            .saturation = safe.saturation,
-                            .op = static_cast<std::uint32_t>(safe.op),
-                            .passthrough = 0,
-                            .ditherScale = safe.dither ? 1.0f / kDisplaySteps : 0.0f,
-                            .bloomIntensity = ClampFinite(bloomIntensity, 0.0f, 1.0f, 0.0f)};
+    const PostProcessSettings look = Sanitized(scene);
+    const glm::mat3 balance = WhiteBalanceMatrix(look.whiteBalanceKelvin, look.whiteBalanceTint);
+    return TonemapConstants{
+        .whiteBalance = {glm::vec4(balance[0], 0.0f), glm::vec4(balance[1], 0.0f), glm::vec4(balance[2], 0.0f)},
+        .manualStops = look.exposure.manualStops,
+        .automatic = look.exposure.automatic,
+        .brightnessStops = safe.exposureStops,
+        .contrast = look.contrast,
+        .saturation = look.saturation,
+        .op = static_cast<std::uint32_t>(safe.op),
+        .passthrough = 0,
+        .ditherScale = safe.dither ? 1.0f / kDisplaySteps : 0.0f,
+        .bloomIntensity = ClampFinite(bloomIntensity, 0.0f, 1.0f, 0.0f)};
 }
 
 } // namespace Assisi::Render

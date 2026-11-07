@@ -53,6 +53,7 @@ target_sources(Assisi-Editor
     "src/EditorColliders.cpp"
     "src/EditorSkeletons.cpp"
     "src/EditorFogVolumes.cpp"
+    "src/EditorPostProcessVolumes.cpp"
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"

@@ -30,6 +30,7 @@ add_executable(Assisi-Runtime-Tests
   TestMaterialConstants.cpp
   TestMeshCuller.cpp
   TestPerfScenes.cpp
+  TestPostProcessResolve.cpp
   TestFogVolumeGather.cpp
   TestFrustum.cpp
   TestSceneSerializer.cpp

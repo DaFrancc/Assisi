@@ -193,24 +193,24 @@ TEST_CASE("A broken scene pixel reaches the chain as something finite")
     CheckNear(BloomSafeRadiance(glm::vec3(infinity, 0.5f, 3.0f)), glm::vec3(65504.0f, 0.5f, 3.0f));
 }
 
-TEST_CASE("Hand-typed bloom settings are held in range")
+TEST_CASE("A scene's bloom settings are held in range")
 {
     const float nan = std::numeric_limits<float>::quiet_NaN();
-    const BloomSettings broken = Sanitized(BloomSettings{.enabled = true, .intensity = nan, .scatter = nan});
-    CHECK(broken.intensity == kDefaultBloomIntensity);
-    CHECK(broken.scatter == kDefaultBloomScatter);
+    const PostProcessSettings broken = Sanitized(PostProcessSettings{.bloomIntensity = nan, .bloomScatter = nan});
+    CHECK(broken.bloomIntensity == kDefaultBloomIntensity);
+    CHECK(broken.bloomScatter == kDefaultBloomScatter);
 
-    const BloomSettings loud = Sanitized(BloomSettings{.enabled = false, .intensity = 9.0f, .scatter = 2.0f});
-    CHECK_FALSE(loud.enabled);
-    CHECK(loud.intensity == kMaxBloomIntensity);
-    CHECK(loud.scatter == kMaxBloomScatter);
-    CHECK(Sanitized(loud) == loud);
+    const PostProcessSettings loud = Sanitized(PostProcessSettings{.bloomIntensity = 9.0f, .bloomScatter = 2.0f});
+    CHECK(loud.bloomIntensity == kMaxBloomIntensity);
+    CHECK(loud.bloomScatter == kMaxBloomScatter);
 }
 
 TEST_CASE("The tone map mixes in the glow it is given, and none when it only copies")
 {
     const TonemapSettings settings;
-    CHECK(MakeTonemapConstants(settings, 0.1f, /*copyThrough=*/ false).bloomIntensity == doctest::Approx(0.1f));
-    CHECK(MakeTonemapConstants(settings, 0.1f, /*copyThrough=*/ true).bloomIntensity == 0.0f);
-    CHECK(MakeTonemapConstants(settings, std::numeric_limits<float>::quiet_NaN(), false).bloomIntensity == 0.0f);
+    const PostProcessSettings scene;
+    CHECK(MakeTonemapConstants(settings, scene, 0.1f, /*copyThrough=*/ false).bloomIntensity == doctest::Approx(0.1f));
+    CHECK(MakeTonemapConstants(settings, scene, 0.1f, /*copyThrough=*/ true).bloomIntensity == 0.0f);
+    CHECK(MakeTonemapConstants(settings, scene, std::numeric_limits<float>::quiet_NaN(), false).bloomIntensity ==
+          0.0f);
 }

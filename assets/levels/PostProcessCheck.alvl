@@ -1,0 +1,693 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Camera": {
+          "farZ": 500.0,
+          "fovDegrees": 50.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.6,
+            6.5
+          ],
+          "rotation": [
+            0.9962,
+            -0.0872,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Camera"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            40.0,
+            1.0,
+            40.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -3.0,
+            0.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "Chrome"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "b56684e7-4836-45f1-8e17-69d960255806",
+              "path": "materials/ibl_gold_rough.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -1.0,
+            0.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "RoughGold"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "colorExpression": 0,
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "intensity": 1.0,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
+        },
+        "Skybox": {
+          "airScattering": [
+            0.1752,
+            0.4078,
+            1.0
+          ],
+          "airThickness": 0.14,
+          "exposure": 10.0,
+          "groundColor": [
+            0.11,
+            0.1,
+            0.09
+          ],
+          "hazeForwardness": 0.76,
+          "hazeScattering": [
+            0.005,
+            0.005,
+            0.005
+          ],
+          "nightColor": [
+            6e-05,
+            0.0001,
+            0.0002
+          ],
+          "minimumAmbient": 0.02,
+          "minimumAmbientColor": [
+            0.35,
+            0.45,
+            0.7
+          ],
+          "preset": 0,
+          "skyBounce": 0.2,
+          "sunDiskColor": [
+            1.0,
+            0.95,
+            0.82
+          ],
+          "sunDiskIntensity": 20.0,
+          "sunEdgeSoftness": 0.1,
+          "sunLimbDarkening": 0.6,
+          "sunSizeDegrees": 0.5
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.44,
+          "bearingDegrees": 0.0,
+          "latitudeDegrees": 45.0
+        },
+        "TimeOfDay": {
+          "day": 0,
+          "dayLengthSeconds": 120.0,
+          "dayOfYear": 0.0,
+          "hour": 15.5,
+          "paused": true,
+          "seasonsPaused": true,
+          "yearLengthDays": 12.0
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -8.0,
+            1.5,
+            -3.1
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            6.4,
+            3.0,
+            0.2
+          ]
+        }
+      },
+      "name": "HutWallNorth"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -8.0,
+            1.5,
+            3.1
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            6.4,
+            3.0,
+            0.2
+          ]
+        }
+      },
+      "name": "HutWallSouth"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -4.9,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.2,
+            3.0,
+            6.0
+          ]
+        }
+      },
+      "name": "HutWallEast"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.1,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.2,
+            3.0,
+            6.0
+          ]
+        }
+      },
+      "name": "HutWallWest"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc",
+              "path": "materials/shadow_white.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            -8.0,
+            3.1,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            6.4,
+            0.2,
+            6.4
+          ]
+        }
+      },
+      "name": "HutRoof"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1.0,
+            0.62,
+            0.32
+          ],
+          "intensity": 12.0,
+          "radius": 6.0
+        },
+        "Transform": {
+          "position": [
+            -6.5,
+            2.2,
+            -1.5
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "HutLamp"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "extent": 0,
+          "overrideExposure": true,
+          "exposureMode": 1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "LevelLook"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "extent": 1,
+          "size": [
+            6.0,
+            3.0,
+            6.0
+          ],
+          "blendDistance": 1.5,
+          "overrideExposure": true,
+          "exposureMode": 1,
+          "maxExposureStops": 3.0,
+          "overrideWhiteBalance": true,
+          "whiteBalanceKelvin": 11000.0,
+          "overrideSaturation": true,
+          "saturation": 1.6,
+          "overrideContrast": true,
+          "contrast": 1.7
+        },
+        "Transform": {
+          "position": [
+            -8.0,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "HutLook"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ea3934fb-3179-4707-ad69-55fe9a99b296",
+              "path": "materials/ibl_steel_matte.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.0,
+            0.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "MatteSteel"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf",
+              "path": "materials/ibl_plastic.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            3.0,
+            0.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "Plastic"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "extent": 1,
+          "size": [
+            6.0,
+            4.0,
+            6.0
+          ],
+          "blendDistance": 3.0,
+          "overrideSaturation": true,
+          "saturation": 0.0,
+          "overrideContrast": true,
+          "contrast": 1.9
+        },
+        "Transform": {
+          "position": [
+            -6.0,
+            2.0,
+            9.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "NoirZone"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "extent": 1,
+          "size": [
+            6.0,
+            4.0,
+            6.0
+          ],
+          "blendDistance": 3.0,
+          "overrideWhiteBalance": true,
+          "whiteBalanceKelvin": 16000.0,
+          "whiteBalanceTint": 0.3,
+          "overrideSaturation": true,
+          "saturation": 1.8,
+          "overrideBloom": true,
+          "bloomIntensity": 0.25,
+          "bloomScatter": 0.85,
+          "overrideContrast": true,
+          "contrast": 1.5
+        },
+        "Transform": {
+          "position": [
+            6.0,
+            2.0,
+            9.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "GoldenZone"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "extent": 1,
+          "size": [
+            6.0,
+            4.0,
+            6.0
+          ],
+          "blendDistance": 3.0,
+          "overrideWhiteBalance": true,
+          "whiteBalanceKelvin": 3200.0,
+          "overrideSaturation": true,
+          "saturation": 0.6,
+          "overrideExposure": true,
+          "exposureMode": 1,
+          "exposureCompensation": 0.8
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            2.0,
+            -9.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "FrostZone"
+    }
+  ],
+  "systems": [
+    "TimeOfDay"
+  ],
+  "version": 2
+}

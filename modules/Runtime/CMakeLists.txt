@@ -21,6 +21,8 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/LodSelection.hpp"
     "include/Assisi/Runtime/Naming.hpp"
     "include/Assisi/Runtime/Path.hpp"
+    "include/Assisi/Runtime/PostProcessResolve.hpp"
+    "include/Assisi/Runtime/PostProcessVolume.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/ShadowCasterGather.hpp"
@@ -41,6 +43,7 @@ target_sources(Assisi-Runtime
     "src/LightingSystem.cpp"
     "src/LodSelection.cpp"
     "src/Naming.cpp"
+    "src/PostProcessResolve.cpp"
     "src/Renderer.cpp"
     "src/SceneRenderer.cpp"
     "src/SceneRendererShadows.cpp"
@@ -88,6 +91,7 @@ assisi_reflect(
     include/Assisi/Runtime/LightComponents.hpp
     include/Assisi/Runtime/NameComponent.hpp
     include/Assisi/Runtime/Path.hpp
+    include/Assisi/Runtime/PostProcessVolume.hpp
     include/Assisi/Runtime/SkyComponents.hpp
     include/Assisi/Runtime/TimeOfDay.hpp
 )

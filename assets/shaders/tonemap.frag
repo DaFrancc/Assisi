@@ -5,9 +5,10 @@
 // and any effect added later) operates on radiance, and everything downstream
 // (FXAA, editor chrome) operates on perceptual values.
 //
-// The look is five stages: the bloom's glow, exposure, a tone curve, a grade,
-// and the display encode. Every stage is a runtime knob — see Tonemap.hpp, which owns the
-// operator's wire values and the ranges these constants are allowed to take.
+// The look is six stages: the bloom's glow, white balance, exposure, a tone
+// curve, a grade, and the display encode. Every stage is a runtime knob — see
+// Tonemap.hpp, which owns the operator's wire values and the ranges these
+// constants are allowed to take.
 //
 // The swapchain is a UNORM format by deliberate choice (VulkanContext picks it
 // over the _SRGB one), so this shader owns the encode. AgX therefore ends at its
@@ -26,9 +27,20 @@ layout(binding = 128) uniform sampler   uSceneSampler;
 // is above zero, and the scene itself bound here otherwise.
 layout(binding = 1)   uniform texture2D uBloom;
 
+// Render::ExposureState: the automatic exposure exposure_adapt.comp keeps.
+layout(std430, binding = 2) readonly buffer ExposureState
+{
+    float autoStops;
+    uint  seeded;
+} exposure;
+
 layout(push_constant) uniform PushConstants
 {
-    float exposureScale; // linear multiplier on radiance: exp2(stops)
+    vec4  whiteBalance[3]; // the white balance matrix's columns, in xyz
+    // Drawn at mix(manualStops, the automatic stops, automatic) + brightnessStops.
+    float manualStops;
+    float automatic;
+    float brightnessStops;
     float contrast;      // exponent on the curve's output
     float saturation;    // scale on each channel's distance from luma
     uint  op;            // TonemapOperator
@@ -165,7 +177,15 @@ void main()
     {
         radiance = mix(radiance, texture(sampler2D(uBloom, uSceneSampler), vTexCoords).rgb, pc.bloomIntensity);
     }
-    vec3 color = radiance * pc.exposureScale;
+    radiance = mat3(pc.whiteBalance[0].xyz, pc.whiteBalance[1].xyz, pc.whiteBalance[2].xyz) * radiance;
+    // The automatic stops are only read while some of the exposure is
+    // automatic; until the first frame has metered they hold nothing.
+    float stops = pc.manualStops;
+    if (pc.automatic > 0.0)
+    {
+        stops = mix(stops, exposure.autoStops, pc.automatic);
+    }
+    vec3 color = radiance * exp2(stops + pc.brightnessStops);
 
     if (pc.op == kAgx)
     {

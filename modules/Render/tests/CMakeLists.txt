@@ -2,6 +2,7 @@ add_executable(Assisi-Render-Tests
   main.cpp
   TestBloom.cpp
   TestCelestial.cpp
+  TestExposure.cpp
   TestFog.cpp
   TestFogVolume.cpp
   TestIndirectLighting.cpp
@@ -24,6 +25,7 @@ add_executable(Assisi-Render-Tests
   TestSceneDepth.cpp
   TestSsao.cpp
   TestTonemap.cpp
+  TestWhiteBalance.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Render-Tests)

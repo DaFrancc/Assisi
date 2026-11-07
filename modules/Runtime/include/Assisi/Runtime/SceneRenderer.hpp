@@ -29,6 +29,7 @@
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/MeshSkinner.hpp>
+#include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowCadence.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
@@ -273,6 +274,11 @@ public:
     /// edge of the world looks, never what is drawn.
     void SetFogEnabled(bool enabled) { _fogEnabled = enabled; }
     [[nodiscard]] bool FogEnabled() const { return _fogEnabled; }
+
+    /// @brief How the last Render()'s scene is finished, as its
+    /// PostProcessVolumes set it where the camera stood. The app hands it to the
+    /// post chain: Application::SetScenePostProcess.
+    [[nodiscard]] const Render::PostProcessSettings &ScenePostProcess() const { return _postProcess; }
 
     /// @brief The probe as the most recent Render() left it: its face size and
     /// mips (both zero while it holds nothing), and how its bakes have gone.
@@ -582,6 +588,7 @@ private:
     // while the setting is off.
     Render::SsaoPass _ssaoPass;
     Render::SsaoSettings _ssaoSettings;
+    Render::PostProcessSettings _postProcess;
 
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.
@@ -614,6 +621,8 @@ private:
     bool _severalFogsWarned = false;
     // The same for fog volumes past what a frame draws.
     bool _droppedFogVolumesWarned = false;
+    // The same for several PostProcessVolumes covering the whole level.
+    bool _severalLevelPostProcessWarned = false;
     bool _fogEnabled = true;
     // Set once the prepass pipelines have failed to build, so the failure is
     // said once and every later frame is lit directly without retrying.

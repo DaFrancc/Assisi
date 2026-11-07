@@ -28,6 +28,7 @@
     - [Smooth shading and shadows](rendering-smooth-shading.md)
     - [Sky and time of day](rendering-sky.md)
     - [Detail levels](rendering-lod.md)
+    - [The level's look](rendering-post-processing.md)
     - [Graphics settings](rendering-settings.md)
     - [How a frame is drawn](rendering-frame.md)
     - [Drawing far from the origin](rendering-far.md)

@@ -617,6 +617,11 @@ class EditorApp : public Assisi::App::Application
     /// in the selection colour; the rest faintly, in their own colour.
     void SubmitFogVolumeGizmos();
 
+    /// @brief Draw each box PostProcessVolume's box, and faintly the box its
+    /// blend distance reaches to, so a designer sees where a look starts fading
+    /// in. The selected volume draws on top in the selection colour.
+    void SubmitPostProcessVolumeGizmos();
+
     /// @brief Draw the benchmark camera route: each path's course, which way it
     /// travels, where it starts and what it looks at, and dashes joining each
     /// path to the next in play order.
@@ -1857,6 +1862,10 @@ class EditorApp : public Assisi::App::Application
     // The same split for the fog volume shapes.
     std::vector<LineVertex> _fogVolumeLinesDepthTested;
     std::vector<LineVertex> _fogVolumeLinesOnTop;
+
+    // The same split for the post-process volume boxes.
+    std::vector<LineVertex> _postProcessVolumeLinesDepthTested;
+    std::vector<LineVertex> _postProcessVolumeLinesOnTop;
 
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;

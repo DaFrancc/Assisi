@@ -2,8 +2,9 @@
 #pragma once
 
 /// @file Bloom.hpp
-/// @brief The glow bright light spreads around itself: its settings, and the
-/// filters that make it.
+/// @brief The glow bright light spreads around itself: the ranges of its
+/// settings, and the filters that make it. Whether it runs is the player's
+/// choice; how strong and how wide is the scene's, in PostProcessSettings.
 ///
 /// Bloom blurs the scene's radiance, wider and wider, and mixes a little of the
 /// blur back in before the tone map. Everything glows by the same share, so it
@@ -16,17 +17,15 @@
 /// bloom_down.frag and bloom_up.frag their transcription**; the tests hold the
 /// CPU form.
 
-#include <Assisi/Math/Float.hpp>
 #include <Assisi/Math/GLM.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 
 namespace Assisi::Render
 {
 
-/// @name Ranges every BloomSettings lane is held inside
+/// @name Ranges the bloom's settings are held inside
 /// @{
 /// The share of the blur in the finished picture. Past the ceiling the whole
 /// picture is a smear.
@@ -41,33 +40,6 @@ inline constexpr float kMinBloomScatter = 0.0f;
 inline constexpr float kMaxBloomScatter = 0.95f;
 inline constexpr float kDefaultBloomScatter = 0.7f;
 /// @}
-
-/// @brief Whether bright light glows, how strongly and how widely.
-///
-/// A preference about the machine as well as a look, so it is saved with the
-/// options and not in the level.
-struct BloomSettings
-{
-    /// Off holds no blur targets and runs no passes.
-    bool enabled = true;
-    float intensity = kDefaultBloomIntensity;
-    float scatter = kDefaultBloomScatter;
-
-    bool operator==(const BloomSettings &) const = default;
-};
-
-/// @brief The same settings with every lane in range. Idempotent.
-[[nodiscard]] inline BloomSettings Sanitized(BloomSettings settings)
-{
-    const BloomSettings defaults;
-    settings.intensity = Math::IsFinite(settings.intensity)
-                             ? std::clamp(settings.intensity, kMinBloomIntensity, kMaxBloomIntensity)
-                             : defaults.intensity;
-    settings.scatter = Math::IsFinite(settings.scatter)
-                           ? std::clamp(settings.scatter, kMinBloomScatter, kMaxBloomScatter)
-                           : defaults.scatter;
-    return settings;
-}
 
 /// @brief The most copies in the chain, whatever the screen. Enough for an 8K
 /// screen to reach the same smallest copy as a 1080p one.

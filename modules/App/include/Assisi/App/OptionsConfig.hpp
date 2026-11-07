@@ -5,7 +5,6 @@
 /// @brief User-facing runtime options persisted to options.json.
 
 #include <Assisi/App/AppConfig.hpp>
-#include <Assisi/Render/Bloom.hpp>
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -64,13 +63,13 @@ struct OptionsConfig
     Render::AaMode aaMode = Render::AaMode::None;
     int32_t msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
 
-    /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
-    /// hand-editable and these lanes reach a shader.
+    /// @brief Tone curve, brightness and dither. Sanitized on load — the file is
+    /// hand-editable and these lanes reach a shader. The level's
+    /// PostProcessVolumes set the exposure, grade and glow under them.
     Render::TonemapSettings tonemap;
 
-    /// @brief Whether bright light glows, and how. Sanitized on load, as the
-    /// tone map is.
-    Render::BloomSettings bloom;
+    /// @brief Whether bright light glows. How strongly is the level's.
+    bool bloomEnabled = true;
 
     /// @brief The shadow knobs, in their sun and local halves. Sanitized on
     /// load for the same reason, and one more: these size a GPU allocation, so

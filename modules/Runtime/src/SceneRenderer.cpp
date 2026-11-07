@@ -15,6 +15,7 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
+#include <Assisi/Runtime/PostProcessResolve.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
@@ -348,6 +349,17 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     SkinPosedInstances(frame, scene);
 
     PlaceOrigins(cameraWorld);
+
+    // The look the volumes give where the camera stands.
+    const PostProcessResolution look = ResolvePostProcess(scene, ECS::WorldPositionOf(cameraWorld));
+    _postProcess = look.settings;
+    if (look.levelVolumes > 1u && !_severalLevelPostProcessWarned)
+    {
+        Core::Log::Warn("SceneRenderer: {} PostProcessVolumes cover the whole level; the highest priority wins.",
+                        look.levelVolumes);
+    }
+    _severalLevelPostProcessWarned = look.levelVolumes > 1u;
+
     // The camera at the lit pass's origin is its rotation alone, and so is the
     // view: nothing the lit pass reads holds the camera's distance from the
     // world's origin.

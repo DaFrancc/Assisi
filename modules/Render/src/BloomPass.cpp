@@ -156,7 +156,7 @@ void BloomPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IGraphicsPipeline 
     commandList->draw(drawArgs);
 }
 
-void BloomPass::Run(nvrhi::ICommandList *commandList, const BloomSettings &settings) const
+void BloomPass::Run(nvrhi::ICommandList *commandList, float scatter) const
 {
     if (!Ready())
     {
@@ -171,7 +171,6 @@ void BloomPass::Run(nvrhi::ICommandList *commandList, const BloomSettings &setti
         Draw(commandList, _downPipeline, _levels[i], _levels[i].downBindings, constants);
     }
 
-    const float scatter = Sanitized(settings).scatter;
     for (uint32_t i = _levelCount - 1u; i-- > 0u;)
     {
         const BloomConstants constants{.texelSize = 1.0f / glm::vec2(_levels[i + 1].extent), .scatter = scatter};

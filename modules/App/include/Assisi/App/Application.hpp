@@ -32,6 +32,7 @@
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -405,6 +406,12 @@ protected:
     /// material debug views, which show a channel raw.
     void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
 
+    /// @brief How the scene is finished from this frame on: its exposure,
+    /// grade, white balance and glow, as its PostProcessVolumes set them at the
+    /// camera. The app calls this after drawing its scene; the player's own
+    /// settings go on top. Until it does, the defaults.
+    void SetScenePostProcess(const Render::PostProcessSettings &settings) { _scenePostProcess = settings; }
+
     /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
     /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable
     /// so an app-side options overlay can edit them; after changing aaMode or
@@ -578,6 +585,9 @@ private:
     Core::AssetStore _assets;
 
     Render::PostProcess _postProcess;
+    Render::PostProcessSettings _scenePostProcess;
+    /// When the post chain last ran, which the automatic exposure adapts over.
+    std::chrono::steady_clock::time_point _lastPostProcess{};
     Core::EventQueue _universalEvents{Core::EventScope::Universal};
     bool _initialized = false;
 
