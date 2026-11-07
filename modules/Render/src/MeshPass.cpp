@@ -105,22 +105,21 @@ bool MeshPass::Initialize(const InitParams &params)
     _bindlessLayout = params.bindlessLayout;
     _bindlessTable = params.bindlessTable;
     _materialTable = params.materialTable;
-    _depthVertexShaderPath = params.depthVertexShaderSpvPath;
-    _maskedDepthVertexShaderPath = params.maskedDepthVertexShaderSpvPath;
-    _maskedDepthPixelShaderPath = params.maskedDepthPixelShaderSpvPath;
-    _invariantVertexShaderPath = params.invariantVertexShaderSpvPath;
 
+    // None is optional: without the masked depth build a cutout material would
+    // draw solid, and without the blended one a see-through material would not
+    // draw — wrong images rather than missing features.
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShaders[kPixelShaderOpaque] = LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    // The masked build is not optional: without it a cutout material would draw
-    // solid, which is a wrong image rather than a missing feature.
-    _pixelShaders[kPixelShaderMasked] =
-        LoadSpirvShader(device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    // Nor is the blended one: without it a see-through material would not draw.
     _pixelShaders[kPixelShaderBlended] =
         LoadSpirvShader(device, params.blendedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderMasked] ||
-        !_pixelShaders[kPixelShaderBlended])
+    _depthVertexShader = LoadSpirvShader(device, params.depthVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _maskedDepthVertexShader =
+        LoadSpirvShader(device, params.maskedDepthVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _maskedDepthPixelShader = LoadSpirvShader(device, params.maskedDepthPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    _invariantVertexShader = LoadSpirvShader(device, params.invariantVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderBlended] ||
+        !_depthVertexShader || !_maskedDepthVertexShader || !_maskedDepthPixelShader || !_invariantVertexShader)
     {
         return false;
     }
@@ -300,23 +299,12 @@ bool MeshPass::Initialize(const InitParams &params)
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    // The prepass's sets were built against the old framebuffer, and the next
-    // PreparePrepass rebuilds them against this one.
-    _framebufferInfo = framebufferInfo;
-    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
-    {
-        _prepassPipelines[i] = nullptr;
-        _afterPrepassPipelines[i] = nullptr;
-    }
-
-    // The pipelines differ only in their pixel shader and their cull mode. Building
-    // them from one desc is what keeps everything else identical: a cutout surface,
-    // or the inside of one, must shade and depth-test exactly as the opaque front
-    // face does, or they would diverge in more than the property that separates them.
+    // Every pipeline is built from one desc, so they differ in nothing but what
+    // is set per stage and per MeshPipeline below: a surface that rasterized
+    // differently in the prepass would hold depth the lit pass cannot match.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.inputLayout = _inputLayout;
-    pipelineDesc.VS = _vertexShader;
     pipelineDesc.addBindingLayout(_bindingLayout);  // set 0: CBs, sampler, light buffers
     pipelineDesc.addBindingLayout(_bindlessLayout);  // set 1: bindless material textures
     // Meshes are authored CCW-front (standard convention). NVRHI's Vulkan backend
@@ -325,24 +313,49 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     // without this, back-face culling culls the actual front faces instead.
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
 
-    const nvrhi::ShaderHandle maskedPixelShader =
-        SpecializeForSamples(_pixelShaders[kPixelShaderMasked], framebufferInfo.sampleCount);
+    StagePipelines &prepass = _pipelines[std::to_underlying(MeshPassStage::DepthPrepass)];
+    StagePipelines &lit = _pipelines[std::to_underlying(MeshPassStage::Lit)];
+    const nvrhi::ShaderHandle maskedDepthPixelShader =
+        SpecializeForSamples(_maskedDepthPixelShader, framebufferInfo.sampleCount);
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
         const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
         const bool masked = MeshPipelineIsMasked(pipeline);
-        pipelineDesc.PS = masked ? maskedPixelShader : _pixelShaders[kPixelShaderOpaque];
-        pipelineDesc.renderState.blendState.alphaToCoverageEnable = masked && framebufferInfo.sampleCount > 1;
         pipelineDesc.renderState.rasterState.cullMode =
             MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
-        _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-        if (_pipelines[i] == nullptr)
+
+        // Depth and nothing else. The scene framebuffer has a colour target,
+        // and a pipeline with no fragment stage leaves what it would write
+        // there undefined, so the mask is what keeps the clear intact for the
+        // sky. An opaque surface gets no fragment stage at all, which is what
+        // keeps early depth rejection whole. Multisampled, a cutout writes its
+        // depth only to the samples its coverage keeps.
+        pipelineDesc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
+        pipelineDesc.PS = masked ? maskedDepthPixelShader : nullptr;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
+        pipelineDesc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = masked && framebufferInfo.sampleCount > 1;
+        prepass[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+
+        // Shades each pixel once, for the surface the prepass kept there: equal
+        // passes it and everything behind fails. The depth is already written,
+        // and writing it again would only cost bandwidth. A cutout needs no
+        // alpha test here, so it gets the shader that keeps early depth
+        // rejection; multisampled, the per-sample depth test already confines
+        // it to the samples the prepass covered.
+        pipelineDesc.VS = _invariantVertexShader;
+        pipelineDesc.PS = _pixelShaders[kPixelShaderOpaque];
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthFunc = AfterPrepassDepthTest(pipeline);
+        pipelineDesc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
+        lit[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+
+        if (prepass[i] == nullptr || lit[i] == nullptr)
         {
-            Core::Log::Error("MeshPass: failed to create the graphics pipeline ({}, {}).",
-                             MeshPipelineIsMasked(pipeline) ? "masked" : "opaque",
+            Core::Log::Error("MeshPass: failed to create the graphics pipelines ({}, {}).", masked ? "masked" : "opaque",
                              MeshPipelineIsDoubleSided(pipeline) ? "double-sided" : "back-face culled");
             return false;
         }
@@ -351,6 +364,7 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     // See-through surfaces are tested against the solid depth but write none:
     // each blends over everything behind it, which may be another of them.
     // Premultiplied, because the shader adds reflections alpha does not fade.
+    pipelineDesc.VS = _vertexShader;
     pipelineDesc.PS = _pixelShaders[kPixelShaderBlended];
     pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
@@ -377,91 +391,6 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     return true;
 }
 
-bool MeshPass::PreparePrepass()
-{
-    if (_prepassPipelines[0] != nullptr && _afterPrepassPipelines[0] != nullptr)
-    {
-        return true;
-    }
-
-    const auto load = [this](nvrhi::ShaderHandle &shader, const std::string &path, nvrhi::ShaderType type)
-    {
-        if (shader == nullptr)
-        {
-            shader = LoadSpirvShader(_device, path, type);
-        }
-        return shader != nullptr;
-    };
-    if (!load(_depthVertexShader, _depthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
-        !load(_maskedDepthVertexShader, _maskedDepthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
-        !load(_maskedDepthPixelShader, _maskedDepthPixelShaderPath, nvrhi::ShaderType::Pixel) ||
-        !load(_invariantVertexShader, _invariantVertexShaderPath, nvrhi::ShaderType::Vertex))
-    {
-        return false;
-    }
-
-    // The same desc the lit set is built from, so the three differ in nothing
-    // but what is set below: a surface that rasterized differently in the
-    // prepass would hold depth the lit pass cannot match.
-    nvrhi::GraphicsPipelineDesc desc;
-    desc.primType = nvrhi::PrimitiveType::TriangleList;
-    desc.inputLayout = _inputLayout;
-    desc.addBindingLayout(_bindingLayout);
-    desc.addBindingLayout(_bindlessLayout);
-    desc.renderState.rasterState.frontCounterClockwise = true;
-    desc.renderState.depthStencilState.depthTestEnable = true;
-
-    const nvrhi::ShaderHandle maskedDepthPixelShader =
-        SpecializeForSamples(_maskedDepthPixelShader, _framebufferInfo.sampleCount);
-    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
-    {
-        const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
-        const bool masked = MeshPipelineIsMasked(pipeline);
-        desc.renderState.rasterState.cullMode =
-            MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
-
-        // Depth and nothing else. The scene framebuffer has a colour target,
-        // and a pipeline with no fragment stage leaves what it would write
-        // there undefined, so the mask is what keeps the clear intact for the
-        // sky. An opaque surface gets no fragment stage at all, which is what
-        // keeps early depth rejection whole. Multisampled, a cutout writes its
-        // depth only to the samples its coverage keeps.
-        desc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
-        desc.PS = masked ? maskedDepthPixelShader : nullptr;
-        desc.renderState.depthStencilState.depthWriteEnable = true;
-        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
-        desc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
-        desc.renderState.blendState.alphaToCoverageEnable = masked && _framebufferInfo.sampleCount > 1;
-        _prepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
-
-        // Shades each pixel once, for the surface the prepass kept there: equal
-        // passes it and everything behind fails. The depth is already written,
-        // and writing it again would only cost bandwidth. A cutout needs no
-        // alpha test here, so it gets the shader that keeps early depth
-        // rejection; multisampled, the per-sample depth test already confines
-        // it to the samples the prepass covered.
-        desc.VS = _invariantVertexShader;
-        desc.PS = _pixelShaders[kPixelShaderOpaque];
-        desc.renderState.blendState.alphaToCoverageEnable = false;
-        desc.renderState.depthStencilState.depthWriteEnable = false;
-        desc.renderState.depthStencilState.depthFunc = AfterPrepassDepthTest(pipeline);
-        desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
-        _afterPrepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
-
-        if (_prepassPipelines[i] == nullptr || _afterPrepassPipelines[i] == nullptr)
-        {
-            Core::Log::Error("MeshPass: failed to create the depth prepass pipelines.");
-            for (uint32_t j = 0; j < kMeshPipelineCount; ++j)
-            {
-                _prepassPipelines[j] = nullptr;
-                _afterPrepassPipelines[j] = nullptr;
-            }
-            return false;
-        }
-    }
-    return true;
-}
-
 nvrhi::ShaderHandle MeshPass::SpecializeForSamples(nvrhi::IShader *shader, uint32_t samples) const
 {
     const nvrhi::ShaderSpecialization constant =
@@ -471,14 +400,7 @@ nvrhi::ShaderHandle MeshPass::SpecializeForSamples(nvrhi::IShader *shader, uint3
 
 const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage) const
 {
-    switch (stage)
-    {
-    case MeshPassStage::DepthPrepass:    return _prepassPipelines;
-    case MeshPassStage::LitAfterPrepass: return _afterPrepassPipelines;
-    case MeshPassStage::Lit:
-    case MeshPassStage::Count_:           break;
-    }
-    return _pipelines;
+    return _pipelines[std::to_underlying(stage)];
 }
 
 void MeshPass::SetShadowMap(nvrhi::ITexture *cascades)

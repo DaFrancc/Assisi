@@ -7,13 +7,12 @@
 // cutout surface gets in the prepass; opaque surfaces have no fragment stage
 // there at all.
 //
-// This is the only alpha test a cutout gets when there is a prepass. The lit
-// pass after it draws cutouts with an Equal depth test and no discard (see
+// This is the only alpha test a cutout gets. The lit pass after it draws
+// cutouts with an Equal depth test and no discard (see
 // Render::AfterPrepassDepthTest), so the texels this keeps are exactly the ones
 // shaded, and a hole, nearer than whatever shows through it, is never shaded.
 // Multisampled, the samples this covers are the ones holding the cutout's
-// depth, so the lit pass colours exactly those. Without a prepass, mesh.frag's
-// masked build tests the same alpha against the same cutoff instead.
+// depth, so the lit pass colours exactly those.
 
 #include "mesh/cutout.glsl"
 

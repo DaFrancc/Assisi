@@ -63,8 +63,7 @@ struct Surface
     bool  eonDiffuse;       // material uses the EON diffuse lobe
     bool  followSmoothing;  // shadow lookups lift onto the smooth-shaded curve
     bool  normalMapped;     // normal comes from a normal map, not the mesh alone
-    float alpha;           // base colour alpha; read by the ASSISI_ALPHA_MASK and ASSISI_ALPHA_BLEND builds
-    float alphaCutoff;      // alpha below this kills the fragment; 0 unless masked
+    float alpha;           // base colour alpha; read by the ASSISI_ALPHA_BLEND build
 };
 
 Surface SampleMaterial()
@@ -76,7 +75,6 @@ Surface SampleMaterial()
     vec4 base = sampleMaterialTex(mat.texIndices.x, vTexCoord) * mat.baseColorFactor;
     s.albedo = base.rgb * mat.openPbrParams.x;
     s.alpha = base.a;
-    s.alphaCutoff = mat.openPbrParams.w;
 
     // glTF packing: R = occlusion when packed here, G = roughness, B = metallic.
     vec4 orm = sampleMaterialTex(mat.texIndices.z, vTexCoord);

@@ -32,6 +32,9 @@ Assisi::Geometry::LodRange LodRangeFor(const Assisi::Render::MeshBuffer &mesh, u
 
 namespace
 {
+/// The GPU timer around DrawScene's draws, which are the depth prepass.
+constexpr const char *kPrepassTimer = "depth-prepass";
+
 /// Whether @p entity's mesh is left out for its own camera, of @p viewerInstance.
 bool HiddenFromViewer(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity, const MeshRenderer &meshRenderer,
                       Assisi::ECS::InstanceId viewerInstance)
@@ -189,8 +192,9 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "submit-indirect");
-        const Assisi::Render::GpuPassTimerScope drawTimer{DrawSceneTimerName(params.stage)};
-        submitStats = params.meshPass.SubmitIndirect(params.frame, inputs, params.stage);
+        const Assisi::Render::GpuPassTimerScope drawTimer{kPrepassTimer};
+        submitStats =
+            params.meshPass.SubmitIndirect(params.frame, inputs, Assisi::Render::MeshPassStage::DepthPrepass);
     }
 
     // Survivor tallies read back from the GPU (a few frames stale). Identical
@@ -210,8 +214,8 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
 {
     // A label and a CPU scope, not a GPU timer: the GPU path times its cull
     // dispatch and its draw separately, and pass timers cannot nest. Each path
-    // opens the `draw-scene` timer around its draw alone, which on the CPU path
-    // is everything this function records.
+    // opens the prepass timer around its draw alone, which on the CPU path is
+    // everything this function records.
     ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-scene");
 
     Assisi::ECS::Scene &scene = params.scene;
@@ -350,8 +354,8 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
         ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-submit");
-        const Assisi::Render::GpuPassTimerScope drawTimer{DrawSceneTimerName(params.stage)};
-        submitStats = meshPass.Submit(params.frame, items, params.stage);
+        const Assisi::Render::GpuPassTimerScope drawTimer{kPrepassTimer};
+        submitStats = meshPass.Submit(params.frame, items, Assisi::Render::MeshPassStage::DepthPrepass);
     }
 
     stats.drawnItems = submitStats.instances;

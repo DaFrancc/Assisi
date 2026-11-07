@@ -873,13 +873,8 @@ foreach(_shader_in ${_vk_shader_sources})
 endforeach()
 
 # Shader variants: the same source compiled again with a define, landing beside
-# the base .spv as <source>.<variant>.spv. The mesh pass needs mesh.frag both
-# with and without its alpha-test discard, because a shader that can discard
-# costs its whole pipeline early depth rejection — so the opaque geometry draws
-# through the build that cannot.
-assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
-    ASSISI_ALPHA_MASK)
-# And for see-through surfaces: alpha fades the diffuse light, written for
+# the base .spv as <source>.<variant>.spv. The mesh pass needs mesh.frag for
+# see-through surfaces too: alpha fades the diffuse light, written for
 # premultiplied blending.
 assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.blended.spv"
     ASSISI_ALPHA_BLEND)
@@ -890,11 +885,9 @@ assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/me
 assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/shadow_depth.vert"
     "shaders/shadow_depth.vert.masked.spv" ASSISI_ALPHA_MASK)
 
-# The depth prepass screen-space occlusion reads, and the lit pass that draws
-# over it. The plain mesh.vert build stays the lit pass whenever there is no
-# prepass, so a frame with occlusion off draws through exactly the stage it
-# always did; these three declare their position invariant so the lit pass's
-# depth matches the prepass's to the bit.
+# The depth prepass, and the lit pass that draws over it. These three declare
+# their position invariant so the lit pass's depth matches the prepass's to the
+# bit; the plain mesh.vert build draws the see-through surfaces.
 assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"
     "shaders/mesh.vert.depth.spv" ASSISI_DEPTH_ONLY)
 assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.vert"

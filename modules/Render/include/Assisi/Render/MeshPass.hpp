@@ -63,18 +63,15 @@ enum class MaterialDebugView : uint32_t
     Smoothing,
 };
 
-/// @brief Which of the mesh pass's three pipeline sets a draw goes through.
+/// @brief Which of the mesh pass's two pipeline sets a draw goes through.
 ///
-/// Lit is the only one a frame without a depth prepass ever touches. The other
-/// two exist for screen-space occlusion, which has to read the scene's depth
-/// before the lit pass runs: the prepass writes that depth, and the lit pass
-/// after it shades exactly the surfaces the prepass kept and writes no depth of
-/// its own.
+/// The prepass writes the scene's depth, and cuts masked materials' holes; the
+/// lit pass after it shades exactly the surfaces the prepass kept and writes no
+/// depth of its own.
 enum class MeshPassStage : uint8_t
 {
-    Lit,
     DepthPrepass,
-    LitAfterPrepass,
+    Lit,
     Count_
 };
 
@@ -164,24 +161,19 @@ public:
         nvrhi::IDevice *device = nullptr;
         nvrhi::FramebufferInfo framebufferInfo;
         /// Compiled-SPIR-V shader paths (see ShaderModule.hpp).
+        /// The see-through pass's vertex stage, and the lit pixel shader.
         std::string vertexShaderSpvPath;
         std::string pixelShaderSpvPath;
-        /// The same pixel shader built with its alpha-test discard enabled — the
-        /// MeshPipeline::Mask pipeline's. It is a separate build rather than a
-        /// branch because a shader that can discard costs its whole pipeline
-        /// early depth rejection, which opaque geometry must not pay for.
-        std::string maskedPixelShaderSpvPath;
         /// The same pixel shader built for see-through surfaces: diffuse light
         /// and glow faded by alpha, written for premultiplied blending.
         std::string blendedPixelShaderSpvPath;
-        /// The depth prepass's builds, loaded the first time a frame asks for a
-        /// prepass (PreparePrepass) and never before: the vertex stage alone,
-        /// the same with the varyings the alpha test reads, and that test.
+        /// The depth prepass's builds: the vertex stage alone, the same with the
+        /// varyings the alpha test reads, and that test.
         std::string depthVertexShaderSpvPath;
         std::string maskedDepthVertexShaderSpvPath;
         std::string maskedDepthPixelShaderSpvPath;
-        /// The lit pass's vertex stage with an invariant position, for drawing
-        /// after a prepass — see mesh.vert.
+        /// The lit pass's vertex stage, with a position invariant so its depth
+        /// matches the prepass's to the bit — see mesh.vert.
         std::string invariantVertexShaderSpvPath;
         /// Must outlive the pass — its light buffers bind into every binding set.
         const ClusterGrid *clusterGrid = nullptr;
@@ -200,12 +192,12 @@ public:
         nvrhi::IBuffer *materialTable = nullptr;
     };
 
-    /// @brief Loads the shaders and builds the pipeline against the framebuffer
+    /// @brief Loads the shaders and builds the pipelines against the framebuffer
     /// format in @p params.
-    /// @return false if either shader failed to load or the pipeline failed to build.
+    /// @return false if a shader failed to load or a pipeline failed to build.
     [[nodiscard]] bool Initialize(const InitParams &params);
 
-    /// @brief Recreates just the graphics pipeline against a new FramebufferInfo,
+    /// @brief Recreates the graphics pipelines against a new FramebufferInfo,
     /// reusing the shaders/input layout/binding layout already loaded by
     /// Initialize(). Needed when the render target's sample count changes at
     /// runtime (see Render::PostProcess) — a pipeline built for sampleCount=1
@@ -213,16 +205,6 @@ public:
     /// don't depend on FramebufferInfo) stay valid and cached.
     /// @pre IsValid() — call Initialize() first.
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
-
-    /// @brief Build the DepthPrepass and LitAfterPrepass pipelines, if they are
-    /// not built already for the current framebuffer.
-    ///
-    /// Lazy, so a renderer that never asks for a prepass never loads its shaders
-    /// or holds its pipelines. A RebuildPipeline drops them, and the next call
-    /// here builds them against the new framebuffer.
-    /// @return false if a shader failed to load or a pipeline to build; the two
-    /// stages are then unusable and the caller should draw Lit alone.
-    [[nodiscard]] bool PreparePrepass();
 
     /// @brief What the mesh shader needs to sample the sun's cascades.
     ///
@@ -397,9 +379,8 @@ public:
     /// @param stage  Which pipeline set records the draws. A DepthPrepass
     ///               submission is kept, and Redraw replays it lit.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
-    ///      PreparePrepass() succeeded, for any stage but Lit.
     [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items,
-                                     MeshPassStage stage = MeshPassStage::Lit) const;
+                                     MeshPassStage stage) const;
 
     /// @brief The GPU-built draw list a MeshCuller produced this frame (stage F1):
     /// the compute pass wrote the per-instance records and grew each batch
@@ -436,7 +417,7 @@ public:
     /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
     ///      recorded into the same command list ahead of this call.
     [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in,
-                                             MeshPassStage stage = MeshPassStage::Lit) const;
+                                             MeshPassStage stage) const;
 
     /// @brief Record this frame's last Submit or SubmitIndirect again, through
     /// @p stage's pipelines.
@@ -459,11 +440,14 @@ public:
 
     bool IsValid() const
     {
-        for (const nvrhi::GraphicsPipelineHandle &pipeline : _pipelines)
+        for (const StagePipelines &stage : _pipelines)
         {
-            if (pipeline == nullptr)
+            for (const nvrhi::GraphicsPipelineHandle &pipeline : stage)
             {
-                return false;
+                if (pipeline == nullptr)
+                {
+                    return false;
+                }
             }
         }
         for (const nvrhi::GraphicsPipelineHandle &pipeline : _blendedPipelines)
@@ -547,20 +531,22 @@ private:
     const ClusterGrid *_clusterGrid = nullptr;
     const FogVolumeBuffers *_fogVolumes = nullptr;
 
-    /// @brief Pixel-shader builds the pass loads: the same GLSL with and without
-    /// the alpha-test discard, and for see-through surfaces. Fewer than the
-    /// pipelines, because cull mode is rasterizer state — it needs a pipeline of
-    /// its own but not a second shader.
+    /// @brief Pixel-shader builds the lit and see-through draws use. Fewer than
+    /// the pipelines, because cull mode is rasterizer state — it needs a
+    /// pipeline of its own but not a second shader.
     enum PixelShaderVariant : uint32_t
     {
         kPixelShaderOpaque = 0,
-        kPixelShaderMasked = 1,
-        kPixelShaderBlended = 2,
+        kPixelShaderBlended = 1,
         kPixelShaderVariantCount,
     };
 
     nvrhi::ShaderHandle _vertexShader;
     nvrhi::ShaderHandle _pixelShaders[kPixelShaderVariantCount];
+    nvrhi::ShaderHandle _depthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthVertexShader;
+    nvrhi::ShaderHandle _maskedDepthPixelShader;
+    nvrhi::ShaderHandle _invariantVertexShader;
     nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::SamplerHandle _sampler;
@@ -568,27 +554,13 @@ private:
     // the receiver's plane and blends the four itself, so even a one-tap lookup
     // comes back filtered rather than as a hard 0 or 1.
     nvrhi::SamplerHandle _shadowSampler;
-    // One pipeline per MeshPipeline, differing only in which pixel shader they
-    // carry and whether they cull back faces. A draw run selects its own off the
-    // sort key.
-    nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
-    // The blended pass's, one per BlendedFaces, rebuilt with the lit set.
+    // One pipeline per stage and MeshPipeline, differing within a stage only in
+    // whether they alpha-test and cull back faces. A draw run selects its own
+    // off the sort key.
+    using StagePipelines = nvrhi::GraphicsPipelineHandle[kMeshPipelineCount];
+    StagePipelines _pipelines[std::to_underlying(MeshPassStage::Count_)];
+    // The blended pass's, one per BlendedFaces, rebuilt with the others.
     nvrhi::GraphicsPipelineHandle _blendedPipelines[std::to_underlying(BlendedFaces::Count_)];
-
-    // The prepass's two sets, empty until PreparePrepass builds them and dropped
-    // by RebuildPipeline, which is why the framebuffer they are built against is
-    // kept. The shaders stay once loaded: they do not depend on the framebuffer.
-    nvrhi::FramebufferInfo _framebufferInfo;
-    std::string _depthVertexShaderPath;
-    std::string _maskedDepthVertexShaderPath;
-    std::string _maskedDepthPixelShaderPath;
-    std::string _invariantVertexShaderPath;
-    nvrhi::ShaderHandle _depthVertexShader;
-    nvrhi::ShaderHandle _maskedDepthVertexShader;
-    nvrhi::ShaderHandle _maskedDepthPixelShader;
-    nvrhi::ShaderHandle _invariantVertexShader;
-    nvrhi::GraphicsPipelineHandle _prepassPipelines[kMeshPipelineCount];
-    nvrhi::GraphicsPipelineHandle _afterPrepassPipelines[kMeshPipelineCount];
 
     // Which path this frame's draws were last submitted through, and for the GPU
     // path what it was handed, so Redraw can replay them. The CPU path's own

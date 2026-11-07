@@ -264,8 +264,8 @@ public:
     /// @brief Whether screen-space occlusion darkens the indirect term, and how.
     /// Applied on the next Render().
     ///
-    /// Off draws the frame there was before it existed — no depth prepass, the
-    /// lit pass through its own pipelines — and holds no texture of it.
+    /// Off draws the frame there was before it existed, and holds no texture
+    /// of it.
     void SetSsaoSettings(const Render::SsaoSettings &settings) { _ssaoSettings = Render::Sanitized(settings); }
     [[nodiscard]] const Render::SsaoSettings &SsaoSettings() const { return _ssaoSettings; }
 
@@ -452,24 +452,12 @@ private:
                                                             const SkyResolution &sky,
                                                             const Render::FogConstants &fog);
 
-    /// @brief Hold the prepass pipelines for @p frame.
-    ///
-    /// Every frame with a depth target draws one, because the lit pass then
-    /// shades each pixel once instead of once per overlapping surface: shading
-    /// runs the whole light loop and every shadow filter, and re-rasterising the
-    /// scene as depth alone costs far less than the overdraw it removes. If the
-    /// pipelines fail to build, the frame is lit directly and it is said once.
-    ///
-    /// @return whether this frame draws a depth prepass.
-    [[nodiscard]] bool PrepareDepthPrepass(const Render::RenderFrame &frame);
-
     /// @brief Hold the scene distance target and occlusion's targets for
     /// @p frame, and point the mesh pass at the result. Releases all of it while
-    /// the setting is off or there is no @p prepass to read depth from, and turns
-    /// the setting off if any of it fails.
+    /// the setting is off, and turns the setting off if any of it fails.
     ///
     /// @return whether this frame runs occlusion.
-    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass);
+    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame);
 
     /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
     /// them. Returns what the mesh shader needs to sample the result — a null
@@ -664,9 +652,6 @@ private:
     bool _severalLevelPostProcessWarned = false;
     bool _fogEnabled = true;
     bool _cloudsEnabled = true;
-    // Set once the prepass pipelines have failed to build, so the failure is
-    // said once and every later frame is lit directly without retrying.
-    bool _prepassFailed = false;
     Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
     DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
     Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay

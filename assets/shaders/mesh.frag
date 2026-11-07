@@ -17,9 +17,6 @@
 #include "mesh/sun_shadows.glsl"
 #include "mesh/local_shadows.glsl"
 #include "mesh/indirect.glsl"
-#ifdef ASSISI_ALPHA_MASK
-#include "mesh/cutout.glsl"
-#endif
 
 // The display encode tonemap.frag applies, repeated here for the debug views
 // it passes through untouched.
@@ -75,16 +72,6 @@ void main()
 {
     CaptureSurfacePlane();
     Surface surf = SampleMaterial();
-
-#ifdef ASSISI_ALPHA_MASK
-    // Only this build can discard, because a shader that can loses early depth
-    // rejection for every draw through its pipeline.
-    float coverage = CutoutCoverage(surf.alpha, surf.alphaCutoff);
-    if (coverage < 0.0)
-    {
-        discard;
-    }
-#endif
 
     // Material debug views write one channel straight out; the tone map passes
     // them through untouched. Colour channels are gamma-encoded for display.
@@ -416,9 +403,6 @@ void main()
 #ifdef ASSISI_ALPHA_BLEND
     // Premultiplied: alpha is how much of what is behind this surface hides.
     outColor = vec4(color, surf.alpha);
-#elif defined(ASSISI_ALPHA_MASK)
-    // Alpha-to-coverage, when multisampled, reads it as the samples to keep.
-    outColor = vec4(color, coverage);
 #else
     outColor = vec4(color, 1.0);
 #endif

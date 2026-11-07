@@ -27,15 +27,12 @@ namespace
 // under the asset root by the build; resolved through Core::AssetSystem.
 constexpr const char *kSceneVertexShader = "shaders/mesh.vert.spv";
 constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
-// The same pixel shader built with its alpha-test discard enabled, for the mesh
-// pass's masked pipeline (see MeshPass::InitParams).
-constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
-// And built for see-through surfaces, for its blended pipelines.
+// The same pixel shader built for see-through surfaces, for the mesh pass's
+// blended pipelines.
 constexpr const char *kSceneBlendedPixelShader = "shaders/mesh.frag.blended.spv";
 
-// The depth prepass every screen-space feature reads, and the lit pass's vertex
-// stage for drawing over it (see MeshPass::PreparePrepass). Loaded only once a
-// frame asks for scene depth.
+// The depth prepass, and the lit pass's vertex stage for drawing over it (see
+// MeshPass::RebuildPipeline).
 constexpr const char *kSceneDepthVertexShader = "shaders/mesh.vert.depth.spv";
 constexpr const char *kSceneMaskedDepthVertexShader = "shaders/mesh.vert.depth.masked.spv";
 constexpr const char *kSceneMaskedDepthPixelShader = "shaders/mesh_depth.frag.spv";
@@ -191,7 +188,6 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                          .framebufferInfo = params.framebufferInfo,
                                          .vertexShaderSpvPath = kSceneVertexShader,
                                          .pixelShaderSpvPath = kScenePixelShader,
-                                         .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
                                          .blendedPixelShaderSpvPath = kSceneBlendedPixelShader,
                                          .depthVertexShaderSpvPath = kSceneDepthVertexShader,
                                          .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
@@ -486,8 +482,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const bool prepass = PrepareDepthPrepass(frame);
-    const bool occlusion = PrepareScreenOcclusion(frame, prepass);
+    const bool occlusion = PrepareScreenOcclusion(frame);
 
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
@@ -507,8 +502,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                                                     .cloudShadow = cloudShadow};
         _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
     }
-    // With a prepass, this draws depth alone: the same extract, cull and sort as
-    // ever, kept for the lit pass below to shade. Without, it is the lit pass.
+    // The depth prepass: the extract, cull and sort, kept for the lit pass below
+    // to shade.
     _lastDrawStats =
         DrawScene(DrawSceneParams{.scene = scene,
                                   .meshPass = _meshPass,
@@ -524,25 +519,19 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                   .culler = &_meshCuller,
                                   .cullBuilder = &_cullBuilder,
                                   .lodSelector = &_lodSelector,
-                                  .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit,
                                   .viewerInstance = ViewerInstance(scene, _viewingCamera),
                                   .blendedItems = &_blendedItems});
 
-    if (prepass)
+    if (occlusion)
     {
-        if (occlusion)
-        {
-            _sceneDistancePass.Render(frame.commandList, projection);
-            _ssaoPass.Render(
-                frame.commandList,
-                Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
-        }
+        _sceneDistancePass.Render(frame.commandList, projection);
+        _ssaoPass.Render(frame.commandList,
+                         Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
+    }
 
-        // Under the name the lit pass has always been measured by, so a capture
-        // with a prepass reads `draw-scene` against its own history and the
-        // prepass, the distance and occlusion as the new rows beside it.
+    {
         ASSISI_PROFILE_GPU_PASS(frame.commandList, "draw-scene");
-        _lastDrawStats.drawCalls += _meshPass.Redraw(frame, Render::MeshPassStage::LitAfterPrepass).drawCalls;
+        _lastDrawStats.drawCalls += _meshPass.Redraw(frame, Render::MeshPassStage::Lit).drawCalls;
     }
 
     // The sky goes last, into whatever the geometry left at the depth clear. Both
@@ -764,26 +753,10 @@ Render::CloudShadowConstants SceneRenderer::UpdateClouds(const Render::RenderFra
     return Render::MakeCloudShadowConstants(settings, placement, static_cast<float>(_viewOrigin.y));
 }
 
-bool SceneRenderer::PrepareDepthPrepass(const Render::RenderFrame &frame)
+bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
 {
-    if (_prepassFailed || frame.depthTexture == nullptr)
-    {
-        return false;
-    }
-    if (!_meshPass.PreparePrepass())
-    {
-        Core::Log::Warn("SceneRenderer: the depth prepass failed to build; the scene is lit without one.");
-        _prepassFailed = true;
-        return false;
-    }
-    return true;
-}
-
-bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass)
-{
-    // Released rather than kept while off — pay for what you place. Occlusion
-    // reads the prepass's depth, so a frame without one has nothing to read.
-    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid() && prepass;
+    // Released rather than kept while off — pay for what you place.
+    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
     if (wanted)
     {
         if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||

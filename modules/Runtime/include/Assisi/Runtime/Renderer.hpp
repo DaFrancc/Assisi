@@ -100,12 +100,6 @@ struct DrawSceneParams
     /// bias and each instance's named level, and remembers nothing.
     LodSelector *lodSelector = nullptr;
 
-    /// Which of the mesh pass's pipeline sets draws the list. A DepthPrepass
-    /// draws depth alone and leaves the list prepared for MeshPass::Redraw to
-    /// shade; it is timed as `depth-prepass` rather than `draw-scene`, so the
-    /// lit pass that follows keeps the name it has always been measured under.
-    Assisi::Render::MeshPassStage stage = Assisi::Render::MeshPassStage::Lit;
-
     /// The blueprint instance the camera belongs to: an entity of the same
     /// instance whose MeshRenderer is hiddenFromOwnCamera is not drawn. Invalid hides nothing.
     Assisi::ECS::InstanceId viewerInstance;
@@ -115,12 +109,6 @@ struct DrawSceneParams
     /// down. Neither path draws them itself. Null leaves them undrawn.
     std::vector<Assisi::Render::DrawItem> *blendedItems = nullptr;
 };
-
-/// @brief The GPU timer DrawScene opens around its draws for @p stage.
-[[nodiscard]] constexpr const char *DrawSceneTimerName(Assisi::Render::MeshPassStage stage)
-{
-    return stage == Assisi::Render::MeshPassStage::DepthPrepass ? "depth-prepass" : "draw-scene";
-}
 
 /// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer
 ///        entity in the scene, through the shared mesh pass.
@@ -135,6 +123,9 @@ struct DrawSceneParams
 /// false submits in query order — both for A/B comparing the seam (the image is
 /// identical either way, only the bind counts change). See-through submeshes go
 /// to `blendedItems` instead, always sorted, because their order is the picture.
+///
+/// What it records is the depth prepass, timed as `depth-prepass`; the list
+/// stays prepared for MeshPass::Redraw to shade as the lit pass.
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);

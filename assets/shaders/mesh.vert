@@ -1,7 +1,6 @@
 #version 450
 
-// Three builds of one stage. The plain one is the lit pass's whenever there is
-// no depth prepass, and is what every frame drew with before there was one.
+// Three builds of one stage. The plain one draws see-through surfaces.
 //
 // ASSISI_DEPTH_ONLY builds the prepass: position out and nothing else, plus the
 // texture coordinate and material row mesh_depth.frag alpha-tests against when
