@@ -20,8 +20,7 @@ layout(location = 1) out flat uint vMaterialIndex;
 
 // Per-instance records, one per drawn submesh instance, indexed by
 // gl_InstanceIndex (each draw sets startInstanceLocation). All the frame's
-// views share one buffer — each view's commands index its own range — so a
-// frame uploads once however many views it draws. Must match
+// views share one buffer, each view's commands indexing its own range. Must match
 // Render::ShadowInstanceData (std430: mat4 + uint, 80-byte stride). The opaque
 // build declares materialIndex and never reads it: one record shape for both
 // pipelines is what lets them share the buffer.
