@@ -23,13 +23,14 @@
 /// softness overlaps, along an edge or at a corner, the two thinnings multiply,
 /// so the fog there is thinner than near either and never less than none. A
 /// falloff thins the fog upward from the floor besides, as the level's mist
-/// thins above its height.
+/// thins above its height, and a pile domes the top, tall over the middle and
+/// low at the edges, so the fog heaps up rather than filling a box.
 ///
 /// Along a line of sight the fog is a polynomial between the points where its
 /// formula changes, at the inner edges of the softness, times the falloff. Each
-/// piece is integrated by the two-point Gauss-Legendre rule, which is exact for
-/// the cubics a volume without falloff makes, in steps short enough that the
-/// falloff costs it no more than half a percent.
+/// piece is integrated by the three-point Gauss-Legendre rule, which is exact
+/// for the polynomials a volume without falloff makes, in steps short enough
+/// that the falloff costs it no more than a fifth of a percent.
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
@@ -91,7 +92,7 @@ struct FogVolumeGpu
     /// xyz = linear colour, w = optical depth per metre where the fog is full.
     glm::vec4 color{0.0f};
     /// x = metres above the floor for the fog to thin to about a third (1/e),
-    /// zero for even; yzw unused.
+    /// zero for even; y = the pile, zero for a flat top; zw unused.
     glm::vec4 profile{0.0f};
     /// x = FogVolumeKind, y = 1 while lit by the sky, z = the first outline edge,
     /// w = how many outline edges.
@@ -146,6 +147,11 @@ struct FogVolumeDesc
     /// How many metres above the box's floor the fog takes to thin to about a
     /// third (1/e). Zero keeps it even.
     float falloff = 0.0f;
+    /// How far the top domes, from 0 for flat to 1 for down to the floor at the
+    /// edges of the box's footprint: the top over a point falls by the pile
+    /// times the height, times the square of the point's distance from the
+    /// middle in units of the footprint's half extents.
+    float pile = 0.0f;
     /// For an outline: its edges, as AppendFogOutline placed them.
     uint32_t firstEdge = 0u;
     uint32_t edgeCount = 0u;

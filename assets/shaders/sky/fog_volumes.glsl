@@ -44,9 +44,14 @@ const uint kFogVolumeOutline   = 2u;
 
 // Must match FogVolume.cpp's constants of the same names.
 const float kFogOutlineBoundsMargin = 1.0e-3;
-const float kFogGaussNode           = 0.57735027;
-const float kFogMaxFalloffPerStep   = 2.0;
+const float kFogGaussOuterNode      = 0.77459667;
+const float kFogGaussOuterWeight    = 5.0 / 9.0;
+const float kFogGaussMiddleWeight   = 8.0 / 9.0;
+const float kFogMaxFalloffPerStep   = 4.0;
 const float kFogMaxStepsPerPiece    = 8.0;
+
+// Further than any line reaches, for an interval with no end.
+const float kFogForever = 3.0e38;
 
 // Must match FogVolume.cpp's Density.
 const int kFogDensityBox       = 0;
@@ -54,8 +59,13 @@ const int kFogDensityEllipsoid = 1;
 const int kFogDensityLayers    = 2;
 const int kFogDensityWall      = 3;
 
-// Must match FogVolume.cpp's Breaks::kSlots.
-const int kFogBreakSlots = 6;
+// Must match FogVolume.cpp's Breaks::kSlots and Breaks::Slot.
+const int kFogBreakSlots   = 8;
+const int kFogSlotAcrossX  = 0;
+const int kFogSlotCore     = 0;
+const int kFogSlotAcrossZ  = 2;
+const int kFogSlotTop      = 4;
+const int kFogSlotFloor    = 6;
 
 // What FogVolumeSpan returns: metres of full fog, and where the box is reached.
 // Render::FogSpan's `length` is `fullMetres` here, because GLSL reads `.length`
@@ -66,18 +76,28 @@ struct FogSpan
     float entry;
 };
 
+// See Dome.
+struct FogDome
+{
+    float drop;
+    float top;
+    vec2  footprint;
+};
+
 // See DensityContext.
 struct FogDensity
 {
-    vec3  start;
-    vec3  ray;
-    vec3  extent;
-    float softness;
-    float falloff;
-    vec2  wallFrom;
-    vec2  wallNormal;
-    float band;
-    int   kind;
+    vec3    start;
+    vec3    ray;
+    vec3    extent;
+    float   softness;
+    float   falloff;
+    FogDome dome;
+    vec2    wallFrom;
+    vec2    wallNormal;
+    float   layerSoftness;
+    float   band;
+    int     kind;
 };
 
 // See Breaks. Every slot is read at a constant index, so the array stays in
@@ -106,10 +126,33 @@ float FogRamp(float depth, float span, float soft)
     return min(min(depth, span - depth) / min(soft, 0.5 * span), 1.0);
 }
 
+// See Rise.
+float FogRise(float depth, float soft)
+{
+    if (soft <= 0.0)
+    {
+        return depth >= 0.0 ? 1.0 : 0.0;
+    }
+    return clamp(depth / soft, 0.0, 1.0);
+}
+
 // See FalloffAt.
 float FogFalloffAt(float height, float falloff)
 {
     return falloff > 0.0 ? exp(-max(height, 0.0) / falloff) : 1.0;
+}
+
+// See DomeOf.
+FogDome FogDomeOf(FogVolume volume, float top, float depth)
+{
+    return FogDome(depth * volume.profile.y, top, volume.extents.xz);
+}
+
+// See DomeDepth.
+float FogDomeDepth(FogDome dome, vec3 p)
+{
+    vec2 across = p.xz / dome.footprint;
+    return dome.top - dome.drop * dot(across, across) - p.y;
 }
 
 // See DensityAt.
@@ -118,19 +161,19 @@ float FogDensityAt(FogDensity d, float t)
     vec3  p       = d.start + d.ray * t;
     vec3  e       = d.extent;
     float falloff = FogFalloffAt(p.y + e.y, d.falloff);
-    if (d.kind == kFogDensityBox)
-    {
-        return FogRamp(p.x + e.x, 2.0 * e.x, d.softness) * FogRamp(p.y + e.y, 2.0 * e.y, d.softness) *
-               FogRamp(p.z + e.z, 2.0 * e.z, d.softness) * falloff;
-    }
+    float top     = FogRise(FogDomeDepth(d.dome, p), d.layerSoftness);
     if (d.kind == kFogDensityEllipsoid)
     {
         vec3  unit     = p / e;
         float radiusSq = dot(unit, unit);
         float shell    = d.band > 0.0 ? clamp((1.0 - radiusSq) / d.band, 0.0, 1.0) : (radiusSq <= 1.0 ? 1.0 : 0.0);
-        return shell * falloff;
+        return shell * top * falloff;
     }
-    float layers = FogRamp(p.y + e.y, 2.0 * e.y, d.softness) * falloff;
+    float layers = FogRise(p.y + e.y, d.layerSoftness) * top * falloff;
+    if (d.kind == kFogDensityBox)
+    {
+        return FogRamp(p.x + e.x, 2.0 * e.x, d.softness) * FogRamp(p.z + e.z, 2.0 * e.z, d.softness) * layers;
+    }
     if (d.kind == kFogDensityWall)
     {
         float depth = dot(d.wallNormal, p.xz - d.wallFrom);
@@ -162,6 +205,14 @@ vec2 FogFaceBreaks(float start, float rate, float halfExtent, float soft, float 
     return clamp(vec2(min(a, b), max(a, b)), vec2(0.0), vec2(len));
 }
 
+// Sets the pair of slots from `slot` on. `slot` is always a constant, so the
+// slots stay in registers.
+void FogSetPair(inout FogBreaks breaks, int slot, vec2 points)
+{
+    breaks.at[slot]     = points.x;
+    breaks.at[slot + 1] = points.y;
+}
+
 void FogSwapIfAfter(inout float a, inout float b)
 {
     float low = min(a, b);
@@ -169,25 +220,105 @@ void FogSwapIfAfter(inout float a, inout float b)
     a         = low;
 }
 
-// A sorting network, the same as Breaks::Sort's: these twelve compare-and-swaps,
-// in this order, sort any six values, the fewest any fixed sequence can. The
-// pairs follow no pattern and each relies on the ones before it, so keep them
-// as they are. Written out, every index is a constant and the slots stay in
-// registers; a sort whose indices depend on the data pushes them out to memory.
+// A sorting network, the same as Breaks::Sort's, Batcher's for eight: these
+// nineteen compare-and-swaps, in this order, sort any eight values, the fewest
+// any fixed sequence can. The pairs look arbitrary and each relies on the ones
+// before it, so keep them as they are. Written out, every index is a constant
+// and the slots stay in registers; a sort whose indices depend on the data
+// pushes them out to memory.
 void FogSortBreaks(inout FogBreaks breaks)
 {
-    FogSwapIfAfter(breaks.at[0], breaks.at[5]);
-    FogSwapIfAfter(breaks.at[1], breaks.at[3]);
-    FogSwapIfAfter(breaks.at[2], breaks.at[4]);
-    FogSwapIfAfter(breaks.at[1], breaks.at[2]);
-    FogSwapIfAfter(breaks.at[3], breaks.at[4]);
-    FogSwapIfAfter(breaks.at[0], breaks.at[3]);
-    FogSwapIfAfter(breaks.at[2], breaks.at[5]);
     FogSwapIfAfter(breaks.at[0], breaks.at[1]);
     FogSwapIfAfter(breaks.at[2], breaks.at[3]);
     FogSwapIfAfter(breaks.at[4], breaks.at[5]);
+    FogSwapIfAfter(breaks.at[6], breaks.at[7]);
+    FogSwapIfAfter(breaks.at[0], breaks.at[2]);
+    FogSwapIfAfter(breaks.at[1], breaks.at[3]);
+    FogSwapIfAfter(breaks.at[4], breaks.at[6]);
+    FogSwapIfAfter(breaks.at[5], breaks.at[7]);
+    FogSwapIfAfter(breaks.at[1], breaks.at[2]);
+    FogSwapIfAfter(breaks.at[5], breaks.at[6]);
+    FogSwapIfAfter(breaks.at[0], breaks.at[4]);
+    FogSwapIfAfter(breaks.at[1], breaks.at[5]);
+    FogSwapIfAfter(breaks.at[2], breaks.at[6]);
+    FogSwapIfAfter(breaks.at[3], breaks.at[7]);
+    FogSwapIfAfter(breaks.at[2], breaks.at[4]);
+    FogSwapIfAfter(breaks.at[3], breaks.at[5]);
     FogSwapIfAfter(breaks.at[1], breaks.at[2]);
     FogSwapIfAfter(breaks.at[3], breaks.at[4]);
+    FogSwapIfAfter(breaks.at[5], breaks.at[6]);
+}
+
+// See DomeInterval: the stretch of the line at least `depth` below the dome.
+bool FogDomeInterval(FogDome dome, vec3 start, vec3 ray, float depth, out vec2 interval)
+{
+    interval = vec2(-kFogForever, kFogForever);
+    vec2  across = start.xz / dome.footprint;
+    vec2  turn   = ray.xz / dome.footprint;
+    float a      = -dome.drop * dot(turn, turn);
+    float b      = -ray.y - 2.0 * dome.drop * dot(across, turn);
+    float c      = dome.top - start.y - dome.drop * dot(across, across) - depth;
+    if (a == 0.0)
+    {
+        if (b == 0.0)
+        {
+            return c >= 0.0;
+        }
+        float root = -c / b;
+        interval   = b > 0.0 ? vec2(root, kFogForever) : vec2(-kFogForever, root);
+        return true;
+    }
+    float discriminant = b * b - 4.0 * a * c;
+    if (discriminant < 0.0)
+    {
+        return false;
+    }
+    float q      = -0.5 * (b + (b >= 0.0 ? 1.0 : -1.0) * sqrt(discriminant));
+    float first  = q / a;
+    float second = q != 0.0 ? c / q : first;
+    interval     = vec2(min(first, second), max(first, second));
+    return true;
+}
+
+// See TopBreaks.
+vec2 FogTopBreaks(FogDome dome, vec3 start, vec3 ray, float soft, float len)
+{
+    vec2 interval;
+    if (soft <= 0.0 || !FogDomeInterval(dome, start, ray, soft, interval))
+    {
+        return vec2(len);
+    }
+    return clamp(interval, vec2(0.0), vec2(len));
+}
+
+// See FloorBreak.
+float FogFloorBreak(float height, float rate, float soft, float len)
+{
+    if (soft <= 0.0 || rate == 0.0)
+    {
+        return len;
+    }
+    return clamp((soft - height) / rate, 0.0, len);
+}
+
+// See ClipToDome: narrows the stretch to the part under the dome.
+bool FogClipToDome(FogDome dome, vec3 ray, inout vec3 start, inout float entry, inout float len)
+{
+    vec2 under;
+    if (!FogDomeInterval(dome, start, ray, 0.0, under))
+    {
+        return false;
+    }
+    float from = max(under.x, 0.0);
+    float to   = min(under.y, len);
+    if (!(to > from))
+    {
+        return false;
+    }
+    start += ray * from;
+    entry += from;
+    len    = to - from;
+    return true;
 }
 
 // See IntegratePiece.
@@ -196,12 +327,13 @@ float FogIntegratePiece(FogDensity d, float from, float to)
     float thinning = d.falloff > 0.0 ? abs(d.ray.y) * (to - from) / d.falloff : 0.0;
     float steps    = clamp(ceil(thinning / kFogMaxFalloffPerStep), 1.0, kFogMaxStepsPerPiece);
     float step     = (to - from) / steps;
-    float offset   = 0.5 * step * kFogGaussNode;
+    float offset   = 0.5 * step * kFogGaussOuterNode;
     float sum      = 0.0;
     for (float index = 0.0; index < steps; index += 1.0)
     {
         float middle = from + (index + 0.5) * step;
-        sum += FogDensityAt(d, middle - offset) + FogDensityAt(d, middle + offset);
+        sum += kFogGaussOuterWeight * (FogDensityAt(d, middle - offset) + FogDensityAt(d, middle + offset)) +
+               kFogGaussMiddleWeight * FogDensityAt(d, middle);
     }
     return sum * 0.5 * step;
 }
@@ -289,20 +421,21 @@ FogSpan FogBoxSpan(vec3 origin, vec3 ray, FogVolume volume, float distance)
     vec3  start;
     float entry;
     float len;
-    if (!FogBoxStretch(origin, ray, extent, distance, start, entry, len))
+    float   layerSoft = min(soft, extent.y);
+    FogDome dome      = FogDomeOf(volume, extent.y, 2.0 * extent.y);
+    if (!FogBoxStretch(origin, ray, extent, distance, start, entry, len) ||
+        !FogClipToDome(dome, ray, start, entry, len))
     {
         return FogSpan(0.0, 0.0);
     }
-    FogBreaks breaks;
-    for (int axis = 0; axis < 3; axis++)
-    {
-        vec2 pair = FogFaceBreaks(start[axis], ray[axis], extent[axis], soft, len);
-        breaks.at[2 * axis]     = pair.x;
-        breaks.at[2 * axis + 1] = pair.y;
-    }
+    FogBreaks breaks = FogNoBreaks(len);
+    FogSetPair(breaks, kFogSlotAcrossX, FogFaceBreaks(start.x, ray.x, extent.x, soft, len));
+    FogSetPair(breaks, kFogSlotAcrossZ, FogFaceBreaks(start.z, ray.z, extent.z, soft, len));
+    FogSetPair(breaks, kFogSlotTop, FogTopBreaks(dome, start, ray, layerSoft, len));
+    breaks.at[kFogSlotFloor] = FogFloorBreak(start.y + extent.y, ray.y, layerSoft, len);
     FogSortBreaks(breaks);
-    FogDensity d = FogDensity(start, ray, extent, soft, volume.profile.x, vec2(0.0), vec2(0.0), 0.0,
-                              kFogDensityBox);
+    FogDensity d = FogDensity(start, ray, extent, soft, volume.profile.x, dome, vec2(0.0), vec2(0.0), layerSoft,
+                              0.0, kFogDensityBox);
     return FogSpan(FogIntegrate(d, breaks, 0.0, len), entry);
 }
 
@@ -331,21 +464,32 @@ FogSpan FogEllipsoidSpan(vec3 origin, vec3 ray, FogVolume volume, float distance
     {
         return FogSpan(0.0, 0.0);
     }
-    float depth = min(volume.extents.w / smallest, 1.0);
+    // Raised by the top's softness, as EllipsoidSpan's.
+    float   soft      = volume.extents.w;
+    float   layerSoft = min(soft, radii.y);
+    FogDome dome      = FogDomeOf(volume, radii.y + layerSoft, 2.0 * radii.y + layerSoft);
+    vec3    start     = origin + ray * from;
+    float   entry     = from;
+    float   len       = to - from;
+    if (!FogClipToDome(dome, ray, start, entry, len))
+    {
+        return FogSpan(0.0, 0.0);
+    }
+    float depth = min(soft / smallest, 1.0);
     float band  = depth * (2.0 - depth);
     float core  = 1.0 - band;
-    FogBreaks breaks = FogNoBreaks(to - from);
+    FogBreaks breaks = FogNoBreaks(len);
     if (band > 0.0 && closestSq < core)
     {
-        // In order already, so no sorting.
         float coreHalf = sqrt((core - closestSq) / stretch);
-        vec2  coreEnds = clamp(vec2(closestAt - coreHalf, closestAt + coreHalf) - from, vec2(0.0), vec2(to - from));
-        breaks.at[0] = coreEnds.x;
-        breaks.at[1] = coreEnds.y;
+        FogSetPair(breaks, kFogSlotCore,
+                   clamp(vec2(closestAt - coreHalf, closestAt + coreHalf) - entry, vec2(0.0), vec2(len)));
     }
-    FogDensity d = FogDensity(origin + ray * from, ray, radii, volume.extents.w, volume.profile.x, vec2(0.0),
-                              vec2(0.0), band, kFogDensityEllipsoid);
-    return FogSpan(FogIntegrate(d, breaks, 0.0, to - from), from);
+    FogSetPair(breaks, kFogSlotTop, FogTopBreaks(dome, start, ray, layerSoft, len));
+    FogSortBreaks(breaks);
+    FogDensity d = FogDensity(start, ray, radii, soft, volume.profile.x, dome, vec2(0.0), vec2(0.0), layerSoft, band,
+                              kFogDensityEllipsoid);
+    return FogSpan(FogIntegrate(d, breaks, 0.0, len), entry);
 }
 
 // Whether the edge from `a` to `b` crosses the ray from `point` toward +x: an
@@ -380,18 +524,20 @@ FogSpan FogOutlineSpan(vec3 origin, vec3 ray, FogVolume volume, float distance)
     vec3  start3;
     float entry;
     float len;
-    vec3  bounds = extent + vec3(kFogOutlineBoundsMargin, 0.0, kFogOutlineBoundsMargin);
-    if (count == 0u || !FogBoxStretch(origin, ray, bounds, distance, start3, entry, len))
+    vec3    bounds    = extent + vec3(kFogOutlineBoundsMargin, 0.0, kFogOutlineBoundsMargin);
+    float   layerSoft = min(soft, extent.y);
+    FogDome dome      = FogDomeOf(volume, extent.y, 2.0 * extent.y);
+    if (count == 0u || !FogBoxStretch(origin, ray, bounds, distance, start3, entry, len) ||
+        !FogClipToDome(dome, ray, start3, entry, len))
     {
         return FogSpan(0.0, 0.0);
     }
-    // One pair, in order already, and every other slot at the end: no sorting.
     FogBreaks breaks = FogNoBreaks(len);
-    vec2 layerBreaks = FogFaceBreaks(start3.y, ray.y, extent.y, soft, len);
-    breaks.at[0] = layerBreaks.x;
-    breaks.at[1] = layerBreaks.y;
-    FogDensity layers = FogDensity(start3, ray, extent, soft, volume.profile.x, vec2(0.0), vec2(0.0), 0.0,
-                                   kFogDensityLayers);
+    FogSetPair(breaks, kFogSlotTop, FogTopBreaks(dome, start3, ray, layerSoft, len));
+    breaks.at[kFogSlotFloor] = FogFloorBreak(start3.y + extent.y, ray.y, layerSoft, len);
+    FogSortBreaks(breaks);
+    FogDensity layers = FogDensity(start3, ray, extent, soft, volume.profile.x, dome, vec2(0.0), vec2(0.0),
+                                   layerSoft, 0.0, kFogDensityLayers);
     vec2 start = start3.xz;
     vec2 flat2 = ray.xz;
 

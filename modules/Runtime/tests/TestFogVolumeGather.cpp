@@ -87,7 +87,7 @@ TEST_CASE("FogVolumeGather: each shape becomes its kind of volume, scaled with i
     const ECS::Entity box = Place(scene, glm::dvec3(0.0, 0.0, -30.0), glm::vec3(2.f, 1.f, 1.f));
     REQUIRE(scene.Add(box, FogBox{.size = glm::vec3(10.f, 4.f, 10.f), .edgeSoftness = 0.f, .falloff = 2.f}) != nullptr);
     const ECS::Entity sphere = Place(scene, glm::dvec3(5.0, 0.0, -30.0), glm::vec3(1.f, 2.f, 1.f));
-    REQUIRE(scene.Add(sphere, FogSphere{.radius = 3.f, .edgeSoftness = 0.f}) != nullptr);
+    REQUIRE(scene.Add(sphere, FogSphere{.radius = 3.f, .edgeSoftness = 0.f, .pile = 0.5f}) != nullptr);
 
     const Render::FogVolumeFrame frame = Gather(scene);
     REQUIRE(frame.volumes.size() == 2u);
@@ -96,6 +96,7 @@ TEST_CASE("FogVolumeGather: each shape becomes its kind of volume, scaled with i
     CHECK(frame.volumes[0].profile.x == 2.f);
     CHECK(frame.volumes[1].info.x == static_cast<uint32_t>(Render::FogVolumeKind::Ellipsoid));
     CHECK(glm::vec3(frame.volumes[1].extents) == glm::vec3(3.f, 6.f, 3.f));
+    CHECK(frame.volumes[1].profile.y == 0.5f);
     // Down through the box's 4 m, thinning above its floor: 2 (1 - e^-2).
     CHECK(Down(frame, 0, 9.f, -30.f) == doctest::Approx(2.f * (1.f - std::exp(-2.f))).epsilon(5.0e-3));
     CHECK(Down(frame, 0, 11.f, -30.f) == 0.f);

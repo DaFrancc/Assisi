@@ -41,14 +41,17 @@ float Cross(const glm::vec2 &a, const glm::vec2 &b)
     return a.x * b.y - a.y * b.x;
 }
 
-// Two-point Gauss-Legendre: a step's integral from its function at 1/sqrt(3) of
-// the way from its middle to each end. Exact for a cubic, which every piece of
-// fog without falloff is: a product of at most three straight ramps.
-constexpr float kGaussNode = 0.57735027f;
+// Three-point Gauss-Legendre: a step's integral from its function at its middle
+// and at sqrt(3/5) of the way from there to each end, weighted 8/9 and 5/9.
+// Exact for any polynomial up to the fifth power, and every piece of fog without
+// falloff is one: at most three straight ramps times a pile's curved top.
+constexpr float kGaussOuterNode = 0.77459667f;
+constexpr float kGaussOuterWeight = 5.0f / 9.0f;
+constexpr float kGaussMiddleWeight = 8.0f / 9.0f;
 
 // How many times the falloff may thin the fog across one step of the rule.
-// Two keeps it within half a percent of the exact integral.
-constexpr float kMaxFalloffPerStep = 2.0f;
+// Four keeps it within a fifth of a percent of the exact integral.
+constexpr float kMaxFalloffPerStep = 4.0f;
 
 // The most steps one piece is cut into. A piece that would need more has
 // thinned to almost nothing across most of its length.
@@ -62,14 +65,42 @@ struct FogShape
     float softness = 0.0f;
     /// Zero for fog as thick at the top as at the floor.
     float falloff = 0.0f;
+    /// Zero for a flat top, one for a dome down to the floor at the edges.
+    float pile = 0.0f;
 };
+
+/// @brief A volume's top, in its frame: a dome whose height over a point falls
+/// with the square of the point's distance from the middle, in units of the
+/// footprint's half extents. Flat when it does not fall at all.
+struct Dome
+{
+    /// How far the dome falls where that distance is one.
+    float drop = 0.0f;
+    /// The frame height of the dome's top, over the middle.
+    float top = 0.0f;
+    glm::vec2 footprint{1.0f};
+};
+
+// The dome @p shape's pile gives a volume whose top is at @p top in its frame
+// and which reaches @p depth below that to its floor.
+Dome DomeOf(const FogShape &shape, float top, float depth)
+{
+    return Dome{.drop = depth * shape.pile, .top = top, .footprint = glm::vec2(shape.extent.x, shape.extent.z)};
+}
+
+// How far below @p dome the point @p p lies.
+float DomeDepth(const Dome &dome, const glm::vec3 &p)
+{
+    const glm::vec2 across = glm::vec2(p.x, p.z) / dome.footprint;
+    return dome.top - dome.drop * glm::dot(across, across) - p.y;
+}
 
 /// @brief Which formula the fog along a stretch follows.
 enum class Density : std::uint8_t
 {
-    /// Each axis's softness ramp, multiplied.
+    /// The two sideways axes' softness, the floor's and the top's, multiplied.
     Box,
-    /// A soft shell around a full core.
+    /// A soft shell around a full core, under a soft top.
     Ellipsoid,
     /// An outline's floor and top softness alone.
     Layers,
@@ -83,9 +114,12 @@ struct DensityContext
     glm::vec3 start{0.0f};
     glm::vec3 ray{0.0f};
     FogShape shape;
+    Dome dome;
     /// Wall: where the wall's edge starts, and its normal pointing inside.
     glm::vec2 wallFrom{0.0f};
     glm::vec2 wallNormal{0.0f};
+    /// The floor's and the top's softness, at most half the height.
+    float layerSoftness = 0.0f;
     /// Ellipsoid: how deep the soft shell is, in units of the radius squared.
     float band = 0.0f;
     Density kind = Density::Box;
@@ -106,6 +140,17 @@ float Ramp(float depth, float span, float soft)
     return std::min(std::min(depth, span - depth) / std::min(soft, 0.5f * span), 1.0f);
 }
 
+// The fog @p depth inside one boundary: rising straight from nothing at it to
+// full @p soft in.
+float Rise(float depth, float soft)
+{
+    if (soft <= 0.0f)
+    {
+        return depth >= 0.0f ? 1.0f : 0.0f;
+    }
+    return std::clamp(depth / soft, 0.0f, 1.0f);
+}
+
 // How thick the falloff leaves the fog @p height above the floor.
 float FalloffAt(float height, float falloff)
 {
@@ -119,59 +164,77 @@ float DensityAt(const DensityContext &context, float t)
     const glm::vec3 &extent = context.shape.extent;
     const float softness = context.shape.softness;
     const float falloff = FalloffAt(p.y + extent.y, context.shape.falloff);
+    const float top = Rise(DomeDepth(context.dome, p), context.layerSoftness);
+    const float layers = Rise(p.y + extent.y, context.layerSoftness) * top * falloff;
     switch (context.kind)
     {
     case Density::Box:
-        return Ramp(p.x + extent.x, 2.0f * extent.x, softness) * Ramp(p.y + extent.y, 2.0f * extent.y, softness) *
-               Ramp(p.z + extent.z, 2.0f * extent.z, softness) * falloff;
+        return Ramp(p.x + extent.x, 2.0f * extent.x, softness) * Ramp(p.z + extent.z, 2.0f * extent.z, softness) *
+               layers;
     case Density::Ellipsoid:
     {
         const glm::vec3 unit = p / extent;
         const float radiusSq = glm::dot(unit, unit);
         const float shell = context.band > 0.0f ? std::clamp((1.0f - radiusSq) / context.band, 0.0f, 1.0f)
                                                 : (radiusSq <= 1.0f ? 1.0f : 0.0f);
-        return shell * falloff;
+        return shell * top * falloff;
     }
     case Density::Layers:
-        return Ramp(p.y + extent.y, 2.0f * extent.y, softness) * falloff;
+        return layers;
     case Density::Wall:
     {
         const float depth = glm::dot(context.wallNormal, glm::vec2(p.x, p.z) - context.wallFrom);
-        const float wall = std::clamp(1.0f - depth / softness, 0.0f, 1.0f);
-        return Ramp(p.y + extent.y, 2.0f * extent.y, softness) * falloff * wall;
+        return layers * std::clamp(1.0f - depth / softness, 0.0f, 1.0f);
     }
     }
     return 0.0f;
 }
 
 /// @brief Where along a stretch the fog's formula changes, which the
-/// integration steps must not straddle: in pairs, two per axis of a box, at the
-/// inner edges of each face's softness. A slot with no point holds the
-/// stretch's length, where it adds no piece.
+/// integration steps must not straddle: where it crosses the inner edge of a
+/// side's softness, of the floor's, or of the top's. A slot with no point holds
+/// the stretch's length, where it adds no piece.
 ///
 /// Fixed slots sorted by a fixed network rather than a list, so the shader's
 /// copy reads every slot at a constant index and keeps them all in registers.
 struct Breaks
 {
-    static constexpr std::size_t kSlots = 6;
+    /// A box's: two for each sideways axis, two for its top and one for its
+    /// floor, and one spare to make eight.
+    static constexpr std::size_t kSlots = 8;
+
+    /// Which slots hold what. The sideways axes and the top take a pair each.
+    enum class Slot : std::uint8_t
+    {
+        AcrossX = 0,
+        /// An ellipsoid's: where the line enters and leaves its full core.
+        Core = 0,
+        AcrossZ = 2,
+        Top = 4,
+        Floor = 6,
+    };
 
     explicit Breaks(float length) { at.fill(length); }
 
-    void SetPair(std::size_t pair, const glm::vec2 &points)
+    void Set(Slot slot, float point) { at[static_cast<std::size_t>(slot)] = point; }
+
+    void SetPair(Slot slot, const glm::vec2 &points)
     {
-        at[2 * pair] = points.x;
-        at[2 * pair + 1] = points.y;
+        at[static_cast<std::size_t>(slot)] = points.x;
+        at[static_cast<std::size_t>(slot) + 1] = points.y;
     }
 
-    /// A sorting network: these twelve compare-and-swaps, in this order, sort
-    /// any six values, the fewest any fixed sequence can. The pairs follow no
-    /// pattern and each relies on the ones before it, so keep them as they are.
-    /// The shader sorts with the same list written out, because a fixed list
-    /// keeps every index constant and the slots in registers.
+    /// A sorting network, Batcher's for eight: these nineteen compare-and-swaps,
+    /// in this order, sort any eight values, the fewest any fixed sequence can.
+    /// The pairs look arbitrary and each relies on the ones before it, so keep
+    /// them as they are. The shader sorts with the same list written out,
+    /// because a fixed list keeps every index constant and the slots in
+    /// registers.
     void Sort()
     {
-        static constexpr std::array<std::array<std::size_t, 2>, 12> kNetwork{
-            {{0, 5}, {1, 3}, {2, 4}, {1, 2}, {3, 4}, {0, 3}, {2, 5}, {0, 1}, {2, 3}, {4, 5}, {1, 2}, {3, 4}}};
+        static constexpr std::array<std::array<std::size_t, 2>, 19> kNetwork{
+            {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {1, 2}, {5, 6},
+                {0, 4}, {1, 5}, {2, 6}, {3, 7}, {2, 4}, {3, 5}, {1, 2}, {3, 4}, {5, 6}}};
         for (const std::array<std::size_t, 2> &pair : kNetwork)
         {
             if (at[pair[0]] > at[pair[1]])
@@ -183,6 +246,67 @@ struct Breaks
 
     std::array<float, kSlots> at{};
 };
+
+// Where the line from @p start along @p ray is at least @p depth below
+// @p dome: one stretch, since the dome never curves upward, which may run on
+// for ever either way. False when there is none.
+bool DomeInterval(const Dome &dome, const glm::vec3 &start, const glm::vec3 &ray, float depth, glm::vec2 &interval)
+{
+    // The depth below the dome, less @p depth, is a t^2 + b t + c along it.
+    const glm::vec2 across = glm::vec2(start.x, start.z) / dome.footprint;
+    const glm::vec2 turn = glm::vec2(ray.x, ray.z) / dome.footprint;
+    const float a = -dome.drop * glm::dot(turn, turn);
+    const float b = -ray.y - 2.0f * dome.drop * glm::dot(across, turn);
+    const float c = dome.top - start.y - dome.drop * glm::dot(across, across) - depth;
+    constexpr float kForever = std::numeric_limits<float>::infinity();
+    if (a == 0.0f)
+    {
+        if (b == 0.0f)
+        {
+            interval = glm::vec2(-kForever, kForever);
+            return c >= 0.0f;
+        }
+        const float root = -c / b;
+        interval = b > 0.0f ? glm::vec2(root, kForever) : glm::vec2(-kForever, root);
+        return true;
+    }
+    const float discriminant = b * b - 4.0f * a * c;
+    if (discriminant < 0.0f)
+    {
+        return false;
+    }
+    // The root that takes no difference of near equals, then the other from it.
+    const float q = -0.5f * (b + (b >= 0.0f ? 1.0f : -1.0f) * std::sqrt(discriminant));
+    const float first = q / a;
+    const float second = q != 0.0f ? c / q : first;
+    interval = glm::vec2(std::min(first, second), std::max(first, second));
+    return true;
+}
+
+// Where the line from @p start along @p ray, within a stretch @p length long,
+// reaches @p soft below @p dome and leaves it again: the inner edge of the
+// top's softness.
+glm::vec2 TopBreaks(const Dome &dome, const glm::vec3 &start, const glm::vec3 &ray, float soft, float length)
+{
+    glm::vec2 interval(length);
+    if (soft <= 0.0f || !DomeInterval(dome, start, ray, soft, interval))
+    {
+        return glm::vec2(length);
+    }
+    return glm::clamp(interval, glm::vec2(0.0f), glm::vec2(length));
+}
+
+// Where a line starting @p height above the floor and climbing @p rate per
+// metre, within a stretch @p length long, passes the inner edge of the floor's
+// softness @p soft.
+float FloorBreak(float height, float rate, float soft, float length)
+{
+    if (soft <= 0.0f || rate == 0.0f)
+    {
+        return length;
+    }
+    return std::clamp((soft - height) / rate, 0.0f, length);
+}
 
 // Where a line starting @p start across a slab of half thickness @p half, and
 // moving @p rate per metre across it, meets the inner edges of the slab's
@@ -199,19 +323,20 @@ glm::vec2 FaceBreaks(float start, float rate, float half, float soft, float leng
     return glm::clamp(glm::vec2(std::min(a, b), std::max(a, b)), glm::vec2(0.0f), glm::vec2(length));
 }
 
-// The two-point rule over [from, to], in steps short enough for the falloff.
+// The three-point rule over [from, to], in steps short enough for the falloff.
 float IntegratePiece(const DensityContext &context, float from, float to)
 {
     const float thinning =
         context.shape.falloff > 0.0f ? std::abs(context.ray.y) * (to - from) / context.shape.falloff : 0.0f;
     const float steps = std::clamp(std::ceil(thinning / kMaxFalloffPerStep), 1.0f, kMaxStepsPerPiece);
     const float step = (to - from) / steps;
-    const float offset = 0.5f * step * kGaussNode;
+    const float offset = 0.5f * step * kGaussOuterNode;
     float sum = 0.0f;
     for (float index = 0.0f; index < steps; index += 1.0f)
     {
         const float middle = from + (index + 0.5f) * step;
-        sum += DensityAt(context, middle - offset) + DensityAt(context, middle + offset);
+        sum += kGaussOuterWeight * (DensityAt(context, middle - offset) + DensityAt(context, middle + offset)) +
+               kGaussMiddleWeight * DensityAt(context, middle);
     }
     return sum * 0.5f * step;
 }
@@ -311,22 +436,49 @@ bool ClippedBoxStretch(const glm::vec3 &origin, const glm::vec3 &ray, const glm:
     return true;
 }
 
+// Narrows @p stretch, along @p ray, to the part under @p dome. False when none
+// of it is.
+bool ClipToDome(const Dome &dome, const glm::vec3 &ray, BoxStretch &stretch)
+{
+    glm::vec2 under(0.0f);
+    if (!DomeInterval(dome, stretch.start, ray, 0.0f, under))
+    {
+        return false;
+    }
+    const float from = std::max(under.x, 0.0f);
+    const float to = std::min(under.y, stretch.length);
+    if (!(to > from))
+    {
+        return false;
+    }
+    stretch = BoxStretch{.start = stretch.start + ray * from, .entry = stretch.entry + from, .length = to - from};
+    return true;
+}
+
 FogSpan BoxSpan(const glm::vec3 &origin, const glm::vec3 &ray, const FogShape &shape, float distance)
 {
+    const float layerSoftness = std::min(shape.softness, shape.extent.y);
+    const Dome dome = DomeOf(shape, shape.extent.y, 2.0f * shape.extent.y);
     BoxStretch stretch;
-    if (!ClippedBoxStretch(origin, ray, shape.extent, distance, stretch))
+    if (!ClippedBoxStretch(origin, ray, shape.extent, distance, stretch) || !ClipToDome(dome, ray, stretch))
     {
         return FogSpan{};
     }
-    Breaks breaks(stretch.length);
-    for (glm::length_t axis = 0; axis < 3; ++axis)
-    {
-        breaks.SetPair(static_cast<std::size_t>(axis), FaceBreaks(stretch.start[axis], ray[axis], shape.extent[axis],
-                                                                  shape.softness, stretch.length));
-    }
+    const glm::vec3 &start = stretch.start;
+    const float length = stretch.length;
+    Breaks breaks(length);
+    breaks.SetPair(Breaks::Slot::AcrossX, FaceBreaks(start.x, ray.x, shape.extent.x, shape.softness, length));
+    breaks.SetPair(Breaks::Slot::AcrossZ, FaceBreaks(start.z, ray.z, shape.extent.z, shape.softness, length));
+    breaks.SetPair(Breaks::Slot::Top, TopBreaks(dome, start, ray, layerSoftness, length));
+    breaks.Set(Breaks::Slot::Floor, FloorBreak(start.y + shape.extent.y, ray.y, layerSoftness, length));
     breaks.Sort();
-    const DensityContext context{.start = stretch.start, .ray = ray, .shape = shape, .kind = Density::Box};
-    return FogSpan{.length = Integrate(context, breaks, 0.0f, stretch.length), .entry = stretch.entry};
+    const DensityContext context{.start = start,
+                                 .ray = ray,
+                                 .shape = shape,
+                                 .dome = dome,
+                                 .layerSoftness = layerSoftness,
+                                 .kind = Density::Box};
+    return FogSpan{.length = Integrate(context, breaks, 0.0f, length), .entry = stretch.entry};
 }
 
 FogSpan EllipsoidSpan(const glm::vec3 &origin, const glm::vec3 &ray, const FogShape &shape, float distance)
@@ -358,23 +510,40 @@ FogSpan EllipsoidSpan(const glm::vec3 &origin, const glm::vec3 &ray, const FogSh
         return FogSpan{};
     }
 
+    // A pile's dome over it, raised by the top's softness so that with no pile
+    // the dome is flat and wholly above the ellipsoid, leaving it as it is.
+    const float layerSoftness = std::min(shape.softness, radii.y);
+    const Dome dome = DomeOf(shape, radii.y + layerSoftness, 2.0f * radii.y + layerSoftness);
+    BoxStretch chord{.start = origin + ray * from, .entry = from, .length = to - from};
+    if (!ClipToDome(dome, ray, chord))
+    {
+        return FogSpan{};
+    }
+
     // Full fog inside the sphere of radius squared 1 - band, thinning as
     // (1 - r^2) / band across the shell outside it. The shell is about the
     // softness deep where the ellipsoid is thinnest.
     const float depth = std::min(shape.softness / smallest, 1.0f);
     const float band = depth * (2.0f - depth);
-    Breaks breaks(to - from);
+    Breaks breaks(chord.length);
     const float core = 1.0f - band;
     if (band > 0.0f && closestSq < core)
     {
-        // In order already, so no sorting.
         const float coreHalf = std::sqrt((core - closestSq) / stretch);
-        breaks.SetPair(0, glm::clamp(glm::vec2(closestAt - coreHalf, closestAt + coreHalf) - from, glm::vec2(0.0f),
-                                     glm::vec2(to - from)));
+        breaks.SetPair(Breaks::Slot::Core,
+                       glm::clamp(glm::vec2(closestAt - coreHalf, closestAt + coreHalf) - chord.entry, glm::vec2(0.0f),
+                                  glm::vec2(chord.length)));
     }
-    const DensityContext context{
-        .start = origin + ray * from, .ray = ray, .shape = shape, .band = band, .kind = Density::Ellipsoid};
-    return FogSpan{.length = Integrate(context, breaks, 0.0f, to - from), .entry = from};
+    breaks.SetPair(Breaks::Slot::Top, TopBreaks(dome, chord.start, ray, layerSoftness, chord.length));
+    breaks.Sort();
+    const DensityContext context{.start = chord.start,
+                                 .ray = ray,
+                                 .shape = shape,
+                                 .dome = dome,
+                                 .layerSoftness = layerSoftness,
+                                 .band = band,
+                                 .kind = Density::Ellipsoid};
+    return FogSpan{.length = Integrate(context, breaks, 0.0f, chord.length), .entry = chord.entry};
 }
 
 glm::vec2 EdgeStart(const FogOutlineEdgeGpu &edge)
@@ -425,17 +594,26 @@ WallBand WallBandOf(const FogOutlineEdgeGpu &edge, const glm::vec2 &start, const
 FogSpan OutlineSpan(const glm::vec3 &origin, const glm::vec3 &ray, const FogShape &shape, float distance,
                     std::span<const FogOutlineEdgeGpu> edges)
 {
+    const float layerSoftness = std::min(shape.softness, shape.extent.y);
+    const Dome dome = DomeOf(shape, shape.extent.y, 2.0f * shape.extent.y);
     BoxStretch stretch;
     const glm::vec3 bounds = shape.extent + glm::vec3(kOutlineBoundsMargin, 0.0f, kOutlineBoundsMargin);
-    if (edges.empty() || !ClippedBoxStretch(origin, ray, bounds, distance, stretch))
+    if (edges.empty() || !ClippedBoxStretch(origin, ray, bounds, distance, stretch) ||
+        !ClipToDome(dome, ray, stretch))
     {
         return FogSpan{};
     }
     const float length = stretch.length;
-    // One pair, in order already, and every other slot at the end: no sorting.
     Breaks breaks(length);
-    breaks.SetPair(0, FaceBreaks(stretch.start.y, ray.y, shape.extent.y, shape.softness, length));
-    const DensityContext layers{.start = stretch.start, .ray = ray, .shape = shape, .kind = Density::Layers};
+    breaks.SetPair(Breaks::Slot::Top, TopBreaks(dome, stretch.start, ray, layerSoftness, length));
+    breaks.Set(Breaks::Slot::Floor, FloorBreak(stretch.start.y + shape.extent.y, ray.y, layerSoftness, length));
+    breaks.Sort();
+    const DensityContext layers{.start = stretch.start,
+                                .ray = ray,
+                                .shape = shape,
+                                .dome = dome,
+                                .layerSoftness = layerSoftness,
+                                .kind = Density::Layers};
     const glm::vec2 start(stretch.start.x, stretch.start.z);
     const glm::vec2 flat(ray.x, ray.z);
 
@@ -527,7 +705,8 @@ FogVolumeGpu MakeFogVolume(const FogVolumeDesc &desc)
     const float softness = std::isfinite(desc.edgeSoftness) ? std::max(desc.edgeSoftness, 0.0f) : 0.0f;
     volume.extents = glm::vec4(glm::max(desc.halfExtents, glm::vec3(0.0f)), softness);
     volume.color = glm::vec4(glm::max(desc.color, glm::vec3(0.0f)), density);
-    volume.profile = glm::vec4(SanitizedFogVolumeFalloff(desc.falloff), 0.0f, 0.0f, 0.0f);
+    const float pile = std::isfinite(desc.pile) ? std::clamp(desc.pile, 0.0f, 1.0f) : 0.0f;
+    volume.profile = glm::vec4(SanitizedFogVolumeFalloff(desc.falloff), pile, 0.0f, 0.0f);
     volume.info = glm::uvec4(static_cast<uint32_t>(desc.kind), desc.litBySky ? 1u : 0u, desc.firstEdge, desc.edgeCount);
     return volume;
 }
@@ -613,8 +792,10 @@ FogSpan FogVolumeSpan(const FogVolumeGpu &volume, std::span<const FogOutlineEdge
         origin[row] = glm::dot(glm::vec3(toFrame), eye) + toFrame.w;
         direction[row] = glm::dot(glm::vec3(toFrame), ray);
     }
-    const FogShape shape{
-        .extent = glm::vec3(volume.extents), .softness = volume.extents.w, .falloff = volume.profile.x};
+    const FogShape shape{.extent = glm::vec3(volume.extents),
+                         .softness = volume.extents.w,
+                         .falloff = volume.profile.x,
+                         .pile = volume.profile.y};
     switch (static_cast<FogVolumeKind>(volume.info.x))
     {
     case FogVolumeKind::Box:

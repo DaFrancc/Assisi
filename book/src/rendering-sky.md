@@ -364,20 +364,24 @@ on the right.
    all but disappear.
 4. Its `falloff` is `1.5`, so the mist lies thickest on the ground. Set it to
    `0` and the box fills evenly to its top. Set it back to `1.5`.
-5. Select **Swamp**. Its outline is drawn on the ground. Drag one of its nodes
+5. Its `pile` is `0.7`, so the mist heaps up in the middle and its top comes
+   down toward the sides; two arcs over the box show the top's shape. Set it to
+   `0` and the mist fills the box out to its corners.
+6. Select **Swamp**. Its outline is drawn on the ground. Drag one of its nodes
    outwards, and the mist follows. Raise `height` to `6`.
-6. Select **Smoke**. Its **Lit by sky** is off, so it keeps its dark colour.
+7. Select **Smoke**. Its **Lit by sky** is off, so it keeps its dark colour.
    Turn it on: it becomes a dark tint over the sky's light.
 
 ### Fog volume fields
 
-Every fog volume has these five:
+Every fog volume has these six:
 
 | Field | Meaning |
 |---|---|
 | `visibility` | How far you can see through it where it is thickest, in metres. A pillar this far into it is all but hidden. `0` is no fog. |
 | `edgeSoftness` | How many metres it takes to thin from full to nothing at its edges, so it has no hard border. `0` gives hard edges. Along an edge or at a corner, where two sides meet, both thin it, so it fades out more there. |
 | `falloff` | How many metres above its floor it takes to thin to about a third, so it lies thickest at the bottom, as mist does. `0` (the default) keeps it the same at every height. The floor is the bottom of a box or a sphere, and a `FogOutline`'s entity origin. |
+| `pile` | How much it heaps up in the middle, from `0` to `1`. At `0` (the default) its top is flat. Higher, the top domes: it stays at full height over the middle and comes down toward the edges, reaching the floor at the edges at `1`. The fog then stands tall in the middle and lies low and thin toward the sides, and a box loses its corners. A `FogOutline`'s dome peaks over the middle of the box around its outline, so a long or bent outline may peak away from where it looks thickest. |
 | `color` | Its colour. See below for how **Lit by sky** changes it. |
 | `litBySky` | **Lit by sky**, on by default. Turn it off for caves and rooms the sky does not reach. |
 

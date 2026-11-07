@@ -62,30 +62,59 @@ float SlabFog(float depth, float span, float soft)
     return std::min(std::min(depth, span - depth) / std::min(soft, 0.5f * span), 1.0f);
 }
 
-/// What the falloff leaves of the fog @p height above the floor.
-float Falloff(float height, float falloff)
+/// The fog @p depth inside one boundary, rising straight from nothing to full
+/// over @p soft.
+float Rise(float depth, float soft)
 {
+    if (soft <= 0.0f)
+    {
+        return depth >= 0.0f ? 1.0f : 0.0f;
+    }
+    return std::clamp(depth / soft, 0.0f, 1.0f);
+}
+
+/// What @p volume's falloff leaves of its fog @p height above its floor.
+float Falloff(const FogVolumeGpu &volume, float height)
+{
+    const float falloff = volume.profile.x;
     return falloff > 0.0f ? std::exp(-std::max(height, 0.0f) / falloff) : 1.0f;
 }
 
-/// A box's fog at @p p, point by point: each axis's softness, multiplied, and
-/// the falloff above its floor.
-float BoxDensity(const glm::vec3 &p, const glm::vec3 &half, float softness, float falloff = 0.0f)
+/// How far below @p volume's piled top @p p lies: the top peaks at @p top over
+/// the middle, and falls @p depth times the pile at the footprint's edge.
+float BelowTop(const FogVolumeGpu &volume, const glm::vec3 &p, float top, float depth)
 {
-    float density = Falloff(p.y + half.y, falloff);
-    for (glm::length_t axis = 0; axis < 3; ++axis)
-    {
-        density *= SlabFog(p[axis] + half[axis], 2.0f * half[axis], softness);
-    }
-    return density;
+    const glm::vec2 across = glm::vec2(p.x, p.z) / glm::vec2(volume.extents.x, volume.extents.z);
+    return top - depth * volume.profile.y * glm::dot(across, across) - p.y;
 }
 
-/// An ellipsoid's fog at @p p: full inside the core, thinning as 1 - r^2 over
-/// the shell @p band wide in r^2, and the falloff above its floor.
-float EllipsoidDensity(const glm::vec3 &p, const glm::vec3 &radii, float band, float falloff = 0.0f)
+/// A box volume's fog at @p p, point by point: its sideways softness, its
+/// floor's and its piled top's, multiplied, and its falloff.
+float BoxDensity(const glm::vec3 &p, const FogVolumeGpu &volume)
 {
+    const glm::vec3 half(volume.extents);
+    const float softness = volume.extents.w;
+    const float layer = std::min(softness, half.y);
+    return SlabFog(p.x + half.x, 2.0f * half.x, softness) * SlabFog(p.z + half.z, 2.0f * half.z, softness) *
+           Rise(p.y + half.y, layer) * Rise(BelowTop(volume, p, half.y, 2.0f * half.y), layer) *
+           Falloff(volume, p.y + half.y);
+}
+
+/// An ellipsoid volume's fog at @p p: full inside the core, thinning as 1 - r^2
+/// over the shell, which is the softness deep where the ellipsoid is thinnest;
+/// under a piled top raised by the softness; and its falloff.
+float EllipsoidDensity(const glm::vec3 &p, const FogVolumeGpu &volume)
+{
+    const glm::vec3 radii(volume.extents);
+    const float softness = volume.extents.w;
+    const float depth = std::min(softness / std::min({radii.x, radii.y, radii.z}), 1.0f);
+    const float band = depth * (2.0f - depth);
     const glm::vec3 unit = p / radii;
-    return std::clamp((1.0f - glm::dot(unit, unit)) / band, 0.0f, 1.0f) * Falloff(p.y + radii.y, falloff);
+    const float radiusSq = glm::dot(unit, unit);
+    const float shell = band > 0.0f ? std::clamp((1.0f - radiusSq) / band, 0.0f, 1.0f) : (radiusSq <= 1.0f ? 1.0f : 0.0f);
+    const float layer = std::min(softness, radii.y);
+    return shell * Rise(BelowTop(volume, p, radii.y + layer, 2.0f * radii.y + layer), layer) *
+           Falloff(volume, p.y + radii.y);
 }
 
 /// Square @p tile's list, out of what BuildFogTileLists wrote.
@@ -97,11 +126,12 @@ std::vector<uint32_t> ListOf(const std::vector<uint32_t> &tiles, uint32_t tile)
 }
 
 /// An outline volume's fog at @p p, point by point: inside the outline, less
-/// each wall band's thinning, times the floor's and the top's softness and the
-/// falloff above the floor.
-float OutlineDensity(const glm::vec3 &p, const glm::vec3 &half, float softness,
-                     std::span<const FogOutlineEdgeGpu> edges, float falloff = 0.0f)
+/// each wall band's thinning, times the floor's and the piled top's softness
+/// and the falloff above the floor.
+float OutlineDensity(const glm::vec3 &p, const FogVolumeGpu &volume, std::span<const FogOutlineEdgeGpu> edges)
 {
+    const glm::vec3 half(volume.extents);
+    const float softness = volume.extents.w;
     const glm::vec2 q(p.x, p.z);
     bool inside = false;
     for (const FogOutlineEdgeGpu &edge : edges)
@@ -130,7 +160,9 @@ float OutlineDensity(const glm::vec3 &p, const glm::vec3 &half, float softness,
             }
         }
     }
-    return across * SlabFog(p.y + half.y, 2.0f * half.y, softness) * Falloff(p.y + half.y, falloff);
+    const float layer = std::min(softness, half.y);
+    return across * Rise(p.y + half.y, layer) * Rise(BelowTop(volume, p, half.y, 2.0f * half.y), layer) *
+           Falloff(volume, p.y + half.y);
 }
 
 /// The density @p density gives, summed in small steps from @p from to @p to
@@ -167,7 +199,8 @@ struct Outline
     FogVolumeGpu volume;
 };
 
-Outline MakeOutline(std::span<const glm::vec2> points, float halfHeight, float softness, float falloff = 0.0f)
+Outline MakeOutline(std::span<const glm::vec2> points, float halfHeight, float softness, float falloff = 0.0f,
+                    float pile = 0.0f)
 {
     Outline outline;
     const std::optional<FogOutlinePlacement> placement = AppendFogOutline(outline.edges, points);
@@ -179,6 +212,7 @@ Outline MakeOutline(std::span<const glm::vec2> points, float halfHeight, float s
             .visibility = 10.0f,
             .edgeSoftness = softness,
             .falloff = falloff,
+            .pile = pile,
             .firstEdge = placement->firstEdge,
             .edgeCount = placement->edgeCount,
             .kind = FogVolumeKind::Outline});
@@ -252,7 +286,7 @@ TEST_CASE("FogVolume: along a box's edge two faces' softness multiplies, and nev
     const glm::vec3 eye(-12.0f, half.y + 2.0f, 0.4f);
     const glm::vec3 ray = glm::normalize(glm::vec3(1.0f, -0.4f, 0.05f));
     CHECK(Span(box, eye, ray) ==
-          doctest::Approx(Summed(eye, ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return BoxDensity(p, half, softness); }))
+          doctest::Approx(Summed(eye, ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return BoxDensity(p, box); }))
           .epsilon(1.0e-3));
 }
 
@@ -276,28 +310,109 @@ TEST_CASE("FogVolume: the falloff thins a volume's fog upward from its floor")
     const glm::vec3 ray = glm::normalize(glm::vec3(1.0f, -0.6f, 0.3f));
     CHECK(Span(softBox, eye, ray) ==
           doctest::Approx(Summed(eye, ray, 0.0f, 40.0f,
-                                 [&](const glm::vec3 &p) { return BoxDensity(p, half, softness, falloff); }))
+                                 [&](const glm::vec3 &p) { return BoxDensity(p, softBox); }))
           .epsilon(5.0e-3));
 
     const glm::vec3 radii(5.0f, 3.0f, 4.0f);
     const FogVolumeGpu ellipsoid = Volume(FogVolumeKind::Ellipsoid, radii, softness, glm::mat4(1.0f), falloff);
-    const float depth = softness / 3.0f;
-    const float band = depth * (2.0f - depth);
     CHECK(Span(ellipsoid, eye, ray) ==
           doctest::Approx(Summed(eye, ray, 0.0f, 40.0f,
-                                 [&](const glm::vec3 &p) { return EllipsoidDensity(p, radii, band, falloff); }))
+                                 [&](const glm::vec3 &p) { return EllipsoidDensity(p, ellipsoid); }))
           .epsilon(5.0e-3));
 
     const Outline outline = MakeOutline(UShape(), 2.0f, 0.6f, 1.0f);
-    const glm::vec3 outlineHalf(outline.volume.extents);
     const glm::vec3 outlineEye(-8.0f, 6.0f, -8.0f);
     const glm::vec3 outlineRay = glm::normalize(glm::vec3(0.7f, -0.5f, 1.0f));
     CHECK(OutlineSpan(outline, outlineEye, outlineRay) ==
           doctest::Approx(Summed(outlineEye, outlineRay, 0.0f, 40.0f,
-                                 [&](const glm::vec3 &p) {
-        return OutlineDensity(p, outlineHalf, 0.6f, outline.edges, 1.0f);
-    }))
+                                 [&](const glm::vec3 &p) { return OutlineDensity(p, outline.volume, outline.edges); }))
           .epsilon(5.0e-3));
+}
+
+TEST_CASE("FogVolume: a pile domes a volume's top, tall over the middle and low at its edges")
+{
+    const glm::vec3 half(5.0f, 2.0f, 4.0f);
+    const float height = 2.0f * half.y;
+    const glm::vec3 down(0.0f, -1.0f, 0.0f);
+    const FogVolumeGpu piled = MakeFogVolume(
+        FogVolumeDesc{.halfExtents = half, .visibility = 10.0f, .pile = 1.0f, .kind = FogVolumeKind::Box});
+    // Straight down: the whole height over the middle, three quarters of it
+    // halfway to a side, and none in a corner, past where the dome meets the
+    // floor.
+    CHECK(Span(piled, glm::vec3(0.0f, 20.0f, 0.0f), down) == doctest::Approx(height));
+    CHECK(Span(piled, glm::vec3(0.5f * half.x, 20.0f, 0.0f), down) == doctest::Approx(0.75f * height));
+    CHECK(Span(piled, glm::vec3(0.8f * half.x, 20.0f, 0.8f * half.z), down) == 0.0f);
+
+    // Level, three quarters of the way up, half piled: fog only where the dome
+    // stands higher, within sqrt(2 (1 - 3/4)) of the half width of the middle.
+    const FogVolumeGpu halfPiled = MakeFogVolume(
+        FogVolumeDesc{.halfExtents = half, .visibility = 10.0f, .pile = 0.5f, .kind = FogVolumeKind::Box});
+    CHECK(Span(halfPiled, glm::vec3(-20.0f, 0.75f * height - half.y, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f)) ==
+          doctest::Approx(2.0f * half.x * std::sqrt(0.5f)));
+}
+
+TEST_CASE("FogVolume: soft, falling off and piled, each shape holds what summing its fog in steps does")
+{
+    const glm::vec3 eye(-12.0f, 6.0f, -3.0f);
+    const glm::vec3 ray = glm::normalize(glm::vec3(1.0f, -0.6f, 0.3f));
+    const glm::vec3 steep = glm::normalize(glm::vec3(0.9f, -1.0f, 0.4f));
+
+    const FogVolumeGpu box = MakeFogVolume(FogVolumeDesc{.halfExtents = glm::vec3(5.0f, 4.0f, 5.0f),
+                                                         .visibility = 10.0f,
+                                                         .edgeSoftness = 1.0f,
+                                                         .falloff = 2.0f,
+                                                         .pile = 0.7f,
+                                                         .kind = FogVolumeKind::Box});
+    for (const glm::vec3 &line : {ray, steep})
+    {
+        CAPTURE(line);
+        CHECK(Span(box, eye, line) ==
+              doctest::Approx(Summed(eye, line, 0.0f, 40.0f, [&](const glm::vec3 &p) { return BoxDensity(p, box); }))
+              .epsilon(5.0e-3));
+    }
+
+    const FogVolumeGpu ellipsoid = MakeFogVolume(FogVolumeDesc{.halfExtents = glm::vec3(5.0f, 3.0f, 4.0f),
+                                                               .visibility = 10.0f,
+                                                               .edgeSoftness = 1.0f,
+                                                               .falloff = 2.0f,
+                                                               .pile = 0.7f,
+                                                               .kind = FogVolumeKind::Ellipsoid});
+    for (const glm::vec3 &line : {ray, steep})
+    {
+        CAPTURE(line);
+        CHECK(Span(ellipsoid, eye, line) ==
+              doctest::Approx(
+                  Summed(eye, line, 0.0f, 40.0f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, ellipsoid); }))
+              .epsilon(5.0e-3));
+    }
+
+    const Outline outline = MakeOutline(UShape(), 2.0f, 0.6f, 1.0f, 0.7f);
+    const glm::vec3 outlineEye(-8.0f, 6.0f, -8.0f);
+    const glm::vec3 outlineRay = glm::normalize(glm::vec3(0.7f, -0.5f, 1.0f));
+    CHECK(OutlineSpan(outline, outlineEye, outlineRay) ==
+          doctest::Approx(Summed(outlineEye, outlineRay, 0.0f, 40.0f,
+                                 [&](const glm::vec3 &p) { return OutlineDensity(p, outline.volume, outline.edges); }))
+          .epsilon(5.0e-3));
+}
+
+TEST_CASE("FogVolume: an ellipsoid piled a little looks as it does unpiled")
+{
+    const glm::vec3 radii(4.0f, 3.0f, 5.0f);
+    const FogVolumeGpu unpiled = MakeFogVolume(FogVolumeDesc{
+        .halfExtents = radii, .visibility = 10.0f, .edgeSoftness = 1.0f, .kind = FogVolumeKind::Ellipsoid});
+    const FogVolumeGpu barely = MakeFogVolume(FogVolumeDesc{.halfExtents = radii,
+                                                            .visibility = 10.0f,
+                                                            .edgeSoftness = 1.0f,
+                                                            .pile = 1.0e-4f,
+                                                            .kind = FogVolumeKind::Ellipsoid});
+    // Through the top, where a dome would first cut in.
+    for (const float height : {0.0f, 2.0f, 2.8f})
+    {
+        CAPTURE(height);
+        const glm::vec3 eye(-10.0f, height, 0.0f);
+        const glm::vec3 ray(1.0f, 0.0f, 0.0f);
+        CHECK(Span(barely, eye, ray) == doctest::Approx(Span(unpiled, eye, ray)).epsilon(1.0e-3));
+    }
 }
 
 TEST_CASE("FogVolume: a slanted line through a soft box holds what summing its fog in steps does")
@@ -308,7 +423,7 @@ TEST_CASE("FogVolume: a slanted line through a soft box holds what summing its f
     const glm::vec3 eye(-12.0f, 3.0f, -5.0f);
     const glm::vec3 ray = glm::normalize(glm::vec3(1.0f, -0.35f, 0.4f));
     const float closedForm = Span(box, eye, ray);
-    const float summed = Summed(eye, ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return BoxDensity(p, half, softness); });
+    const float summed = Summed(eye, ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return BoxDensity(p, box); });
     CHECK(closedForm > 0.0f);
     CHECK(closedForm == doctest::Approx(summed).epsilon(1.0e-3));
 }
@@ -348,23 +463,21 @@ TEST_CASE("FogVolume: a partly soft ellipsoid holds what summing its fog in step
     const glm::vec3 radii(4.0f, 3.0f, 5.0f);
     const float softness = 1.0f;
     const FogVolumeGpu ellipsoid = Volume(FogVolumeKind::Ellipsoid, radii, softness);
-    // The shell is the softness deep where the ellipsoid is thinnest.
-    const float depth = softness / 3.0f;
-    const float band = depth * (2.0f - depth);
     const glm::vec3 eye(-10.0f, 1.2f, -0.7f);
     const glm::vec3 ray = glm::normalize(glm::vec3(1.0f, 0.1f, 0.2f));
     CHECK(Span(ellipsoid, eye, ray) ==
-          doctest::Approx(Summed(eye, ray, 0.0f, 25.0f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, radii, band); }))
+          doctest::Approx(Summed(eye, ray, 0.0f, 25.0f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, ellipsoid); }))
           .epsilon(1.0e-3));
     // And stopped by a surface inside it.
     CHECK(Span(ellipsoid, eye, ray, 9.5f) ==
-          doctest::Approx(Summed(eye, ray, 0.0f, 9.5f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, radii, band); }))
+          doctest::Approx(Summed(eye, ray, 0.0f, 9.5f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, ellipsoid); }))
           .epsilon(1.0e-3));
     // Through the full core as well as the shell around it.
     const glm::vec3 coreEye(-10.0f, 0.3f, 0.2f);
     const glm::vec3 coreRay = glm::normalize(glm::vec3(1.0f, 0.02f, 0.05f));
     CHECK(Span(ellipsoid, coreEye, coreRay) ==
-          doctest::Approx(Summed(coreEye, coreRay, 0.0f, 25.0f, [&](const glm::vec3 &p) { return EllipsoidDensity(p, radii, band); }))
+          doctest::Approx(Summed(coreEye, coreRay, 0.0f, 25.0f,
+                                 [&](const glm::vec3 &p) { return EllipsoidDensity(p, ellipsoid); }))
           .epsilon(1.0e-3));
 }
 
@@ -448,7 +561,6 @@ TEST_CASE("FogVolume: slanted lines through a soft U hold what summing its fog i
 {
     const float softness = 0.6f;
     const Outline outline = MakeOutline(UShape(), 2.0f, softness);
-    const glm::vec3 half(outline.volume.extents);
     const std::array<std::array<glm::vec3, 2>, 4> lines = {{
         {glm::vec3(-20.0f, 1.0f, 2.5f), glm::vec3(1.0f, -0.05f, 0.08f)},
         {glm::vec3(-8.0f, 6.0f, -8.0f), glm::vec3(0.7f, -0.5f, 1.0f)},
@@ -460,7 +572,7 @@ TEST_CASE("FogVolume: slanted lines through a soft U hold what summing its fog i
         const glm::vec3 ray = glm::normalize(line[1]);
         CAPTURE(line[0]);
         const float summed =
-            Summed(line[0], ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return OutlineDensity(p, half, softness, outline.edges); });
+            Summed(line[0], ray, 0.0f, 40.0f, [&](const glm::vec3 &p) { return OutlineDensity(p, outline.volume, outline.edges); });
         CHECK(OutlineSpan(outline, line[0], ray) == doctest::Approx(std::max(summed, 0.0f)).epsilon(1.0e-3));
     }
 }
