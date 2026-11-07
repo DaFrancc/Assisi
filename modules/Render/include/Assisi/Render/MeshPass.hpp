@@ -32,6 +32,7 @@
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 #include <Assisi/Render/ShadowCascades.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
 
@@ -74,6 +75,19 @@ enum class MeshPassStage : uint8_t
     LitAfterPrepass,
     Count_
 };
+
+/// @brief The depth test the lit pass draws @p pipeline's surfaces with over the
+/// depth prepass. Its shader never alpha-tests there: the prepass already did.
+///
+/// A cutout passes only where its depth equals the stored depth, which is where
+/// the prepass kept it; a hole lies nearer than whatever shows through it and
+/// fails, instead of being shaded and thrown away. Solid surfaces keep nearer or
+/// same, which gives them the same pixels, because equal can weaken coarse depth
+/// rejection on some hardware.
+[[nodiscard]] inline constexpr nvrhi::ComparisonFunc AfterPrepassDepthTest(MeshPipeline pipeline)
+{
+    return MeshPipelineIsMasked(pipeline) ? kSceneDepthSame : kSceneDepthNearerOrSame;
+}
 
 /// @brief What the shadow lookup draws instead of shading, for diagnosis.
 ///

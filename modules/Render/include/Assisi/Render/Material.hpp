@@ -30,6 +30,13 @@ enum MaterialFlagBits : uint32_t
     kMaterialFlagEnergyPreservingDiffuse = 1u << 1, ///< EON diffuse; set when BaseDiffuseRoughness > 0.
     kMaterialFlagSpecularAntiAliasing = 1u << 2,    ///< Geometric specular AA; set when the enable is on and the clamp > 0.
     kMaterialFlagShadowsFollowSmoothing = 1u << 3,  ///< Shadow lookups lift onto the smooth-shaded curve.
+    /// The emissive factor is not zero. Without it the emissive texture is not
+    /// read: anything times a zero factor is no light.
+    kMaterialFlagHasEmissive = 1u << 4,
+    /// An occlusion texture is bound and its strength is not zero. Without it
+    /// the texture is not read: the default texture and a zero strength both
+    /// leave the surface unoccluded.
+    kMaterialFlagHasOcclusion = 1u << 5,
 };
 
 /// @brief Per-material constants — one row of the shared material table.
@@ -70,6 +77,7 @@ struct MaterialTextures
     uint32_t occlusion = 0;
     uint32_t emissive = 0;
     bool hasNormalTexture = false;     ///< False when the normal channel is the flat default.
+    bool hasOcclusionTexture = false;  ///< False when the occlusion channel is the white default.
 };
 
 class Material

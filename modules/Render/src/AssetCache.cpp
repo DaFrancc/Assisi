@@ -434,7 +434,8 @@ void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData 
     textures.normal =
         ResolveChannel(data.NormalTexture, MaterialChannel::Normal, &textures.hasNormalTexture);
     textures.metallicRoughness = ResolveChannel(data.MetallicRoughnessTexture, MaterialChannel::MetallicRoughness);
-    textures.occlusion         = ResolveChannel(data.OcclusionTexture, MaterialChannel::Occlusion);
+    textures.occlusion =
+        ResolveChannel(data.OcclusionTexture, MaterialChannel::Occlusion, &textures.hasOcclusionTexture);
     textures.emissive          = ResolveChannel(data.EmissiveTexture, MaterialChannel::Emissive);
 
     material.Create(_device, id, data, textures);
@@ -909,6 +910,11 @@ void AssetCache::PublishMaterial(PendingPublish &publish)
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
     {
         RecordedChannel &rc = publish.material.channels[ch];
+        // The error pattern counts: it is drawn so the failure shows.
+        if (ch == static_cast<std::size_t>(MaterialChannel::Occlusion) && (rc.texture || rc.failed))
+        {
+            textures.hasOcclusionTexture = true;
+        }
         if (rc.texture)
         {
             // Dedup by (id, space, format): a texture shared across materials

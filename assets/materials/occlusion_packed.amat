@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [
+    0.8,
+    0.8,
+    0.8,
+    1.0
+  ],
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.7,
+  "MetallicRoughnessTexture": {
+    "guid": "bc1ebcba-3a5c-4b22-96ff-08cd1f653b75",
+    "path": "textures/occlusion_rings.png"
+  },
+  "NormalScale": 1.0,
+  "OcclusionTexture": {
+    "guid": "bc1ebcba-3a5c-4b22-96ff-08cd1f653b75",
+    "path": "textures/occlusion_rings.png"
+  },
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [
+    0.0,
+    0.0,
+    0.0
+  ]
+}

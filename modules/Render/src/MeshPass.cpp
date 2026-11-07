@@ -390,11 +390,13 @@ bool MeshPass::PreparePrepass()
 
         // Shades each pixel once, for the surface the prepass kept there: equal
         // passes it and everything behind fails. The depth is already written,
-        // and writing it again would only cost bandwidth.
+        // and writing it again would only cost bandwidth. A cutout needs no
+        // alpha test here, so it gets the shader that keeps early depth
+        // rejection.
         desc.VS = _invariantVertexShader;
-        desc.PS = _pixelShaders[masked ? kPixelShaderMasked : kPixelShaderOpaque];
+        desc.PS = _pixelShaders[kPixelShaderOpaque];
         desc.renderState.depthStencilState.depthWriteEnable = false;
-        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
+        desc.renderState.depthStencilState.depthFunc = AfterPrepassDepthTest(pipeline);
         desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
         _afterPrepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
 

@@ -9,10 +9,10 @@
 // that draws after it.
 //
 // Both of those declare gl_Position invariant. The lit pass after a prepass
-// tests its depth against the prepass's with GreaterOrEqual (reversed Z: see
-// Render/SceneDepth.hpp) and writes none of its
-// own, so a fragment survives only if the two stages computed its position to
-// the bit. Two separately compiled stages are free to schedule the same
+// tests its depth against the prepass's, with GreaterOrEqual for solid
+// surfaces and Equal for cutouts (reversed Z: see Render/SceneDepth.hpp), and
+// writes none of its own, so a fragment survives only if the two stages
+// computed its position to the bit. Two separately compiled stages are free to schedule the same
 // arithmetic differently unless both say invariant; one that is off by an ulp
 // leaves a crack of whatever the depth clear shows through. The plain build
 // does not declare it, so the frame without a prepass is the frame it always was.
@@ -102,11 +102,16 @@ void main()
     vMaterialIndex = inst.materialIndex;
     vWorldPos = worldPos.xyz;
     // Normals transform by the inverse-transpose of the model's upper-left 3x3,
-    // so non-uniform scale doesn't skew them (for uniform scale/rotation this
-    // reduces to mat3(model)). Computed per-vertex from the instance's model
-    // matrix; inverse() of a 3x3 is cheap.
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
-    vNormal   = normalize(normalMatrix * inNormal);
+    // so non-uniform scale doesn't skew them. That is the cofactor matrix over
+    // the determinant; the normalize removes the scale, so only the
+    // determinant's sign is kept, which turns the normal back out of a mirrored
+    // model. Three cross products rather than a full inverse per vertex.
+    mat3 linear       = mat3(model);
+    vec3 acrossX      = cross(linear[1], linear[2]);
+    mat3 normalMatrix = mat3(acrossX, cross(linear[2], linear[0]), cross(linear[0], linear[1]));
+    // The determinant, from the cross product already taken.
+    float handedness  = sign(dot(linear[0], acrossX));
+    vNormal   = normalize(normalMatrix * inNormal * handedness);
     // In vWorldPos's space, measured from the camera: the fragment shader takes
     // the difference of terms as large as the distance to it, and a far origin
     // would leave nothing of the difference but rounding.

@@ -104,9 +104,10 @@ number of lights.
 
 Draws every mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
-in front, rather than once for every surface drawn over it. Its cost grows with
-the number of triangles in view, which [detail levels](rendering-lod.md) keep
-down.
+in front, rather than once for every surface drawn over it. This is also where
+masked materials cut their holes, so the lit pass never shades a hole. Its cost
+grows with the number of triangles in view, which
+[detail levels](rendering-lod.md) keep down.
 
 - **Changed by:** the number of meshes and triangles in view; masked materials,
   which cost more.

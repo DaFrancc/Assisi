@@ -60,7 +60,8 @@ inline constexpr uint32_t kMeshPipelineCount = 4;
                                      (doubleSided ? kMeshPipelineDoubleSidedBit : 0u));
 }
 
-/// @brief Whether @p pipeline's shader carries the alpha-test discard.
+/// @brief Whether @p pipeline draws cutouts, whose shader carries the
+/// alpha-test discard in the prepass and in a lit pass with no prepass before it.
 [[nodiscard]] inline constexpr bool MeshPipelineIsMasked(MeshPipeline pipeline)
 {
     return (static_cast<uint32_t>(pipeline) & kMeshPipelineMaskedBit) != 0u;
