@@ -109,7 +109,11 @@ bool MeshPass::Initialize(const InitParams &params)
     // solid, which is a wrong image rather than a missing feature.
     _pixelShaders[kPixelShaderMasked] =
         LoadSpirvShader(device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderMasked])
+    // Nor is the blended one: without it a see-through material would not draw.
+    _pixelShaders[kPixelShaderBlended] =
+        LoadSpirvShader(device, params.blendedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderMasked] ||
+        !_pixelShaders[kPixelShaderBlended])
     {
         return false;
     }
@@ -332,6 +336,32 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
             return false;
         }
     }
+
+    // See-through surfaces are tested against the solid depth but write none:
+    // each blends over everything behind it, which may be another of them.
+    // Premultiplied, because the shader adds reflections alpha does not fade.
+    pipelineDesc.PS = _pixelShaders[kPixelShaderBlended];
+    pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+    pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
+    nvrhi::BlendState::RenderTarget &blend = pipelineDesc.renderState.blendState.targets[0];
+    blend.blendEnable = true;
+    blend.srcBlend = nvrhi::BlendFactor::One;
+    blend.destBlend = nvrhi::BlendFactor::InvSrcAlpha;
+    blend.srcBlendAlpha = nvrhi::BlendFactor::One;
+    blend.destBlendAlpha = nvrhi::BlendFactor::InvSrcAlpha;
+    for (uint32_t i = 0; i < std::to_underlying(BlendedFaces::Count_); ++i)
+    {
+        const BlendedFaces faces = static_cast<BlendedFaces>(i);
+        pipelineDesc.renderState.rasterState.cullMode =
+            faces == BlendedFaces::Back ? nvrhi::RasterCullMode::Front : nvrhi::RasterCullMode::Back;
+        _blendedPipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+        if (_blendedPipelines[i] == nullptr)
+        {
+            Core::Log::Error("MeshPass: failed to create the blended pipeline ({} faces).",
+                             faces == BlendedFaces::Back ? "back" : "front");
+            return false;
+        }
+    }
     return true;
 }
 
@@ -493,14 +523,15 @@ bool MeshPass::CreateBrdfTable()
     return true;
 }
 
-nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
+nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(CachedBindingSet &cache,
+                                                          nvrhi::IBuffer *instanceBuffer) const
 {
-    if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
-        _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
-        _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube &&
-        _globalSetAmbientOcclusion == _ambientOcclusion && _globalSetCloudShadow == _cloudShadow)
+    if (cache.set != nullptr && cache.instanceBuffer == instanceBuffer && cache.shadowMap == _shadowMap &&
+        cache.shadowAtlas == _shadowAtlas && cache.shadowViewTable == _shadowViewTable &&
+        cache.environmentCube == _environmentCube && cache.ambientOcclusion == _ambientOcclusion &&
+        cache.cloudShadow == _cloudShadow)
     {
-        return _globalBindingSet;
+        return cache.set;
     }
 
     // Every referenced handle but the instance buffer and the cascade array is
@@ -552,34 +583,45 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
                                                                 _fogVolumes->Edges().NativeBuffer()));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles),
                                                                 _fogVolumes->Tiles().NativeBuffer()));
-    _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
-    _globalSetInstanceBuffer = instanceBuffer;
-    _globalSetShadowMap = _shadowMap;
-    _globalSetShadowAtlas = _shadowAtlas;
-    _globalSetShadowViewTable = _shadowViewTable;
-    _globalSetEnvironmentCube = _environmentCube;
-    _globalSetAmbientOcclusion = _ambientOcclusion;
-    _globalSetCloudShadow = _cloudShadow;
-    return _globalBindingSet;
+    cache = CachedBindingSet{.set = _device->createBindingSet(bindingSetDesc, _bindingLayout),
+                             .instanceBuffer = instanceBuffer,
+                             .shadowMap = _shadowMap,
+                             .shadowAtlas = _shadowAtlas,
+                             .shadowViewTable = _shadowViewTable,
+                             .environmentCube = _environmentCube,
+                             .ambientOcclusion = _ambientOcclusion,
+                             .cloudShadow = _cloudShadow};
+    return cache.set;
 }
 
-void MeshPass::EnsureIndirectCapacity(uint32_t commandCount) const
+void MeshPass::EnsureIndirectCapacity(nvrhi::BufferHandle &buffer, uint32_t &capacity, uint32_t commandCount,
+                                      const char *debugName) const
 {
-    if (_indirectBuffer != nullptr && commandCount <= _indirectCapacity)
+    if (buffer != nullptr && commandCount <= capacity)
     {
         return;
     }
-    const uint32_t grown = std::max(_indirectCapacity * 2u, kInitialInstanceCapacity);
-    const uint32_t capacity = std::max(grown, commandCount);
+    const uint32_t grown = std::max(capacity * 2u, kInitialInstanceCapacity);
+    const uint32_t newCapacity = std::max(grown, commandCount);
 
     nvrhi::BufferDesc desc;
-    desc.byteSize = static_cast<uint64_t>(sizeof(nvrhi::DrawIndexedIndirectArguments)) * capacity;
+    desc.byteSize = static_cast<uint64_t>(sizeof(nvrhi::DrawIndexedIndirectArguments)) * newCapacity;
     desc.isDrawIndirectArgs = true;
     desc.initialState = nvrhi::ResourceStates::IndirectArgument;
     desc.keepInitialState = true;
-    desc.debugName = "MeshPass::IndirectArgs";
-    _indirectBuffer = _device->createBuffer(desc);
-    _indirectCapacity = capacity;
+    desc.debugName = debugName;
+    buffer = _device->createBuffer(desc);
+    capacity = newCapacity;
+}
+
+void MeshPass::EnsureInstanceCapacity(Buffer &buffer, uint32_t count, const char *debugName) const
+{
+    if (buffer.IsValid() && count <= buffer.CapacityElements())
+    {
+        return;
+    }
+    const uint32_t grown = std::max(buffer.CapacityElements() * 2u, kInitialInstanceCapacity);
+    buffer.Create(_device, sizeof(InstanceData), std::max(grown, count), /*allowUnorderedAccess=*/ false, debugName);
 }
 
 MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items,
@@ -673,15 +715,10 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
 
     // Grow the instance buffer to hold this frame's records if needed. A growth
     // swaps the buffer handle, so the cached global set (which references it) must
-    // be rebuilt — GetOrCreateGlobalBindingSet notices via _globalSetInstanceBuffer.
-    if (!_instanceBuffer.IsValid() || instances.size() > _instanceBuffer.CapacityElements())
-    {
-        const uint32_t needed = static_cast<uint32_t>(instances.size());
-        const uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialInstanceCapacity);
-        _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/ false,
-                               "MeshPass::Instances");
-    }
-    EnsureIndirectCapacity(static_cast<uint32_t>(commands.size()));
+    // be rebuilt — GetOrCreateGlobalBindingSet notices the handle changed.
+    EnsureInstanceCapacity(_instanceBuffer, static_cast<uint32_t>(instances.size()), "MeshPass::Instances");
+    EnsureIndirectCapacity(_indirectBuffer, _indirectCapacity, static_cast<uint32_t>(commands.size()),
+                           "MeshPass::IndirectArgs");
 
     // Upload both buffers before recording draws: the copies land in this command
     // list ahead of the draws that read them, so the ordering is correct in-frame.
@@ -703,7 +740,8 @@ MeshPass::SubmitStats MeshPass::RecordCpuDraws(const RenderFrame &frame, MeshPas
     const std::vector<MeshPipeline> &batchPipelines = _scratchBatchPipelines;
     const nvrhi::GraphicsPipelineHandle *const pipelines = PipelinesFor(stage);
 
-    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_instanceBuffer.NativeBuffer());
+    nvrhi::IBindingSet *const globalBindingSet =
+        GetOrCreateGlobalBindingSet(_globalBindingSet, _instanceBuffer.NativeBuffer());
 
     // Multi-draw each maximal run of batches that share the same arena vertex/index
     // buffers *and* pipeline with one drawIndexedIndirect. Stage C keeps every mesh
@@ -783,7 +821,7 @@ MeshPass::SubmitStats MeshPass::RecordIndirectDraws(const RenderFrame &frame, co
 
     // Bind the global set against the cull pass's instance buffer (t6) — the
     // records it wrote are read by gl_InstanceIndex just like the CPU path's.
-    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(in.instanceBuffer);
+    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_globalBindingSet, in.instanceBuffer);
 
     // One multi-draw per live pipeline block. Single arena → all batches share the
     // arena's vertex/index buffers (stage C/E), so each block is one
@@ -816,6 +854,125 @@ MeshPass::SubmitStats MeshPass::RecordIndirectDraws(const RenderFrame &frame, co
     }
 
     // Survivor/batch tallies come from the culler's readback; report the calls.
+    return stats;
+}
+
+void PlanBlendedDraws(std::span<const DrawItem> items, std::vector<BlendedDraw> &out)
+{
+    out.clear();
+    for (uint32_t record = 0; record < static_cast<uint32_t>(items.size()); ++record)
+    {
+        const DrawItem &item = items[record];
+        if (item.material->IsDoubleSided())
+        {
+            out.push_back(BlendedDraw{.mesh = item.mesh,
+                                      .submeshIndex = item.submeshIndex,
+                                      .firstInstance = record,
+                                      .instanceCount = 1,
+                                      .faces = BlendedFaces::Back});
+            out.push_back(BlendedDraw{.mesh = item.mesh,
+                                      .submeshIndex = item.submeshIndex,
+                                      .firstInstance = record,
+                                      .instanceCount = 1,
+                                      .faces = BlendedFaces::Front});
+            continue;
+        }
+        // Only onto a single-sided draw of the same submesh that ends at this
+        // record: the previous item's.
+        if (!out.empty())
+        {
+            BlendedDraw &previous = out.back();
+            if (previous.faces == BlendedFaces::Front && previous.mesh == item.mesh &&
+                previous.submeshIndex == item.submeshIndex && !items[record - 1].material->IsDoubleSided())
+            {
+                ++previous.instanceCount;
+                continue;
+            }
+        }
+        out.push_back(BlendedDraw{.mesh = item.mesh,
+                                  .submeshIndex = item.submeshIndex,
+                                  .firstInstance = record,
+                                  .instanceCount = 1,
+                                  .faces = BlendedFaces::Front});
+    }
+}
+
+MeshPass::SubmitStats MeshPass::SubmitBlended(const RenderFrame &frame, std::span<const DrawItem> items) const
+{
+    SubmitStats stats;
+    if (items.empty())
+    {
+        return stats;
+    }
+
+    _blendedInstances.clear();
+    for (const DrawItem &item : items)
+    {
+        ASSISI_ASSERT(item.mesh != nullptr && item.material != nullptr && item.material->IsBlended(),
+                      "a blended draw needs a mesh and a see-through material");
+        ASSISI_ASSERT(item.material->Id() < AssetCache::kMaxMaterials,
+                      "material id indexes past the material table - the shader read would be out of bounds");
+        _blendedInstances.push_back(InstanceData{item.model, item.material->Id()});
+    }
+    PlanBlendedDraws(items, _blendedDraws);
+
+    _blendedCommands.clear();
+    for (const BlendedDraw &draw : _blendedDraws)
+    {
+        const Geometry::SubMesh &subMesh = draw.mesh->SubMeshes()[draw.submeshIndex];
+        nvrhi::DrawIndexedIndirectArguments cmd;
+        cmd.indexCount = subMesh.IndexCount;
+        cmd.instanceCount = draw.instanceCount;
+        cmd.startIndexLocation = draw.mesh->IndexBase() + subMesh.IndexOffset;
+        cmd.baseVertexLocation = static_cast<int32_t>(draw.mesh->VertexBase());
+        cmd.startInstanceLocation = draw.firstInstance;
+        _blendedCommands.push_back(cmd);
+    }
+
+    const uint32_t instanceCount = static_cast<uint32_t>(_blendedInstances.size());
+    const uint32_t commandCount = static_cast<uint32_t>(_blendedCommands.size());
+    EnsureInstanceCapacity(_blendedInstanceBuffer, instanceCount, "MeshPass::BlendedInstances");
+    EnsureIndirectCapacity(_blendedIndirectBuffer, _blendedIndirectCapacity, commandCount,
+                           "MeshPass::BlendedIndirectArgs");
+    nvrhi::ICommandList *const commandList = frame.commandList;
+    _blendedInstanceBuffer.Upload(commandList, _blendedInstances.data(), instanceCount);
+    commandList->writeBuffer(_blendedIndirectBuffer, _blendedCommands.data(),
+                             _blendedCommands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
+
+    nvrhi::IBindingSet *const bindingSet =
+        GetOrCreateGlobalBindingSet(_blendedBindingSet, _blendedInstanceBuffer.NativeBuffer());
+
+    // One call per run of draws sharing a pipeline and the arena buffers, in
+    // plan order, which is the order they composite in.
+    uint32_t runStart = 0;
+    while (runStart < commandCount)
+    {
+        const BlendedDraw &first = _blendedDraws[runStart];
+        uint32_t runEnd = runStart + 1;
+        while (runEnd < commandCount && _blendedDraws[runEnd].faces == first.faces &&
+               _blendedDraws[runEnd].mesh->VertexBuffer() == first.mesh->VertexBuffer() &&
+               _blendedDraws[runEnd].mesh->IndexBuffer() == first.mesh->IndexBuffer())
+        {
+            ++runEnd;
+        }
+        nvrhi::GraphicsState state;
+        state.pipeline = _blendedPipelines[std::to_underlying(first.faces)];
+        state.framebuffer = frame.framebuffer;
+        state.addBindingSet(bindingSet);
+        state.addBindingSet(_bindlessTable);
+        state.viewport.addViewportAndScissorRect(
+            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+        state.addVertexBuffer(nvrhi::VertexBufferBinding{first.mesh->VertexBuffer(), 0, 0});
+        state.indexBuffer = nvrhi::IndexBufferBinding{first.mesh->IndexBuffer(), nvrhi::Format::R32_UINT, 0};
+        state.indirectParams = _blendedIndirectBuffer;
+        commandList->setGraphicsState(state);
+        commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments), runEnd - runStart);
+        ++stats.drawCalls;
+        runStart = runEnd;
+    }
+
+    stats.instances = instanceCount;
+    stats.batches = commandCount;
     return stats;
 }
 

@@ -820,11 +820,8 @@ TEST_CASE("ImportMesh: alphaMode MASK without an explicit cutoff takes the glTF 
     fs::remove_all(root);
 }
 
-TEST_CASE("ImportMesh: alphaMode BLEND still imports as opaque, and says so")
+TEST_CASE("ImportMesh: alphaMode BLEND imports as see-through, with nothing to warn about")
 {
-    // There is no blended pass yet, so BLEND has nowhere to go. Importing it as a
-    // cutout would be worse than opaque: it would punch holes in a surface the
-    // author meant to see through smoothly.
     const fs::path root = WriteKhrAssets(MakeAlphaGltf("BLEND", ""));
     const Assisi::Tests::LogCapture log;
 
@@ -832,8 +829,8 @@ TEST_CASE("ImportMesh: alphaMode BLEND still imports as opaque, and says so")
     REQUIRE(result.has_value());
     REQUIRE(result->Materials.size() == 1);
 
-    CHECK(result->Materials[0].Alpha == Assisi::Geometry::AlphaMode::Opaque);
-    CHECK(log.Mentions("BLEND"));
+    CHECK(result->Materials[0].Alpha == Assisi::Geometry::AlphaMode::Blend);
+    CHECK_FALSE(log.Mentions("BLEND"));
 
     fs::remove_all(root);
 }
@@ -886,6 +883,16 @@ TEST_CASE("ImportMesh: cutout and double-sided materials do not lift their shado
     REQUIRE(doubleSided.has_value());
     CHECK(doubleSided->Materials[0].ShadowsFollowSmoothing == false);
     fs::remove_all(card);
+}
+
+TEST_CASE("ImportMesh: a see-through material keeps its shadows on the smoothing")
+{
+    // A glass bottle is a smooth closed shell, not a foliage card.
+    const fs::path root = WriteKhrAssets(MakeAlphaGltf("BLEND", ""));
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("khr.gltf");
+    REQUIRE(result.has_value());
+    CHECK(result->Materials[0].ShadowsFollowSmoothing == true);
+    fs::remove_all(root);
 }
 
 namespace

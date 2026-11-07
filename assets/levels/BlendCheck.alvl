@@ -1,0 +1,136 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {"farZ": 200.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+        "Transform": {"position": [0.0, 1.7, 5.5], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {"color": [1.0, 0.98, 0.95], "direction": [0.3, -1.0, 0.6], "intensity": 2.0},
+        "Skybox": {"preset": 0}
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [0.0, -0.25, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [40.0, 0.5, 40.0]}
+      }
+    },
+    {
+      "name": "Wall",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc", "path": "materials/shadow_white.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [1.5, 1.0, -4.5], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [3.0, 2.0, 0.3]}
+      }
+    },
+    {
+      "name": "Post",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc", "path": "materials/shadow_white.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-1.9, 0.75, 0.6], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [0.2, 1.5, 0.2]}
+      }
+    },
+    {
+      "name": "RedPane",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "2381e09f-59ca-4ae8-a984-169b30b114fd", "path": "materials/glass_red.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-0.8, 1.6, 0.6], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.8, 1.6, 0.04]}
+      }
+    },
+    {
+      "name": "GreenPane",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "69ec71f7-d8f5-46d4-b7ad-1d2078c7e52d", "path": "materials/glass_green.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [0.2, 2.0, -0.4], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.8, 1.6, 0.04]}
+      }
+    },
+    {
+      "name": "BluePane",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572", "path": "materials/glass_blue.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [1.2, 1.4, -1.4], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.8, 1.6, 0.04]}
+      }
+    },
+    {
+      "name": "GlowPane",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "937be8f5-6cb9-458d-adf1-283b3d303aa4", "path": "materials/glass_glow.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-1.0, 3.1, -0.2], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 0.4, 0.04]}
+      }
+    },
+    {
+      "name": "ClearSphere",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ddc7228d-2d03-4331-9fac-30490dcff40e", "path": "materials/glass_clear.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000006", "path": "prim://sphere"}
+        },
+        "Transform": {"position": [-3.6, 1.0, -0.5], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [2.0, 2.0, 2.0]}
+      }
+    },
+    {
+      "name": "GlassBox",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "1d16803c-aeb4-4193-8b02-292af243bbea", "path": "materials/glass_box.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [3.6, 0.8, -0.5], "rotation": [0.96593, 0.0, 0.25882, 0.0], "scale": [1.6, 1.6, 1.6]}
+      }
+    },
+    {
+      "name": "CrossedPaneA",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "2381e09f-59ca-4ae8-a984-169b30b114fd", "path": "materials/glass_red.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [2.6, 2.9, -1.2], "rotation": [0.96593, 0.0, 0.25882, 0.0], "scale": [1.4, 0.8, 0.04]}
+      }
+    },
+    {
+      "name": "CrossedPaneB",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572", "path": "materials/glass_blue.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [2.6, 2.9, -1.2], "rotation": [0.96593, 0.0, -0.25882, 0.0], "scale": [1.4, 0.8, 0.04]}
+      }
+    },
+    {
+      "name": "Lamp",
+      "components": {
+        "PointLight": {"color": [1.0, 0.7, 0.4], "intensity": 20.0, "radius": 6.0},
+        "Transform": {"position": [0.4, 0.6, 1.6], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    }
+  ],
+  "version": 2
+}

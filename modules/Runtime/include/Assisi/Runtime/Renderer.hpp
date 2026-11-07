@@ -109,6 +109,11 @@ struct DrawSceneParams
     /// The blueprint instance the camera belongs to: an entity of the same
     /// instance whose MeshRenderer is hiddenFromOwnCamera is not drawn. Invalid hides nothing.
     Assisi::ECS::InstanceId viewerInstance;
+
+    /// Filled with the see-through submeshes in view, farthest first, for
+    /// MeshPass::SubmitBlended to draw once the solid scene and the sky are
+    /// down. Neither path draws them itself. Null leaves them undrawn.
+    std::vector<Assisi::Render::DrawItem> *blendedItems = nullptr;
 };
 
 /// @brief The GPU timer DrawScene opens around its draws for @p stage.
@@ -128,7 +133,8 @@ struct DrawSceneParams
 /// DrawItem::sortKey so MeshPass::Submit records it in material/mesh-major,
 /// front-to-back order. `frustumCulling` false submits every mesh; `sortDraws`
 /// false submits in query order — both for A/B comparing the seam (the image is
-/// identical either way, only the bind counts change).
+/// identical either way, only the bind counts change). See-through submeshes go
+/// to `blendedItems` instead, always sorted, because their order is the picture.
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);

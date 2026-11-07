@@ -608,16 +608,25 @@ FogSpan FogVolumeSpan(FogVolume volume, vec3 eye, vec3 ray, float distance)
     return FogSpan(0.0, 0.0);
 }
 
-// `color` seen through every volume listed for this pixel's square, along the
-// unit `ray` from `eye` as far as `distance`. `volumes` is the frame's
-// fogVolumes lanes (Render::FogVolumeFrame::Lanes); `fog` is the level's fog,
-// whose haze colours a lit volume and covers what lies beyond it.
-vec3 ApplyFogVolumes(vec3 color, uvec4 volumes, FogConstants fog, vec3 eye, vec3 ray, float distance,
-                     vec2 fragCoord)
+// What the volumes in front of a surface do to its light: the share of it that
+// gets through, and the colour they add over it.
+struct FogVolumesEffect
 {
+    vec3  added;
+    float through;
+};
+
+// The effect of every volume listed for this pixel's square, along the unit
+// `ray` from `eye` as far as `distance`. `volumes` is the frame's fogVolumes
+// lanes (Render::FogVolumeFrame::Lanes); `fog` is the level's fog, whose haze
+// colours a lit volume and covers what lies beyond it.
+FogVolumesEffect FogVolumesAlong(uvec4 volumes, FogConstants fog, vec3 eye, vec3 ray, float distance,
+                                 vec2 fragCoord)
+{
+    FogVolumesEffect none = FogVolumesEffect(vec3(0.0), 1.0);
     if (volumes.x == 0u)
     {
-        return color;
+        return none;
     }
     uvec2 square = min(uvec2(fragCoord) / volumes.w, volumes.yz - 1u);
     uint  tile   = square.y * volumes.y + square.x;
@@ -625,7 +634,7 @@ vec3 ApplyFogVolumes(vec3 color, uvec4 volumes, FogConstants fog, vec3 eye, vec3
     uint  count  = fogTiles[tile * 2u + 1u];
     if (count == 0u)
     {
-        return color;
+        return none;
     }
 
     // FogVolumeBlend, with each volume's colour as FogVolumeColor gives it.
@@ -655,10 +664,18 @@ vec3 ApplyFogVolumes(vec3 color, uvec4 volumes, FogConstants fog, vec3 eye, vec3
     }
     if (depth <= 0.0)
     {
-        return color;
+        return none;
     }
     float through = exp(-depth);
-    return color * through + weighted / depth * (1.0 - through);
+    return FogVolumesEffect(weighted / depth * (1.0 - through), through);
+}
+
+// `color` seen through every volume FogVolumesAlong finds.
+vec3 ApplyFogVolumes(vec3 color, uvec4 volumes, FogConstants fog, vec3 eye, vec3 ray, float distance,
+                     vec2 fragCoord)
+{
+    FogVolumesEffect effect = FogVolumesAlong(volumes, fog, eye, ray, distance, fragCoord);
+    return color * effect.through + effect.added;
 }
 
 #endif

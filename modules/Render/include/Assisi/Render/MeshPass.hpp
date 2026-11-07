@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <nvrhi/nvrhi.h>
 
@@ -89,6 +91,39 @@ enum class MeshPassStage : uint8_t
     return MeshPipelineIsMasked(pipeline) ? kSceneDepthSame : kSceneDepthNearerOrSame;
 }
 
+/// @brief Which faces of a see-through surface one blended draw rasterizes.
+///
+/// A double-sided see-through surface is drawn twice, its back faces and then
+/// its front faces over them: through a closed shell such as a glass box, the
+/// far side is seen behind the near one. A single-sided surface is drawn once,
+/// front faces only.
+enum class BlendedFaces : uint8_t
+{
+    Back,
+    Front,
+    Count_
+};
+
+/// @brief One instanced draw of the blended pass: @ref instanceCount records
+/// from @ref firstInstance, all of one submesh, through @ref faces' pipeline.
+struct BlendedDraw
+{
+    const MeshBuffer *mesh = nullptr;
+    uint32_t submeshIndex = 0;
+    uint32_t firstInstance = 0;
+    uint32_t instanceCount = 0;
+    BlendedFaces faces = BlendedFaces::Front;
+};
+
+/// @brief The draws that composite @p items, which are sorted farthest first,
+/// in the order they must be recorded. Item i's instance record is record i.
+///
+/// Neighbouring single-sided items of the same submesh share one instanced
+/// draw, which rasterizes its instances in order. A double-sided item is never
+/// merged: its two draws must both land before the nearer item's.
+/// @pre Every item has a mesh and a blended material.
+void PlanBlendedDraws(std::span<const DrawItem> items, std::vector<BlendedDraw> &out);
+
 /// @brief What the shadow lookup draws instead of shading, for diagnosis.
 ///
 /// Wire encoding: the shader switches on the integer. Separate from
@@ -136,6 +171,9 @@ public:
         /// branch because a shader that can discard costs its whole pipeline
         /// early depth rejection, which opaque geometry must not pay for.
         std::string maskedPixelShaderSpvPath;
+        /// The same pixel shader built for see-through surfaces: diffuse light
+        /// and glow faded by alpha, written for premultiplied blending.
+        std::string blendedPixelShaderSpvPath;
         /// The depth prepass's builds, loaded the first time a frame asks for a
         /// prepass (PreparePrepass) and never before: the vertex stage alone,
         /// the same with the varyings the alpha test reads, and that test.
@@ -409,9 +447,26 @@ public:
     /// Draws nothing when nothing has been submitted since UpdateFrameConstants.
     [[nodiscard]] SubmitStats Redraw(const RenderFrame &frame, MeshPassStage stage) const;
 
+    /// @brief Draws see-through surfaces over the finished opaque scene and sky.
+    ///
+    /// Each blends over what is behind it and writes no depth, so @p items must
+    /// arrive farthest first (MakeBlendedSortKey, sorted stably). They are drawn
+    /// in that order (PlanBlendedDraws), from records and commands of their own,
+    /// which leaves this frame's opaque submission for Redraw untouched.
+    /// @pre IsValid(), UpdateFrameConstants() this frame; every item has a mesh
+    ///      and a blended material.
+    [[nodiscard]] SubmitStats SubmitBlended(const RenderFrame &frame, std::span<const DrawItem> items) const;
+
     bool IsValid() const
     {
         for (const nvrhi::GraphicsPipelineHandle &pipeline : _pipelines)
+        {
+            if (pipeline == nullptr)
+            {
+                return false;
+            }
+        }
+        for (const nvrhi::GraphicsPipelineHandle &pipeline : _blendedPipelines)
         {
             if (pipeline == nullptr)
             {
@@ -426,23 +481,48 @@ public:
     /// the set references survives an AssetCache::Clear (frame CB, sampler, light
     /// buffers, material table, instance buffer), so the rebuild is identical today
     /// — the seam is here for when a referenced resource is recreated.
-    void InvalidateBindingSets() { _globalBindingSet = nullptr; }
+    void InvalidateBindingSets()
+    {
+        _globalBindingSet.set = nullptr;
+        _blendedBindingSet.set = nullptr;
+    }
 
 private:
-    /// @brief Builds (once, then caches) the pass's single binding set: frame
-    /// constants, the shared sampler, the clustered-light buffers, the material
-    /// table, the per-instance buffer at t6 — @p instanceBuffer, which is the
-    /// pass's own (CPU path) or the MeshCuller's (GPU path) — and the sun's
-    /// cascade array at t7. Rebuilt when either handle changes (a growth, a
-    /// switch between paths, a cascade reallocation) or after
-    /// InvalidateBindingSets().
-    nvrhi::IBindingSet *GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const;
+    /// @brief A cached binding set and every non-owned handle it was built
+    /// against; a mismatch in any of them means it must be rebuilt.
+    struct CachedBindingSet
+    {
+        nvrhi::BindingSetHandle set;
+        const nvrhi::IBuffer *instanceBuffer = nullptr;
+        const nvrhi::ITexture *shadowMap = nullptr;
+        const nvrhi::ITexture *shadowAtlas = nullptr;
+        const nvrhi::IBuffer *shadowViewTable = nullptr;
+        const nvrhi::ITexture *environmentCube = nullptr;
+        const nvrhi::ITexture *ambientOcclusion = nullptr;
+        const nvrhi::ITexture *cloudShadow = nullptr;
+    };
 
-    /// @brief Ensures the indirect-args buffer holds at least @p commandCount
+    /// @brief Builds (once, then caches in @p cache) the pass's binding set:
+    /// frame constants, the shared sampler, the clustered-light buffers, the
+    /// material table, the per-instance buffer at t6 — @p instanceBuffer, which
+    /// is the pass's own (CPU path, blended pass) or the MeshCuller's (GPU path)
+    /// — and the shadow maps. Rebuilt when a handle changes (a growth, a switch
+    /// between paths, a cascade reallocation) or after InvalidateBindingSets().
+    /// The opaque and blended draws keep a cache each, because on the GPU path
+    /// they read different instance buffers every frame.
+    nvrhi::IBindingSet *GetOrCreateGlobalBindingSet(CachedBindingSet &cache, nvrhi::IBuffer *instanceBuffer) const;
+
+    /// @brief Ensures @p buffer holds at least @p commandCount
     /// DrawIndexedIndirectArguments, reallocating with geometric growth when not.
     /// Unlike the instance buffer this handle is never referenced by a binding set
     /// (it binds via GraphicsState::indirectParams), so a growth needs no set rebuild.
-    void EnsureIndirectCapacity(uint32_t commandCount) const;
+    void EnsureIndirectCapacity(nvrhi::BufferHandle &buffer, uint32_t &capacity, uint32_t commandCount,
+                                const char *debugName) const;
+
+    /// @brief Ensures @p buffer holds at least @p count instance records,
+    /// reallocating with geometric growth when not. A growth swaps the handle,
+    /// which invalidates the binding set built against it.
+    void EnsureInstanceCapacity(Buffer &buffer, uint32_t count, const char *debugName) const;
 
     /// @brief Build the BRDF table on the CPU and upload it, on a command list
     /// of its own. Once, at Initialize.
@@ -463,12 +543,14 @@ private:
     const FogVolumeBuffers *_fogVolumes = nullptr;
 
     /// @brief Pixel-shader builds the pass loads: the same GLSL with and without
-    /// the alpha-test discard. Fewer than the pipelines, because cull mode is
-    /// rasterizer state — it needs a pipeline of its own but not a second shader.
+    /// the alpha-test discard, and for see-through surfaces. Fewer than the
+    /// pipelines, because cull mode is rasterizer state — it needs a pipeline of
+    /// its own but not a second shader.
     enum PixelShaderVariant : uint32_t
     {
         kPixelShaderOpaque = 0,
         kPixelShaderMasked = 1,
+        kPixelShaderBlended = 2,
         kPixelShaderVariantCount,
     };
 
@@ -485,6 +567,8 @@ private:
     // carry and whether they cull back faces. A draw run selects its own off the
     // sort key.
     nvrhi::GraphicsPipelineHandle _pipelines[kMeshPipelineCount];
+    // The blended pass's, one per BlendedFaces, rebuilt with the lit set.
+    nvrhi::GraphicsPipelineHandle _blendedPipelines[std::to_underlying(BlendedFaces::Count_)];
 
     // The prepass's two sets, empty until PreparePrepass builds them and dropped
     // by RebuildPipeline, which is why the framebuffer they are built against is
@@ -534,9 +618,16 @@ private:
     // which invalidates _globalBindingSet (see GetOrCreateGlobalBindingSet). Owned
     // by the pass, unlike the AssetCache-owned tables above.
     mutable Buffer _instanceBuffer;
-    mutable nvrhi::BindingSetHandle _globalBindingSet;
-    // The instance-buffer and cascade-array handles _globalBindingSet was built
-    // against; a mismatch in either means the set must be rebuilt.
+    mutable CachedBindingSet _globalBindingSet;
+    // The blended pass's own records, commands, binding set and scratch, on the
+    // same terms as the opaque ones.
+    mutable Buffer _blendedInstanceBuffer;
+    mutable nvrhi::BufferHandle _blendedIndirectBuffer;
+    mutable uint32_t _blendedIndirectCapacity = 0;
+    mutable CachedBindingSet _blendedBindingSet;
+    mutable std::vector<InstanceData> _blendedInstances;
+    mutable std::vector<BlendedDraw> _blendedDraws;
+    mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _blendedCommands;
     // The local-light atlas (LocalShadowPass owns it) and the frame's shadow view
     // table (ShadowDepthRenderer owns it). Non-owning, and both swap handles on a
     // reallocation, which invalidates the cached global set.
@@ -563,14 +654,6 @@ private:
     nvrhi::TextureHandle _brdfTable;
     // Trilinear and clamped, for the table and the environment cube.
     nvrhi::SamplerHandle _clampSampler;
-
-    mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
-    mutable const nvrhi::ITexture *_globalSetShadowMap = nullptr;
-    mutable const nvrhi::ITexture *_globalSetShadowAtlas = nullptr;
-    mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
-    mutable const nvrhi::ITexture *_globalSetEnvironmentCube = nullptr;
-    mutable const nvrhi::ITexture *_globalSetAmbientOcclusion = nullptr;
-    mutable const nvrhi::ITexture *_globalSetCloudShadow = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn

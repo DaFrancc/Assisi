@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [0.55, 0.85, 1.0, 0.25],
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.1,
+  "Alpha": 2,
+  "DoubleSided": true
+}

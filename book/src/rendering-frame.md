@@ -24,7 +24,9 @@ what the frame contains:
    maps can be kept from the last frame.
 6. **The draw list.** Meshes outside the camera's view are left out, which is
    called **culling**, and the rest are sorted so that copies of the same mesh
-   with the same material are drawn together in one go.
+   with the same material are drawn together in one go. Surfaces with a
+   [see-through material](rendering-materials.md#see-through-materials) go in a
+   list of their own, sorted farthest first.
 
 The cost of this grows with the number of entities with a `MeshRenderer` and
 with how many of them move.
@@ -102,7 +104,7 @@ number of lights.
 
 ### 9. Depth prepass
 
-Draws every mesh in view, but only how far away each pixel is, with no
+Draws every solid mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
 in front, rather than once for every surface drawn over it. This is also where
 masked materials cut their holes, so the lit pass never shades a hole. Its cost
@@ -122,7 +124,7 @@ screen. Off by default.
 
 ### 11. Lit pass (`draw-scene`)
 
-Draws every mesh in view again, this time working out the colour of each pixel:
+Draws every solid mesh in view again, this time working out the colour of each pixel:
 it reads the material's maps, adds the light of every directional light and of
 the point and spot lights in the pixel's cluster, looks each one up in its
 shadow map, adds the sky's ambient light and reflections, and last fades the
@@ -143,7 +145,19 @@ the ground's. Its cost grows with how much sky is on screen.
 
 - **Changed by:** `Skybox`; `Fog`; the resolution.
 
-### 13. Post-processing (`post-process`, `post-process-output`)
+### 13. See-through surfaces (`draw-blended`)
+
+Draws every surface with a
+[see-through material](rendering-materials.md#see-through-materials) over the
+finished scene and sky, farthest first, each blended over what is behind it.
+They are lit, shadowed and fogged as in the lit pass. Only runs when one is in
+view. Its cost grows with the screen area they cover, counted once for every
+surface over a pixel.
+
+- **Changed by:** materials with `Alpha` set to `Blend`; the same lights,
+  shadows and fog as the lit pass; the resolution.
+
+### 14. Post-processing (`post-process`, `post-process-output`)
 
 Turns the drawn scene into the finished picture:
 
@@ -160,7 +174,7 @@ Turns the drawn scene into the finished picture:
 - **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
   `PostProcessVolume`. See [The level's look](rendering-post-processing.md).
 
-### 14. User interface (`game-ui`)
+### 15. User interface (`game-ui`)
 
 Draws the game's [screens](user-interface.md): menus and HUDs. They are drawn
 after the tone map, so their colours are exactly as you set them. In the editor,
@@ -170,7 +184,7 @@ the editor's own windows are drawn after this.
 
 | You change | Pass |
 |---|---|
-| Resolution, MSAA samples | Lit pass, sky, prepass, post-processing |
+| Resolution, MSAA samples | Lit pass, sky, see-through surfaces, prepass, post-processing |
 | `antiAliasing.mode` | Post-processing, and MSAA's cost in the lit pass |
 | `toneMap` | Post-processing (free) |
 | `bloom` | Post-processing |
@@ -190,4 +204,5 @@ the editor's own windows are drawn after this.
 | `Fog` | Lit pass, sky; and, through the draw distance, everything `Camera.farZ` changes |
 | `Camera.farZ` | Light grid; how far the sun shadows reach |
 | A material's `Alpha` set to `Mask` | Prepass, lit pass, shadows |
+| A material's `Alpha` set to `Blend` | See-through surfaces (and no longer the prepass, lit pass or shadows) |
 | A `SkinnedMesh` | Skinning |
