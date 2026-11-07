@@ -1063,7 +1063,7 @@ void Application::Run()
             ++_frameSampleCount;
         }
 
-        if (_perfCapture)
+        if (_perfCapture && !AssetsStreaming())
         {
             RecordCaptureFrame(cpuMs, gpuMs, rawDt, vulkanContext);
         }

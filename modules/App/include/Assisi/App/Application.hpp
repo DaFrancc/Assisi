@@ -256,6 +256,11 @@ protected:
 
     virtual void OnShutdown() {}
 
+    /// @brief Whether the level's assets are still arriving. A capture's warm-up
+    /// waits for them, so its picture and its timings are of the level as it
+    /// stands loaded, not of the stand-ins drawn while it streams in.
+    [[nodiscard]] virtual bool AssetsStreaming() const { return false; }
+
     /// @brief Checks the picture a capture took, once it is written, on the GPU
     /// named @p deviceName. Returning false fails the run. The editor compares
     /// it with the picture accepted for the level; the image decoder that needs

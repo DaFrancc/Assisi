@@ -275,6 +275,7 @@ class EditorApp : public Assisi::App::Application
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
     void OnShutdown() override;
+    [[nodiscard]] bool AssetsStreaming() const override { return _worlds.AnyStreaming(); }
     /// Compares the capture's picture with the one accepted for the level on
     /// this GPU, when the capture names a directory for them.
     [[nodiscard]] bool CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName) override;

@@ -499,6 +499,10 @@ public:
 
     [[nodiscard]] std::size_t Count() const { return _worlds.size(); }
 
+    /// @brief Whether any resident world is still loading, or still streaming in
+    /// the meshes and materials its level names.
+    [[nodiscard]] bool AnyStreaming() const;
+
     /// @brief Calls @p fn(World&) for each resident world in **creation
     /// order** — deterministic, so stepping several worlds is reproducible.
     template <typename F> void ForEach(F &&fn)

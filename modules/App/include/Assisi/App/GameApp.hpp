@@ -121,6 +121,7 @@ class GameApp : public Application
     [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
     void OnUpdate(float dt) override;
     void OnRender(Render::RenderFrame &frame) override;
+    [[nodiscard]] bool AssetsStreaming() const override { return _worlds.AnyStreaming(); }
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
