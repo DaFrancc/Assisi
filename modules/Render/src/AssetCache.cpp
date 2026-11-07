@@ -181,6 +181,7 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image
                           "AssetCache::MaterialTable");
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
+    _primitiveFactories.emplace(Core::BuiltinAssetId::Quad, &Geometry::CreateUnitQuadMesh);
     for (const PrimitiveDesc &primitive : kShapePrimitives)
     {
         _primitiveFactories.emplace(primitive.id, primitive.factory);

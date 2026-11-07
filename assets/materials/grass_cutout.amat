@@ -10,6 +10,6 @@
   "RoughnessFactor": 0.8,
   "Alpha": 1,
   "AlphaCutoff": 0.5,
-  "DoubleSided": false,
+  "DoubleSided": true,
   "ShadowsFollowSmoothing": false
 }

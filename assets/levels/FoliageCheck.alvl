@@ -12,26 +12,26 @@
       "Transform": {"position": [0.0, -0.5, -150.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [400.0, 1.0, 400.0]}}},
 
     {"name": "Card at 4 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [-2.0, 1.5, -3.4641], "rotation": [0.96593, 0.0, 0.25882, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [-2.0, 1.5, -3.4641], "rotation": [0.96593, 0.0, 0.25882, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 7 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [-0.6101, 1.5, -6.9733], "rotation": [0.99905, 0.0, 0.04362, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [-0.6101, 1.5, -6.9733], "rotation": [0.99905, 0.0, 0.04362, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 12 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [1.8772, 1.5, -11.8523], "rotation": [0.99692, 0.0, -0.07846, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [1.8772, 1.5, -11.8523], "rotation": [0.99692, 0.0, -0.07846, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 24 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [7.4164, 1.5, -22.8254], "rotation": [0.98769, 0.0, -0.15643, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [7.4164, 1.5, -22.8254], "rotation": [0.98769, 0.0, -0.15643, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 48 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [20.2858, 1.5, -43.5029], "rotation": [0.9763, 0.0, -0.21644, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [20.2858, 1.5, -43.5029], "rotation": [0.9763, 0.0, -0.21644, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 96 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [49.4438, 1.5, -82.2883], "rotation": [0.96363, 0.0, -0.26724, 0.0], "scale": [2.0, 2.0, 0.002]}}},
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [49.4438, 1.5, -82.2883], "rotation": [0.96363, 0.0, -0.26724, 0.0], "scale": [2.0, 2.0, 1.0]}}},
     {"name": "Card at 192 m", "components": {
-      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
-      "Transform": {"position": [115.5494, 1.5, -153.3389], "rotation": [0.94832, 0.0, -0.3173, 0.0], "scale": [2.0, 2.0, 0.002]}}}
+      "MeshRenderer": {"castsShadows": false, "materialOverrides": [{"guid": "0b859acb-82dd-43f6-8d19-8ad2e30beeab", "path": "materials/grass_cutout.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-00000000000d", "path": "prim://quad"}},
+      "Transform": {"position": [115.5494, 1.5, -153.3389], "rotation": [0.94832, 0.0, -0.3173, 0.0], "scale": [2.0, 2.0, 1.0]}}}
   ],
   "version": 2
 }

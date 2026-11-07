@@ -35,6 +35,7 @@ entries.
 | `prim://sphere-low`, `prim://sphere`, `prim://sphere-high` | A sphere made of rings, at three levels of detail. | 144, 576, 4096 |
 | `prim://icosphere-low`, `prim://icosphere`, `prim://icosphere-high` | A sphere made of near-equal triangles, which looks rounder at the same triangle count. | 320, 1280, 20480 |
 | `prim://cylinder`, `prim://cylinder-high` | A cylinder. | 96, 256 |
+| `prim://quad` | A flat square, 1 m on each side, facing along +Z: a foliage card, a sign. Seen only from the front unless its material is double-sided. | 2 |
 
 A built-in shape has one material slot. It draws with the engine's default
 material, plain white and moderately rough, until you give it another in
