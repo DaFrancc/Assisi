@@ -37,8 +37,9 @@ public:
     /// @brief The finished glow, half the screen's size, once Run has drawn it.
     [[nodiscard]] nvrhi::ITexture *Output() const;
 
-    /// @brief Draws the chain down from the source and back up. Ready() first.
-    void Run(nvrhi::ICommandList *commandList, const BloomSettings &settings) const;
+    /// @brief Draws the chain down from the source and back up, each smaller
+    /// copy blended over the larger by @p scatter. Ready() first.
+    void Run(nvrhi::ICommandList *commandList, float scatter) const;
 
     void Shutdown();
 

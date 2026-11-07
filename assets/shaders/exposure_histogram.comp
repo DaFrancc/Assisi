@@ -1,0 +1,73 @@
+#version 450
+
+// Counts the scene's pixels by brightness for automatic exposure: one sample
+// per 2x2 block of pixels, their bilinear average, into a histogram of stops. A
+// transcription of Render::ExposureHistogramBin in Exposure.hpp, which the tests
+// hold; the two must agree.
+
+const uint kGroupSide = 16u;
+const uint kBins      = 128u; // Render::kExposureHistogramBins
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Texture_SRV/Sampler are separate descriptors in NVRHI's Vulkan backend, offset
+// by VulkanBindingOffsets: shaderResource at +0, sampler at +128, UAV at +384.
+layout(binding = 0)   uniform texture2D uScene;
+layout(binding = 128) uniform sampler   uSceneSampler;
+layout(std430, binding = 384) buffer Histogram { uint bins[]; };
+
+// Render::ExposureConstants.
+layout(push_constant) uniform PushConstants
+{
+    uvec2 sampleGrid;
+    vec2  texelSize;
+    float minStops;
+    float maxStops;
+    float compensationStops;
+    float adaptationRate;
+    float seconds;
+} pc;
+
+const float kMinLog2   = -14.0; // Render::kExposureHistogramMinLog2
+const float kMaxLog2   = 10.0;  // Render::kExposureHistogramMaxLog2
+const float kBinStops  = (kMaxLog2 - kMinLog2) / float(kBins - 1u);
+const vec3  kLumaWeights = vec3(0.2126, 0.7152, 0.0722);
+
+shared uint localBins[kBins];
+
+// Render::ExposureHistogramBin.
+uint Bin(float luminance)
+{
+    if (!(luminance >= exp2(kMinLog2)))
+    {
+        return 0u;
+    }
+    float position = (log2(luminance) - kMinLog2) / kBinStops;
+    return uint(floor(min(position, float(kBins - 2u)))) + 1u;
+}
+
+void main()
+{
+    uint local = gl_LocalInvocationIndex;
+    if (local < kBins)
+    {
+        localBins[local] = 0u;
+    }
+    barrier();
+
+    uvec2 cell = gl_GlobalInvocationID.xy;
+    if (all(lessThan(cell, pc.sampleGrid)))
+    {
+        // The middle of the cell's 2x2 block, where one bilinear tap averages
+        // all four pixels.
+        vec2 uv = (vec2(cell) * 2.0 + 1.0) * pc.texelSize;
+        vec3 radiance = textureLod(sampler2D(uScene, uSceneSampler), uv, 0.0).rgb;
+        atomicAdd(localBins[Bin(dot(radiance, kLumaWeights))], 1u);
+    }
+    barrier();
+
+    if (local < kBins && localBins[local] != 0u)
+    {
+        atomicAdd(bins[local], localBins[local]);
+    }
+}

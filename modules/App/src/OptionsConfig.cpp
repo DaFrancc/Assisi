@@ -206,8 +206,6 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             const auto &tm = json.at("toneMap");
             ReadMapped(tm, "operator", cfg.tonemap.op, TonemapOperatorFromString);
             ReadField(tm, "exposureStops", cfg.tonemap.exposureStops);
-            ReadField(tm, "contrast", cfg.tonemap.contrast);
-            ReadField(tm, "saturation", cfg.tonemap.saturation);
             ReadField(tm, "dither", cfg.tonemap.dither);
             // Whatever the file said, the shader only ever sees values in range.
             cfg.tonemap = Render::Sanitized(cfg.tonemap);
@@ -215,11 +213,7 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
 
         if (json.contains("bloom"))
         {
-            const auto &bloom = json.at("bloom");
-            ReadField(bloom, "enabled", cfg.bloom.enabled);
-            ReadField(bloom, "intensity", cfg.bloom.intensity);
-            ReadField(bloom, "scatter", cfg.bloom.scatter);
-            cfg.bloom = Render::Sanitized(cfg.bloom);
+            ReadField(json.at("bloom"), "enabled", cfg.bloomEnabled);
         }
 
         if (json.contains("shadows"))
@@ -460,12 +454,8 @@ nlohmann::json FullJson(const OptionsConfig &options)
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
     json["toneMap"]["operator"] = TonemapOperatorToString(tonemap.op);
     json["toneMap"]["exposureStops"] = tonemap.exposureStops;
-    json["toneMap"]["contrast"] = tonemap.contrast;
-    json["toneMap"]["saturation"] = tonemap.saturation;
     json["toneMap"]["dither"] = tonemap.dither;
-    json["bloom"]["enabled"] = options.bloom.enabled;
-    json["bloom"]["intensity"] = options.bloom.intensity;
-    json["bloom"]["scatter"] = options.bloom.scatter;
+    json["bloom"]["enabled"] = options.bloomEnabled;
 
     json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
 

@@ -74,8 +74,6 @@ compressed rather than cut off, so they keep their detail and colour.
 "toneMap": {
     "operator": "agx",
     "exposureStops": 0.0,
-    "contrast": 1.35,
-    "saturation": 1.4,
     "dither": true
 }
 ```
@@ -83,21 +81,16 @@ compressed rather than cut off, so they keep their detail and colour.
 | Key | F11 name | Values | Default |
 |---|---|---|---|
 | `operator` | **Tone Map** | `"agx"`, `"aces"`, `"reinhard"` | `"agx"` |
-| `exposureStops` | **Exposure** | −8 to 8 | `0` |
-| `contrast` | **Contrast** | 0.5 to 2.5 | `1.35` |
-| `saturation` | **Saturation** | 0 to 2 | `1.4` |
+| `exposureStops` | **Brightness** | −8 to 8 | `0` |
 | `dither` | **Dither** | `true`, `false` | `true` |
 
 - **`operator`** chooses the curve. **AgX** fades very bright, strongly coloured
   light towards white without changing its colour. **ACES** has more contrast,
   but very bright colours change hue: a bright blue turns purple, a bright red
   orange. **Reinhard** is a simple, flat curve.
-- **`exposureStops`** brightens or darkens the whole picture before the curve.
-  Each stop doubles or halves it: `1` is twice as bright, `-1` half.
-- **`contrast`** and **`saturation`** are applied after the curve. `1` leaves
-  each alone; `0` saturation is black and white. The F11 window's **Punchy**
-  button sets them to 1.35 and 1.4, the defaults, and **Neutral** sets both
-  to 1.
+- **`exposureStops`** is the player's brightness. It is added on top of the
+  exposure the level sets, so it still works in a level with automatic
+  exposure. Each stop doubles or halves it: `1` is twice as bright, `-1` half.
 - **`dither`** adds a faint, fixed grain before the picture goes to the screen.
   A screen shows 256 levels of brightness per colour, so where light fades
   slowly, such as a dim floor at the edge of a lamp's reach, the picture holds
@@ -108,6 +101,12 @@ compressed rather than cut off, so they keep their detail and colour.
 
 The tone map runs every frame whatever it is set to, so these settings cost
 nothing.
+
+The level sets the rest of its look, its exposure, contrast, saturation and
+white balance, with `PostProcessVolume`s. See
+[The level's look](rendering-post-processing.md). An `options.json` from before
+that change may still hold `contrast` and `saturation` under `toneMap`; they
+are ignored.
 
 ## Bloom
 
@@ -120,24 +119,18 @@ anything around it, spreads a visible halo over its neighbours.
 
 ```json
 "bloom": {
-    "enabled": true,
-    "intensity": 0.05,
-    "scatter": 0.7
+    "enabled": true
 }
 ```
 
 | Key | F11 name | Values | Default |
 |---|---|---|---|
 | `enabled` | **Bloom** | `true`, `false` | `true` |
-| `intensity` | **Bloom Intensity** | 0 to 0.5 | `0.05` |
-| `scatter` | **Bloom Scatter** | 0 to 0.95 | `0.7` |
 
-- **`intensity`** is the share of the blur in the finished picture. `0.05`
-  is a modest glow. Above about `0.2` the whole picture looks soft.
-- **`scatter`** sets how far the glow spreads. Low keeps it tight around each
-  light; high spreads a faint haze wide across the screen.
-
-The glow covers the same share of the screen at any resolution.
+How strong the glow is and how widely it spreads belong to the level's look:
+`bloomIntensity` and `bloomScatter` on a `PostProcessVolume`. See
+[Bloom](rendering-post-processing.md#bloom). The glow covers the same share of
+the screen at any resolution.
 
 Bloom adds a few passes over a half-size copy of the picture and smaller ones.
 Off, it runs no passes and holds no memory.

@@ -1128,6 +1128,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // A fog volume's soft edges hide where its shape ends.
         SubmitFogVolumeGizmos();
 
+        // Nor does a post-process volume show where its look applies.
+        SubmitPostProcessVolumeGizmos();
+
         // Where the benchmark camera will fly, which nothing else in the
         // viewport shows.
         SubmitCameraPathGizmos();
@@ -1170,12 +1173,14 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     {
         _sceneRenderer.SetViewingCamera(view->entity);
         _sceneRenderer.Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
+        SetScenePostProcess(_sceneRenderer.ScenePostProcess());
         return;
     }
 
     // The editor's camera is nobody's eyes, so it sees every body.
     _sceneRenderer.SetViewingCamera(Assisi::ECS::NullEntity);
     _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
+    SetScenePostProcess(_sceneRenderer.ScenePostProcess());
 }
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)

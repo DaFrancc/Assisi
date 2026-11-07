@@ -797,35 +797,18 @@ void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
     ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
 }
 
-// The glow around bright light. Like the tone map's look, the values reach the
-// next frame with nothing rebuilt; the switch builds or drops the bloom's copies.
+// The glow around bright light: the player's switch. How strong and how wide is
+// the level's, set on its PostProcessVolumes. The switch builds or drops the
+// bloom's copies and nothing else.
 void EditorOptionsPanel::DrawBloomSettings(const Frame &frame)
 {
-    Assisi::Render::BloomSettings &bloom = frame.options.bloom;
     ImGui::TextUnformatted("Bloom");
-    bool changed = ImGui::Checkbox("Bloom", &bloom.enabled);
-    ImGui::SetItemTooltip("A glow around the sun, lamps and bright highlights.");
-
-    if (!bloom.enabled)
+    if (ImGui::Checkbox("Bloom", &frame.options.bloomEnabled))
     {
-        ImGui::BeginDisabled();
-    }
-    changed |= ImGui::SliderFloat("Bloom Intensity", &bloom.intensity, Assisi::Render::kMinBloomIntensity,
-                                  Assisi::Render::kMaxBloomIntensity, "%.3f");
-    ImGui::SetItemTooltip("The share of the glow in the finished picture.");
-    changed |= ImGui::SliderFloat("Bloom Scatter", &bloom.scatter, Assisi::Render::kMinBloomScatter,
-                                  Assisi::Render::kMaxBloomScatter, "%.2f");
-    ImGui::SetItemTooltip("Low keeps the glow tight around a light; high spreads it wide.");
-    if (!bloom.enabled)
-    {
-        ImGui::EndDisabled();
-    }
-
-    if (changed)
-    {
-        bloom = Assisi::Render::Sanitized(bloom);
         frame.options.SaveToJson();
     }
+    ImGui::SetItemTooltip("A glow around the sun, lamps and bright highlights. The level's PostProcessVolumes set "
+                          "how strong it is.");
 }
 
 bool EditorOptionsPanel::Draw(const Frame &frame)
@@ -1223,9 +1206,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
 
         ImGui::Separator();
 
-        // The look. Nothing here rebuilds a target — the values ride in the tone
-        // map's push constants, so every edit lands on the next frame, which is
-        // what makes these usable for comparing one against another.
+        // The player's part of the look; the level's PostProcessVolumes set the
+        // exposure and grade under it. Nothing here rebuilds a target — the
+        // values ride in the tone map's push constants, so every edit lands on
+        // the next frame.
         //
         // **Indexed by the enum value** — this list must stay in
         // Render::TonemapOperator's order.
@@ -1237,33 +1221,12 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             options.SaveToJson();
         }
 
-        bool lookChanged =
-            ImGui::SliderFloat("Exposure", &options.tonemap.exposureStops, Assisi::Render::kMinExposureStops,
-                               Assisi::Render::kMaxExposureStops, "%.2f stops");
-        lookChanged |= ImGui::SliderFloat("Contrast", &options.tonemap.contrast, Assisi::Render::kMinContrast,
-                                          Assisi::Render::kMaxContrast, "%.2f");
-        lookChanged |= ImGui::SliderFloat("Saturation", &options.tonemap.saturation, Assisi::Render::kMinSaturation,
-                                          Assisi::Render::kMaxSaturation, "%.2f");
-        if (lookChanged)
+        if (ImGui::SliderFloat("Brightness", &options.tonemap.exposureStops, Assisi::Render::kMinExposureStops,
+                               Assisi::Render::kMaxExposureStops, "%.2f stops"))
         {
             options.SaveToJson();
         }
-
-        // AgX is neutral by design and reads flat ungraded, so "no grade" is a
-        // comparison point rather than a default worth returning to.
-        if (ImGui::SmallButton("Punchy"))
-        {
-            options.tonemap.contrast = Assisi::Render::kPunchyContrast;
-            options.tonemap.saturation = Assisi::Render::kPunchySaturation;
-            options.SaveToJson();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Neutral"))
-        {
-            options.tonemap.contrast = 1.0f;
-            options.tonemap.saturation = 1.0f;
-            options.SaveToJson();
-        }
+        ImGui::SetItemTooltip("Added on top of the exposure the level sets. Each stop doubles or halves it.");
 
         if (ImGui::Checkbox("Dither", &options.tonemap.dither))
         {

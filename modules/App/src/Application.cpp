@@ -372,7 +372,9 @@ bool Application::InitializePresentation()
                                       .tonemapShaderSpvPath = "shaders/tonemap.frag.spv",
                                       .fxaaShaderSpvPath = "shaders/fxaa.frag.spv",
                                       .bloomDownShaderSpvPath = "shaders/bloom_down.frag.spv",
-                                      .bloomUpShaderSpvPath = "shaders/bloom_up.frag.spv"}))
+                                      .bloomUpShaderSpvPath = "shaders/bloom_up.frag.spv",
+                                      .exposureHistogramShaderSpvPath = "shaders/exposure_histogram.comp.spv",
+                                      .exposureAdaptShaderSpvPath = "shaders/exposure_adapt.comp.spv"}))
         {
             Core::Log::Fatal("Failed to initialize post-process pipeline.");
             return false;
@@ -624,6 +626,10 @@ using Seconds = std::chrono::duration<double>;
 /// slow-frame diagnostic in Run). Half a 60 Hz frame: high enough to stay quiet
 /// in normal play, low enough that a streaming hitch is always reported.
 constexpr double kSlowFrameMs = 8.0;
+
+/// The longest frame the automatic exposure adapts over in one go, so a hitch
+/// or the first frame does not jump it as far as a long pause would.
+constexpr double kMaxExposureFrameSeconds = 0.25;
 
 /// Waits until `target` while wasting as little CPU as possible. sleep_for()
 /// overshoots its request by a scheduler-dependent amount, so we can't sleep the
@@ -1232,7 +1238,14 @@ void Application::RenderFrame()
         // land on the next frame with nothing to rebuild.
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
         _postProcess.SetTonemapSettings(_options.tonemap);
-        _postProcess.SetBloomSettings(_options.bloom);
+        _postProcess.SetBloomEnabled(_options.bloomEnabled);
+        _postProcess.SetSceneSettings(_scenePostProcess);
+        // The window-refresh callback also draws, so the time between draws is
+        // measured here rather than taken from the loop.
+        const Clock::time_point now = Clock::now();
+        _postProcess.SetFrameSeconds(
+            static_cast<float>(std::min(Seconds(now - _lastPostProcess).count(), kMaxExposureFrameSeconds)));
+        _lastPostProcess = now;
         _postProcess.RunBeforeOverlays(frame->commandList, *frame);
     }
 

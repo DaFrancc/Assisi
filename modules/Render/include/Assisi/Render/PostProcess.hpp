@@ -21,8 +21,9 @@
 #include <cstdint>
 #include <string>
 
-#include <Assisi/Render/Bloom.hpp>
 #include <Assisi/Render/BloomPass.hpp>
+#include <Assisi/Render/ExposurePass.hpp>
+#include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/Tonemap.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -198,6 +199,8 @@ public:
         std::string fxaaShaderSpvPath;
         std::string bloomDownShaderSpvPath;
         std::string bloomUpShaderSpvPath;
+        std::string exposureHistogramShaderSpvPath;
+        std::string exposureAdaptShaderSpvPath;
     };
 
     /// @brief Loads the post-process shaders and builds what does not depend on
@@ -228,14 +231,15 @@ public:
     /// be built/rebuilt to match this. Differs from the scene's in format.
     [[nodiscard]] nvrhi::FramebufferInfo OverlayFramebufferInfo() const;
 
-    /// @brief Runs the chain up to the overlay seam: the MSAA resolve, then the
-    /// tone map. Call after the scene draws.
-    void RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;
+    /// @brief Runs the chain up to the overlay seam: the MSAA resolve, the
+    /// automatic exposure's metering, the bloom, then the tone map. Call after
+    /// the scene draws.
+    void RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame);
 
     /// @brief Runs the rest of the chain, landing the result in `frame`'s
     /// swapchain framebuffer. Call after the overlays draw (or straight after
     /// RunBeforeOverlays when there are none), before ImGui.
-    void RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;
+    void RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame);
 
     /// @brief Makes the tone map copy its input through instead of mapping it.
     ///
@@ -244,14 +248,22 @@ public:
     /// a channel raw. Mapping those would rescale the very numbers being read.
     void SetTonemapPassthrough(bool passthrough) { _tonemapPassthrough = passthrough; }
 
-    /// @brief The operator, exposure and grade the tone map applies. Takes effect
-    /// on the next frame — nothing is rebuilt, the values ride in push constants.
+    /// @brief The player's curve, brightness and dither. Takes effect on the
+    /// next frame — nothing is rebuilt, the values ride in push constants.
     void SetTonemapSettings(const TonemapSettings &settings) { _tonemap = settings; }
 
-    /// @brief Whether bright light glows, and how. The intensity and scatter
-    /// take effect on the next frame; turning it on or off builds or drops the
-    /// bloom's copies there and then, and touches no other target.
-    void SetBloomSettings(const BloomSettings &settings);
+    /// @brief The scene's exposure, grade, white balance and glow, as its
+    /// volumes set them for this frame. Takes effect on the next frame.
+    void SetSceneSettings(const PostProcessSettings &settings) { _scene = Sanitized(settings); }
+
+    /// @brief How long the frame took, which the automatic exposure adapts
+    /// over.
+    void SetFrameSeconds(float seconds) { _frameSeconds = seconds; }
+
+    /// @brief Whether bright light glows: the player's choice. Turning it on or
+    /// off builds or drops the bloom's copies there and then, and touches no
+    /// other target.
+    void SetBloomEnabled(bool enabled);
 
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
@@ -268,7 +280,9 @@ private:
     [[nodiscard]] nvrhi::BindingSetHandle MakeStepBindings(uint32_t index) const;
     /// @brief Whether the glow is drawn and mixed in this frame.
     [[nodiscard]] bool BloomRuns() const;
-    void RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first, uint32_t last) const;
+    /// @brief Whether the automatic exposure meters this frame.
+    [[nodiscard]] bool ExposureRuns() const;
+    void RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first, uint32_t last);
     [[nodiscard]] nvrhi::IFramebuffer *FramebufferFor(ChainSurface surface, const RenderFrame *frame) const;
     [[nodiscard]] nvrhi::ITexture *TextureFor(ChainSurface surface, const RenderFrame *frame) const;
     [[nodiscard]] nvrhi::FramebufferInfo InfoFor(ChainSurface surface) const;
@@ -283,7 +297,9 @@ private:
     uint32_t _width = 0;
     uint32_t _height = 0;
     TonemapSettings _tonemap;
-    BloomSettings _bloomSettings;
+    PostProcessSettings _scene;
+    float _frameSeconds = 0.0f;
+    bool _bloomEnabled = true;
     bool _tonemapPassthrough = false;
 
     // Multisample HDR scene target — used by MSAA and MSAA_FXAA. Its depth is
@@ -324,6 +340,7 @@ private:
     std::array<StepResources, kMaxChainSteps> _stepResources;
 
     BloomPass _bloom;
+    ExposurePass _exposure;
 };
 
 } // namespace Assisi::Render

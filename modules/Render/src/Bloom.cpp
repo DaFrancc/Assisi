@@ -2,6 +2,7 @@
 
 #include <Assisi/Render/Bloom.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 

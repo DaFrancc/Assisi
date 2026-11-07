@@ -70,6 +70,7 @@ to entities in the editor, but it helps to know what they are.
 | `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
 | `FogBox`, `FogSphere`, `FogOutline` | `<Assisi/Runtime/FogVolume.hpp>` | Fog in one place only: a box, a sphere, or a curve on the ground filled to a height. See [Fog volumes](rendering-sky.md#fog-volumes). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
+| `PostProcessVolume` | `<Assisi/Runtime/PostProcessVolume.hpp>` | The level's exposure, contrast, saturation, white balance and bloom, everywhere or inside a box. See [The level's look](rendering-post-processing.md). |
 | `Path` | `<Assisi/Runtime/Path.hpp>` | A curve through points you place, for a route something follows. See [Splines](splines.md). |
 
 `Transform` looks like this:

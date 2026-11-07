@@ -134,12 +134,20 @@ the ground's. Its cost grows with how much sky is on screen.
 
 ### 12. Post-processing (`post-process`, `post-process-output`)
 
-Turns the drawn scene into the finished picture: with MSAA, combines each
-pixel's samples into one; **bloom**, if it is on, spreads a soft glow around
-the brightest light; the **tone map** turns light values into screen colours; in the editor, the selection outline, icons and wire shapes are
-drawn; then FXAA, if it is on, or a copy to the screen.
+Turns the drawn scene into the finished picture:
 
-- **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings.
+1. With MSAA, each pixel's samples are combined into one.
+2. With automatic exposure, the picture's brightness is measured
+   (`pp-exposure`).
+3. **Bloom**, if it is on, spreads a soft glow around the brightest light
+   (`pp-bloom`).
+4. The **tone map** balances the colours, applies the exposure, and turns light
+   values into screen colours, with the level's contrast and saturation.
+5. In the editor, the selection outline, icons and wire shapes are drawn.
+6. FXAA, if it is on, or a copy to the screen.
+
+- **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
+  `PostProcessVolume`. See [The level's look](rendering-post-processing.md).
 
 ### 13. User interface (`game-ui`)
 
@@ -155,6 +163,7 @@ the editor's own windows are drawn after this.
 | `antiAliasing.mode` | Post-processing, and MSAA's cost in the lit pass |
 | `toneMap` | Post-processing (free) |
 | `bloom` | Post-processing |
+| A `PostProcessVolume` | Post-processing; automatic exposure adds its measuring passes |
 | `shadows.sun` | Sun shadows; the filter in the lit pass |
 | `shadows.local`, `shadows.selection` | Spot and point light shadows; the filter in the lit pass |
 | `shadows.pcss` | Lit pass |

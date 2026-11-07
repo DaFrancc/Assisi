@@ -52,6 +52,7 @@ void PostProcess::Shutdown()
         step.pipeline = nullptr;
     }
     _bloom.Shutdown();
+    _exposure.Shutdown();
     _fxaaBindingLayout = nullptr;
     _tonemapBindingLayout = nullptr;
     _sampler = nullptr;
@@ -85,22 +86,25 @@ bool PostProcess::Initialize(const InitParams &params)
     }
 
     // Only the fragment shaders have bindings (a fullscreen triangle needs no
-    // vertex buffer or per-vertex bindings) — see fullscreen.vert. The tone
-    // map's layout also reads the bloom's glow, and the two differ in their
-    // push constants.
-    const auto makeLayout = [this](size_t pushConstantSize, uint32_t textures) {
-                                nvrhi::BindingLayoutDesc desc;
-                                desc.visibility = nvrhi::ShaderType::Pixel;
-                                desc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, pushConstantSize));
-                                for (uint32_t slot = 0; slot < textures; ++slot)
-                                {
-                                    desc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(slot));
-                                }
-                                desc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
-                                return _device->createBindingLayout(desc);
-                            };
-    _tonemapBindingLayout = makeLayout(sizeof(TonemapConstants), 2u);
-    _fxaaBindingLayout = makeLayout(sizeof(glm::vec2), 1u);
+    // vertex buffer or per-vertex bindings) — see fullscreen.vert.
+    {
+        nvrhi::BindingLayoutDesc tonemap;
+        tonemap.visibility = nvrhi::ShaderType::Pixel;
+        tonemap.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(TonemapConstants)));
+        tonemap.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        // The bloom's glow, and the automatic exposure.
+        tonemap.addItem(nvrhi::BindingLayoutItem::Texture_SRV(1));
+        tonemap.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2));
+        tonemap.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+        _tonemapBindingLayout = _device->createBindingLayout(tonemap);
+
+        nvrhi::BindingLayoutDesc fxaa;
+        fxaa.visibility = nvrhi::ShaderType::Pixel;
+        fxaa.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::vec2)));
+        fxaa.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+        fxaa.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+        _fxaaBindingLayout = _device->createBindingLayout(fxaa);
+    }
 
     nvrhi::SamplerDesc samplerDesc;
     samplerDesc.setAllFilters(true);
@@ -113,13 +117,18 @@ bool PostProcess::Initialize(const InitParams &params)
         Core::Log::Error("PostProcess: could not build the bloom.");
         return false;
     }
+    if (!_exposure.Initialize(_device, params.exposureHistogramShaderSpvPath, params.exposureAdaptShaderSpvPath))
+    {
+        Core::Log::Error("PostProcess: could not build the automatic exposure.");
+        return false;
+    }
     return true;
 }
 
-void PostProcess::SetBloomSettings(const BloomSettings &settings)
+void PostProcess::SetBloomEnabled(bool enabled)
 {
-    _bloomSettings = Sanitized(settings);
-    if (_sceneColor == nullptr || _bloomSettings.enabled == _bloom.Ready())
+    _bloomEnabled = enabled;
+    if (_sceneColor == nullptr || _bloomEnabled == _bloom.Ready())
     {
         return;
     }
@@ -136,7 +145,7 @@ void PostProcess::SetBloomSettings(const BloomSettings &settings)
 
 void PostProcess::ConfigureBloom()
 {
-    if (_bloomSettings.enabled)
+    if (_bloomEnabled)
     {
         _bloom.Configure(_width, _height, _sceneColor);
     }
@@ -148,7 +157,12 @@ void PostProcess::ConfigureBloom()
 
 bool PostProcess::BloomRuns() const
 {
-    return _bloom.Ready() && !_tonemapPassthrough && _bloomSettings.intensity > 0.0f;
+    return _bloom.Ready() && !_tonemapPassthrough && _scene.bloomIntensity > 0.0f;
+}
+
+bool PostProcess::ExposureRuns() const
+{
+    return !_tonemapPassthrough && _scene.exposure.automatic > 0.0f;
 }
 
 void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples, ChainOptions options)
@@ -289,6 +303,7 @@ void PostProcess::Rebuild()
 
     // Read from the scene target just made, so built again with it.
     ConfigureBloom();
+    _exposure.Configure(_sceneColor, _width, _height);
 
     // One pipeline and binding set per fullscreen step: each is built against the
     // framebuffer it draws into and bound to the texture it reads.
@@ -342,6 +357,7 @@ nvrhi::BindingSetHandle PostProcess::MakeStepBindings(uint32_t index) const
         // reads it only while it mixes glow in.
         nvrhi::ITexture *glow = step.stage == ChainStage::Tonemap ? _bloom.Output() : nullptr;
         bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, glow != nullptr ? glow : source));
+        bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _exposure.State()));
     }
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
     return _device->createBindingSet(bindingSetDesc, isFxaa ? _fxaaBindingLayout.Get() : _tonemapBindingLayout.Get());
@@ -431,12 +447,12 @@ nvrhi::ITexture *PostProcess::TextureFor(ChainSurface surface, const RenderFrame
     return frame != nullptr ? frame->colorTexture : nullptr;
 }
 
-void PostProcess::RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+void PostProcess::RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame)
 {
     RunSteps(commandList, frame, 0, _plan.IndexOf(ChainStage::Overlays));
 }
 
-void PostProcess::RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
+void PostProcess::RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame)
 {
     const uint32_t overlays = _plan.IndexOf(ChainStage::Overlays);
     // IndexOf returns stepCount when there is no overlay seam, which makes this
@@ -445,7 +461,7 @@ void PostProcess::RunAfterOverlays(nvrhi::ICommandList *commandList, const Rende
 }
 
 void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first,
-                           uint32_t last) const
+                           uint32_t last)
 {
     for (uint32_t i = first; i < last; ++i)
     {
@@ -455,10 +471,15 @@ void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &
             continue; // the app's, not ours
         }
 
+        // Both read the resolved scene, before the tone map draws it.
+        if (step.stage == ChainStage::Tonemap && ExposureRuns())
+        {
+            _exposure.Run(commandList, _scene.exposure, _frameSeconds);
+        }
         const bool bloom = step.stage == ChainStage::Tonemap && BloomRuns();
         if (bloom)
         {
-            _bloom.Run(commandList, _bloomSettings);
+            _bloom.Run(commandList, _scene.bloomScatter);
         }
 
         // The chain's shape is data, so a step is only identifiable in a capture
@@ -507,7 +528,7 @@ void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &
                 // image it is moving has already been mapped, exposed and graded.
                 const bool copyThrough = (step.stage == ChainStage::Blit) || _tonemapPassthrough;
                 const TonemapConstants constants =
-                    MakeTonemapConstants(_tonemap, bloom ? _bloomSettings.intensity : 0.0f, copyThrough);
+                    MakeTonemapConstants(_tonemap, _scene, bloom ? _scene.bloomIntensity : 0.0f, copyThrough);
                 commandList->setPushConstants(&constants, sizeof(constants));
             }
         }
