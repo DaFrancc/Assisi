@@ -392,6 +392,10 @@ _ASYSTEM_RE = re.compile(
     r'\s*(?P<ctx>[\w:]+)\s*&\s*\w*\s*'     # SystemContext &ctx / RenderContext &ctx
     r'\)\s*;'
 )
+# Every ASYSTEM token, taken or not: one the pattern above does not take would be
+# a system that is never registered.
+_ASYSTEM_TOKEN_RE = re.compile(r'\bASYSTEM\s*\(')
+_DEFINE_LINE_RE   = re.compile(r'\s*#\s*define\s*$')
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
                    'Ui', 'Render')
@@ -971,6 +975,18 @@ def find_systems(text: str, path: Path) -> list:
     than threading a rare declaration through a scanner built around struct
     bodies.
     """
+    declared = {match.start() for match in _ASYSTEM_RE.finditer(text)}
+    for token in _ASYSTEM_TOKEN_RE.finditer(text):
+        line_start = text.rfind('\n', 0, token.start()) + 1
+        if token.start() in declared or _DEFINE_LINE_RE.match(text[line_start:token.start()]):
+            continue
+        line = text.count('\n', 0, token.start()) + 1
+        raise ValueError(
+            f"{path.name}:{line}: this ASYSTEM is not followed by a declaration reflectgen reads, "
+            f"so the system would never be registered. Declare it in exactly this shape: "
+            f"ASYSTEM(...) void Name(SystemContext &ctx); with no body and nothing but 'inline' "
+            f"before the return type, and define the function separately.")
+
     systems: list = []
     for match in _ASYSTEM_RE.finditer(text):
         where = f"{path.name}: system '{match.group('fn')}'"
