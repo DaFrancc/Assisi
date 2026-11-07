@@ -370,7 +370,9 @@ bool Application::InitializePresentation()
                                       .swapchainFramebufferInfo = vulkanContext->GetFramebufferInfo(),
                                       .vertexShaderSpvPath = "shaders/fullscreen.vert.spv",
                                       .tonemapShaderSpvPath = "shaders/tonemap.frag.spv",
-                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv"}))
+                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv",
+                                      .bloomDownShaderSpvPath = "shaders/bloom_down.frag.spv",
+                                      .bloomUpShaderSpvPath = "shaders/bloom_up.frag.spv"}))
         {
             Core::Log::Fatal("Failed to initialize post-process pipeline.");
             return false;
@@ -1225,11 +1227,12 @@ void Application::RenderFrame()
     }
 
     {
-        // Resolve, then tone map: the chain's HDR half. The look rides in push
+        // Resolve, bloom, then tone map: the chain's HDR half. The look rides in push
         // constants, so handing it over per frame is what makes an editor slider
         // land on the next frame with nothing to rebuild.
         ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
         _postProcess.SetTonemapSettings(_options.tonemap);
+        _postProcess.SetBloomSettings(_options.bloom);
         _postProcess.RunBeforeOverlays(frame->commandList, *frame);
     }
 

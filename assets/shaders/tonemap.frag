@@ -5,8 +5,8 @@
 // and any effect added later) operates on radiance, and everything downstream
 // (FXAA, editor chrome) operates on perceptual values.
 //
-// The look is four stages: exposure, a tone curve, a grade, and the display
-// encode. Every stage is a runtime knob — see Tonemap.hpp, which owns the
+// The look is five stages: the bloom's glow, exposure, a tone curve, a grade,
+// and the display encode. Every stage is a runtime knob — see Tonemap.hpp, which owns the
 // operator's wire values and the ranges these constants are allowed to take.
 //
 // The swapchain is a UNORM format by deliberate choice (VulkanContext picks it
@@ -22,6 +22,9 @@ layout(location = 0) out vec4 outColor;
 // by VulkanBindingOffsets: shaderResource at +0, sampler at +128 (see fxaa.frag).
 layout(binding = 0)   uniform texture2D uScene;
 layout(binding = 128) uniform sampler   uSceneSampler;
+// The bloom's glow, at half the screen's size; read only while bloomIntensity
+// is above zero, and the scene itself bound here otherwise.
+layout(binding = 1)   uniform texture2D uBloom;
 
 layout(push_constant) uniform PushConstants
 {
@@ -34,6 +37,7 @@ layout(push_constant) uniform PushConstants
     // radiance, and the final copy of an already-mapped image to the swapchain.
     uint  passthrough;
     float ditherScale; // one display step while dithering, else 0
+    float bloomIntensity; // share of the glow mixed into the radiance, 0 for none
 } pc;
 
 // --- Dither ------------------------------------------------------------------
@@ -154,7 +158,14 @@ void main()
         return;
     }
 
-    vec3 color = scene.rgb * pc.exposureScale;
+    // The glow replaces its share of the radiance rather than adding to it, so
+    // an even picture comes out as bright as it went in.
+    vec3 radiance = scene.rgb;
+    if (pc.bloomIntensity > 0.0)
+    {
+        radiance = mix(radiance, texture(sampler2D(uBloom, uSceneSampler), vTexCoords).rgb, pc.bloomIntensity);
+    }
+    vec3 color = radiance * pc.exposureScale;
 
     if (pc.op == kAgx)
     {

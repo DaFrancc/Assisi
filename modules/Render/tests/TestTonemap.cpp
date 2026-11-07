@@ -55,7 +55,7 @@ glm::vec3 Grade(glm::vec3 v, float contrast, float saturation)
 /// restores saturation *after* the look has had its say.
 glm::vec3 AgxDisplay(glm::vec3 radiance, const TonemapSettings &settings)
 {
-    const TonemapConstants pc = MakeTonemapConstants(settings, /*copyThrough=*/ false);
+    const TonemapConstants pc = MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
 
     glm::vec3 v = radiance * pc.exposureScale;
     v = kInset * v;
@@ -134,13 +134,13 @@ TEST_CASE("A copy-through step neither exposes nor grades")
     loud.contrast = 2.0f;
     loud.saturation = 0.0f;
 
-    const TonemapConstants copy = MakeTonemapConstants(loud, /*copyThrough=*/ true);
+    const TonemapConstants copy = MakeTonemapConstants(loud, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true);
     CHECK(copy.passthrough != 0u);
     CHECK(copy.exposureScale == doctest::Approx(1.0f));
     CHECK(copy.contrast == doctest::Approx(1.0f));
     CHECK(copy.saturation == doctest::Approx(1.0f));
 
-    const TonemapConstants mapped = MakeTonemapConstants(loud, /*copyThrough=*/ false);
+    const TonemapConstants mapped = MakeTonemapConstants(loud, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false);
     CHECK(mapped.passthrough == 0u);
     CHECK(mapped.exposureScale == doctest::Approx(16.0f));
     CHECK(mapped.contrast == doctest::Approx(2.0f));
@@ -307,12 +307,12 @@ TEST_CASE("Only a mapped image is dithered, and only while dithering is on")
 {
     TonemapSettings settings;
     CHECK(settings.dither);
-    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ false).ditherScale ==
+    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale ==
           doctest::Approx(1.0f / kDisplaySteps));
 
     // A copy through moves an image this shader already dithered.
-    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ true).ditherScale == 0.0f);
+    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ true).ditherScale == 0.0f);
 
     settings.dither = false;
-    CHECK(MakeTonemapConstants(settings, /*copyThrough=*/ false).ditherScale == 0.0f);
+    CHECK(MakeTonemapConstants(settings, /*bloomIntensity=*/ 0.0f, /*copyThrough=*/ false).ditherScale == 0.0f);
 }

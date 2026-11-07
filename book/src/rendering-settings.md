@@ -27,7 +27,7 @@ editor's **F11** window, and what it costs.
 - **In a game**, the settings are read when the game starts. Your own settings
   screen can change them through `ctx.settings->Options()` and save them with
   `ctx.settings->Save()`, as the [audio volumes](audio.md#volumes-the-player-sets)
-  are. Tone mapping and the frame rate settings take effect at once. Shadows,
+  are. Tone mapping, bloom and the frame rate settings take effect at once. Shadows,
   sky reflections, ambient occlusion and fog take effect the next time the game
   starts. Anti-aliasing takes effect the next time the game starts or its window
   changes size.
@@ -108,6 +108,39 @@ compressed rather than cut off, so they keep their detail and colour.
 
 The tone map runs every frame whatever it is set to, so these settings cost
 nothing.
+
+## Bloom
+
+**Bloom** is the soft glow around light much brighter than its surroundings:
+the sun, a lamp, a bright highlight on metal or water. The engine blurs the
+picture, wider and wider, and mixes a small share of the blur back in before
+the tone map. The blur replaces the same small share of every pixel, so an
+evenly lit wall looks the same, while the sun, hundreds of times brighter than
+anything around it, spreads a visible halo over its neighbours.
+
+```json
+"bloom": {
+    "enabled": true,
+    "intensity": 0.05,
+    "scatter": 0.7
+}
+```
+
+| Key | F11 name | Values | Default |
+|---|---|---|---|
+| `enabled` | **Bloom** | `true`, `false` | `true` |
+| `intensity` | **Bloom Intensity** | 0 to 0.5 | `0.05` |
+| `scatter` | **Bloom Scatter** | 0 to 0.95 | `0.7` |
+
+- **`intensity`** is the share of the blur in the finished picture. `0.05`
+  is a modest glow. Above about `0.2` the whole picture looks soft.
+- **`scatter`** sets how far the glow spreads. Low keeps it tight around each
+  light; high spreads a faint haze wide across the screen.
+
+The glow covers the same share of the screen at any resolution.
+
+Bloom adds a few passes over a half-size copy of the picture and smaller ones.
+Off, it runs no passes and holds no memory.
 
 ## Shadows
 

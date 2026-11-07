@@ -99,6 +99,8 @@ private:
     /// the radius and the strength.
     static void DrawAmbientOcclusionSettings(const Frame &frame);
     static void DrawFogSettings(const Frame &frame);
+    /// @brief The bloom section: the switch, the intensity and the scatter.
+    static void DrawBloomSettings(const Frame &frame);
 
     bool _showOptions = false;
 

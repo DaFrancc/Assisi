@@ -70,8 +70,8 @@ single-player game. See [Multiplayer basics](multiplayer.md).
 The player's settings are saved in `options.json`, next to the executable:
 
 - Window size.
-- Graphics: shadows, anti-aliasing, tone mapping, sky reflections, ambient
-  occlusion, VSync, frame rate limit, frame snapping. The editor's **F11**
+- Graphics: shadows, anti-aliasing, tone mapping, bloom, sky reflections,
+  ambient occlusion, VSync, frame rate limit, frame snapping. The editor's **F11**
   window edits these; [Graphics settings](rendering-settings.md) lists each
   one. Frame snapping is `frameSync.snap` in `options.json`: `"game"` follows
   your `frameSnap`, and `"snapped"` or `"unsnapped"` overrides it.
