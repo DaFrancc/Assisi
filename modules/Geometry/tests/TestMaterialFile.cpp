@@ -88,6 +88,22 @@ TEST_CASE("MaterialFile: a full material survives a serialize -> deserialize rou
     CHECK(restored->EmissiveTexture == original.EmissiveTexture);
 }
 
+TEST_CASE("MaterialFile: a see-through material is Alpha 2 in the file, and survives a round-trip")
+{
+    // The number is the file format: the book tells authors 2 is Blend.
+    const auto fromFile = DeserializeMaterial(R"({ "version": 1, "type": "MaterialData", "Alpha": 2 })");
+    REQUIRE(fromFile.has_value());
+    CHECK(fromFile->Alpha == Assisi::Geometry::AlphaMode::Blend);
+
+    MaterialData original;
+    original.Alpha = Assisi::Geometry::AlphaMode::Blend;
+    const auto text = SerializeMaterial(original);
+    REQUIRE(text.has_value());
+    const auto restored = DeserializeMaterial(*text);
+    REQUIRE(restored.has_value());
+    CHECK(restored->Alpha == Assisi::Geometry::AlphaMode::Blend);
+}
+
 TEST_CASE("MaterialFile: the .amat envelope carries version and type")
 {
     const auto text = SerializeMaterial(MaterialData{});

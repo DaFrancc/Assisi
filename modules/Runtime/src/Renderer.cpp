@@ -44,6 +44,64 @@ bool HiddenFromViewer(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entit
     return member != nullptr && member->instanceId == viewerInstance;
 }
 
+/// The see-through draw of @p mesh's submesh @p submeshIndex, whose object's
+/// centre is @p distance from the camera.
+Assisi::Render::DrawItem BlendedItem(const Assisi::Render::MeshBuffer *mesh, uint32_t submeshIndex,
+                                     const Assisi::Render::Material *material, const glm::mat4 &world, float distance)
+{
+    return Assisi::Render::DrawItem{.sortKey = Assisi::Render::MakeBlendedSortKey(distance),
+                                    .mesh = mesh,
+                                    .submeshIndex = submeshIndex,
+                                    .castsShadows = false,
+                                    .material = material,
+                                    .model = world};
+}
+
+/// Whether any of @p meshRenderer's slots holds a see-through material.
+bool HasBlendedMaterial(const MeshRenderer &meshRenderer)
+{
+    return std::ranges::any_of(meshRenderer.materials, [](const Assisi::Render::Material *material)
+                               { return material != nullptr && material->IsBlended(); });
+}
+
+/// How far @p worldSphere's centre is from the camera @p view looks from.
+float CentreDistance(const glm::mat4 &view, const Assisi::Geometry::BoundingSphere &worldSphere)
+{
+    return glm::length(glm::vec3(view * glm::vec4(worldSphere.center, 1.f)));
+}
+
+/// What the GPU path leaves to the CPU: the see-through submeshes of one
+/// entity, which the cull pass skips because they must be sorted. Culled and
+/// given a level here, as the CPU path does.
+void AppendBlendedItems(const DrawSceneParams &params, const Assisi::Render::Frustum &frustum,
+                        Assisi::ECS::Entity entity, const Assisi::Render::MeshBuffer *mesh, const glm::mat4 &world,
+                        const MeshRenderer &meshRenderer)
+{
+    const Assisi::Geometry::BoundingSphere worldSphere =
+        Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world);
+    if (params.frustumCulling &&
+        (!frustum.IntersectsSphere(worldSphere) ||
+         !frustum.IntersectsAabb(Assisi::Geometry::TransformedAabb(mesh->LocalAabb(), world))))
+    {
+        return;
+    }
+    const uint32_t level =
+        params.lodSelector != nullptr ? params.lodSelector->Select(entity, mesh->Lods(), worldSphere) : 0u;
+    const float distance = CentreDistance(params.view, worldSphere);
+    const Assisi::Geometry::LodRange lod = LodRangeFor(*mesh, level);
+    for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
+    {
+        const uint32_t submeshIndex = lod.FirstSubMesh + i;
+        const uint32_t slot = mesh->SubMeshes()[submeshIndex].MaterialSlot;
+        const Assisi::Render::Material *material =
+            slot < meshRenderer.materials.size() ? meshRenderer.materials[slot] : nullptr;
+        if (material != nullptr && material->IsBlended())
+        {
+            params.blendedItems->push_back(BlendedItem(mesh, submeshIndex, material, world, distance));
+        }
+    }
+}
+
 // GPU-driven cull path. Instead of culling + emitting + sorting draws on the CPU,
 // gather every mesh entity into the culler's host tables (deduping meshes into a
 // descriptor table), let the compute pass frustum-cull, select each survivor's
@@ -89,6 +147,10 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
                                 std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
                                                                                  meshRenderer.materials.size()),
                                 level);
+            if (params.blendedItems != nullptr && HasBlendedMaterial(meshRenderer))
+            {
+                AppendBlendedItems(params, frustum, entity, mesh, world, meshRenderer);
+            }
         }
     }
 
@@ -142,9 +204,9 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     std::ranges::copy(params.culler->SurvivorLodCounts(), stats.lodInstances.begin());
     return stats;
 }
-} // namespace
 
-DrawStats DrawScene(const DrawSceneParams &params)
+/// DrawScene but for sorting what it gathered for the blended pass.
+DrawStats DrawAndGather(const DrawSceneParams &params)
 {
     // A label and a CPU scope, not a GPU timer: the GPU path times its cull
     // dispatch and its draw separately, and pass timers cannot nest. Each path
@@ -216,6 +278,9 @@ DrawStats DrawScene(const DrawSceneParams &params)
             const glm::vec3 centerWorld = glm::vec3(world * glm::vec4(mesh->LocalBounds().center, 1.f));
             const float viewDistance = -(view * glm::vec4(centerWorld, 1.f)).z; // camera looks down -Z
             const uint16_t depth = Assisi::Render::QuantizeDepthFrontToBack(viewDistance, params.nearZ, params.farZ);
+            // See-through surfaces sort by the distance itself rather than its
+            // depth along the view, so turning the camera never reorders them.
+            const float centreDistance = CentreDistance(view, worldSphere);
 
             // The same call the shadow gathers make for this instance, so the
             // shadow is cast by the silhouette on screen.
@@ -227,6 +292,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
             const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
             const Assisi::Geometry::LodRange lod = LodRangeFor(*mesh, level);
             const std::size_t itemsBefore = items.size();
+            const std::size_t blendedBefore = params.blendedItems != nullptr ? params.blendedItems->size() : 0u;
 
             for (uint32_t i = 0; i < lod.SubMeshCount; ++i)
             {
@@ -238,6 +304,14 @@ DrawStats DrawScene(const DrawSceneParams &params)
                 if (material == nullptr)
                 {
                     continue; // no material resolved for this slot — skip rather than guess
+                }
+                if (material->IsBlended())
+                {
+                    if (params.blendedItems != nullptr)
+                    {
+                        params.blendedItems->push_back(BlendedItem(mesh, submeshIndex, material, world, centreDistance));
+                    }
+                    continue;
                 }
 
                 const uint64_t sortKey =
@@ -252,7 +326,8 @@ DrawStats DrawScene(const DrawSceneParams &params)
 
             // After the loop: an instance whose every slot went unresolved drew
             // nothing, at no level.
-            if (items.size() > itemsBefore)
+            const std::size_t blendedAfter = params.blendedItems != nullptr ? params.blendedItems->size() : 0u;
+            if (items.size() > itemsBefore || blendedAfter > blendedBefore)
             {
                 ++stats.lodInstances[std::min<std::size_t>(level, kMaxReportedLods - 1u)];
             }
@@ -282,6 +357,21 @@ DrawStats DrawScene(const DrawSceneParams &params)
     stats.drawnItems = submitStats.instances;
     stats.batches = submitStats.batches;
     stats.drawCalls = submitStats.drawCalls;
+    return stats;
+}
+} // namespace
+
+DrawStats DrawScene(const DrawSceneParams &params)
+{
+    if (params.blendedItems != nullptr)
+    {
+        params.blendedItems->clear();
+    }
+    const DrawStats stats = DrawAndGather(params);
+    if (params.blendedItems != nullptr)
+    {
+        std::ranges::stable_sort(*params.blendedItems, {}, &Assisi::Render::DrawItem::sortKey);
+    }
     return stats;
 }
 

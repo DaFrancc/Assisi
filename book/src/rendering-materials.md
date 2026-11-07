@@ -158,7 +158,7 @@ either drawn or not; there is nothing in between.
 
 | Field | Meaning | Default |
 |---|---|---|
-| `Alpha` | `Opaque` ignores alpha. `Mask` cuts out every point whose alpha is below `AlphaCutoff`. In the file, `0` is `Opaque` and `1` is `Mask`. | `Opaque` |
+| `Alpha` | `Opaque` ignores alpha. `Mask` cuts out every point whose alpha is below `AlphaCutoff`. `Blend` makes the surface see-through (see [See-through materials](#see-through-materials)). In the file, `0` is `Opaque`, `1` is `Mask` and `2` is `Blend`. | `Opaque` |
 | `AlphaCutoff` | The alpha below which a point is cut out, from 0 to 1. | `0.5` |
 
 The alpha is the base colour texture's alpha times the alpha of
@@ -171,9 +171,45 @@ on materials that have holes. The holes themselves are not lit: the
 skips them. `levels/PerfCutouts.alvl`, rows of cards with a hole in each, is the
 level to measure them on.
 
-**There is no see-through material yet.** Glass, water and smoke, where you see
-the scene through a tinted surface, can't be drawn. A glTF material set to
-blend imports as opaque, and the log warns.
+## See-through materials
+
+A **see-through** material shows the scene behind the surface, tinted by the
+surface's colour: glass, water, ice, a soap bubble. Set `Alpha` to `Blend`. The
+alpha, which is the base colour texture's alpha times the alpha of
+`BaseColorFactor`, says how much the surface's own colour covers what is behind
+it: at `0` you see only what is behind, at `1` nothing of it.
+
+Open `levels/BlendCheck.alvl` to see them. It has three tinted panes that
+overlap each other and the sky, a clear glass sphere on the left, a glass box on
+the right, a glowing pane, and two panes that cross each other.
+
+Things to know about see-through materials:
+
+- **Reflections keep their full strength.** Alpha fades the surface's colour and
+  glow, but not its highlights or its reflection of the sky. The clear sphere in
+  BlendCheck has an alpha of `0.05`, so it is almost invisible, but it still
+  shows the sun's highlight and the sky around its edge, which is what makes it
+  look like glass. Give clear glass a low `RoughnessFactor`, such as `0.05`.
+- **They cast no shadow.** A shadow map only records whether something blocks
+  the light, so a pane of glass would shade the floor like a wall. In BlendCheck,
+  the post casts a shadow and the panes beside it don't. See-through surfaces
+  still receive shadows, and are lit by the same lights as everything else.
+- **They are drawn after everything solid, farthest first.** Each one is drawn
+  over whatever is behind it, so the engine sorts them by how far the centre of
+  each object is from the camera. Two cases come out wrong: surfaces that pass
+  through each other, like the crossed panes in BlendCheck, and one see-through
+  object inside another. Split such a model into separate pieces.
+- **A double-sided one shows its far side.** With `DoubleSided` on, its back
+  faces are drawn first and its front faces over them, so through the glass box
+  in BlendCheck you see its far walls.
+- **Fog covers them as it covers anything else.** `levels/BlendFogCheck.alvl`
+  shows clear and blue panes 10, 70 and 170 m away in fog, and one behind a fog
+  volume.
+- **They cost more than solid surfaces.** A pixel covered by three panes is
+  shaded three times, and the [depth prepass](rendering-frame.md#9-depth-prepass)
+  saves them no work. Keep large areas of overlapping glass to a minimum. A level
+  with no see-through materials pays nothing for them.
+- **A glTF material set to `BLEND` imports as `Blend`.**
 
 ## Double-sided materials
 
@@ -182,8 +218,8 @@ the model. From inside a closed mesh you see nothing, which costs nothing.
 
 `DoubleSided` (default off) draws the back of each triangle too, and lights it
 as if it faced the other way. Use it for surfaces made of a single sheet, such
-as a leaf, a flag or a sheet of paper, and for masked surfaces you can see
-through to their back. Leave it off for closed meshes: their back faces are
+as a leaf, a flag or a sheet of paper, and for masked or see-through surfaces
+you can see through to their back. Leave it off for closed meshes: their back faces are
 never seen, and drawing them costs time.
 
 ## Shadows on smooth-shaded models
@@ -200,7 +236,7 @@ next to the model file, named after the model and the material: a model
 `Chair.gltf` with a material called `Cushion` gets `Chair_Cushion.amat`. They
 copy the model's colours, metal and roughness, textures, alpha mode and
 double-sided setting, and turn `ShadowsFollowSmoothing` off for masked and
-double-sided materials.
+double-sided materials, which are usually foliage cards.
 
 - **Your changes are kept.** The editor never overwrites a material file that
   exists. Edit them freely.

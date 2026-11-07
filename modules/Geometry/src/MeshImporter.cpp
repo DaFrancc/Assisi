@@ -113,7 +113,6 @@ struct ImportWarnings
 {
     bool secondUvSet = false;
     bool vertexColor = false;
-    bool alphaBlend = false;
     bool embeddedImage = false;
     bool secondaryTexCoord = false;
     bool negativeIor = false;
@@ -301,18 +300,13 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
         data.Alpha = AlphaMode::Mask;
         data.AlphaCutoff = static_cast<float>(material.alphaCutoff);
     }
-    else if (material.alphaMode == fastgltf::AlphaMode::Blend && !warnings.alphaBlend)
+    else if (material.alphaMode == fastgltf::AlphaMode::Blend)
     {
-        // Blending has no pass to draw in. Opaque is the honest fallback: importing
-        // it as a cutout instead would punch holes in a surface authored to fade.
-        warnings.alphaBlend = true;
-        Core::Log::Warn("MeshImporter: '{}' has an alphaMode BLEND material ('{}'); blended transparency is not "
-                        "supported yet - importing as opaque.",
-                        virtualPath, data.Name);
+        data.Alpha = AlphaMode::Blend;
     }
     data.DoubleSided = material.doubleSided;
     // Cutout and double-sided materials are the cards foliage is made of.
-    data.ShadowsFollowSmoothing = data.Alpha == AlphaMode::Opaque && !data.DoubleSided;
+    data.ShadowsFollowSmoothing = data.Alpha != AlphaMode::Mask && !data.DoubleSided;
 
     return data;
 }

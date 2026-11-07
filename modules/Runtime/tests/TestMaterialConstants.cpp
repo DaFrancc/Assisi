@@ -151,6 +151,27 @@ TEST_CASE("Material: the alpha cutoff reaches the shader only for a masked mater
     CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Mask);
 }
 
+TEST_CASE("Material: a see-through material is blended, never cut out")
+{
+    MaterialData src;
+    src.Alpha = Assisi::Geometry::AlphaMode::Blend;
+    src.AlphaCutoff = 0.75f;
+
+    Material material;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.IsBlended());
+    CHECK_FALSE(material.IsAlphaMasked());
+    // Its alpha fades it; none of it is thrown away.
+    CHECK(material.Constants().openPbrParams.w == 0.f);
+
+    src.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK_FALSE(material.IsBlended());
+    src.Alpha = Assisi::Geometry::AlphaMode::Opaque;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK_FALSE(material.IsBlended());
+}
+
 TEST_CASE("Material: alpha mode and double-sidedness each pick their own pipeline")
 {
     // The two properties are independent, and the pipeline has to carry both: a

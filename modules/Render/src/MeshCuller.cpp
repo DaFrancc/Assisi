@@ -271,6 +271,15 @@ void CullTableBuilder::Finalize()
     }
 }
 
+uint32_t CullMaterialFor(const Material *material)
+{
+    if (material == nullptr || material->IsBlended())
+    {
+        return kNoMaterial;
+    }
+    return EncodeCullMaterial(material->Id(), material->Pipeline());
+}
+
 void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
                                    std::span<const Material *const> slotMaterials, uint32_t level)
 {
@@ -291,11 +300,7 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     _materialScratch.clear();
     for (const Material *mat : slotMaterials)
     {
-        // Material::Pipeline is the one place a material's properties decide where
-        // it draws; carrying its answer here is what keeps this path and the CPU
-        // draw list from disagreeing about the same material.
-        _materialScratch.push_back(mat == nullptr ? kNoMaterial
-                                                  : EncodeCullMaterial(mat->Id(), mat->Pipeline()));
+        _materialScratch.push_back(CullMaterialFor(mat));
     }
 
     MeshGeometry geometry;

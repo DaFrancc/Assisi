@@ -30,6 +30,8 @@ constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
 // The same pixel shader built with its alpha-test discard enabled, for the mesh
 // pass's masked pipeline (see MeshPass::InitParams).
 constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
+// And built for see-through surfaces, for its blended pipelines.
+constexpr const char *kSceneBlendedPixelShader = "shaders/mesh.frag.blended.spv";
 
 // The depth prepass every screen-space feature reads, and the lit pass's vertex
 // stage for drawing over it (see MeshPass::PreparePrepass). Loaded only once a
@@ -190,6 +192,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                          .vertexShaderSpvPath = kSceneVertexShader,
                                          .pixelShaderSpvPath = kScenePixelShader,
                                          .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
+                                         .blendedPixelShaderSpvPath = kSceneBlendedPixelShader,
                                          .depthVertexShaderSpvPath = kSceneDepthVertexShader,
                                          .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
                                          .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
@@ -522,7 +525,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                   .cullBuilder = &_cullBuilder,
                                   .lodSelector = &_lodSelector,
                                   .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit,
-                                  .viewerInstance = ViewerInstance(scene, _viewingCamera)});
+                                  .viewerInstance = ViewerInstance(scene, _viewingCamera),
+                                  .blendedItems = &_blendedItems});
 
     if (prepass)
     {
@@ -560,6 +564,16 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         _skyPass.SetFog(Render::SkyFogMode::Flat, fog.settings.color);
         _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), Render::SkySun{},
                       Render::SkyMoon{}, Render::SkySettings{});
+    }
+
+    // See-through surfaces last, over the solid scene and the sky they show.
+    if (!_blendedItems.empty())
+    {
+        ASSISI_PROFILE_GPU_PASS(frame.commandList, "draw-blended");
+        const Render::MeshPass::SubmitStats blended = _meshPass.SubmitBlended(frame, _blendedItems);
+        _lastDrawStats.drawnItems += blended.instances;
+        _lastDrawStats.batches += blended.batches;
+        _lastDrawStats.drawCalls += blended.drawCalls;
     }
     // Said once, because silently dropping the sky sends someone reading shader
     // code, and saying it every frame is its own kind of unreadable.

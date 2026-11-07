@@ -863,6 +863,10 @@ endforeach()
 # through the build that cannot.
 assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.masked.spv"
     ASSISI_ALPHA_MASK)
+# And for see-through surfaces: alpha fades the diffuse light, written for
+# premultiplied blending.
+assisi_compile_shader("${CMAKE_SOURCE_DIR}/assets/shaders/mesh.frag" "shaders/mesh.frag.blended.spv"
+    ASSISI_ALPHA_BLEND)
 
 # The shadow depth stage the same way round: the base build reads position only
 # and has no fragment stage, and this one carries the UV and material row that

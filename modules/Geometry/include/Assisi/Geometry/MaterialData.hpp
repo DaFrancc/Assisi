@@ -28,15 +28,19 @@ namespace Assisi::Geometry
 /// and draws through its own pipeline, because a shader that can discard costs
 /// the whole pipeline its early depth rejection.
 ///
-/// glTF's third mode, BLEND, is deliberately absent: there is no blended pass to
-/// draw it in, and an enumerator that silently rendered opaque would be a field
-/// that lies. It arrives with the pass. Enumerators serialize as their integer
-/// value, so appending one leaves every existing .amat reading the same.
+/// Blend is glTF's BLEND: a see-through surface, drawn after everything solid,
+/// farthest first, over what is behind it. Alpha fades the surface's own colour,
+/// its diffuse light and its glow, while its reflections keep their full
+/// strength, which is what makes a clear pane read as glass. It casts no shadow.
+///
+/// Enumerators serialize as their integer value, so appending one leaves every
+/// existing .amat reading the same.
 AENUM()
 enum class AlphaMode : std::uint8_t
 {
     Opaque, ///< Alpha is ignored; the surface is solid.
     Mask,   ///< Alpha below AlphaCutoff kills the fragment.
+    Blend,  ///< Alpha fades the surface over what is behind it.
 };
 
 /// @brief One material: PBR factors plus a GUID reference for each texture
@@ -106,8 +110,8 @@ struct MaterialData
     AFIELD(min = 0, max = 1) float SpecularAaVarianceClamp = 0.2f;
 
     // --- Alpha ---
-    // OpenPBR's geometry_opacity, cutout half. Opaque is the default, so every
-    // material authored before these existed keeps drawing solid.
+    // Opaque is the default, so every material authored before these existed
+    // keeps drawing solid.
     AFIELD() AlphaMode Alpha = AlphaMode::Opaque;
     /// Fragments whose base-colour alpha falls below this are killed. Read only
     /// when Alpha is Mask; the glTF default, so an import that omits it agrees

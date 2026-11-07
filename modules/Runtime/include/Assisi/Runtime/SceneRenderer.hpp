@@ -536,6 +536,9 @@ private:
     // path uses them only when _gpuCulling is on (else the CPU path runs).
     Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
+    // The frame's see-through draws, farthest first: gathered with the rest of
+    // the draw list and drawn after the sky. Kept so a frame allocates nothing.
+    std::vector<Render::DrawItem> _blendedItems;
     // Poses skinned instances before anything draws them.
     Render::MeshSkinner _meshSkinner;
     Render::SkinBatch _skinBatch;

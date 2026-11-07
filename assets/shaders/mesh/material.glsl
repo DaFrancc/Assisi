@@ -63,7 +63,7 @@ struct Surface
     bool  eonDiffuse;       // material uses the EON diffuse lobe
     bool  followSmoothing;  // shadow lookups lift onto the smooth-shaded curve
     bool  normalMapped;     // normal comes from a normal map, not the mesh alone
-    float alpha;           // base colour alpha; read only by the ASSISI_ALPHA_MASK build
+    float alpha;           // base colour alpha; read by the ASSISI_ALPHA_MASK and ASSISI_ALPHA_BLEND builds
     float alphaCutoff;      // alpha below this kills the fragment; 0 unless masked
 };
 
