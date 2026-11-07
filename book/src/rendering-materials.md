@@ -141,7 +141,12 @@ Things to know about the maps:
   image, and a glTF import binds that one file to both. Any other image used as
   two kinds of map, such as a colour map that is also a normal map, fails the
   cook, because each kind is compressed differently: copy the image and use one
-  copy for each.
+  copy for each. A packed image is read once for both maps, which is a little
+  cheaper than two images. `levels/OcclusionMapCheck.alvl` shows a sphere with
+  no occlusion map, one with its own, and one with it packed.
+- **A map that can't change the picture isn't read.** With `EmissiveFactor`
+  black, the emissive map is skipped, and with `OcclusionStrength` at `0`, the
+  occlusion map is.
 - **Textures are PNG or JPEG files.** The cook compresses them and makes their
   smaller versions for distance, called **mipmaps**, for you.
 
@@ -161,7 +166,10 @@ The alpha is the base colour texture's alpha times the alpha of
 leaf-shaped shadow.
 
 Masked materials cost a little more to draw than opaque ones, so use `Mask` only
-on materials that have holes.
+on materials that have holes. The holes themselves are not lit: the
+[depth prepass](rendering-frame.md#9-depth-prepass) finds them, and the lit pass
+skips them. `levels/PerfCutouts.alvl`, rows of cards with a hole in each, is the
+level to measure them on.
 
 **There is no see-through material yet.** Glass, water and smoke, where you see
 the scene through a tinted surface, can't be drawn. A glTF material set to

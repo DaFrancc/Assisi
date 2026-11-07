@@ -6,11 +6,12 @@
 // cutout surface gets in the prepass; opaque surfaces have no fragment stage
 // there at all.
 //
-// It has to kill exactly the fragments mesh.frag's masked build kills. The lit
-// pass after a prepass writes no depth, so a fragment kept here and killed there
-// leaves a hole showing the depth clear, and one killed here and kept there
-// shades over whatever lies behind it. Same texture, same implicit mip, same
-// factor, same comparison — see SampleMaterial() and the discard in mesh.frag.
+// This is the only alpha test a cutout gets when there is a prepass. The lit
+// pass after it draws cutouts with an Equal depth test and no discard (see
+// Render::AfterPrepassDepthTest), so the texels this keeps are exactly the ones
+// shaded, and a hole, nearer than whatever shows through it, is never shaded.
+// Without a prepass, mesh.frag's masked build tests the same alpha against the
+// same cutoff instead.
 
 layout(location = 2) in vec2 vTexCoord;
 layout(location = 6) in flat uint vMaterialIndex;

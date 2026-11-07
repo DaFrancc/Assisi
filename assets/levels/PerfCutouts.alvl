@@ -1,0 +1,269 @@
+{
+  "entities": [
+    {
+      "name": "MeasurementCamera",
+      "components": {
+        "Camera": {"farZ": 200.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+        "Transform": {"position": [0.0, 1.8, 10.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {"color": [1.0, 0.98, 0.95], "direction": [-0.4, -1.0, -0.35], "intensity": 2.0},
+        "Skybox": {"preset": 0}
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [0.0, -0.25, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [80.0, 0.5, 80.0]}
+      }
+    },
+    {
+      "name": "Card_0_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-3.6, 1.4, 6.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [2.4, 2.4, 0.02]}
+      }
+    },
+    {
+      "name": "Card_0_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-1.2, 1.4, 6.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [2.4, 2.4, 0.02]}
+      }
+    },
+    {
+      "name": "Card_0_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [1.2, 1.4, 6.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [2.4, 2.4, 0.02]}
+      }
+    },
+    {
+      "name": "Card_0_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [3.6, 1.4, 6.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [2.4, 2.4, 0.02]}
+      }
+    },
+    {
+      "name": "Card_1_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-5.0, 2.0, 3.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [4.0, 4.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_1_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-1.0, 2.0, 3.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [4.0, 4.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_1_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [3.0, 2.0, 3.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [4.0, 4.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_1_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [7.0, 2.0, 3.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [4.0, 4.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_2_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-9.55, 2.5, 0.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [5.5, 5.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_2_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-4.05, 2.5, 0.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [5.5, 5.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_2_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [1.45, 2.5, 0.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [5.5, 5.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_2_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [6.95, 2.5, 0.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [5.5, 5.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_3_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-9.25, 3.0, -4.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [7.5, 6.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_3_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-1.75, 3.0, -4.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [7.5, 6.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_3_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [5.75, 3.0, -4.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [7.5, 6.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_3_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [13.25, 3.0, -4.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [7.5, 6.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_4_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-17.5, 4.0, -9.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [10.0, 8.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_4_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-7.5, 4.0, -9.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [10.0, 8.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_4_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [2.5, 4.0, -9.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [10.0, 8.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_4_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [12.5, 4.0, -9.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [10.0, 8.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_5_0",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-16.5, 5.0, -15.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [13.0, 10.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_5_1",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-3.5, 5.0, -15.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [13.0, 10.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_5_2",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [9.5, 5.0, -15.0], "rotation": [0.996195, 0.0, -0.087156, 0.0], "scale": [13.0, 10.0, 0.02]}
+      }
+    },
+    {
+      "name": "Card_5_3",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "ea116972-39f8-49e4-84c8-95e4abe4a853", "path": "materials/checker_hole.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [22.5, 5.0, -15.0], "rotation": [0.996195, 0.0, 0.087156, 0.0], "scale": [13.0, 10.0, 0.02]}
+      }
+    }
+  ],
+  "version": 2
+}

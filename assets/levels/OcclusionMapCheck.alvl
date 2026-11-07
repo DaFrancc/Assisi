@@ -1,0 +1,59 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {"farZ": 200.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+        "Transform": {"position": [0.0, 1.4, 6.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {"color": [1.0, 0.98, 0.95], "direction": [0.3, -1.0, 0.6], "intensity": 2.0},
+        "Skybox": {"preset": 0}
+      }
+    },
+    {
+      "name": "Ground",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [0.0, -0.25, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [40.0, 0.5, 40.0]}
+      }
+    },
+    {
+      "name": "NoOcclusionMap",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc", "path": "materials/shadow_white.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000006", "path": "prim://sphere"}
+        },
+        "Transform": {"position": [-3.6, 1.6, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.6, 1.6, 1.6]}
+      }
+    },
+    {
+      "name": "OcclusionMap",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "24cef642-0f6a-4b94-98ad-27b7b80af7c8", "path": "materials/occlusion_map.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000006", "path": "prim://sphere"}
+        },
+        "Transform": {"position": [0.0, 1.6, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.6, 1.6, 1.6]}
+      }
+    },
+    {
+      "name": "OcclusionPackedWithMetalRoughness",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "687ab6ef-dbea-4a80-9015-df7fabddf3f5", "path": "materials/occlusion_packed.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000006", "path": "prim://sphere"}
+        },
+        "Transform": {"position": [3.6, 1.6, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.6, 1.6, 1.6]}
+      }
+    }
+  ],
+  "version": 2
+}
