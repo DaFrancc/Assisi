@@ -6,6 +6,7 @@
 /// two of them differ enough to bake again.
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Sky.hpp>
 
 #include <algorithm>
@@ -22,6 +23,18 @@ namespace Assisi::Render
 /// reflection is below what the eye separates.
 inline constexpr float kProbeRadianceTolerance = 0.02f;
 
+/// @brief The clouds a probe bake saw, if it saw any.
+struct SkyProbeClouds
+{
+    CloudSettings settings;
+    /// Where the camera stood among the clouds: its position across, less the
+    /// wind's drift. See CloudsMovedInSky.
+    glm::dvec2 across{0.0};
+    /// How far above the camera the clouds' bases were.
+    float heightAbove = 0.0f;
+    bool present = false;
+};
+
 /// @brief The sky a probe is baked from: sanitized, and with both disks at zero.
 ///
 /// **The disks are left out** for the reason the ambient leaves them out: each
@@ -34,12 +47,14 @@ struct SkyProbeInputs
     SkySun sun;
     SkyMoon moon;
     SkySettings settings;
+    SkyProbeClouds clouds;
 };
 
 [[nodiscard]] inline SkyProbeInputs MakeSkyProbeInputs(const SkySun &sun, const SkyMoon &moon,
                                                        const SkySettings &settings)
 {
-    SkyProbeInputs inputs{.sun = Sanitized(sun), .moon = Sanitized(moon), .settings = Sanitized(settings)};
+    SkyProbeInputs inputs{
+        .sun = Sanitized(sun), .moon = Sanitized(moon), .settings = Sanitized(settings), .clouds = {}};
     inputs.settings.sunDiskIntensity = 0.0f;
     inputs.moon.diskIntensity = 0.0f;
     return inputs;
@@ -93,12 +108,29 @@ static_assert(sizeof(SkySettings) == kSkySettingsFloatLanes * sizeof(float),
     }
     return false;
 }
+/// Whether the clouds came, went, changed, or moved across the sky past
+/// @p toleranceDegrees.
+[[nodiscard]] inline bool ProbeCloudsChanged(const SkyProbeClouds &baked, const SkyProbeClouds &current,
+                                             float toleranceDegrees)
+{
+    if (baked.present != current.present)
+    {
+        return true;
+    }
+    if (!current.present)
+    {
+        return false;
+    }
+    return baked.settings != current.settings ||
+           CloudsMovedInSky(baked.across, current.across, current.heightAbove, toleranceDegrees);
+}
 } // namespace Detail
 
 /// @brief Whether a probe baked from @p baked is out of date against @p current.
 ///
 /// Either body moving past @p toleranceDegrees, or its radiance past
-/// kProbeRadianceTolerance, and any change at all to the atmosphere. A zero
+/// kProbeRadianceTolerance, any change at all to the atmosphere, and the
+/// clouds changing or moving across the sky past the same tolerance. A zero
 /// tolerance turns both bands off and compares exactly.
 ///
 /// What only the disks read — their size, tint and the moon's image
@@ -115,7 +147,8 @@ static_assert(sizeof(SkySettings) == kSkySettingsFloatLanes * sizeof(float),
            Detail::ProbeRadianceChanged(baked.moon.color * baked.moon.intensity,
                                         current.moon.color * current.moon.intensity, exact) ||
            baked.moon.atmosphericTint != current.moon.atmosphericTint ||
-           !Detail::ProbeSettingsEqual(baked.settings, current.settings);
+           !Detail::ProbeSettingsEqual(baked.settings, current.settings) ||
+           Detail::ProbeCloudsChanged(baked.clouds, current.clouds, toleranceDegrees);
 }
 
 } // namespace Assisi::Render

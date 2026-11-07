@@ -14,6 +14,7 @@
 #include "sky/scatter.glsl"
 #include "sky/fog.glsl"
 #include "sky/fog_volumes.glsl"
+#include "sky/cloud_map.glsl"
 
 layout(binding = 256) uniform SkyConstants
 {
@@ -26,7 +27,7 @@ layout(binding = 256) uniform SkyConstants
     vec4 groundColor;     // xyz = linear colour, w = sky exposure
     vec4 nightColor;      // xyz = linear colour, w = disk intensity
     vec4 sunDiskColor;    // xyz = disk tint, w = limb darkening
-    vec4 atmosphere;      // x = sky bounce, yzw unused
+    vec4 atmosphere;      // x = sky bounce, y = 1 while the sky has clouds, zw unused
     vec4 moonDirection;   // xyz = unit direction TO the moon, w = its disk radius (radians)
     vec4 moonRadiance;    // xyz = colour * intensity, w = its disk intensity
     vec4 moonDiskColor;   // xyz = tint over the albedo texture, w = how much of the air's colour shift it takes
@@ -53,6 +54,11 @@ const float kSkyDistance = 3.0e38;
 // locked moon ever shows. Loaded sRGB, so the view decodes it to linear here.
 layout(binding = 0)   uniform texture2D uMoon;
 layout(binding = 128) uniform sampler   uMoonSampler;
+
+// The clouds, as cloud_map.comp drew them this frame: rgb to add to the sky
+// behind them, alpha how much of it shows through. Across wraps, up clamps.
+layout(binding = 1)   uniform texture2D uCloudMap;
+layout(binding = 129) uniform sampler   uCloudMapSampler;
 
 layout(location = 0) in vec4 vRayPoint;
 layout(location = 0) out vec4 outColor;
@@ -171,6 +177,15 @@ void main()
     }
 
     vec3 sky = max(radiance * uSky.groundColor.w, vec3(0.0));
+
+    // The clouds in front of all of it, the disks included, so the sun goes
+    // behind a cloud. Gated by the same blend as the disks: there are no clouds
+    // below the horizon.
+    if (uSky.atmosphere.y != 0.0)
+    {
+        vec4 clouds = textureLod(sampler2D(uCloudMap, uCloudMapSampler), CloudMapUv(ray), 0.0);
+        sky = sky * mix(1.0, clouds.a, skyward) + clouds.rgb * skyward;
+    }
     outColor = vec4(ApplyFogVolumes(sky, uSkyFog.volumes, uSkyFog.fog, eye, ray, kSkyDistance, gl_FragCoord.xy),
                     1.0);
 }

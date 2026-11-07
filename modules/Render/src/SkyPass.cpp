@@ -22,8 +22,10 @@ enum class ConstantSlot : std::uint8_t
     Fog = 1,
 };
 
-// The moon's texture and its sampler, each first in its own register space.
+// The moon's texture and its sampler, each first in its own register space,
+// and the clouds' after them.
 constexpr uint32_t kMoonSlot = 0u;
+constexpr uint32_t kCloudMapSlot = 1u;
 } // namespace
 
 bool SkyPass::Initialize(const InitParams &params)
@@ -94,6 +96,25 @@ bool SkyPass::Initialize(const InitParams &params)
         return false;
     }
 
+    _noClouds.UploadSolidColor(_device, 0, 0, 0, 255, Image::ColorSpace::Linear, "SkyPass::NoClouds");
+    if (!_noClouds.IsValid())
+    {
+        Core::Log::Error("SkyPass: failed to create the empty cloud map.");
+        return false;
+    }
+    nvrhi::SamplerDesc cloudSamplerDesc;
+    cloudSamplerDesc.setAllFilters(true);
+    // Across is the bearing, which comes round to where it started; up stops at
+    // the horizon and the zenith.
+    cloudSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+    cloudSamplerDesc.setAddressU(nvrhi::SamplerAddressMode::Wrap);
+    _cloudMapSampler = _device->createSampler(cloudSamplerDesc);
+    if (_cloudMapSampler == nullptr)
+    {
+        Core::Log::Error("SkyPass: failed to create the cloud map sampler.");
+        return false;
+    }
+
     // Both stages read the block: the vertex shader for the inverse
     // view-projection, the pixel shader for everything else.
     nvrhi::BindingLayoutDesc layoutDesc;
@@ -102,6 +123,8 @@ bool SkyPass::Initialize(const InitParams &params)
     layoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(std::to_underlying(ConstantSlot::Fog)));
     layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(kMoonSlot));
     layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(kMoonSlot));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(kCloudMapSlot));
+    layoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(kCloudMapSlot));
     layoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(
                            std::to_underlying(FogVolumeBuffers::Slot::Volumes)));
     layoutDesc.addItem(
@@ -130,6 +153,9 @@ bool SkyPass::BuildBindingSet()
     setDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(std::to_underlying(ConstantSlot::Fog), _fogConstantsBuffer));
     setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(kMoonSlot, _moon.NativeTexture()));
     setDesc.addItem(nvrhi::BindingSetItem::Sampler(kMoonSlot, _moonSampler));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(
+                        kCloudMapSlot, _cloudMap != nullptr ? _cloudMap : _noClouds.NativeTexture()));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(kCloudMapSlot, _cloudMapSampler));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Volumes),
                                                                 _fogVolumeBuffers->Volumes().NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(std::to_underlying(FogVolumeBuffers::Slot::Edges),
@@ -143,6 +169,19 @@ bool SkyPass::BuildBindingSet()
         return false;
     }
     return true;
+}
+
+void SkyPass::SetClouds(nvrhi::ITexture *cloudMap)
+{
+    if (cloudMap == _cloudMap)
+    {
+        return;
+    }
+    _cloudMap = cloudMap;
+    if (_bindingLayout != nullptr)
+    {
+        (void)BuildBindingSet();
+    }
 }
 
 void SkyPass::LoadMoonTexture()
@@ -283,7 +322,9 @@ void SkyPass::Submit(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *targ
                      nvrhi::IGraphicsPipeline *pipeline, const nvrhi::Viewport &viewport,
                      const SkyConstants &constants, const SkyFogConstants &fog)
 {
-    commandList->writeBuffer(_constantsBuffer, &constants, sizeof(constants));
+    SkyConstants withClouds = constants;
+    withClouds.atmosphere.y = _cloudMap != nullptr ? 1.0f : 0.0f;
+    commandList->writeBuffer(_constantsBuffer, &withClouds, sizeof(withClouds));
     commandList->writeBuffer(_fogConstantsBuffer, &fog, sizeof(fog));
 
     nvrhi::GraphicsState state;

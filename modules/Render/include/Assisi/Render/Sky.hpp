@@ -899,7 +899,9 @@ struct SkyConstants
     glm::vec4 groundColor{0.0f};                    ///< xyz = linear colour, w = sky intensity
     glm::vec4 nightColor{0.0f};                     ///< xyz = linear colour, w = disk intensity
     glm::vec4 sunDiskColor{1.0f};                   ///< xyz = disk tint, w = limb darkening
-    glm::vec4 atmosphere{0.0f};                     ///< x = multiple scattering, yzw unused
+    /// x = multiple scattering, y = 1 while the sky has clouds (SkyPass sets
+    /// it, from whether it holds a cloud map), zw unused.
+    glm::vec4 atmosphere{0.0f};
     /// xyz = unit direction TO the moon, w = its disk radius (radians). The moon
     /// carries its own radius because it is a different body, not because the
     /// sun's would not fit: feeding it through the sun's lane draws it sun-sized.

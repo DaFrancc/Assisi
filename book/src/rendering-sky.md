@@ -11,6 +11,7 @@ the right direction, and maybe a day that passes. All of these are components on
 | `TimeOfDay` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock: the hour, the day and the time of year. |
 | `Sun` | `<Assisi/Runtime/TimeOfDay.hpp>` | Aims the light from the clock, so the sun rises, crosses the sky and sets. |
 | `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A moon that rises and sets, goes through its phases, and lights the world at night. |
+| `Clouds` | `<Assisi/Runtime/SkyComponents.hpp>` | Clouds in the sky, their shadows on the ground, and the grey light of an overcast. |
 
 [Entities and components](entities-and-components.md#the-sky-the-sun-and-the-moon)
 introduces these. This page explains what each does in full. The `Pretty` level
@@ -53,6 +54,8 @@ night.
   [`game.json`](game-settings.md).
 - **The `Skybox`, `Sun` and `Moon` must be on the light's entity.** On any other
   entity they do nothing.
+- **`Clouds` need a `Skybox`** beside them. Without one they are not drawn,
+  and the log says so.
 - **A `Moon` needs a `Sun`** beside it. Without one the moon is ignored and the
   log says so.
 - **A `Sun` needs a `TimeOfDay`** somewhere in the level. Without one the sun
@@ -222,6 +225,91 @@ lights the world; once it sets, the moon takes over the same light and its
 shadow, dimmed by its phase: a new moon gives no light at all. A moon in the
 daytime sky is drawn, but lights nothing. When neither is up, the world is lit
 only by the sky's own light.
+
+## `Clouds`
+
+`Clouds` puts clouds in the sky. The sun and the moon light them, their
+shadows cross the ground with the wind, and the sky's light turns grey and soft
+as they close it. Put the component on the light's entity, beside the
+`Skybox`. Without it, a level has no clouds and pays nothing for them.
+
+### Try it: a cloudy afternoon
+
+Open the editor on `levels/CloudCheck.alvl`: a plain with a few trees, under
+scattered clouds at three in the afternoon.
+
+1. Select the `Sun` entity. Its `Clouds` has the `Scattered` preset.
+2. Set `windSpeed` to `20`. The clouds drift east, and their shadows cross the
+   plain with them.
+3. Set `changeRate` to `10`. Watch one cloud: its edges swell and fray as it
+   drifts, and small clouds form and fade around it.
+4. Set `seed` to `1`. The sky is the same kind of sky, with other clouds in it.
+5. Set `preset` to `Overcast`. The sky closes, the sun's shadows fade away, and
+   the light turns soft and grey.
+6. Drag `TimeOfDay`'s `hour` to `17.5`. The clouds' tops turn gold and their
+   undersides darken.
+
+### Choosing clouds
+
+| `preset` | The sky |
+|---|---|
+| `Fair` | Small cumulus, well apart, with plenty of blue between them. |
+| `Scattered` | Cumulus over about half the sky. The default. |
+| `Broken` | More cloud than sky, with gaps the sun breaks through. |
+| `Overcast` | A low grey layer closing the sky. No sun shadows under it. |
+| `Custom` | Uses the first five fields below as you set them. |
+
+| Field | What it changes |
+|---|---|
+| `coverage` | How much of the sky is cloud, from `0` (clear) to `1` (overcast). |
+| `height` | The height of the clouds' flat bottoms, in metres above the world's zero. |
+| `thickness` | How tall the clouds can grow above their bottoms, in metres. |
+| `density` | How thick a cloud is inside. Higher hides the sun behind smaller clouds and darkens their undersides. |
+| `puffiness` | How heaped the clouds are, from `0` (flat grey sheets) to `1` (towering cumulus). The sky mixes kinds around it, so some clouds are flatter and some taller. |
+| `changeRate` | How fast the clouds change shape: `0` never, `1` about as fast as real cumulus, which form and fade over a quarter of an hour. |
+| `windSpeed` | How fast the wind carries the clouds, in metres per second. |
+| `windBearingDegrees` | The compass direction they move toward: `0` is north, `90` east. |
+| `seed` | Which sky of its kind: the same settings with another seed give other clouds. |
+
+While `preset` is anything but `Custom`, the first five fields are greyed out.
+The change rate, the wind and the seed are never greyed out: they work with
+every preset.
+
+The wind carries the clouds as time passes, in the editor as well as in the
+game, whether or not the `TimeOfDay` system runs: they keep moving from where
+they are, so changing `windSpeed` speeds them up rather than jumping them
+elsewhere. Each player's machine moves its own, so two players may see the
+clouds in different places. Nothing in play depends on where they are.
+
+### What clouds change
+
+- **The sky.** Clouds are drawn in front of the sky, the sun's and the moon's
+  disks included. Far ones fade into the haze toward the horizon.
+- **Reflections.** Shiny surfaces reflect the clouds. The reflection probe is
+  redrawn as they drift, each time they have moved the **Rebake Angle**; see
+  [Sky reflections](rendering-settings.md#sky-reflections).
+- **Sunlight and shadows.** Under a cloud, the sun's light and its shadows
+  fade, so cloud shadows cross the land with the wind. At night the moon's
+  light does the same.
+- **The light the sky casts.** It turns from blue to soft grey as the clouds
+  close the sky, and loses its direction: under an overcast nothing has a lit
+  side.
+
+### Limits
+
+**The camera and the world must stay below the clouds.** They are drawn as
+seen from underneath: a mountain tall enough to reach them has them pass behind
+it, not around it, and a camera that flies up into them does not see them
+around it.
+
+### What clouds cost
+
+Each frame the clouds are drawn into a small map of the sky above the horizon,
+and into a map of their shadow. The sky and the reflections read the first; the
+lit pass looks the second up once per pixel. The first costs the same whatever
+the screen's size, which keeps it cheap on high resolutions and in VR, where one
+map serves both eyes. The player's settings choose the map's size and how
+finely each line of sight is sampled; see [Clouds](rendering-settings.md#clouds).
 
 ## The light the sky casts
 

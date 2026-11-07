@@ -5,6 +5,7 @@
 /// @brief User-facing runtime options persisted to options.json.
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/Render/CloudQuality.hpp>
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -88,6 +89,15 @@ struct OptionsConfig
     /// leave it on. Read only when the game lets players choose: see FogEnabled.
     std::optional<bool> fogEnabled;
 
+    /// @brief How finely the clouds are drawn. Sanitized on load: the
+    /// resolution sizes the clouds' sky map.
+    Render::CloudQuality clouds;
+
+    /// @brief Whether the player chose to draw a level's clouds, or nullopt to
+    /// leave them on. Read only when the game lets players choose: see
+    /// CloudsEnabled.
+    std::optional<bool> cloudsEnabled;
+
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
     /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
@@ -113,6 +123,15 @@ struct OptionsConfig
     [[nodiscard]] bool FogEnabled(const AppConfig &config) const
     {
         return config.playerSetsFog && fogEnabled ? *fogEnabled : true;
+    }
+
+    /// @brief Whether to draw a level's clouds: the player's choice when
+    /// @p config lets players choose and they have, on otherwise. Off keeps the
+    /// light the clouds give the sky, so it changes the sky, never how the
+    /// level is lit.
+    [[nodiscard]] bool CloudsEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsClouds && cloudsEnabled ? *cloudsEnabled : true;
     }
 
     /// @brief The tap interval to run with: the player's when @p config lets

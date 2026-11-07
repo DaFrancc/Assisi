@@ -148,6 +148,12 @@ struct AppConfig
     /// letting players remove it is the game's decision, and it starts closed.
     AFIELD() bool playerSetsFog = false;
 
+    /// @brief Whether a player may turn a level's clouds off from their
+    /// options. Off, clouds are always drawn. They are part of how a level
+    /// looks, so letting players remove them is the game's decision, and it
+    /// starts closed.
+    AFIELD() bool playerSetsClouds = false;
+
     /// @brief Whether the pointer moving over a UI node focuses it, so the keys
     /// act on what is pointed at. Off leaves focus where the keys or a click put it.
     AFIELD() bool uiHoverFocuses = false;

@@ -797,6 +797,78 @@ void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
     ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
 }
 
+// A level's clouds. Off is the A/B against the clouds alone: the light they
+// give the sky stays, so how the level is lit stays the same.
+void EditorOptionsPanel::DrawCloudSettings(const Frame &frame)
+{
+    ImGui::TextUnformatted("Clouds");
+    bool enabled = frame.renderer.CloudsEnabled();
+    if (ImGui::Checkbox("Clouds", &enabled))
+    {
+        frame.renderer.SetCloudsEnabled(enabled);
+        frame.options.cloudsEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the sky's Clouds component and their shadows. Off keeps the light they give the sky.");
+
+    Assisi::Render::CloudQuality quality = frame.renderer.CloudQuality();
+    bool changed = false;
+
+    // The tier presets, which write both knobs below and leave them editable.
+    static const char *kTierNames[] = {"Low##clouds", "Medium##clouds", "High##clouds", "Ultra##clouds"};
+    const Assisi::Render::CloudTier tier = Assisi::Render::Tier(quality);
+    for (int32_t i = 0; i < IM_ARRAYSIZE(kTierNames); ++i)
+    {
+        if (i > 0)
+        {
+            ImGui::SameLine();
+        }
+        ImGui::BeginDisabled(static_cast<int32_t>(tier) == i);
+        if (ImGui::SmallButton(kTierNames[i]))
+        {
+            quality = Assisi::Render::CloudTierSettings(static_cast<Assisi::Render::CloudTier>(i));
+            changed = true;
+        }
+        ImGui::EndDisabled();
+    }
+
+    // Map widths the combo offers, each a power of two inside the sanitized
+    // range.
+    static const uint32_t kResolutions[] = {256, 512, 1024, 2048, 4096};
+    static const char *kResolutionNames[] = {"256", "512", "1024", "2048", "4096"};
+    int32_t resolutionIndex = 0;
+    for (int32_t i = 0; i < IM_ARRAYSIZE(kResolutions); ++i)
+    {
+        if (kResolutions[i] == quality.resolution)
+        {
+            resolutionIndex = i;
+        }
+    }
+    if (ImGui::Combo("Cloud Map Size", &resolutionIndex, kResolutionNames, IM_ARRAYSIZE(kResolutionNames)))
+    {
+        quality.resolution = kResolutions[resolutionIndex];
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Width of the map the clouds are drawn into; its height is a quarter of that. Larger is "
+                          "sharper and slower.");
+
+    int32_t steps = static_cast<int32_t>(quality.steps);
+    if (ImGui::SliderInt("Cloud Steps", &steps, static_cast<int32_t>(Assisi::Render::kMinCloudSteps),
+                         static_cast<int32_t>(Assisi::Render::kMaxCloudSteps)))
+    {
+        quality.steps = static_cast<uint32_t>(steps);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Steps along each ray through the clouds. Fewer is faster and shows as blotches.");
+
+    if (changed)
+    {
+        frame.renderer.SetCloudQuality(quality);
+        frame.options.clouds = frame.renderer.CloudQuality();
+        frame.options.SaveToJson();
+    }
+}
+
 // The glow around bright light: the player's switch. How strong and how wide is
 // the level's, set on its PostProcessVolumes. The switch builds or drops the
 // bloom's copies and nothing else.
@@ -1199,6 +1271,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         DrawFogSettings(frame);
+
+        ImGui::Separator();
+
+        DrawCloudSettings(frame);
 
         ImGui::Separator();
 

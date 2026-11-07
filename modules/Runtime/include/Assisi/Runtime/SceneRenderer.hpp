@@ -24,6 +24,8 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/CloudPass.hpp>
+#include <Assisi/Render/CloudQuality.hpp>
 #include <Assisi/Render/FogVolume.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
@@ -48,6 +50,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -275,6 +278,19 @@ public:
     void SetFogEnabled(bool enabled) { _fogEnabled = enabled; }
     [[nodiscard]] bool FogEnabled() const { return _fogEnabled; }
 
+    /// @brief Whether a level's Clouds are drawn: the player's choice. Applied
+    /// on the next Render().
+    ///
+    /// Off draws no clouds and no cloud shadows, and holds no texture of them.
+    /// The sky's ambient light still follows the clouds, so turning them off
+    /// never changes how a level is lit.
+    void SetCloudsEnabled(bool enabled) { _cloudsEnabled = enabled; }
+    [[nodiscard]] bool CloudsEnabled() const { return _cloudsEnabled; }
+
+    /// @brief How finely the clouds are drawn. Applied on the next Render().
+    void SetCloudQuality(const Render::CloudQuality &quality) { _cloudQuality = Render::Sanitized(quality); }
+    [[nodiscard]] const Render::CloudQuality &CloudQuality() const { return _cloudQuality; }
+
     /// @brief How the last Render()'s scene is finished, as its
     /// PostProcessVolumes set it where the camera stood. The app hands it to the
     /// post chain: Application::SetScenePostProcess.
@@ -424,6 +440,17 @@ private:
     /// Before UpdateFrameConstants, which is told through the returned value
     /// whether an environment answers this frame.
     [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
+
+    /// @brief Draw this frame's clouds into their sky map and shadow map, and
+    /// point the sky pass and the mesh pass at them; or release both and point
+    /// the passes at none while the sky has no clouds or the player has them
+    /// off.
+    ///
+    /// Before UpdateSkyProbe, whose bake reads the sky map, and before
+    /// UpdateFrameConstants, which takes the returned shadow's constants.
+    [[nodiscard]] Render::CloudShadowConstants UpdateClouds(const Render::RenderFrame &frame,
+                                                            const SkyResolution &sky,
+                                                            const Render::FogConstants &fog);
 
     /// @brief Hold the prepass pipelines for @p frame.
     ///
@@ -581,6 +608,15 @@ private:
     // shader. Holds nothing while there is no sky.
     Render::SkyProbe _skyProbe;
     Render::EnvironmentSettings _environmentSettings;
+    // The clouds' sky map and shadow, drawn before the probe and the sky read
+    // them. Holds nothing while the sky has no clouds or they are off.
+    Render::CloudPass _cloudPass;
+    Render::CloudQuality _cloudQuality;
+    // What time has done to the clouds, and when it last did: it adds up a
+    // little each frame, so a speed sets how fast they move rather than where
+    // they are.
+    Render::CloudMotion _cloudMotion;
+    std::optional<std::chrono::steady_clock::time_point> _cloudMotionTime;
     // The depth prepass's depth as a distance, for every screen-space feature.
     // Holds nothing while occlusion, the only one, is off.
     Render::SceneDistancePass _sceneDistancePass;
@@ -624,6 +660,7 @@ private:
     // The same for several PostProcessVolumes covering the whole level.
     bool _severalLevelPostProcessWarned = false;
     bool _fogEnabled = true;
+    bool _cloudsEnabled = true;
     // Set once the prepass pipelines have failed to build, so the failure is
     // said once and every later frame is lit directly without retrying.
     bool _prepassFailed = false;

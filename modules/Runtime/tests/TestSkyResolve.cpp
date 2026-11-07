@@ -1016,3 +1016,73 @@ TEST_CASE("A hand-typed Fog is sanitized before it reaches a shader")
     // No haze, so nothing shortens the camera.
     CHECK(Runtime::SceneDrawDistance(scene, 5000.f) == 5000.f);
 }
+
+TEST_CASE("Clouds beside the sky's Skybox are part of that sky")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = AddSun(scene);
+    (void)scene.Add<Skybox>(sun);
+    CHECK_FALSE(ResolveSky(scene).clouds.present);
+
+    (void)scene.Add<Runtime::Clouds>(sun, Runtime::Clouds{.preset = Runtime::CloudPreset::Overcast,
+                                                          .changeRate = 3.f,
+                                                          .windSpeed = 12.f,
+                                                          .windBearingDegrees = 45.f,
+                                                          .seed = 99u});
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    REQUIRE(resolved.clouds.present);
+    CHECK(resolved.clouds.settings.coverage ==
+          doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Overcast)].coverage));
+    // The change rate, the wind and the seed are the component's whatever the
+    // preset.
+    CHECK(resolved.clouds.settings.changeRate == doctest::Approx(3.f));
+    CHECK(resolved.clouds.settings.windSpeed == doctest::Approx(12.f));
+    CHECK(resolved.clouds.settings.windBearingDegrees == doctest::Approx(45.f));
+    CHECK(resolved.clouds.settings.seed == 99u);
+    CHECK_FALSE(resolved.warnings.test(std::to_underlying(Runtime::SkyWarning::CloudsWithoutSkybox)));
+}
+
+TEST_CASE("Clouds on a light with no Skybox are not drawn, and the log says so")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = AddSun(scene);
+    (void)scene.Add<Runtime::Clouds>(sun);
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    CHECK_FALSE(resolved.clouds.present);
+    CHECK(resolved.warnings.test(std::to_underlying(Runtime::SkyWarning::CloudsWithoutSkybox)));
+}
+
+TEST_CASE("A cloud preset answers the cloud fields; Custom reads them")
+{
+    Runtime::Clouds clouds{.preset = Runtime::CloudPreset::Fair,
+                           .coverage = 0.9f,
+                           .height = 3000.f,
+                           .thickness = 700.f,
+                           .density = 0.3f,
+                           .puffiness = 0.2f};
+    const Assisi::Render::CloudSettings fair = Runtime::ToCloudSettings(clouds);
+    CHECK(fair.coverage == doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Fair)].coverage));
+    CHECK(fair.baseHeight != doctest::Approx(3000.f));
+
+    clouds.preset = Runtime::CloudPreset::Custom;
+    const Assisi::Render::CloudSettings custom = Runtime::ToCloudSettings(clouds);
+    CHECK(custom.coverage == doctest::Approx(0.9f));
+    CHECK(custom.baseHeight == doctest::Approx(3000.f));
+    CHECK(custom.thickness == doctest::Approx(700.f));
+    CHECK(custom.density == doctest::Approx(0.3f));
+    CHECK(custom.puffiness == doctest::Approx(0.2f));
+}
+
+TEST_CASE("Every cloud preset is already in range, and they grow cloudier in order")
+{
+    float previous = -1.f;
+    for (const Runtime::CloudPreset preset : {Runtime::CloudPreset::Fair, Runtime::CloudPreset::Scattered,
+                                              Runtime::CloudPreset::Broken, Runtime::CloudPreset::Overcast})
+    {
+        const Assisi::Render::CloudSettings settings = Runtime::kCloudPresets[std::to_underlying(preset)];
+        const Assisi::Render::CloudSettings safe = Assisi::Render::Sanitized(settings);
+        CHECK(safe == settings);
+        CHECK(settings.coverage > previous);
+        previous = settings.coverage;
+    }
+}

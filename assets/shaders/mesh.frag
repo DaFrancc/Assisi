@@ -9,6 +9,7 @@
 // Each piece may use anything the pieces before it declare.
 #include "sky/fog.glsl"
 #include "sky/fog_volumes.glsl"
+#include "mesh/cloud_shadow.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"
@@ -149,11 +150,15 @@ void main()
     uint shadowLightIndex   = uFrame.shadowCounts.y;
     uint shadowCascade      = 0u;
 
+    // Clouds come only with a sky, and a sky only with exactly one directional
+    // light, so whatever the clouds let through is that light's.
+    float cloudLight = CloudShadow(uFrame.cloudShadow, vWorldPos - uFrame.cameraPosition.xyz, uClampSampler);
+
     uint dirLightCount = uFrame.lightCounts.x;
     for (uint i = 0u; i < dirLightCount; i++)
     {
         vec3 L        = -dirLights[i].directionIntensity.xyz;
-        vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
+        vec3 radiance = dirLights[i].colorPad.xyz * (dirLights[i].directionIntensity.w * cloudLight);
         if (shadowCascadeCount > 0u && i == shadowLightIndex)
         {
             shadowCascade = SelectCascade(abs(vViewZ));

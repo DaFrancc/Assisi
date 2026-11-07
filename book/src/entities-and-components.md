@@ -67,6 +67,7 @@ to entities in the editor, but it helps to know what they are.
 | `Character` | `<Assisi/Physics/PhysicsComponents.hpp>` | A player or NPC the character controller moves. |
 | `ArcadeMovement`, `SourceMovement` | `<Assisi/Physics/PhysicsComponents.hpp>` | How a character speeds up, slows down and steers in the air. See [The character controller](physics-character.md). |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
+| `Clouds` | `<Assisi/Runtime/SkyComponents.hpp>` | Clouds in that sky, with their shadows on the ground. See [Clouds](rendering-sky.md#clouds). |
 | `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
 | `FogBox`, `FogSphere`, `FogOutline` | `<Assisi/Runtime/FogVolume.hpp>` | Fog in one place only: a box, a sphere, or a curve on the ground filled to a height. See [Fog volumes](rendering-sky.md#fog-volumes). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
@@ -145,6 +146,7 @@ entity**, the one with the `DirectionalLight`. That light *is* the sun.
 | `TimeOfDay` | A clock: the hour, the day, and how many real seconds a day lasts. |
 | `Sun` | The sun follows the clock: it rises, crosses the sky and sets. The light's own `direction` is ignored. |
 | `Moon` | A moon that rises, sets, goes through phases and lights the world at night. Needs a `Sun` on the same entity. |
+| `Clouds` | Clouds that drift with the wind and shadow the ground. Pick a **preset**: `Fair`, `Scattered`, `Broken` or `Overcast`. Needs a `Skybox` on the same entity. |
 
 For the clock to move while the game runs, add the **`TimeOfDay` system** to
 the level's systems list. Without it the time stays where you set it, which is

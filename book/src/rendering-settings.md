@@ -325,6 +325,51 @@ it off is your game's choice. It is closed unless you open it: set
 - **In the editor**, F11's **Fog** checkbox works whatever `playerSetsFog` says,
   so you can compare a level with and without its fog.
 
+## Clouds
+
+How finely a level's [`Clouds`](rendering-sky.md#clouds) are drawn, and
+whether they are. These settings only matter in a level with clouds.
+
+```json
+"clouds": {
+    "resolution": 2048,
+    "steps": 24
+}
+```
+
+| Key | F11 name | Values | Default |
+|---|---|---|---|
+| `resolution` | **Cloud Map Size** | 256 to 4096, rounded down to a power of two | `2048` |
+| `steps` | **Cloud Steps** | 8 to 256 | `24` |
+| `enabled` | **Clouds** | `true`, `false` | `true` |
+
+- **`resolution`** is the width of the map of the sky the clouds are drawn
+  into; its height is a quarter of that. Larger gives sharper clouds. It costs
+  in proportion to the map's area, whatever the screen's size, and it is the
+  setting that changes the clouds most.
+- **`steps`** is how many points along each line of sight through the clouds
+  are looked at, looking straight up. A line of sight toward the horizon
+  crosses more cloud and gets up to three times as many. Fewer is faster, and
+  shows as blotches inside the clouds. Above about 24, more steps change
+  little.
+- **Low**, **Medium**, **High** and **Ultra** in the F11 window set both. Each
+  tier costs about two to three times the one below; measured on an RTX 3070:
+
+  | Tier | `resolution` | `steps` | Time per frame |
+  |---|---|---|---|
+  | Low | 512 | 16 | 0.18 ms |
+  | Medium | 1024 | 24 | 0.32 ms |
+  | High | 2048 | 24 | 0.82 ms |
+  | Ultra | 4096 | 24 | 2.7 ms |
+
+- **`enabled` is read only when your game allows it**: set `playerSetsClouds`
+  to `true` in [`game.json`](game-settings.md#gamejson). The file only holds it
+  once a player has chosen. Off draws no clouds and no cloud shadows, and saves
+  their cost. The sky's light still greys under the clouds as it would, so
+  turning them off changes the sky, never how the level is lit.
+- **In the editor**, F11's **Clouds** checkbox works whatever
+  `playerSetsClouds` says.
+
 ## Frame rate
 
 ```json
@@ -360,5 +405,6 @@ misleading.
 3. **Ambient occlusion**, or its **Occlusion Samples**.
 4. **The resolution**: fewer pixels makes every per-pixel cost smaller.
 5. **Sky reflections' Probe Samples**, if the sun moves quickly.
+6. **Clouds**: a lower tier, or fewer **Cloud Steps**.
 
 The [frame page](rendering-frame.md) shows which pass each setting changes.

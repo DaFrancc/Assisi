@@ -54,7 +54,17 @@ Rebuilds the grid of **clusters** that point and spot lights are sorted into
 a frame when the window changes size or the active camera's `fovDegrees`,
 `nearZ` or `farZ` change.
 
-### 4. Sky reflections (`sky-probe`)
+### 4. Clouds (`clouds`)
+
+Draws the level's clouds into a small map of the sky above the horizon, which
+the sky and the sky reflections read, and into a map of their shadow, which the
+lit pass reads. Its cost is the map's size, not the screen's. Only in a level
+with a `Clouds` beside its `Skybox`, and only with clouds on. The first frame
+with clouds also draws the noise they are made from, once.
+
+- **Changed by:** the `clouds` settings; `Clouds`, `Skybox`, `TimeOfDay`.
+
+### 5. Sky reflections (`sky-probe`)
 
 Draws the sky into the reflection probe, the six pictures shiny surfaces
 reflect. It runs only when the sun or moon has moved more than the **Rebake
@@ -63,7 +73,7 @@ only with sky reflections on.
 
 - **Changed by:** the `environment` settings; `Skybox`, `TimeOfDay`.
 
-### 5. Sun shadows (`shadow-cascades`)
+### 6. Sun shadows (`shadow-cascades`)
 
 Draws the sun's shadow **cascades**: the shadow-casting meshes in each one, as
 seen from the sun. Cascades in which nothing changed are kept from the last
@@ -74,7 +84,7 @@ grows with the number of cascades redrawn and the meshes in each. See
 - **Changed by:** the `shadows.sun` settings; `DirectionalLight.castsShadows`;
   `MeshRenderer.castsShadows`; anything moving in the sun.
 
-### 6. Spot and point light shadows (`shadow-atlas`)
+### 7. Spot and point light shadows (`shadow-atlas`)
 
 Draws the shadow maps of the spot and point lights that need it into the shadow
 atlas, up to the redraw budget. Lights whose surroundings are still keep their
@@ -84,13 +94,13 @@ maps and cost nothing. A point light costs six times a spot light.
   light's `castsShadows`, `radius`, `shadowPriority` and `shadowAlwaysOn`;
   `MeshRenderer.castsShadows`; anything moving near a shadowed light.
 
-### 7. Light sorting (`light-cull`)
+### 8. Light sorting (`light-cull`)
 
 Sorts every point and spot light into the clusters it reaches, so that each
 pixel later checks only the lights near it. Small; its cost grows with the
 number of lights.
 
-### 8. Depth prepass
+### 9. Depth prepass
 
 Draws every mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
@@ -101,7 +111,7 @@ down.
 - **Changed by:** the number of meshes and triangles in view; masked materials,
   which cost more.
 
-### 9. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
+### 10. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
 
 Finds the creases and corners on screen from the prepass's depth, and works
 out how much to darken the ambient light in them. Three passes over the whole
@@ -109,7 +119,7 @@ screen. Off by default.
 
 - **Changed by:** the `ambientOcclusion` settings; the resolution.
 
-### 10. Lit pass (`draw-scene`)
+### 11. Lit pass (`draw-scene`)
 
 Draws every mesh in view again, this time working out the colour of each pixel:
 it reads the material's maps, adds the light of every directional light and of
@@ -123,7 +133,7 @@ each pixel, and the shadow filter.
   the number of directional lights; the shadow `filter` and contact hardening;
   every material; a `Fog`.
 
-### 11. Sky (`sky`)
+### 12. Sky (`sky`)
 
 Draws the sky into every pixel that nothing else covered. Only in a level with
 a sky, or a foggy level with none, where it fills those pixels with the fog's
@@ -132,7 +142,7 @@ the ground's. Its cost grows with how much sky is on screen.
 
 - **Changed by:** `Skybox`; `Fog`; the resolution.
 
-### 12. Post-processing (`post-process`, `post-process-output`)
+### 13. Post-processing (`post-process`, `post-process-output`)
 
 Turns the drawn scene into the finished picture:
 
@@ -149,7 +159,7 @@ Turns the drawn scene into the finished picture:
 - **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
   `PostProcessVolume`. See [The level's look](rendering-post-processing.md).
 
-### 13. User interface (`game-ui`)
+### 14. User interface (`game-ui`)
 
 Draws the game's [screens](user-interface.md): menus and HUDs. They are drawn
 after the tone map, so their colours are exactly as you set them. In the editor,
@@ -168,12 +178,14 @@ the editor's own windows are drawn after this.
 | `shadows.local`, `shadows.selection` | Spot and point light shadows; the filter in the lit pass |
 | `shadows.pcss` | Lit pass |
 | `environment` | Sky reflections |
+| `clouds` | Clouds |
 | `ambientOcclusion` | Ambient occlusion |
 | A `MeshRenderer` | Preparation, prepass, lit pass, and every shadow it falls in |
 | `MeshRenderer.castsShadows` | Sun shadows, spot and point light shadows |
 | A `PointLight` or `SpotLight` | Light sorting, lit pass, and its shadow if it casts one |
 | A `DirectionalLight` | Lit pass, everywhere; sun shadows if it casts |
 | `Skybox`, `TimeOfDay`, `Sun`, `Moon` | Sky, sky reflections, sun shadows |
+| `Clouds` | Clouds, sky, sky reflections, lit pass |
 | `Fog` | Lit pass, sky; and, through the draw distance, everything `Camera.farZ` changes |
 | `Camera.farZ` | Light grid; how far the sun shadows reach |
 | A material's `Alpha` set to `Mask` | Prepass, lit pass, shadows |

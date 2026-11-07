@@ -1029,6 +1029,9 @@ void EditorApp::SetupScene()
     // The author's own choice whatever the game allows its players: the editor
     // is where fog is compared on and off.
     _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
+    // The same for clouds.
+    _sceneRenderer.SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer.SetCloudsEnabled(GetOptions().cloudsEnabled.value_or(true));
 
     _preferences = Assisi::Editor::LoadEditorPreferences();
     _savedPreferences = _preferences;

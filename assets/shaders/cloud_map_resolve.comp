@@ -1,0 +1,42 @@
+#version 450
+// texelFetch on a texture read without a sampler.
+#extension GL_EXT_samplerless_texture_functions : require
+
+/// cloud_map_resolve.comp
+/// The clouds' sky map, from the march's: each texel the mean of the 3x3 texels
+/// about it. cloud_map.comp staggers each texel's steps by one of nine offsets,
+/// laid out so every 3x3 block holds all nine, so the mean is the clouds marched
+/// with nine times the steps: no grain from the stagger and no banding from the
+/// steps, for the price of a texel's width of softness.
+///
+/// Across wraps, since the map runs a whole turn round; up clamps at the horizon
+/// and the zenith.
+///
+/// Dispatch: ceil(width / 8) x ceil(height / 8) workgroups.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0) uniform texture2D uMarched;
+
+// NVRHI's Vulkan backend offsets UAV bindings by +384.
+layout(binding = 384, rgba16f) uniform writeonly image2D uCloudMap;
+
+void main()
+{
+    ivec2 size  = imageSize(uCloudMap);
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, size)))
+    {
+        return;
+    }
+    vec4 sum = vec4(0.0);
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 at = ivec2((texel.x + x + size.x) % size.x, clamp(texel.y + y, 0, size.y - 1));
+            sum += texelFetch(uMarched, at, 0);
+        }
+    }
+    imageStore(uCloudMap, texel, sum / 9.0);
+}

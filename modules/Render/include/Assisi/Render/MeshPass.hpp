@@ -24,6 +24,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
@@ -238,6 +239,9 @@ public:
         /// occlusion. False leaves the shader reading no texture and taking the
         /// indirect expressions it had before there was any.
         bool screenOcclusion = false;
+        /// Where SetCloudShadow's map lies. A default one casts nothing, and the
+        /// shader reads no map.
+        CloudShadowConstants cloudShadow;
     };
 
     /// @brief Updates the per-frame constant buffer (view-projection + camera view
@@ -285,6 +289,11 @@ public:
     /// shader reads the texture only on a frame whose constants say occlusion
     /// ran. A different handle invalidates the cached set.
     void SetAmbientOcclusion(nvrhi::ITexture *occlusion);
+
+    /// @brief Point the shader at the clouds' shadow map (CloudPass owns it), or
+    /// at none, on the same terms as occlusion: the shader reads it only on a
+    /// frame whose constants say clouds cast.
+    void SetCloudShadow(nvrhi::ITexture *shadow);
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). They describe the batching
@@ -532,6 +541,7 @@ private:
     // Screen-space occlusion's result (SsaoPass owns it), or null for none, and
     // its stand-in on the same terms as the environment's.
     nvrhi::ITexture *_ambientOcclusion = nullptr;
+    nvrhi::ITexture *_cloudShadow = nullptr;
     nvrhi::TextureHandle _noAmbientOcclusion;
     // The GGX lobe's integrals by (n.v, roughness): the split sum's scale and
     // bias, and the per-light lobe's directional albedo. Owned here because
@@ -546,6 +556,7 @@ private:
     mutable const nvrhi::IBuffer *_globalSetShadowViewTable = nullptr;
     mutable const nvrhi::ITexture *_globalSetEnvironmentCube = nullptr;
     mutable const nvrhi::ITexture *_globalSetAmbientOcclusion = nullptr;
+    mutable const nvrhi::ITexture *_globalSetCloudShadow = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn
