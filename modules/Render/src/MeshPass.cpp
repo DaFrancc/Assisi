@@ -73,6 +73,13 @@ enum class ConstantBufferSlot : std::uint8_t
     Frame = 0,
 };
 
+// The specialization constants the cutout test reads; each must match its
+// constant_id in mesh/cutout.glsl.
+enum class SpecializationConstant : std::uint32_t
+{
+    SceneSamples = 0,
+};
+
 // Starting instance-buffer capacity (records). Grows geometrically past this when
 // a frame draws more items; the first level typically fits without a growth. Also
 // the starting capacity for the indirect-args buffer (batches <= instances).
@@ -321,10 +328,14 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
     pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
 
+    const nvrhi::ShaderHandle maskedPixelShader =
+        SpecializeForSamples(_pixelShaders[kPixelShaderMasked], framebufferInfo.sampleCount);
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
         const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
-        pipelineDesc.PS = _pixelShaders[MeshPipelineIsMasked(pipeline) ? kPixelShaderMasked : kPixelShaderOpaque];
+        const bool masked = MeshPipelineIsMasked(pipeline);
+        pipelineDesc.PS = masked ? maskedPixelShader : _pixelShaders[kPixelShaderOpaque];
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = masked && framebufferInfo.sampleCount > 1;
         pipelineDesc.renderState.rasterState.cullMode =
             MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
         _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
@@ -341,6 +352,7 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     // each blends over everything behind it, which may be another of them.
     // Premultiplied, because the shader adds reflections alpha does not fade.
     pipelineDesc.PS = _pixelShaders[kPixelShaderBlended];
+    pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
     pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
     nvrhi::BlendState::RenderTarget &blend = pipelineDesc.renderState.blendState.targets[0];
@@ -399,6 +411,8 @@ bool MeshPass::PreparePrepass()
     desc.renderState.rasterState.frontCounterClockwise = true;
     desc.renderState.depthStencilState.depthTestEnable = true;
 
+    const nvrhi::ShaderHandle maskedDepthPixelShader =
+        SpecializeForSamples(_maskedDepthPixelShader, _framebufferInfo.sampleCount);
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
         const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
@@ -410,21 +424,25 @@ bool MeshPass::PreparePrepass()
         // and a pipeline with no fragment stage leaves what it would write
         // there undefined, so the mask is what keeps the clear intact for the
         // sky. An opaque surface gets no fragment stage at all, which is what
-        // keeps early depth rejection whole.
+        // keeps early depth rejection whole. Multisampled, a cutout writes its
+        // depth only to the samples its coverage keeps.
         desc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
-        desc.PS = masked ? _maskedDepthPixelShader : nullptr;
+        desc.PS = masked ? maskedDepthPixelShader : nullptr;
         desc.renderState.depthStencilState.depthWriteEnable = true;
         desc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
         desc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
+        desc.renderState.blendState.alphaToCoverageEnable = masked && _framebufferInfo.sampleCount > 1;
         _prepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
 
         // Shades each pixel once, for the surface the prepass kept there: equal
         // passes it and everything behind fails. The depth is already written,
         // and writing it again would only cost bandwidth. A cutout needs no
         // alpha test here, so it gets the shader that keeps early depth
-        // rejection.
+        // rejection; multisampled, the per-sample depth test already confines
+        // it to the samples the prepass covered.
         desc.VS = _invariantVertexShader;
         desc.PS = _pixelShaders[kPixelShaderOpaque];
+        desc.renderState.blendState.alphaToCoverageEnable = false;
         desc.renderState.depthStencilState.depthWriteEnable = false;
         desc.renderState.depthStencilState.depthFunc = AfterPrepassDepthTest(pipeline);
         desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
@@ -442,6 +460,13 @@ bool MeshPass::PreparePrepass()
         }
     }
     return true;
+}
+
+nvrhi::ShaderHandle MeshPass::SpecializeForSamples(nvrhi::IShader *shader, uint32_t samples) const
+{
+    const nvrhi::ShaderSpecialization constant =
+        nvrhi::ShaderSpecialization::UInt32(std::to_underlying(SpecializationConstant::SceneSamples), samples);
+    return _device->createShaderSpecialization(shader, &constant, 1);
 }
 
 const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage) const

@@ -264,6 +264,22 @@ if (ASSISI_BUILD_TESTS)
     set_tests_properties(Gpu-${_name} PROPERTIES LABELS gpu RESOURCE_LOCK gpu TIMEOUT ${_gpu_timeout_seconds})
   endforeach()
 
+  # Levels pictured again with 4x multisampling, which only it draws: cutout
+  # edges smoothed by alpha-to-coverage. Their accepted pictures are kept apart
+  # from the default run's, which are named after the same levels.
+  file(WRITE "${_gpu_dir}/msaa.json" "{\"antiAliasing\": {\"mode\": \"msaa\", \"msaaSamples\": 4}}\n")
+  foreach (_name IN ITEMS FoliageCheck)
+    add_test(NAME Gpu-${_name}-Msaa
+      COMMAND Assisi-GameEditor -l "levels/${_name}.alvl" --no-editor-visuals --vulkan-validation
+              --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}
+              --capture-options "${_gpu_dir}/msaa.json"
+              --capture-image "${_gpu_dir}/${_name}-Msaa.png"
+              --capture-golden "${CMAKE_SOURCE_DIR}/out/golden/msaa"
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-GameEditor>"
+    )
+    set_tests_properties(Gpu-${_name}-Msaa PROPERTIES LABELS gpu RESOURCE_LOCK gpu TIMEOUT ${_gpu_timeout_seconds})
+  endforeach()
+
   # The empty level with every feature switched off and no editor overlays
   # records only the passes no frame can do without. A feature whose pass still
   # runs when it is off shows up here and nowhere else.

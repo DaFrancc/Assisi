@@ -47,7 +47,8 @@ public:
     /// A cooked texture comes back in the format and colour space it was cooked in:
     /// the cook chose them from the channel every material binds it as.
     [[nodiscard]] std::expected<Image::DecodedImage, Render::AssetLoadError>
-    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format) const override;
+    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format,
+                float alphaCutoff) const override;
 
     [[nodiscard]] std::expected<std::vector<std::byte>, Render::AssetLoadError>
     LoadShader(std::string_view vpath) const override;

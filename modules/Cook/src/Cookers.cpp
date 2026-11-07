@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <filesystem>
 #include <format>
 #include <span>
@@ -322,6 +323,19 @@ class TextureCooker final : public Cooker
                static_cast<std::uint64_t>(context.textureQuality);
     }
 
+    [[nodiscard]] std::uint64_t AssetKeyVariant(Core::AssetId id, const CookContext &context) const override
+    {
+        // How it is stored rather than which channel binds it: channels stored
+        // alike share one blob. The colour space fits in the low byte and the
+        // format in the next; the cutoff its mips keep coverage at sits above.
+        constexpr std::uint32_t kSpaceBits = 8;
+        constexpr std::uint32_t kCutoffShift = 32;
+        const Geometry::MaterialChannelFormat storage = StorageOf(id, context);
+        const float cutoff = context.roles != nullptr ? context.roles->AlphaCutoffOf(id) : 0.f;
+        return (static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(cutoff)) << kCutoffShift) |
+               (static_cast<std::uint64_t>(storage.format) << kSpaceBits) | static_cast<std::uint64_t>(storage.space);
+    }
+
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
                                                                         const CookContext &context) const override
     {
@@ -336,20 +350,20 @@ class TextureCooker final : public Cooker
             const auto [first, second] = context.roles->Conflict(id);
             if (!first.empty())
             {
-                return std::unexpected(
-                    Failure(vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
-                                               "blob, so copy the file if both are wanted",
-                                               first, second)));
+                const std::string_view how = context.roles->ConflictIsOverAlpha(id)
+                                                 ? "cut out at another alpha cutoff, or cut out and blended,"
+                                                 : "bound as two different channels,";
+                const std::string reason = std::format(
+                    "is {} by '{}' and '{}' - one GUID is one blob, so copy the file if both are wanted", how, first,
+                    second);
+                return std::unexpected(Failure(vpath, reason));
             }
         }
 
-        // Unbound textures are loaded straight from their path — the sky's moon —
-        // and are colour. A normal map reaches the GPU through a material slot or
-        // not at all, so there is no unbound one to get wrong.
-        const Geometry::MaterialChannelFormat wanted =
-            Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
+        const Geometry::MaterialChannelFormat wanted = StorageOf(id, context);
 
-        std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(vpath, wanted.space);
+        std::expected<Image::DecodedImage, Core::AssetError> decoded =
+            Image::DecodeTexture(vpath, wanted.space, context.roles->AlphaCutoffOf(id));
         if (!decoded)
         {
             return std::unexpected(Failure(vpath, "could not be decoded"));
@@ -370,6 +384,18 @@ class TextureCooker final : public Cooker
         Image::WriteCookedTexture(writer, *compressed);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+
+  private:
+    /// The format and colour space the channel binding @p id stores it in.
+    /// Unbound textures are loaded straight from their path — the sky's moon —
+    /// and are colour. A normal map reaches the GPU through a material slot or
+    /// not at all, so there is no unbound one to get wrong.
+    [[nodiscard]] static Geometry::MaterialChannelFormat StorageOf(Core::AssetId id, const CookContext &context)
+    {
+        const std::optional<Geometry::MaterialChannel> channel =
+            context.roles != nullptr ? context.roles->ChannelOf(id) : std::nullopt;
+        return Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
     }
 };
 
@@ -907,7 +933,8 @@ class VerbatimCooker final : public Cooker
 
 } // namespace
 
-bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material)
+bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material,
+                        std::optional<float> alphaUse)
 {
     if (texture.IsNil())
     {
@@ -917,24 +944,50 @@ bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel
     Binding fresh;
     fresh.material = std::string{material};
     fresh.channel = channel;
+    fresh.alphaUse = alphaUse;
 
     const auto [slot, inserted] = _bindings.try_emplace(texture, std::move(fresh));
+    if (inserted)
+    {
+        return true;
+    }
+    Binding &kept = slot->second;
     // Two channels stored alike share the blob: glTF packs occlusion into the
     // red channel of the metal-roughness image, which is one file read by both.
-    const Geometry::MaterialChannelFormat kept = Geometry::FormatFor(slot->second.channel);
+    const Geometry::MaterialChannelFormat keptFormat = Geometry::FormatFor(kept.channel);
     const Geometry::MaterialChannelFormat wanted = Geometry::FormatFor(channel);
-    if (inserted || (kept.format == wanted.format && kept.space == wanted.space))
+    const bool sameFormat = keptFormat.format == wanted.format && keptFormat.space == wanted.space;
+    // A material that reads no alpha is served by any mips.
+    const bool sameAlpha = !kept.alphaUse || !alphaUse || *kept.alphaUse == *alphaUse;
+    if (sameFormat && sameAlpha)
     {
+        if (!kept.alphaUse)
+        {
+            kept.alphaUse = alphaUse;
+        }
         return true;
     }
 
     // Recorded rather than reported here: the cook of that texture is where the
     // path is known, and this walk has only ids.
-    if (slot->second.conflictingMaterial.empty())
+    if (kept.conflictingMaterial.empty())
     {
-        slot->second.conflictingMaterial = std::string{material};
+        kept.conflictingMaterial = std::string{material};
+        kept.conflictOverAlpha = sameFormat;
     }
     return false;
+}
+
+float TextureRoles::AlphaCutoffOf(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found == _bindings.end() ? 0.f : found->second.alphaUse.value_or(0.f);
+}
+
+bool TextureRoles::ConflictIsOverAlpha(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found != _bindings.end() && !found->second.conflictingMaterial.empty() && found->second.conflictOverAlpha;
 }
 
 std::optional<Geometry::MaterialChannel> TextureRoles::ChannelOf(Core::AssetId texture) const

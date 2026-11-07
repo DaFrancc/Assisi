@@ -155,7 +155,7 @@ TEST_CASE("The cooked asset source reads each kind of blob the cook writes")
     // Asked for as linear RGBA, and handed back as cooked: the cook chose the
     // format from the channel, and a load does no encode.
     const auto texture = source.LoadTexture(Core::DerivedAssetId("textures/red.png"), Image::ColorSpace::Linear,
-                                            Image::PixelFormat::Rgba8);
+                                            Image::PixelFormat::Rgba8, /*alphaCutoff=*/ 0.f);
     REQUIRE(texture.has_value());
     CHECK(texture->format == Image::PixelFormat::Bc7);
     CHECK(texture->colorSpace == Image::ColorSpace::Srgb);
@@ -192,7 +192,8 @@ TEST_CASE("The cooked asset source tells a missing asset from one of the wrong k
     REQUIRE_FALSE(notAMaterial.has_value());
     CHECK(notAMaterial.error() == Render::AssetLoadError::Undecodable);
 
-    const auto notATexture = source.LoadTexture(shaderId, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7);
+    const auto notATexture =
+        source.LoadTexture(shaderId, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
     REQUIRE_FALSE(notATexture.has_value());
     CHECK(notATexture.error() == Render::AssetLoadError::Undecodable);
 }

@@ -168,6 +168,28 @@ inline MeshData CreateUnitCubeMesh()
     return mesh;
 }
 
+/// @brief Returns a unit quad, 1 by 1 in the XY plane, centred at the origin and
+/// facing +Z.
+///
+/// One flat face: a foliage card, a sign, a panel. Its texture reads upright and
+/// un-mirrored from the front, as the cube's +Z face does; from behind it is
+/// culled unless its material is double-sided.
+inline MeshData CreateUnitQuadMesh()
+{
+    MeshData mesh;
+    mesh.Vertices = {
+        {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+    };
+    mesh.Indices = {0, 1, 2, 2, 3, 0};
+
+    ComputeTangents(mesh);
+
+    return mesh;
+}
+
 /// @brief Returns a solid unit sphere (radius 1, centred at the origin) as a
 /// UV-sphere with @p slices longitudinal and @p stacks latitudinal divisions.
 ///

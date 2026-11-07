@@ -531,6 +531,11 @@ private:
     /// @brief The pipeline set @p stage draws through.
     [[nodiscard]] const nvrhi::GraphicsPipelineHandle *PipelinesFor(MeshPassStage stage) const;
 
+    /// @brief @p shader with the scene target's @p samples per pixel fixed in,
+    /// which the cutout test in mesh/cutout.glsl reads: so the shader and the
+    /// pipeline's alpha-to-coverage are decided from the same framebuffer.
+    [[nodiscard]] nvrhi::ShaderHandle SpecializeForSamples(nvrhi::IShader *shader, uint32_t samples) const;
+
     /// @brief Record the CPU path's prepared commands through @p stage.
     [[nodiscard]] SubmitStats RecordCpuDraws(const RenderFrame &frame, MeshPassStage stage) const;
 

@@ -92,6 +92,33 @@ TEST_CASE("Each channel reads its own texture slot")
     CHECK(ChannelTexture(material, MaterialChannel::Emissive).IsNil());
 }
 
+TEST_CASE("Only a cutout material's colour map keeps its mips' coverage, at its cutoff")
+{
+    using Assisi::Geometry::AlphaMode;
+    using Assisi::Geometry::AlphaUseOf;
+    constexpr float kCutoff = 0.3f;
+    MaterialData material;
+    material.AlphaCutoff = kCutoff;
+
+    // Opaque reads no alpha, so any mips serve it.
+    CHECK_FALSE(AlphaUseOf(material, MaterialChannel::BaseColor).has_value());
+
+    material.Alpha = AlphaMode::Mask;
+    CHECK(AlphaUseOf(material, MaterialChannel::BaseColor) == kCutoff);
+    // The other channels carry no alpha a material reads.
+    for (const MaterialChannel channel : kMaterialChannels)
+    {
+        if (channel != MaterialChannel::BaseColor)
+        {
+            CHECK_FALSE(AlphaUseOf(material, channel).has_value());
+        }
+    }
+
+    // Blending wants alpha's plain average, which is a cutoff of zero.
+    material.Alpha = AlphaMode::Blend;
+    CHECK(AlphaUseOf(material, MaterialChannel::BaseColor) == 0.f);
+}
+
 TEST_CASE("kMaterialChannels lists every enumerator once")
 {
     CHECK(kMaterialChannels.size() == static_cast<std::size_t>(MaterialChannel::Count_));

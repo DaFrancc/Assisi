@@ -154,7 +154,8 @@ Things to know about the maps:
 
 A **masked** material cuts holes in the surface wherever the base colour's alpha
 is low: leaves on a branch, a chain-link fence, a torn flag. Each point is
-either drawn or not; there is nothing in between.
+either drawn or not; there is nothing in between, except at the edges when MSAA
+is on (see below).
 
 | Field | Meaning | Default |
 |---|---|---|
@@ -170,6 +171,27 @@ on materials that have holes. The holes themselves are not lit: the
 [depth prepass](rendering-frame.md#9-depth-prepass) finds them, and the lit pass
 skips them. `levels/PerfCutouts.alvl`, rows of cards with a hole in each, is the
 level to measure them on.
+
+Things to know about masked materials:
+
+- **Their edges are smooth with MSAA.** With `antiAliasing` set to MSAA (see
+  [Graphics settings](rendering-settings.md)), each edge is spread over the
+  points MSAA checks inside a pixel, a technique called **alpha to coverage**,
+  so a blade of grass has a smooth outline instead of a stepped one. Without
+  MSAA the edges are hard.
+- **Thin details keep their density in the distance.** A texture's smaller
+  versions for distance, its mipmaps, average neighbouring texels, which would
+  pull a thin blade below the cutoff and make grass thin out and vanish as it
+  gets farther away. For a masked material's colour map, each mipmap is
+  adjusted so the same share of it stays above the cutoff.
+  `levels/FoliageCheck.alvl` shows grass cards at 4 to 192 m.
+- **Leave a few empty texels along the bottom and top edges.** Textures repeat,
+  so a solid row along one edge blends into the opposite edge and shows there,
+  with MSAA on, as a faint line.
+- **One texture can't be cut at two cutoffs.** Its mipmaps are made for the
+  cutoff of the materials that use it, so two masked materials with different
+  `AlphaCutoff` values, or a masked and a see-through material, sharing one
+  texture fail the cook. Copy the image and use one copy for each.
 
 ## See-through materials
 

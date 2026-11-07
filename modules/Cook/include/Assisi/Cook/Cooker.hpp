@@ -88,6 +88,17 @@ public:
     /// cooked under the old setting marked current.
     [[nodiscard]] virtual std::uint64_t KeyVariant(const CookContext & /*context*/) const { return 0; }
 
+    /// @brief What besides its source changes asset @p id's output, folded into
+    ///        its cache key.
+    ///
+    /// Zero for a cooker whose assets cook from their own bytes alone. A texture
+    /// is the case it exists for: the materials that bind it decide its format,
+    /// and rebinding it touches no byte of the image.
+    [[nodiscard]] virtual std::uint64_t AssetKeyVariant(Core::AssetId /*id*/, const CookContext & /*context*/) const
+    {
+        return 0;
+    }
+
     /// @brief Other files the cooked bytes depend on, as virtual paths.
     ///
     /// Folded into the cache key, so editing a `.gltf`'s external `.bin` re-cooks
@@ -141,22 +152,34 @@ public:
 class TextureRoles
 {
 public:
-    /// @brief Record that @p material binds @p texture to @p channel.
+    /// @brief Record that @p material binds @p texture to @p channel and reads its
+    ///        alpha as @p alphaUse says (Geometry::AlphaUseOf).
     ///
     /// @return false if @p texture is already bound to a channel stored in a
-    ///         different format — one GUID names one blob, so a texture wanted as
-    ///         two formats has to be two files. The names of both materials are
-    ///         kept for the message. Channels stored alike, such as metal-roughness
-    ///         and occlusion, share it.
-    bool Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material);
+    ///         different format, or by a material whose alpha use its mips cannot
+    ///         also serve: cut at another cutoff, or blended where this cuts. One
+    ///         GUID names one blob, so a texture wanted two ways has to be two
+    ///         files. The names of both materials are kept for the message.
+    ///         Channels stored alike, such as metal-roughness and occlusion, share
+    ///         it, as do materials that read no alpha.
+    bool Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material,
+              std::optional<float> alphaUse);
 
     /// @brief The channel @p texture is bound to, or nullopt when no material
-    ///        references it.
+    ///        references it or two disagree about it.
     [[nodiscard]] std::optional<Geometry::MaterialChannel> ChannelOf(Core::AssetId texture) const;
+
+    /// @brief The alpha cutoff @p texture's mips keep their coverage at, or zero
+    ///        when no material cuts with it.
+    [[nodiscard]] float AlphaCutoffOf(Core::AssetId texture) const;
 
     /// @brief The two materials that disagreed about @p texture, for the failure
     ///        message. Empty when they did not.
     [[nodiscard]] std::pair<std::string, std::string> Conflict(Core::AssetId texture) const;
+
+    /// @brief Whether the materials Conflict names disagreed about how they read
+    ///        @p texture's alpha, rather than about its channel.
+    [[nodiscard]] bool ConflictIsOverAlpha(Core::AssetId texture) const;
 
     /// @brief A material that binds @p texture, or empty when none does.
     [[nodiscard]] std::string BoundBy(Core::AssetId texture) const;
@@ -166,7 +189,9 @@ public:
     {
         std::string material;
         std::string conflictingMaterial;
+        std::optional<float> alphaUse;
         Geometry::MaterialChannel channel = Geometry::MaterialChannel::BaseColor;
+        bool conflictOverAlpha = false;
     };
 
     std::unordered_map<Core::AssetId, Binding> _bindings;

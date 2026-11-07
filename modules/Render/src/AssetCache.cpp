@@ -118,6 +118,13 @@ Geometry::MaterialChannelFormat ChannelFormat(std::size_t channel)
     return Geometry::FormatFor(static_cast<MaterialChannel>(channel));
 }
 
+/// The cutoff @p data's texture on @p channel keeps its mips' coverage at:
+/// a cutout material's, on its colour map, and zero for the plain average.
+float ChannelCutoff(const Geometry::MaterialData &data, std::size_t channel)
+{
+    return Geometry::AlphaUseOf(data, static_cast<MaterialChannel>(channel)).value_or(0.f);
+}
+
 /// The installed source, or an error naming the id when none is installed — a
 /// cache used before its executable installed one loads nothing rather than crash.
 const AssetSource *SourceOrLog(const Core::AssetId &id)
@@ -174,6 +181,7 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image
                           "AssetCache::MaterialTable");
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
+    _primitiveFactories.emplace(Core::BuiltinAssetId::Quad, &Geometry::CreateUnitQuadMesh);
     for (const PrimitiveDesc &primitive : kShapePrimitives)
     {
         _primitiveFactories.emplace(primitive.id, primitive.factory);
@@ -278,14 +286,16 @@ Image::PixelFormat AssetCache::EffectiveFormat(Image::PixelFormat wanted) const
 }
 
 std::expected<void, AssetLoadError> AssetCache::LoadTexture(Texture &texture, const Core::AssetId &id,
-                                                            Image::ColorSpace colorSpace, Image::PixelFormat format)
+                                                            Image::ColorSpace colorSpace, Image::PixelFormat format,
+                                                            float alphaCutoff)
 {
     const AssetSource *source = SourceOrLog(id);
     if (source == nullptr)
     {
         return std::unexpected(AssetLoadError::UnknownAsset);
     }
-    std::expected<Image::DecodedImage, AssetLoadError> loaded = source->LoadTexture(id, colorSpace, format);
+    std::expected<Image::DecodedImage, AssetLoadError> loaded =
+        source->LoadTexture(id, colorSpace, format, alphaCutoff);
     if (!loaded)
     {
         return std::unexpected(loaded.error());
@@ -300,7 +310,7 @@ std::expected<void, AssetLoadError> AssetCache::LoadTexture(Texture &texture, co
 }
 
 const Texture *AssetCache::ResolveTexture(const Core::AssetId &id, Image::ColorSpace colorSpace,
-                                          Image::PixelFormat format)
+                                          Image::PixelFormat format, float alphaCutoff)
 {
     if (id.IsNil())
         return nullptr;
@@ -312,7 +322,7 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetId &id, Image::ColorS
         prim != _texturePrimitives.end())
     {
         const SolidColor &color = prim->second;
-        TextureKey key{id, color.space, Image::PixelFormat::Rgba8};
+        const TextureKey key{.id = id, .space = color.space, .format = Image::PixelFormat::Rgba8};
         if (std::unordered_map<TextureKey, Texture, TextureKeyHash>::iterator it = _textures.find(key);
             it != _textures.end())
             return it->second.IsValid() ? &it->second : nullptr;
@@ -323,13 +333,14 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetId &id, Image::ColorS
         return &texture;
     }
 
-    TextureKey key{id, colorSpace, format};
+    const TextureKey key{.id = id, .alphaCutoff = alphaCutoff, .space = colorSpace, .format = format};
     if (std::unordered_map<TextureKey, Texture, TextureKeyHash>::iterator it = _textures.find(key);
         it != _textures.end())
         return it->second.IsValid() ? &it->second : nullptr;
 
     Texture &texture = _textures[key];
-    if (std::expected<void, AssetLoadError> loaded = LoadTexture(texture, id, colorSpace, format); !loaded)
+    if (std::expected<void, AssetLoadError> loaded = LoadTexture(texture, id, colorSpace, format, alphaCutoff);
+        !loaded)
     {
         Core::Log::Warn("AssetCache: failed to load texture '{}' ({}) - drawing the error pattern.", Describe(id),
                         ToString(loaded.error()));
@@ -403,15 +414,17 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
     return slot;
 }
 
-uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, Geometry::MaterialChannel channel,
+uint32_t AssetCache::ResolveChannel(const Geometry::MaterialData &data, Geometry::MaterialChannel channel,
                                     bool *outPresent)
 {
     const ChannelDesc &desc                       = kChannels[static_cast<std::size_t>(channel)];
     const Geometry::MaterialChannelFormat wanted   = Geometry::FormatFor(channel);
+    const Core::AssetId channelId                 = Geometry::ChannelTexture(data, channel);
 
     if (!channelId.IsNil())
     {
-        if (const Texture *texture = ResolveTexture(channelId, wanted.space, EffectiveFormat(wanted.format)))
+        if (const Texture *texture = ResolveTexture(channelId, wanted.space, EffectiveFormat(wanted.format),
+                                                    ChannelCutoff(data, static_cast<std::size_t>(channel))))
         {
             if (outPresent != nullptr)
                 *outPresent = true;
@@ -423,20 +436,18 @@ uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, Geometry::Ma
         *outPresent = false;
     // The primitive dictates its own colour space and is never compressed; what is
     // passed here is a harmless hint.
-    const Texture *fallback = ResolveTexture(desc.fallback, wanted.space, Image::PixelFormat::Rgba8);
+    const Texture *fallback = ResolveTexture(desc.fallback, wanted.space, Image::PixelFormat::Rgba8, 0.f);
     return fallback != nullptr ? fallback->BindlessIndex() : 0u;
 }
 
 void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id)
 {
     MaterialTextures textures;
-    textures.baseColor         = ResolveChannel(data.BaseColorTexture, MaterialChannel::BaseColor);
-    textures.normal =
-        ResolveChannel(data.NormalTexture, MaterialChannel::Normal, &textures.hasNormalTexture);
-    textures.metallicRoughness = ResolveChannel(data.MetallicRoughnessTexture, MaterialChannel::MetallicRoughness);
-    textures.occlusion =
-        ResolveChannel(data.OcclusionTexture, MaterialChannel::Occlusion, &textures.hasOcclusionTexture);
-    textures.emissive          = ResolveChannel(data.EmissiveTexture, MaterialChannel::Emissive);
+    textures.baseColor         = ResolveChannel(data, MaterialChannel::BaseColor);
+    textures.normal            = ResolveChannel(data, MaterialChannel::Normal, &textures.hasNormalTexture);
+    textures.metallicRoughness = ResolveChannel(data, MaterialChannel::MetallicRoughness);
+    textures.occlusion         = ResolveChannel(data, MaterialChannel::Occlusion, &textures.hasOcclusionTexture);
+    textures.emissive          = ResolveChannel(data, MaterialChannel::Emissive);
 
     material.Create(_device, id, data, textures);
     WriteMaterialToTable(material);
@@ -757,8 +768,9 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
 
         const Image::PixelFormat format = cache.EffectiveFormat(ChannelFormat(ch).format);
         std::expected<Image::DecodedImage, AssetLoadError> img =
-            source != nullptr ? source->LoadTexture(channelIds[ch], ChannelFormat(ch).space, format)
-                              : std::unexpected(AssetLoadError::UnknownAsset);
+            source != nullptr
+                ? source->LoadTexture(channelIds[ch], ChannelFormat(ch).space, format, ChannelCutoff(bundle.data, ch))
+                : std::unexpected(AssetLoadError::UnknownAsset);
         // A source holding textures already encoded returns the format it has; one
         // the channel's key does not expect would be cached under the wrong key.
         if (!img || img->format != format)
@@ -923,7 +935,10 @@ void AssetCache::PublishMaterial(PendingPublish &publish)
             // a texture we release, kept alive by the list until the submit retires)
             // and is freed. The format has to be the one the worker actually encoded,
             // or the publish would look up a key nothing was stored under.
-            const TextureKey key{rc.id, ChannelFormat(ch).space, EffectiveFormat(ChannelFormat(ch).format)};
+            const TextureKey key{.id = rc.id,
+                                 .alphaCutoff = ChannelCutoff(publish.material.data, ch),
+                                 .space = ChannelFormat(ch).space,
+                                 .format = EffectiveFormat(ChannelFormat(ch).format)};
             if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
             {
                 *slots[ch] = it->second.BindlessIndex();
@@ -945,7 +960,7 @@ void AssetCache::PublishMaterial(PendingPublish &publish)
             Core::Log::Warn("AssetCache: failed to load texture '{}' - drawing the error pattern.", Describe(rc.id));
             ++_failedTextures;
 
-            const TextureKey key{rc.id, ChannelFormat(ch).space, Image::PixelFormat::Rgba8};
+            const TextureKey key{.id = rc.id, .space = ChannelFormat(ch).space, .format = Image::PixelFormat::Rgba8};
             Texture &texture = _textures[key];
             if (!texture.IsValid())
             {
@@ -956,7 +971,7 @@ void AssetCache::PublishMaterial(PendingPublish &publish)
         else
         {
             const Texture *fallback =
-                ResolveTexture(kChannels[ch].fallback, ChannelFormat(ch).space, Image::PixelFormat::Rgba8);
+                ResolveTexture(kChannels[ch].fallback, ChannelFormat(ch).space, Image::PixelFormat::Rgba8, 0.f);
             *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
         }
     }

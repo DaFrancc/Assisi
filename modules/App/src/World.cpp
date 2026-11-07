@@ -333,6 +333,12 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
     return &incoming;
 }
 
+bool WorldManager::AnyStreaming() const
+{
+    return std::ranges::any_of(_worlds, [](const std::unique_ptr<World> &world)
+                               { return world->state == WorldState::Loading || world->streamingPending; });
+}
+
 bool WorldManager::Destroy(std::string_view name)
 {
     if (RefuseWhileIterating("Destroy"))
