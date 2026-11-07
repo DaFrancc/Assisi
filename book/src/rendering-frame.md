@@ -96,13 +96,13 @@ maps and cost nothing. A point light costs six times a spot light.
   light's `castsShadows`, `radius`, `shadowPriority` and `shadowAlwaysOn`;
   `MeshRenderer.castsShadows`; anything moving near a shadowed light.
 
-### 8. Light sorting (`light-cull`)
+### 8. Light sorting (`lighting`)
 
-Sorts every point and spot light into the clusters it reaches, so that each
-pixel later checks only the lights near it. Small; its cost grows with the
-number of lights.
+Sends the frame's lights to the graphics card and sorts every point and spot
+light into the clusters it reaches, so that each pixel later checks only the
+lights near it. Small; its cost grows with the number of lights.
 
-### 9. Depth prepass
+### 9. Depth prepass (`cull-dispatch`, `depth-prepass`)
 
 Draws every solid mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
@@ -110,6 +110,11 @@ in front, rather than once for every surface drawn over it. This is also where
 masked materials cut their holes, so the lit pass never shades a hole. Its cost
 grows with the number of triangles in view, which
 [detail levels](rendering-lod.md) keep down.
+
+With **GPU Cull** on in the editor (see
+[Looking at rendering problems](rendering-debugging.md)), the graphics card
+first picks what is in view and at which detail level, timed as
+`cull-dispatch`, instead of the processor doing it.
 
 - **Changed by:** the number of meshes and triangles in view; masked materials,
   which cost more.
