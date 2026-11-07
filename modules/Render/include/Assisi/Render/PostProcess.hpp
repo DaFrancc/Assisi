@@ -3,7 +3,7 @@
 
 /// @file PostProcess.hpp
 /// @brief The offscreen scene target and the post-process chain that lands it
-/// on the swapchain: MSAA resolve, tone map, overlays, FXAA.
+/// on the swapchain: MSAA resolve, bloom, tone map, overlays, FXAA.
 ///
 /// The scene never draws directly into the swapchain. It draws into an HDR
 /// offscreen target owned by this class (SceneFramebuffer()), and the chain
@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <string>
 
+#include <Assisi/Render/Bloom.hpp>
+#include <Assisi/Render/BloomPass.hpp>
 #include <Assisi/Render/Tonemap.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -71,7 +73,7 @@ enum class ChainSurface : std::uint8_t
 enum class ChainStage : std::uint8_t
 {
     Resolve,  ///< Multisample resolve. Both sides share a colour space, so samples average in it.
-    Tonemap,  ///< The one radiance -> display-encoded step in the chain.
+    Tonemap,  ///< The one radiance -> display-encoded step in the chain. The bloom, when on, runs just before it.
     Overlays, ///< The seam: the app draws display-referred chrome. Reads and writes the same surface.
     Blit,     ///< Straight copy, for when the chain's last real work did not land on the swapchain.
     Fxaa      ///< Edge-directed blur. Wants perceptual input, so it is always last.
@@ -194,6 +196,8 @@ public:
         std::string vertexShaderSpvPath;
         std::string tonemapShaderSpvPath;
         std::string fxaaShaderSpvPath;
+        std::string bloomDownShaderSpvPath;
+        std::string bloomUpShaderSpvPath;
     };
 
     /// @brief Loads the post-process shaders and builds what does not depend on
@@ -244,6 +248,11 @@ public:
     /// on the next frame — nothing is rebuilt, the values ride in push constants.
     void SetTonemapSettings(const TonemapSettings &settings) { _tonemap = settings; }
 
+    /// @brief Whether bright light glows, and how. The intensity and scatter
+    /// take effect on the next frame; turning it on or off builds or drops the
+    /// bloom's copies there and then, and touches no other target.
+    void SetBloomSettings(const BloomSettings &settings);
+
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
     /// @brief Releases all GPU resources this owns. Call during app shutdown,
@@ -253,6 +262,12 @@ public:
 
 private:
     void Rebuild();
+    /// @brief Builds the bloom's copies when it is on and drops them when off.
+    void ConfigureBloom();
+    /// @brief The textures and constants step @p index reads.
+    [[nodiscard]] nvrhi::BindingSetHandle MakeStepBindings(uint32_t index) const;
+    /// @brief Whether the glow is drawn and mixed in this frame.
+    [[nodiscard]] bool BloomRuns() const;
     void RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first, uint32_t last) const;
     [[nodiscard]] nvrhi::IFramebuffer *FramebufferFor(ChainSurface surface, const RenderFrame *frame) const;
     [[nodiscard]] nvrhi::ITexture *TextureFor(ChainSurface surface, const RenderFrame *frame) const;
@@ -268,6 +283,7 @@ private:
     uint32_t _width = 0;
     uint32_t _height = 0;
     TonemapSettings _tonemap;
+    BloomSettings _bloomSettings;
     bool _tonemapPassthrough = false;
 
     // Multisample HDR scene target — used by MSAA and MSAA_FXAA. Its depth is
@@ -306,6 +322,8 @@ private:
         nvrhi::BindingSetHandle bindingSet;
     };
     std::array<StepResources, kMaxChainSteps> _stepResources;
+
+    BloomPass _bloom;
 };
 
 } // namespace Assisi::Render

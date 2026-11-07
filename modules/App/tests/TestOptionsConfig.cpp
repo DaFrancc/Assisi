@@ -223,6 +223,32 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
     CHECK(read.ambientOcclusion == SsaoSettings{});
 }
 
+TEST_CASE("Bloom settings survive a write and a read")
+{
+    OptionsConfig written;
+    written.bloom.enabled = false;
+    written.bloom.intensity = 0.2f;
+    written.bloom.scatter = 0.4f;
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    CHECK(read.bloom.enabled == written.bloom.enabled);
+    CHECK(read.bloom.intensity == doctest::Approx(written.bloom.intensity));
+    CHECK(read.bloom.scatter == doctest::Approx(written.bloom.scatter));
+}
+
+TEST_CASE("A hand-typed bloom is held inside its ranges")
+{
+    const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "bloom": { "intensity": 7.0, "scatter": -1.0 } })");
+    CHECK(read.bloom.intensity == doctest::Approx(kMaxBloomIntensity));
+    CHECK(read.bloom.scatter == doctest::Approx(kMinBloomScatter));
+}
+
+TEST_CASE("A settings file from before bloom existed loads it on, at its defaults")
+{
+    const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "antiAliasing": { "mode": "fxaa" } })");
+    CHECK(read.bloom == BloomSettings{});
+}
+
 TEST_CASE("A player's fog choice survives a write and a read, and is stored only once made")
 {
     OptionsConfig written;

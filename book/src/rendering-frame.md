@@ -135,11 +135,11 @@ the ground's. Its cost grows with how much sky is on screen.
 ### 12. Post-processing (`post-process`, `post-process-output`)
 
 Turns the drawn scene into the finished picture: with MSAA, combines each
-pixel's samples into one; the **tone map** turns light values into screen
-colours; in the editor, the selection outline, icons and wire shapes are
+pixel's samples into one; **bloom**, if it is on, spreads a soft glow around
+the brightest light; the **tone map** turns light values into screen colours; in the editor, the selection outline, icons and wire shapes are
 drawn; then FXAA, if it is on, or a copy to the screen.
 
-- **Changed by:** the `antiAliasing` and `toneMap` settings.
+- **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings.
 
 ### 13. User interface (`game-ui`)
 
@@ -154,6 +154,7 @@ the editor's own windows are drawn after this.
 | Resolution, MSAA samples | Lit pass, sky, prepass, post-processing |
 | `antiAliasing.mode` | Post-processing, and MSAA's cost in the lit pass |
 | `toneMap` | Post-processing (free) |
+| `bloom` | Post-processing |
 | `shadows.sun` | Sun shadows; the filter in the lit pass |
 | `shadows.local`, `shadows.selection` | Spot and point light shadows; the filter in the lit pass |
 | `shadows.pcss` | Lit pass |

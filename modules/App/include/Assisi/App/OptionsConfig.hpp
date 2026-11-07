@@ -5,6 +5,7 @@
 /// @brief User-facing runtime options persisted to options.json.
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/Render/Bloom.hpp>
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -66,6 +67,10 @@ struct OptionsConfig
     /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
     /// hand-editable and these lanes reach a shader.
     Render::TonemapSettings tonemap;
+
+    /// @brief Whether bright light glows, and how. Sanitized on load, as the
+    /// tone map is.
+    Render::BloomSettings bloom;
 
     /// @brief The shadow knobs, in their sun and local halves. Sanitized on
     /// load for the same reason, and one more: these size a GPU allocation, so

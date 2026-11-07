@@ -5,6 +5,8 @@ target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/AssetSource.hpp"
+    "include/Assisi/Render/Bloom.hpp"
+    "include/Assisi/Render/BloomPass.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/Celestial.hpp"
     "include/Assisi/Render/DrawItem.hpp"
@@ -53,6 +55,8 @@ target_sources(Assisi-Render
   PRIVATE
     "src/AssetCache.cpp"
     "src/AssetSource.cpp"
+    "src/Bloom.cpp"
+    "src/BloomPass.cpp"
     "src/ShaderModule.cpp"
     "src/ClusterGrid.cpp"
     "src/ComputeShader.cpp"

@@ -797,6 +797,37 @@ void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
     ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
 }
 
+// The glow around bright light. Like the tone map's look, the values reach the
+// next frame with nothing rebuilt; the switch builds or drops the bloom's copies.
+void EditorOptionsPanel::DrawBloomSettings(const Frame &frame)
+{
+    Assisi::Render::BloomSettings &bloom = frame.options.bloom;
+    ImGui::TextUnformatted("Bloom");
+    bool changed = ImGui::Checkbox("Bloom", &bloom.enabled);
+    ImGui::SetItemTooltip("A glow around the sun, lamps and bright highlights.");
+
+    if (!bloom.enabled)
+    {
+        ImGui::BeginDisabled();
+    }
+    changed |= ImGui::SliderFloat("Bloom Intensity", &bloom.intensity, Assisi::Render::kMinBloomIntensity,
+                                  Assisi::Render::kMaxBloomIntensity, "%.3f");
+    ImGui::SetItemTooltip("The share of the glow in the finished picture.");
+    changed |= ImGui::SliderFloat("Bloom Scatter", &bloom.scatter, Assisi::Render::kMinBloomScatter,
+                                  Assisi::Render::kMaxBloomScatter, "%.2f");
+    ImGui::SetItemTooltip("Low keeps the glow tight around a light; high spreads it wide.");
+    if (!bloom.enabled)
+    {
+        ImGui::EndDisabled();
+    }
+
+    if (changed)
+    {
+        bloom = Assisi::Render::Sanitized(bloom);
+        frame.options.SaveToJson();
+    }
+}
+
 bool EditorOptionsPanel::Draw(const Frame &frame)
 {
     bool applyDisplay = false;
@@ -1185,6 +1216,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         DrawFogSettings(frame);
+
+        ImGui::Separator();
+
+        DrawBloomSettings(frame);
 
         ImGui::Separator();
 

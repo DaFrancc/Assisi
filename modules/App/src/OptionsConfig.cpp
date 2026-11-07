@@ -213,6 +213,15 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.tonemap = Render::Sanitized(cfg.tonemap);
         }
 
+        if (json.contains("bloom"))
+        {
+            const auto &bloom = json.at("bloom");
+            ReadField(bloom, "enabled", cfg.bloom.enabled);
+            ReadField(bloom, "intensity", cfg.bloom.intensity);
+            ReadField(bloom, "scatter", cfg.bloom.scatter);
+            cfg.bloom = Render::Sanitized(cfg.bloom);
+        }
+
         if (json.contains("shadows"))
         {
             const auto &sh = json.at("shadows");
@@ -454,6 +463,9 @@ nlohmann::json FullJson(const OptionsConfig &options)
     json["toneMap"]["contrast"] = tonemap.contrast;
     json["toneMap"]["saturation"] = tonemap.saturation;
     json["toneMap"]["dither"] = tonemap.dither;
+    json["bloom"]["enabled"] = options.bloom.enabled;
+    json["bloom"]["intensity"] = options.bloom.intensity;
+    json["bloom"]["scatter"] = options.bloom.scatter;
 
     json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
 

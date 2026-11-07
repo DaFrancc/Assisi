@@ -116,6 +116,9 @@ struct TonemapConstants
     std::uint32_t passthrough = 0;
     /// One display step in output units while dithering, else 0.
     float ditherScale = 0.0f;
+    /// The share of the bloom's glow mixed into the radiance before exposure;
+    /// 0 reads no glow at all.
+    float bloomIntensity = 0.0f;
 };
 
 /// @brief The steps an 8-bit display target has above black.
@@ -160,14 +163,16 @@ inline constexpr float kDisplaySteps = 255.0f;
     return first + second - 1.0f;
 }
 
-/// @brief The constants for one tone map draw.
+/// @brief The constants for one tone map draw, mixing in @p bloomIntensity of
+/// the bloom's glow: zero when no glow was drawn.
 ///
 /// `copyThrough` covers the two steps that must move an image without restating
 /// it: the Blit, whose input this same shader already mapped, and the material
 /// debug views, whose scene target holds channel values rather than radiance.
-/// Both come out as an identity copy — exposing, grading or dithering either
-/// would apply the look a second time.
-[[nodiscard]] inline TonemapConstants MakeTonemapConstants(const TonemapSettings &settings, bool copyThrough)
+/// Both come out as an identity copy — exposing, grading, dithering or adding
+/// glow to either would apply the look a second time.
+[[nodiscard]] inline TonemapConstants MakeTonemapConstants(const TonemapSettings &settings, float bloomIntensity,
+                                                           bool copyThrough)
 {
     if (copyThrough)
     {
@@ -180,7 +185,8 @@ inline constexpr float kDisplaySteps = 255.0f;
                             .saturation = safe.saturation,
                             .op = static_cast<std::uint32_t>(safe.op),
                             .passthrough = 0,
-                            .ditherScale = safe.dither ? 1.0f / kDisplaySteps : 0.0f};
+                            .ditherScale = safe.dither ? 1.0f / kDisplaySteps : 0.0f,
+                            .bloomIntensity = ClampFinite(bloomIntensity, 0.0f, 1.0f, 0.0f)};
 }
 
 } // namespace Assisi::Render
