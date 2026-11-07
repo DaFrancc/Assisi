@@ -88,6 +88,21 @@ def build_options(levels: bool = False, sanitizers: bool = True, required: bool 
     return tuple(options)
 
 
+TARGET = "target"
+
+
+def target_option(help: str) -> Option:
+    """One CMake target to build instead of the whole build, with what it needs."""
+    return Option(TARGET, Kind.STRING, help)
+
+
+def targets_of(request) -> Tuple[str, ...]:
+    """The targets the build step builds for @p request: its named one, or none,
+    which builds everything."""
+    target = request.get(TARGET)
+    return (target,) if target else ()
+
+
 PREVIOUS = "previous"
 FRESH = "fresh"
 

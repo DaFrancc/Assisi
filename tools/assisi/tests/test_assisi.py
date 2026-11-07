@@ -336,6 +336,23 @@ class BuildTest(ToolTest):
             "cmake --build --preset gcc-dev --target Assisi-Game",
         ])
 
+    def test_a_target_is_built_alone_in_every_level(self):
+        self.sandbox.configured("gcc-dev", "gcc-ship")
+        code, _, err = self.sandbox.run("build", "dev", "ship", "--target", "Assisi-Runtime-Tests")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-dev --target Assisi-Runtime-Tests",
+            "cmake --build --preset gcc-ship --target Assisi-Runtime-Tests",
+        ])
+
+    def test_game_flag_builds_the_game_after_a_target(self):
+        self.sandbox.configured("gcc-dev")
+        self.assertEqual(self.sandbox.run("build", "dev", "--target", "Assisi-Render", "--game")[0], 0)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-dev --target Assisi-Render",
+            "cmake --build --preset gcc-dev --target Assisi-Game",
+        ])
+
     def test_configure_always_runs_the_cached_script(self):
         self.sandbox.configured("clang-dev")
         self.assertEqual(self.sandbox.run("configure", "dev", "--compiler", "clang")[0], 0)
@@ -447,6 +464,24 @@ class SteamRuntimeTest(ToolTest):
             f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -L game|container",
         ])
 
+    def test_inside_the_container_a_target_runs_its_own_suite_instead_of_the_game_tests(self):
+        self.sandbox.configured("gcc-ship-steamrt")
+        code, _, err = self.sandbox.run("test", "ship", "--steam-runtime", "--target", "Assisi-Core-Tests",
+                                        ASSISI_STEAMRT_SDK="1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-ship-steamrt --target Assisi-Core-Tests",
+            f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -L ^Assisi-Core-Tests$ "
+            "--no-tests=error",
+        ])
+
+    def test_on_the_host_a_target_alone_boots_no_game(self):
+        self.assertEqual(self.sandbox.run("test", "ship", "--steam-runtime", "--target", "Assisi-Core-Tests")[0], 0)
+        self.assertEqual(self.sandbox.calls(), [
+            f"steamrt run -- python3 {self.sandbox.path('assisi')} test ship --compiler gcc --steam-runtime "
+            "--target Assisi-Core-Tests",
+        ])
+
     def test_fetch_and_remove(self):
         stale = self.sandbox.root / "out" / "steamrt-home"
         stale.mkdir(parents=True)
@@ -475,6 +510,19 @@ class TestCommandTest(ToolTest):
         code, _, err = self.sandbox.run("test", "debug")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.sandbox.calls()[-1], "ctest --preset gcc-debug -j7")
+
+    def test_a_target_is_built_alone_and_only_its_suite_runs(self):
+        self.sandbox.configured("gcc-debug")
+        code, _, err = self.sandbox.run("test", "debug", "--target", "Assisi-Runtime-Tests", "--", "-R", "Post")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-debug --target Assisi-Runtime-Tests",
+            "ctest --preset gcc-debug -j7 -L ^Assisi-Runtime-Tests$ --no-tests=error -R Post",
+        ])
+
+    def test_a_target_name_is_matched_literally(self):
+        self.assertEqual(test_command.suite_filter("Lib.Tests+1"),
+                         ["-L", "^Lib\\.Tests\\+1$", "--no-tests=error"])
 
     def test_a_jobs_count_passed_through_is_the_only_one(self):
         self.sandbox.configured("gcc-debug")
@@ -610,6 +658,8 @@ class RequestTest(ToolTest):
         ["release", "ship", "--version", "1.2"],
         ["cook", "debug"],
         ["test", "debug", "--", "-R", "Audio"],
+        ["build", "dev", "--target", "Assisi-Runtime-Tests"],
+        ["test", "debug", "--target", "Assisi-Render-Tests", "--", "-R", "Bloom"],
         ["run", "editor", "dev", "--no-build", "--", "-l", "x.alvl"],
         ["clean", "debug", "dev"],
         ["clean", "--all", "--deps"],
