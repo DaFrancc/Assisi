@@ -9,9 +9,9 @@
 /// transcription**, as Fog.hpp is for the level's fog. The tests hold the CPU
 /// form; the shader has to agree with it.
 ///
-/// Not volumetric. Each pixel works out, in closed form, how much fog its line of
-/// sight passes through in front of the surface it shows, and fogs it by that
-/// much. Nothing casts a shadow into it.
+/// Not volumetric. Each pixel works out how much fog its line of sight passes
+/// through in front of the surface it shows, from the shape alone, and fogs it
+/// by that much. Nothing casts a shadow into it.
 ///
 /// Every volume lives in a frame of its own, turned and moved but never scaled,
 /// so a length there is metres. In that frame it is a box of some half extents,
@@ -19,10 +19,17 @@
 /// touching its faces, or an outline in its x-z plane from its floor to its top.
 ///
 /// Edges are soft: within the edge softness of a face, a wall, a floor or a top,
-/// the fog thins linearly to nothing at the boundary. The thinning is integrated
-/// exactly along the line of sight, so a shape's silhouette fades out whichever
-/// way it is seen. Where two boundaries' softness overlaps, along an edge or at a
-/// corner, both thin it, which rounds the edge off.
+/// the fog thins linearly to nothing at the boundary. Where two boundaries'
+/// softness overlaps, along an edge or at a corner, the two thinnings multiply,
+/// so the fog there is thinner than near either and never less than none. A
+/// falloff thins the fog upward from the floor besides, as the level's mist
+/// thins above its height.
+///
+/// Along a line of sight the fog is a polynomial between the points where its
+/// formula changes, at the inner edges of the softness, times the falloff. Each
+/// piece is integrated by the two-point Gauss-Legendre rule, which is exact for
+/// the cubics a volume without falloff makes, in steps short enough that the
+/// falloff costs it no more than half a percent.
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
@@ -55,6 +62,14 @@ inline constexpr uint32_t kMaxFogOutlineEdges = 8192u;
 /// it, the squares listed last lose volumes.
 inline constexpr uint32_t kMaxFogTileEntries = 65536u;
 
+/// @brief A falloff of zero keeps a volume's fog as thick at its top as at its
+/// floor; any other is clamped to this range, in metres.
+inline constexpr float kMinFogVolumeFalloff = 0.05f;
+inline constexpr float kMaxFogVolumeFalloff = 100000.0f;
+
+/// @brief A falloff of zero, or one inside the range.
+[[nodiscard]] float SanitizedFogVolumeFalloff(float falloff);
+
 /// @brief Which part of its box a volume fills. Must match sky/fog_volumes.glsl.
 enum class FogVolumeKind : uint32_t
 {
@@ -75,6 +90,9 @@ struct FogVolumeGpu
     glm::vec4 extents{0.0f};
     /// xyz = linear colour, w = optical depth per metre where the fog is full.
     glm::vec4 color{0.0f};
+    /// x = metres above the floor for the fog to thin to about a third (1/e),
+    /// zero for even; yzw unused.
+    glm::vec4 profile{0.0f};
     /// x = FogVolumeKind, y = 1 while lit by the sky, z = the first outline edge,
     /// w = how many outline edges.
     glm::uvec4 info{0u};
@@ -84,7 +102,8 @@ ASSISI_GPU_LAYOUT(FogVolumeGpu);
 ASSISI_GPU_FIRST_FIELD(FogVolumeGpu, toFrame);
 ASSISI_GPU_FIELD_AFTER(FogVolumeGpu, extents, toFrame);
 ASSISI_GPU_FIELD_AFTER(FogVolumeGpu, color, extents);
-ASSISI_GPU_FIELD_AFTER(FogVolumeGpu, info, color);
+ASSISI_GPU_FIELD_AFTER(FogVolumeGpu, profile, color);
+ASSISI_GPU_FIELD_AFTER(FogVolumeGpu, info, profile);
 ASSISI_GPU_NO_TAIL_PADDING(FogVolumeGpu, info);
 
 /// @brief One edge of an outline, in its volume's frame, with x-z as a plane's
@@ -124,6 +143,9 @@ struct FogVolumeDesc
     float visibility = 0.0f;
     /// How deep, in metres, the fog thins toward a boundary.
     float edgeSoftness = 0.0f;
+    /// How many metres above the box's floor the fog takes to thin to about a
+    /// third (1/e). Zero keeps it even.
+    float falloff = 0.0f;
     /// For an outline: its edges, as AppendFogOutline placed them.
     uint32_t firstEdge = 0u;
     uint32_t edgeCount = 0u;

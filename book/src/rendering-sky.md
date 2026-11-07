@@ -362,19 +362,22 @@ on the right.
    Set it back to `2`.
 3. Drag its `visibility` down to `4`. The feet of the pillars standing in it
    all but disappear.
-4. Select **Swamp**. Its outline is drawn on the ground. Drag one of its nodes
+4. Its `falloff` is `1.5`, so the mist lies thickest on the ground. Set it to
+   `0` and the box fills evenly to its top. Set it back to `1.5`.
+5. Select **Swamp**. Its outline is drawn on the ground. Drag one of its nodes
    outwards, and the mist follows. Raise `height` to `6`.
-5. Select **Smoke**. Its **Lit by sky** is off, so it keeps its dark colour.
+6. Select **Smoke**. Its **Lit by sky** is off, so it keeps its dark colour.
    Turn it on: it becomes a dark tint over the sky's light.
 
 ### Fog volume fields
 
-Every fog volume has these four:
+Every fog volume has these five:
 
 | Field | Meaning |
 |---|---|
 | `visibility` | How far you can see through it where it is thickest, in metres. A pillar this far into it is all but hidden. `0` is no fog. |
-| `edgeSoftness` | How many metres it takes to thin from full to nothing at its edges, so it has no hard border. `0` gives hard edges. |
+| `edgeSoftness` | How many metres it takes to thin from full to nothing at its edges, so it has no hard border. `0` gives hard edges. Along an edge or at a corner, where two sides meet, both thin it, so it fades out more there. |
+| `falloff` | How many metres above its floor it takes to thin to about a third, so it lies thickest at the bottom, as mist does. `0` (the default) keeps it the same at every height. The floor is the bottom of a box or a sphere, and a `FogOutline`'s entity origin. |
 | `color` | Its colour. See below for how **Lit by sky** changes it. |
 | `litBySky` | **Lit by sky**, on by default. Turn it off for caves and rooms the sky does not reach. |
 

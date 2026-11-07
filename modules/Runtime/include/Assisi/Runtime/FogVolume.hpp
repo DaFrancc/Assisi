@@ -8,7 +8,7 @@
 /// The level's Fog covers the whole world. A fog volume fills one shape with fog
 /// of its own colour and thickness, thinning toward its edges, and nothing
 /// outside it. There is a component per shape — FogBox, FogSphere, FogOutline —
-/// each placed, turned and scaled with its entity, and each with the same four
+/// each placed, turned and scaled with its entity, and each with the same five
 /// fields for how the fog looks.
 ///
 /// A volume is drawn from its shape alone, in front of whatever each pixel
@@ -33,6 +33,8 @@ namespace Assisi::Runtime
 inline constexpr float kDefaultFogVolumeVisibility = 20.f;
 /// How deep it thins toward its edges, in metres.
 inline constexpr float kDefaultFogVolumeEdgeSoftness = 2.f;
+/// As thick at its top as at its floor.
+inline constexpr float kDefaultFogVolumeFalloff = 0.f;
 /// @}
 
 /// @brief A box of fog, centred on its entity.
@@ -47,6 +49,9 @@ struct FogBox
     AFIELD(min = 0) float visibility = kDefaultFogVolumeVisibility;
     /// How deep, in metres, it thins toward its faces, so it has no hard edge.
     AFIELD(min = 0) float edgeSoftness = kDefaultFogVolumeEdgeSoftness;
+    /// How many metres above its floor it takes to thin to about a third, so
+    /// it lies thickest at the bottom. Zero keeps it the same at every height.
+    AFIELD(min = 0) float falloff = kDefaultFogVolumeFalloff;
     /// With @ref litBySky, a tint over the light the level's haze takes from the
     /// sky: white matches the haze and follows the time of day. Without, the
     /// colour drawn at every hour.
@@ -63,9 +68,10 @@ struct FogSphere
     /// In metres.
     AFIELD(min = 0) float radius = 5.f;
 
-    /// The same four as FogBox's.
+    /// The same five as FogBox's. The floor is the sphere's lowest point.
     AFIELD(min = 0) float visibility = kDefaultFogVolumeVisibility;
     AFIELD(min = 0) float edgeSoftness = kDefaultFogVolumeEdgeSoftness;
+    AFIELD(min = 0) float falloff = kDefaultFogVolumeFalloff;
     AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> color{1.f, 1.f, 1.f};
     AFIELD() bool litBySky = true;
 };
@@ -96,9 +102,10 @@ struct FogOutline
     /// How high above the entity's origin it is filled, in metres.
     AFIELD(min = 0) float height = 4.f;
 
-    /// The same four as FogBox's.
+    /// The same five as FogBox's. The floor is the entity's origin.
     AFIELD(min = 0) float visibility = kDefaultFogVolumeVisibility;
     AFIELD(min = 0) float edgeSoftness = kDefaultFogVolumeEdgeSoftness;
+    AFIELD(min = 0) float falloff = kDefaultFogVolumeFalloff;
     AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> color{1.f, 1.f, 1.f};
     AFIELD() bool litBySky = true;
 };

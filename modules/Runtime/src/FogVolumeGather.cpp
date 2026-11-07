@@ -97,6 +97,7 @@ public:
                                      .color = volume.color,
                                      .visibility = volume.visibility,
                                      .edgeSoftness = volume.edgeSoftness,
+                                     .falloff = volume.falloff,
                                      .litBySky = volume.litBySky};
     }
 
