@@ -316,7 +316,8 @@ endfunction()
 # holds test cases, named <NAME>.<file stem>, so ctest runs a suite's files side
 # by side instead of the whole suite as one long test. <NAME>.Other runs every
 # case outside those files, so between them they run each case exactly once.
-# PROPERTIES are set on every one of them.
+# PROPERTIES are set on every one of them, and each is labelled with the
+# executable's target name, so `ctest -L` picks one suite's tests alone.
 #
 # Cases are picked by doctest's source-file filter, which matches the end of the
 # path a case was compiled from. A file whose name ends another's would pick up
@@ -355,6 +356,8 @@ function(Assisi_add_doctest_tests target_name)
   if (ARG_PROPERTIES)
     set_tests_properties(${_tests} PROPERTIES ${ARG_PROPERTIES})
   endif()
+  # Appended after PROPERTIES, which would replace it.
+  set_property(TEST ${_tests} APPEND PROPERTY LABELS "${target_name}")
 endfunction()
 
 
