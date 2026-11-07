@@ -611,6 +611,12 @@ class EditorApp : public Assisi::App::Application
     /// enough to sit under a scene full of lights.
     void SubmitLightGizmos();
 
+    /// @brief Draw each fog volume's shape: a FogBox's box, a FogSphere's
+    /// sphere, a FogOutline's floor and top. Their soft edges never show where
+    /// the shape ends, which is what this does. The selected volume draws on top
+    /// in the selection colour; the rest faintly, in their own colour.
+    void SubmitFogVolumeGizmos();
+
     /// @brief Draw the benchmark camera route: each path's course, which way it
     /// travels, where it starts and what it looks at, and dashes joining each
     /// path to the next in play order.
@@ -1847,6 +1853,10 @@ class EditorApp : public Assisi::App::Application
     // one's absence depend on the other's ordering.
     std::vector<LineVertex> _lightLinesDepthTested;
     std::vector<LineVertex> _lightLinesOnTop;
+
+    // The same split for the fog volume shapes.
+    std::vector<LineVertex> _fogVolumeLinesDepthTested;
+    std::vector<LineVertex> _fogVolumeLinesOnTop;
 
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;

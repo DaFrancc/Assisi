@@ -8,7 +8,8 @@ The engine gives you two things:
 
 - **`Path`**, a component holding one spline, for a route on its own.
 - **`Assisi::Geometry::Spline`**, the type a `Path` holds, which your own
-  components can hold too.
+  components can hold too. A `FogOutline` holds one for the shape of its fog;
+  see [Fog volumes](rendering-sky.md#fog-volumes).
 
 ## Try it: draw a path
 

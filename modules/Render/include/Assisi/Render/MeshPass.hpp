@@ -26,6 +26,7 @@
 #include <Assisi/Render/ClusterGrid.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Fog.hpp>
+#include <Assisi/Render/FogVolumeBuffers.hpp>
 #include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -131,6 +132,8 @@ public:
         std::string invariantVertexShaderSpvPath;
         /// Must outlive the pass — its light buffers bind into every binding set.
         const ClusterGrid *clusterGrid = nullptr;
+        /// Must outlive the pass — its buffers bind into every binding set.
+        const FogVolumeBuffers *fogVolumes = nullptr;
         /// The AssetCache's bindless material-texture table + layout (stage D):
         /// the layout joins the pipeline as register space 1, the table binds
         /// every draw. Both must outlive the pass (AssetCache owns them; the
@@ -229,6 +232,8 @@ public:
         /// The level's fog, already resolved against its sky. A default one is
         /// off, and the shader takes none of it.
         FogConstants fog;
+        /// The placed fog volumes' lanes, FogVolumeFrame::Lanes. Zero draws none.
+        glm::uvec4 fogVolumes{0u};
         /// Whether SetAmbientOcclusion's texture holds this frame's screen-space
         /// occlusion. False leaves the shader reading no texture and taking the
         /// indirect expressions it had before there was any.
@@ -432,6 +437,7 @@ private:
 
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
+    const FogVolumeBuffers *_fogVolumes = nullptr;
 
     /// @brief Pixel-shader builds the pass loads: the same GLSL with and without
     /// the alpha-test discard. Fewer than the pipelines, because cull mode is

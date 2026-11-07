@@ -2,6 +2,7 @@ add_executable(Assisi-Render-Tests
   main.cpp
   TestCelestial.cpp
   TestFog.cpp
+  TestFogVolume.cpp
   TestIndirectLighting.cpp
   TestLocalShadowCache.cpp
   TestLocalShadowViews.cpp

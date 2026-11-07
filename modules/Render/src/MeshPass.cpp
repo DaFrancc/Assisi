@@ -55,6 +55,9 @@ enum class ResourceSlot : std::uint8_t
     Environment = 10,
     BrdfTable = 11,
     ScreenOcclusion = 12,
+    FogVolumes = std::to_underlying(FogVolumeBuffers::Slot::Volumes),
+    FogEdges = std::to_underlying(FogVolumeBuffers::Slot::Edges),
+    FogTiles = std::to_underlying(FogVolumeBuffers::Slot::Tiles),
 };
 
 enum class SamplerSlot : std::uint8_t
@@ -90,6 +93,7 @@ bool MeshPass::Initialize(const InitParams &params)
 
     _device = device;
     _clusterGrid = params.clusterGrid;
+    _fogVolumes = params.fogVolumes;
     _bindlessLayout = params.bindlessLayout;
     _bindlessTable = params.bindlessTable;
     _materialTable = params.materialTable;
@@ -163,6 +167,9 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Clamp)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles)));
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -526,6 +533,12 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable), _brdfTable));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Clamp), _clampSampler));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion), occlusion));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes),
+                                                                _fogVolumes->Volumes().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges),
+                                                                _fogVolumes->Edges().NativeBuffer()));
+    bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles),
+                                                                _fogVolumes->Tiles().NativeBuffer()));
     _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
     _globalSetInstanceBuffer = instanceBuffer;
     _globalSetShadowMap = _shadowMap;

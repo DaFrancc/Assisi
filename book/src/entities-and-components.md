@@ -68,6 +68,7 @@ to entities in the editor, but it helps to know what they are.
 | `ArcadeMovement`, `SourceMovement` | `<Assisi/Physics/PhysicsComponents.hpp>` | How a character speeds up, slows down and steers in the air. See [The character controller](physics-character.md). |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
 | `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
+| `FogBox`, `FogSphere`, `FogOutline` | `<Assisi/Runtime/FogVolume.hpp>` | Fog in one place only: a box, a sphere, or a curve on the ground filled to a height. See [Fog volumes](rendering-sky.md#fog-volumes). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
 | `Path` | `<Assisi/Runtime/Path.hpp>` | A curve through points you place, for a route something follows. See [Splines](splines.md). |
 

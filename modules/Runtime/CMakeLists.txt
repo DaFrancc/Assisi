@@ -12,6 +12,8 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Camera.hpp"
     "include/Assisi/Runtime/CameraPath.hpp"
     "include/Assisi/Runtime/Components.hpp"
+    "include/Assisi/Runtime/FogVolume.hpp"
+    "include/Assisi/Runtime/FogVolumeGather.hpp"
     "include/Assisi/Runtime/IndirectResolve.hpp"
     "include/Assisi/Runtime/LightComponents.hpp"
     "include/Assisi/Runtime/LightingSystem.hpp"
@@ -35,6 +37,7 @@ target_sources(Assisi-Runtime
     "src/Blueprint.cpp"
     "src/Camera.cpp"
     "src/CameraPath.cpp"
+    "src/FogVolumeGather.cpp"
     "src/LightingSystem.cpp"
     "src/LodSelection.cpp"
     "src/Naming.cpp"
@@ -80,6 +83,7 @@ assisi_reflect(
     include/Assisi/Runtime/CameraPath.hpp
     include/Assisi/Runtime/Components.hpp
     include/Assisi/Runtime/EditorOnly.hpp
+    include/Assisi/Runtime/FogVolume.hpp
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
     include/Assisi/Runtime/NameComponent.hpp

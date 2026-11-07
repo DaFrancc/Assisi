@@ -50,6 +50,9 @@ layout(binding = 256) uniform FrameConstants
     mat4  shadowViewProjection[8];
     // The level's fog; view.x is zero without one.
     FogConstants fog;
+    // The placed fog volumes: x = how many (zero skips them), y = screen square
+    // columns, z = rows, w = a square's side in pixels.
+    uvec4 fogVolumes;
 } uFrame;
 
 // Must match Render::MaterialDebugView.
