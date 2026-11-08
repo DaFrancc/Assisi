@@ -2,8 +2,9 @@
 
 /// @file TestWaterGather.cpp
 /// @brief The scene's Oceans and Lakes become the frame's bodies of water:
-/// placed, turned and scaled with their entities, each lake's fetch its width
-/// along the wind, and a body left out when none of it is in view.
+/// placed, turned and scaled with their entities, raised by the level's wind,
+/// each lake's fetch its width along the wind, and a body left out when none of
+/// it is in view.
 
 #include <doctest/doctest.h>
 
@@ -15,6 +16,7 @@
 #include <Assisi/Render/Water.hpp>
 #include <Assisi/Runtime/WaterComponents.hpp>
 #include <Assisi/Runtime/WaterGather.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 #include <cmath>
 
@@ -22,6 +24,7 @@ using namespace Assisi;
 using Assisi::ECS::Transform;
 using Assisi::Runtime::Lake;
 using Assisi::Runtime::Ocean;
+using Assisi::Runtime::Wind;
 
 namespace
 {
@@ -53,11 +56,12 @@ float WindHeight(const Render::WaterWaves &waves)
 
 } // namespace
 
-TEST_CASE("An Ocean is endless water at its entity's height, with its wind and swell")
+TEST_CASE("An Ocean is endless water at its entity's height, with the level's wind and its own swell")
 {
     ECS::Scene scene;
     const ECS::Entity sea = Place(scene, Transform{.position = glm::dvec3(120.0, -2.5, 40.0)});
-    REQUIRE(scene.Add(sea, Ocean{.windSpeed = 11.0f, .swellHeight = 1.5f, .swellPeriod = 12.0f}) != nullptr);
+    REQUIRE(scene.Add(sea, Ocean{.swellHeight = 1.5f, .swellPeriod = 12.0f}) != nullptr);
+    REQUIRE(scene.Add(scene.Create(), Wind{.speed = 11.0f, .bearingDegrees = 200.0f}) != nullptr);
 
     const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 3.0, 0.0)));
     REQUIRE(frame.bodies.size() == 1u);
@@ -70,6 +74,7 @@ TEST_CASE("An Ocean is endless water at its entity's height, with its wind and s
     CHECK(body.nodeCount > 0u);
     CHECK(body.firstNode + body.nodeCount == frame.nodes.size());
     CHECK(body.waves.wind.windSpeed == 11.0f);
+    CHECK(body.waves.wind.bearingDegrees == doctest::Approx(200.0f));
     CHECK(body.waves.wind.fetch == Render::kOceanFetch);
     CHECK(body.waves.swell.height == 1.5f);
     CHECK(body.waves.swell.period == 12.0f);
@@ -80,6 +85,23 @@ TEST_CASE("An Ocean is endless water at its entity's height, with its wind and s
     const Render::WaterFrame again = Gather(scene, From(glm::dvec3(10.0, 3.0, 0.0)));
     REQUIRE(again.bodies.size() == 1u);
     CHECK(again.bodies.front().key == body.key);
+}
+
+TEST_CASE("Without a Wind the air is still, so only swell moves the sea")
+{
+    ECS::Scene scene;
+    const ECS::Entity sea = Place(scene, Transform{});
+    REQUIRE(scene.Add(sea, Ocean{.swellHeight = 0.0f}) != nullptr);
+    const ECS::Entity lake = Place(scene, Transform{.position = glm::dvec3(0.0, 5.0, 0.0)});
+    REQUIRE(scene.Add(lake, Lake{.size = glm::vec2(30.0f, 30.0f)}) != nullptr);
+
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 8.0, 0.0)));
+    REQUIRE(frame.bodies.size() == 2u);
+    for (const Render::WaterBody &body : frame.bodies)
+    {
+        CHECK(body.waves.wind.windSpeed == 0.0f);
+        CHECK(body.significantHeight == 0.0f);
+    }
 }
 
 TEST_CASE("A Lake turns and scales with its entity")
@@ -105,18 +127,22 @@ TEST_CASE("A Lake turns and scales with its entity")
 
 TEST_CASE("A Lake's fetch is its width along the wind, so a pond's waves stay small")
 {
-    const Lake long_{.windSpeed = 8.0f, .windBearingDegrees = 90.0f};
+    const Lake long_{};
+    const Wind east{.speed = 8.0f, .bearingDegrees = 90.0f};
     // Its x axis runs east, the way the wind blows.
-    const Render::WaterWaves along = Runtime::LakeWaves(long_, glm::vec2(300.0f, 20.0f), glm::vec2(1.0f, 0.0f));
+    const Render::WaterWaves along =
+        Runtime::LakeWaves(long_, east, glm::vec2(300.0f, 20.0f), glm::vec2(1.0f, 0.0f));
     CHECK(along.wind.fetch == doctest::Approx(300.0f));
     // Turned so its x axis runs north, the wind crosses its narrow width.
-    const Render::WaterWaves across = Runtime::LakeWaves(long_, glm::vec2(300.0f, 20.0f), glm::vec2(0.0f, -1.0f));
+    const Render::WaterWaves across =
+        Runtime::LakeWaves(long_, east, glm::vec2(300.0f, 20.0f), glm::vec2(0.0f, -1.0f));
     CHECK(across.wind.fetch == doctest::Approx(20.0f));
     CHECK(WindHeight(across) < WindHeight(along));
 
     // A pond under the same wind as a big lake.
-    const Render::WaterWaves pond = Runtime::LakeWaves(long_, glm::vec2(8.0f, 8.0f), glm::vec2(1.0f, 0.0f));
-    const Render::WaterWaves big = Runtime::LakeWaves(long_, glm::vec2(3000.0f, 3000.0f), glm::vec2(1.0f, 0.0f));
+    const Render::WaterWaves pond = Runtime::LakeWaves(long_, east, glm::vec2(8.0f, 8.0f), glm::vec2(1.0f, 0.0f));
+    const Render::WaterWaves big =
+        Runtime::LakeWaves(long_, east, glm::vec2(3000.0f, 3000.0f), glm::vec2(1.0f, 0.0f));
     CHECK(WindHeight(pond) < WindHeight(big) / 10.0f);
     CHECK(pond.swell.height == 0.0f);
 }

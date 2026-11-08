@@ -233,14 +233,18 @@ shadows cross the ground with the wind, and the sky's light turns grey and soft
 as they close it. Put the component on the light's entity, beside the
 `Skybox`. Without it, a level has no clouds and pays nothing for them.
 
+The clouds drift with the level's [`Wind`](rendering-wind.md). Without one,
+they hang where they are.
+
 ### Try it: a cloudy afternoon
 
 Open the editor on `levels/CloudCheck.alvl`: a plain with a few trees, under
 scattered clouds at three in the afternoon.
 
 1. Select the `Sun` entity. Its `Clouds` has the `Scattered` preset.
-2. Set `windSpeed` to `20`. The clouds drift east, and their shadows cross the
-   plain with them.
+2. Add a `Wind` to any entity, and set its `speed` to `20`. The clouds drift
+   east, and their shadows cross the plain with them. See
+   [Wind](rendering-wind.md) for adding one.
 3. Set `changeRate` to `10`. Watch one cloud: its edges swell and fray as it
    drifts, and small clouds form and fade around it.
 4. Set `seed` to `1`. The sky is the same kind of sky, with other clouds in it.
@@ -267,18 +271,17 @@ scattered clouds at three in the afternoon.
 | `density` | How thick a cloud is inside. Higher hides the sun behind smaller clouds and darkens their undersides. |
 | `puffiness` | How heaped the clouds are, from `0` (flat grey sheets) to `1` (towering cumulus). The sky mixes kinds around it, so some clouds are flatter and some taller. |
 | `changeRate` | How fast the clouds change shape: `0` never, `1` about as fast as real cumulus, which form and fade over a quarter of an hour. |
-| `windSpeed` | How fast the wind carries the clouds, in metres per second. |
-| `windBearingDegrees` | The compass direction they move toward: `0` is north, `90` east. |
 | `seed` | Which sky of its kind: the same settings with another seed give other clouds. |
 
 While `preset` is anything but `Custom`, the first five fields are greyed out.
-The change rate, the wind and the seed are never greyed out: they work with
-every preset.
+The change rate and the seed are never greyed out: they work with every
+preset.
 
 The wind carries the clouds as time passes, in the editor as well as in the
-game, whether or not the `TimeOfDay` system runs: they keep moving from where
-they are, so changing `windSpeed` speeds them up rather than jumping them
-elsewhere. Each player's machine moves its own, so two players may see the
+game, whether or not the `TimeOfDay` system runs. They move half as fast again
+as the `Wind`'s `speed`, because the wind up where clouds are is faster than
+near the ground. They keep moving from where they are, so changing the wind
+speeds them up rather than jumping them elsewhere. Each player's machine moves its own, so two players may see the
 clouds in different places. Nothing in play depends on where they are.
 
 ### What clouds change

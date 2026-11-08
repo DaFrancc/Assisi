@@ -20,6 +20,7 @@
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/ScenePasses.generated.hpp>
 #include <Assisi/Runtime/WaterGather.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 namespace Assisi::Runtime
 {
@@ -269,6 +270,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         Core::Log::Warn("SceneRenderer: more than one Fog in the scene; the first found is used.");
     }
     _severalFogsWarned = fog.several;
+    const bool severalWinds = ResolveWind(scene).count > 1;
+    if (severalWinds && !_severalWindsWarned)
+    {
+        Core::Log::Warn("SceneRenderer: more than one Wind in the scene; the first found is used.");
+    }
+    _severalWindsWarned = severalWinds;
 
     // Refresh world matrices before anything reads them (view matrix, draw). Only
     // entities whose transform changed since last frame are recomputed; the tick

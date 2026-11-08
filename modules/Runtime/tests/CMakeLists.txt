@@ -46,6 +46,7 @@ add_executable(Assisi-Runtime-Tests
   TestSkyResolve.cpp
   TestTimeOfDay.cpp
   TestWaterGather.cpp
+  TestWindResolve.cpp
   TestWireGating.cpp
 )
 

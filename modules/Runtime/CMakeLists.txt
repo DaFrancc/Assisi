@@ -32,6 +32,8 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/TimeOfDay.hpp"
     "include/Assisi/Runtime/WaterComponents.hpp"
     "include/Assisi/Runtime/WaterGather.hpp"
+    "include/Assisi/Runtime/WindComponents.hpp"
+    "include/Assisi/Runtime/WindResolve.hpp"
   PRIVATE
     "src/AssetResolve.cpp"
     "src/AnimationPlayback.cpp"
@@ -64,6 +66,7 @@ target_sources(Assisi-Runtime
     "src/SkyResolve.cpp"
     "src/TimeOfDay.cpp"
     "src/WaterGather.cpp"
+    "src/WindResolve.cpp"
 )
 
 target_include_directories(Assisi-Runtime
@@ -99,6 +102,7 @@ assisi_reflect(
     include/Assisi/Runtime/SkyComponents.hpp
     include/Assisi/Runtime/TimeOfDay.hpp
     include/Assisi/Runtime/WaterComponents.hpp
+    include/Assisi/Runtime/WindComponents.hpp
 )
 
 # The scene's render passes: ordered from their declarations and recorded by

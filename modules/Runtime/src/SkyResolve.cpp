@@ -8,6 +8,7 @@
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 #include <cmath>
 #include <utility>
@@ -110,7 +111,7 @@ SkyResolution ResolveSky(ECS::Scene &scene)
                             clouds != nullptr && skybox == nullptr);
     if (clouds != nullptr && skybox != nullptr)
     {
-        resolution.clouds.settings = ToCloudSettings(*clouds);
+        resolution.clouds.settings = ToCloudSettings(*clouds, ResolveWind(scene).wind);
         resolution.clouds.present = true;
     }
     resolution.settings = skybox != nullptr ? ToSkySettings(*skybox) : Render::SkySettings{};

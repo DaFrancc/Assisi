@@ -30,6 +30,7 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 // Private to the serializer's own translation units: the nesting tests at the
 // bottom engage a context directly, which is the one thing the public API cannot
@@ -1227,8 +1228,6 @@ TEST_CASE("SceneSerializer: clouds round-trip, preset and fields both")
                         .density = 0.11f,
                         .puffiness = 0.35f,
                         .changeRate = 2.5f,
-                        .windSpeed = 17.f,
-                        .windBearingDegrees = 215.f,
                         .seed = 4000000123u};
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
@@ -1245,8 +1244,22 @@ TEST_CASE("SceneSerializer: clouds round-trip, preset and fields both")
     CHECK(read->density == doctest::Approx(0.11f));
     CHECK(read->puffiness == doctest::Approx(0.35f));
     CHECK(read->changeRate == doctest::Approx(2.5f));
-    CHECK(read->windSpeed == doctest::Approx(17.f));
-    CHECK(read->windBearingDegrees == doctest::Approx(215.f));
     // Past 2^31, so a seed read back through a signed or float type fails.
     CHECK(read->seed == 4000000123u);
+}
+
+TEST_CASE("SceneSerializer: the wind round-trips")
+{
+    using Assisi::Runtime::Wind;
+
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Wind{.speed = 17.f, .bearingDegrees = 215.f}) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+    const Wind *read = loaded.Get<Wind>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(read != nullptr);
+    CHECK(read->speed == doctest::Approx(17.f));
+    CHECK(read->bearingDegrees == doctest::Approx(215.f));
 }

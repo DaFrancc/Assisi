@@ -8,8 +8,10 @@ A level gets water from two components, in `<Assisi/Runtime/WaterComponents.hpp>
 | `Lake` | Water inside a rectangle at its entity's height, turned and scaled with the entity: a lake, or a pond. |
 
 Both draw real waves that move, catch the sun, reflect the sky, and show the
-ground through them where the water is shallow. A level without either pays
-nothing for water.
+ground through them where the water is shallow. The waves grow from the
+level's [`Wind`](rendering-wind.md); without one the air is still, and only an
+ocean's swell moves the water. A level without either component pays nothing
+for water.
 
 ## Try it: an ocean and a lake
 
@@ -25,18 +27,19 @@ into it on the left, and a stone basin on the right with a lake on top.
 
 ### Step 2: Change the wind
 
-1. Select the `Sea` entity. Its `Ocean` has `windSpeed` 10.
-2. Set `windSpeed` to `20`, a gale. The waves grow taller and longer, and
-   their crests sharpen.
+1. Select the `Wind` entity. Its `Wind` has `speed` 10.
+2. Set `speed` to `20`, a gale. The waves grow taller and longer, and their
+   crests sharpen.
 3. Set it to `2`. The sea goes almost calm, and only the long swell is left
    rolling through it.
-4. Set `swellHeight` to `0` too. Now the sea is nearly flat.
+4. Select the `Sea` entity and set its `Ocean`'s `swellHeight` to `0`. Now the
+   sea is nearly flat.
 
 ### Step 3: Look at the lake
 
-1. Fly up over the basin. The lake has small waves of its own. Set its
-   `windSpeed` to 10, the sea's: they stay far smaller than the sea's, because
-   wind blowing over only 30 metres of water can't build big waves.
+1. Fly up over the basin. The lake has small waves of its own, under the same
+   wind as the sea. They stay far smaller than the sea's, because wind blowing
+   over only 30 metres of water can't build big waves.
 2. Select the `Lake` entity and set `clarity` to `0.5`. The water turns murky,
    and the floor of the basin disappears.
 
@@ -44,18 +47,19 @@ into it on the left, and a stone basin on the right with a lake on top.
 
 The surface is the sum of thousands of waves of every length and direction at
 once. How big the waves of each length are comes from measurements of real
-seas, for the wind you set. Each frame the graphics card moves every wave on to
+seas, for the level's wind. Each frame the graphics card moves every wave on to
 the current time and adds them all up.
 
 Three things decide the waves:
 
-- **The wind:** its speed, and the compass bearing it blows toward. Most waves
-  travel the way the wind blows; `spread` lets some travel off to the sides.
+- **The wind:** the level's `Wind`, its speed and the compass bearing it blows
+  toward. Most waves travel the way the wind blows; `spread` lets some travel
+  off to the sides.
 - **Fetch:** how far the wind has blown over open water. A long fetch grows
   long, tall waves. An `Ocean`'s fetch is the open sea's. A `Lake`'s is its own
   width along the wind, which is why a pond only ripples.
 - **Swell:** long, even waves from a storm far away, which an `Ocean` adds to
-  its own wind's waves. You set it as a forecast gives it: a height and the
+  the local wind's waves. You set it as a forecast gives it: a height and the
   seconds between crests.
 
 `choppiness` pulls the surface sideways toward each crest, which makes crests
@@ -70,8 +74,6 @@ metre a second.
 
 | Field | Meaning |
 |---|---|
-| `windSpeed` | The local wind, in metres per second. A breeze is about 5, a gale about 20. |
-| `windBearingDegrees` | The compass bearing the wind blows toward: `0` is north, `90` east. |
 | `spread` | From `0`, waves travel close to the wind, to `1`, waves travel every way equally. |
 | `swellHeight` | The swell's height in metres: about the height of its bigger waves from trough to crest. `0` is no swell. |
 | `swellPeriod` | Seconds between the swell's crests, from 4 to 25. Longer swell is longer and faster, and has come further. |
@@ -84,9 +86,8 @@ metre a second.
 
 ## `Lake` fields
 
-A `Lake` has the same `windSpeed`, `windBearingDegrees`, `spread`,
-`choppiness`, `color`, `crestColor`, `clarity` and `seed` as an `Ocean`, and no
-swell. It adds:
+A `Lake` has the same `spread`, `choppiness`, `color`, `crestColor`, `clarity`
+and `seed` as an `Ocean`, and no swell. It adds:
 
 | Field | Meaning |
 |---|---|

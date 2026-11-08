@@ -15,9 +15,15 @@
       }
     },
     {
+      "name": "Wind",
+      "components": {
+        "Wind": {"speed": 10.0, "bearingDegrees": 160.0}
+      }
+    },
+    {
       "name": "Sea",
       "components": {
-        "Ocean": {"windSpeed": 10.0, "windBearingDegrees": 160.0, "swellHeight": 1.0, "swellPeriod": 11.0, "swellBearingDegrees": 200.0},
+        "Ocean": {"swellHeight": 1.0, "swellPeriod": 11.0, "swellBearingDegrees": 200.0},
         "Transform": {"position": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
       }
     },
@@ -84,7 +90,7 @@
     {
       "name": "Lake",
       "components": {
-        "Lake": {"size": [30.0, 30.0], "windSpeed": 9.0, "windBearingDegrees": 160.0},
+        "Lake": {"size": [30.0, 30.0]},
         "Transform": {"position": [40.0, 11.0, -80.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
       }
     },

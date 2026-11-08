@@ -72,14 +72,23 @@ inline constexpr float kMinCloudChangeRate = 0.0f;
 inline constexpr float kMaxCloudChangeRate = 10.0f;
 inline constexpr float kDefaultCloudChangeRate = 1.0f;
 
-/// @brief Wind speed in metres per second. A gale is about twenty.
+/// @brief The level's wind, 10 m above the ground, in metres per second. A
+/// gale is about twenty. Still air unless the level says otherwise.
 inline constexpr float kMinCloudWindSpeed = 0.0f;
 inline constexpr float kMaxCloudWindSpeed = 100.0f;
-inline constexpr float kDefaultCloudWindSpeed = 8.0f;
+inline constexpr float kDefaultCloudWindSpeed = kMinCloudWindSpeed;
 
-/// @brief The compass bearing the clouds move toward: 0 north, 90 east.
-inline constexpr float kDefaultCloudWindBearingDegrees = 90.0f;
+/// @brief The compass bearing the wind blows toward: 0 north, 90 east.
+inline constexpr float kDefaultCloudWindBearingDegrees = 0.0f;
 /// @}
+
+/// @brief How much faster the clouds move than the wind 10 m up. Friction
+/// slows the wind near the ground to 70-80% of the wind above the lowest few
+/// hundred metres over water, and 50-60% over rough land, so the clouds, above
+/// that layer, move 1.25 to 2 times as fast. The wind also turns 10-30 degrees
+/// with height; the clouds leave that out, because clouds crossing the waves
+/// at an angle reads as a mistake.
+inline constexpr double kCloudWindScale = 1.5;
 
 /// @brief The clouds as the renderer takes them.
 struct CloudSettings
@@ -158,13 +167,14 @@ struct CloudSettings
 inline constexpr uint32_t kCloudMapAspect = 4;
 /// @}
 
-/// @brief The wind's velocity, in metres per second along world x and z.
-/// Double, because the drift it adds up to reaches tens of kilometres in a day
-/// and the noise it moves through repeats every few.
+/// @brief How fast the clouds move, in metres per second along world x and z:
+/// the wind's velocity at their height. Double, because the drift it adds up to
+/// reaches tens of kilometres in a day and the noise it moves through repeats
+/// every few.
 [[nodiscard]] inline glm::dvec2 CloudWindVelocity(const CloudSettings &settings)
 {
     const double bearing = glm::radians(static_cast<double>(settings.windBearingDegrees));
-    const double speed = static_cast<double>(settings.windSpeed);
+    const double speed = static_cast<double>(settings.windSpeed) * kCloudWindScale;
     // North is -z and east is +x, so a bearing turns from -z toward +x.
     return glm::dvec2(std::sin(bearing) * speed, -std::cos(bearing) * speed);
 }
