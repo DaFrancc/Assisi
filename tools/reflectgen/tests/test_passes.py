@@ -180,10 +180,45 @@ class EmitTest(unittest.TestCase):
         self.assertIn("Render::Writes<X>{produced.x}", source)
         self.assertIn("Render::Reads<X, Service>{produced.x, imports.service}", source)
         self.assertIn("produced.x = {};", source)
-        self.assertIn("/*eager=*/ true", source[reader:])
+        self.assertIn("Render::RecorderTiming::Eager", source[reader:])
         header = reflect_passes.render_header(graph, "Game/T.hpp")
         self.assertIn("WriterPass writer;", header)
         self.assertIn("X x;", header)
+
+    def test_an_untimed_pass_opens_a_marker_and_counts_no_timer(self):
+        text = reflect_parser.strip_comments(
+            "namespace Game {\n" + IMPORTS + a_pass("HookPass", "hook", ", Writes<X> out", "untimed") +
+            a_pass("TimedPass", "timed", ", Reads<X> in") + "}\n")
+        found, imported = reflect_passes.parse_passes(text, Path("include/Game/T.hpp"), "Test")
+        graph = reflect_passes.Graph(prefix="Test", passes=reflect_passes.order_passes(found, imported),
+                                     imports=imported, produced=["X"], namespaces=["Game"],
+                                     header="include/Game/T.hpp")
+        source = reflect_passes.render_source(graph, "Game/T.generated.hpp")
+        timed = source.index('ASSISI_PROFILE_SCOPE("timed")')
+        self.assertIn("Render::RecorderTiming::Untimed", source[:timed])
+        self.assertIn("Render::RecorderTiming::Lazy", source[timed:])
+        self.assertIn("kTestPassTimerCount = 1;", reflect_passes.render_header(graph, "Game/T.hpp"))
+
+    def test_a_graph_with_no_per_view_pass_takes_no_view(self):
+        text = reflect_parser.strip_comments("namespace Game {\n" + IMPORTS + a_pass("APass", "a", ", Writes<X> out") + "}\n")
+        found, imported = reflect_passes.parse_passes(text, Path("include/Game/T.hpp"), "Test")
+        graph = reflect_passes.Graph(prefix="Test", passes=reflect_passes.order_passes(found, imported),
+                                     imports=imported, produced=["X"], namespaces=["Game"],
+                                     header="include/Game/T.hpp")
+        self.assertNotIn("ViewFrame", reflect_passes.render_header(graph, "Game/T.hpp"))
+        self.assertNotIn("ViewFrame", reflect_passes.render_source(graph, "Game/T.generated.hpp"))
+
+
+class UntimedTest(unittest.TestCase):
+    def test_an_untimed_pass_cannot_list_timers(self):
+        with self.assertRaises(ValueError) as caught:
+            graph_of(a_pass("APass", "a", ", Writes<X> out", 'untimed, timers = {"a1", "a2"}'))
+        self.assertIn("untimed and lists timers", str(caught.exception))
+
+    def test_an_untimed_pass_cannot_be_base(self):
+        with self.assertRaises(ValueError) as caught:
+            graph_of(a_pass("APass", "a", ", Writes<X> out", "untimed, base"))
+        self.assertIn("both base and untimed", str(caught.exception))
 
 
 if __name__ == '__main__':

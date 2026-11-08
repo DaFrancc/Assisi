@@ -15,9 +15,10 @@ value falls between the extremes.
 
 With no --capture, it asks which build and which capture to read.
 
-Scopes are keyed by their path through the tree, not by name, so the two
-`pp-resolve` steps in a post-process chain keep separate statistics. A path that
-is not in every frame reports how many frames it appeared in.
+Scopes are keyed by their path through the tree, not by name, so the
+`graphics-state` under `pp-tonemap` and the one under `pp-fxaa` keep separate
+statistics. A path that is not in every frame reports how many frames it
+appeared in.
 """
 
 import argparse
@@ -1122,7 +1123,8 @@ READING THE TABLE
     ▲ ▼             unusual for that scope — the rows listed in the summary
 
   Scopes are keyed by their position in the tree rather than by name, so the
-  two `pp-resolve` steps of a post-process chain keep separate statistics.
+  `graphics-state` under `pp-tonemap` and the one under `pp-fxaa` keep separate
+  statistics.
 
 ONE SCOPE INSTEAD OF ONE FRAME
 

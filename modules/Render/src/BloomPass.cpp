@@ -3,7 +3,6 @@
 #include <Assisi/Render/BloomPass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 namespace Assisi::Render
@@ -162,7 +161,6 @@ void BloomPass::Run(nvrhi::ICommandList *commandList, float scatter) const
     {
         return;
     }
-    ASSISI_PROFILE_GPU_SCOPE(commandList, "pp-bloom");
 
     for (uint32_t i = 0; i < _levelCount; ++i)
     {

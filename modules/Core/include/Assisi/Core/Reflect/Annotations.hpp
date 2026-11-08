@@ -248,7 +248,9 @@
 /// and `before` name, and refuses a cycle, a read nothing writes, or two
 /// writers it cannot order. `name` is the pass's timer;
 /// `timers = {"a", "b"}` declares the timers a pass opens one after another
-/// instead; `base` marks a pass every frame records, which has no Wanted.
+/// instead; `base` marks a pass every frame records, which has no Wanted;
+/// `untimed` marks a pass that opens a GPU marker but no timer, because what it
+/// calls opens timers of its own.
 ///
 /// The struct holds the pass's own state. Its hooks are optional and found by
 /// the compiler: Wanted (false turns the pass off), Release (called while it

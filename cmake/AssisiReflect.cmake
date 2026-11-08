@@ -416,7 +416,9 @@ function(assisi_generate_passes)
         VERBATIM
     )
     target_sources(${_ARG_TARGET} PRIVATE "${_outdir}/${_stem}.generated.cpp")
-    target_include_directories(${_ARG_TARGET} PRIVATE "${_generated_root}")
+    # Public, so a module above can check the timers every graph of the frame
+    # opens fit the pool together.
+    target_include_directories(${_ARG_TARGET} PUBLIC "${_generated_root}")
 endfunction()
 
 # Call once on each final executable (or shared library) to force-include

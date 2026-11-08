@@ -62,13 +62,6 @@ constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv"
 constexpr const char *kSkyVertexShader = "shaders/sky.vert.spv";
 constexpr const char *kSkyPixelShader = "shaders/sky.frag.spv";
 
-// The GPU timers the walk and the app open in one frame, beyond the scene's
-// passes: the clear, the post chain's two, the game UI, the debug UI and the
-// editor's three overlay passes.
-constexpr std::uint32_t kAppPassTimers = 8;
-static_assert(Passes::kScenePassTimerCount + kAppPassTimers <= Render::kMaxTimedPasses,
-              "the frame opens more GPU timers than the timer pool holds");
-
 // The moon's albedo, stamped on its disk. An engine constant rather than a field
 // on the Moon component: authoring a second moon's texture is a feature nobody
 // has asked for, and a path in a level file is a path that can rot there.

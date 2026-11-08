@@ -2,28 +2,26 @@
 #pragma once
 
 /// @file PostProcess.hpp
-/// @brief The offscreen scene target and the post-process chain that lands it
-/// on the swapchain: MSAA resolve, bloom, tone map, overlays, FXAA.
+/// @brief The offscreen scene target, the images the post steps pass along, and
+/// the full-screen draws that bring the scene to the swapchain.
 ///
 /// The scene never draws directly into the swapchain. It draws into an HDR
-/// offscreen target owned by this class (SceneFramebuffer()), and the chain
-/// brings it to the swapchain framebuffer. `Application::RenderFrame` wires this
-/// up by swapping the `RenderFrame` it hands to `OnRender()`; derived apps never
-/// see the offscreen target directly.
+/// offscreen target owned by this class (SceneFramebuffer()), and the post steps
+/// bring it to the swapchain framebuffer. Each step is a pass of its own; this
+/// class owns what they share: the targets, which of them each named image is
+/// for the current configuration (RouteChain), and the tone map, FXAA and copy
+/// pipelines.
 ///
-/// The chain has a seam in it: display-referred content (editor chrome — the
-/// selection outline, entity icons, collider wireframes) draws *after* the tone
-/// map, because those colours are already what they should look like on screen
-/// and mapping them would restate them. An app that has none says so, and the
-/// seam and its extra targets do not exist.
+/// The steps have a seam among them: display-referred content (editor chrome —
+/// the selection outline, entity icons, collider wireframes) draws *after* the
+/// tone map, because those colours are already what they should look like on
+/// screen and mapping them would restate them. An app that has none says so,
+/// and the seam and its extra targets do not exist.
 
-#include <array>
 #include <cstdint>
 #include <string>
 
-#include <Assisi/Render/BloomPass.hpp>
-#include <Assisi/Render/ExposurePass.hpp>
-#include <Assisi/Render/PostProcessSettings.hpp>
+#include <Assisi/Render/FramePass.hpp>
 #include <Assisi/Render/Tonemap.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -71,22 +69,6 @@ enum class ChainSurface : std::uint8_t
     return surface == ChainSurface::SceneMultisample || surface == ChainSurface::OverlayMultisample;
 }
 
-enum class ChainStage : std::uint8_t
-{
-    Resolve,  ///< Multisample resolve. Both sides share a colour space, so samples average in it.
-    Tonemap,  ///< The one radiance -> display-encoded step in the chain. The bloom, when on, runs just before it.
-    Overlays, ///< The seam: the app draws display-referred chrome. Reads and writes the same surface.
-    Blit,     ///< Straight copy, for when the chain's last real work did not land on the swapchain.
-    Fxaa      ///< Edge-directed blur. Wants perceptual input, so it is always last.
-};
-
-struct ChainStep
-{
-    ChainStage stage{};
-    ChainSurface source{};
-    ChainSurface destination{};
-};
-
 /// @brief What the chain is asked to accommodate, beyond the AA mode.
 struct ChainOptions
 {
@@ -95,92 +77,59 @@ struct ChainOptions
     bool overlays = false;
 };
 
-inline constexpr std::uint32_t kMaxChainSteps = 5;
-
-/// @brief The chain for one configuration: which stages run, in order, over
-/// which surfaces.
-struct ChainPlan
+/// @brief Which surface each image the post steps name is, for one AA mode and
+/// one choice of overlays. The steps read and write the names; only this knows
+/// where they land, so a step never checks the configuration to find its target.
+struct ChainRoute
 {
-    ChainSurface sceneTarget = ChainSurface::SceneHdr; ///< where the scene itself draws
-    std::array<ChainStep, kMaxChainSteps> steps{};
-    std::uint32_t stepCount = 0;
+    /// Where the scene draws.
+    ChainSurface sceneTarget = ChainSurface::SceneHdr;
+    /// The resolved scene the tone map reads: always SceneHdr, which the scene
+    /// draws into itself unless it is multisampled.
+    ChainSurface sceneHdr = ChainSurface::SceneHdr;
+    /// Where the tone map writes and the overlays draw.
+    ChainSurface toneMapped = ChainSurface::Swapchain;
+    /// The single-sampled picture FXAA or the final copy reads.
+    ChainSurface display = ChainSurface::Swapchain;
+    bool overlays = false;
+    bool fxaa = false;
 
-    [[nodiscard]] constexpr bool Has(ChainStage stage) const { return IndexOf(stage) < stepCount; }
-
-    /// @brief Position of the first step with this stage, or stepCount if absent.
-    [[nodiscard]] constexpr std::uint32_t IndexOf(ChainStage stage) const
-    {
-        for (std::uint32_t i = 0; i < stepCount; ++i)
-        {
-            if (steps[i].stage == stage)
-            {
-                return i;
-            }
-        }
-        return stepCount;
-    }
-
-    /// @brief Where the app's overlays draw, or Swapchain-if-absent guarded by Has().
-    [[nodiscard]] constexpr ChainSurface OverlaySurface() const
-    {
-        const std::uint32_t index = IndexOf(ChainStage::Overlays);
-        return index < stepCount ? steps[index].destination : ChainSurface::Swapchain;
-    }
+    /// @brief The scene draws multisampled and resolves into sceneHdr.
+    [[nodiscard]] constexpr bool ResolvesScene() const { return sceneTarget != sceneHdr; }
+    /// @brief The overlays draw multisampled and resolve into display.
+    [[nodiscard]] constexpr bool ResolvesOverlays() const { return toneMapped != display; }
+    /// @brief The picture ends somewhere other than the swapchain with no FXAA
+    /// to move it there, so a copy does.
+    [[nodiscard]] constexpr bool CopiesToSwapchain() const { return !fxaa && display != ChainSurface::Swapchain; }
 };
 
-/// @brief Derives the chain from the AA mode and what the app needs — the whole
-/// shape of the frame in one place, so Rebuild() allocates exactly what the
-/// execution walks.
-[[nodiscard]] constexpr ChainPlan PlanChain(AaMode mode, ChainOptions options = {})
+/// @brief Routes the chain for the AA mode and what the app needs — the whole
+/// shape of the frame in one place, so Configure() allocates exactly what the
+/// steps touch.
+[[nodiscard]] constexpr ChainRoute RouteChain(AaMode mode, ChainOptions options = {})
 {
     const bool multisampled = (mode == AaMode::MSAA || mode == AaMode::MSAA_FXAA);
-    const bool fxaa = (mode == AaMode::FXAA || mode == AaMode::MSAA_FXAA);
 
-    ChainPlan plan;
-    plan.sceneTarget = multisampled ? ChainSurface::SceneMultisample : ChainSurface::SceneHdr;
-
-    if (multisampled)
-    {
-        plan.steps[plan.stepCount++] = {ChainStage::Resolve, ChainSurface::SceneMultisample, ChainSurface::SceneHdr};
-    }
+    ChainRoute route;
+    route.overlays = options.overlays;
+    route.fxaa = (mode == AaMode::FXAA || mode == AaMode::MSAA_FXAA);
+    route.sceneTarget = multisampled ? ChainSurface::SceneMultisample : ChainSurface::SceneHdr;
 
     // Overlays under MSAA draw at the scene's sample count, which is the only way
     // they can share the depth buffer the scene wrote — and it is also what keeps
     // wireframe edges as smooth as they were before the tone map moved out of the
-    // mesh shader.
-    ChainSurface tonemapTarget = ChainSurface::Swapchain;
+    // mesh shader. With nothing after it, the tone map writes the swapchain
+    // itself, so the picture is never copied there.
     if (options.overlays)
     {
-        tonemapTarget = multisampled ? ChainSurface::OverlayMultisample : ChainSurface::Ldr;
+        route.toneMapped = multisampled ? ChainSurface::OverlayMultisample : ChainSurface::Ldr;
     }
-    else if (fxaa)
+    else if (route.fxaa)
     {
-        tonemapTarget = ChainSurface::Ldr;
+        route.toneMapped = ChainSurface::Ldr;
     }
-
-    // The tone map runs in every configuration: it is the only thing that turns
-    // radiance into something a display format can hold.
-    plan.steps[plan.stepCount++] = {ChainStage::Tonemap, ChainSurface::SceneHdr, tonemapTarget};
-
-    if (options.overlays)
-    {
-        plan.steps[plan.stepCount++] = {ChainStage::Overlays, tonemapTarget, tonemapTarget};
-        if (multisampled)
-        {
-            plan.steps[plan.stepCount++] = {ChainStage::Resolve, ChainSurface::OverlayMultisample, ChainSurface::Ldr};
-        }
-    }
-
-    const ChainSurface last = plan.steps[plan.stepCount - 1].destination;
-    if (fxaa)
-    {
-        plan.steps[plan.stepCount++] = {ChainStage::Fxaa, last, ChainSurface::Swapchain};
-    }
-    else if (last != ChainSurface::Swapchain)
-    {
-        plan.steps[plan.stepCount++] = {ChainStage::Blit, last, ChainSurface::Swapchain};
-    }
-    return plan;
+    route.display = route.toneMapped == ChainSurface::OverlayMultisample ? ChainSurface::Ldr : route.toneMapped;
+    return route;
 }
 
 class PostProcess
@@ -191,26 +140,33 @@ public:
     struct InitParams
     {
         nvrhi::IDevice *device = nullptr;
-        /// The format/sample count the last stage of the chain draws into.
+        /// The format/sample count the last step draws into.
         nvrhi::FramebufferInfo swapchainFramebufferInfo;
         /// Shared fullscreen-triangle vertex stage for every post pass.
         std::string vertexShaderSpvPath;
         std::string tonemapShaderSpvPath;
         std::string fxaaShaderSpvPath;
-        std::string bloomDownShaderSpvPath;
-        std::string bloomUpShaderSpvPath;
-        std::string exposureHistogramShaderSpvPath;
-        std::string exposureAdaptShaderSpvPath;
     };
 
-    /// @brief Loads the post-process shaders and builds what does not depend on
-    /// the AA mode. Call once, before the first Configure().
+    /// @brief Loads the tone map and FXAA shaders and builds what does not
+    /// depend on the AA mode. Call once, before the first Configure().
     [[nodiscard]] bool Initialize(const InitParams &params);
 
     /// @brief (Re)allocates offscreen render targets for the given size, mode, and
     /// MSAA sample count. Cheap to call every time any of these might have changed
     /// (resize, or an options-menu edit) — no-ops internally skip unaffected targets.
     void Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples, ChainOptions options);
+
+    /// @brief Which surface each named image is, as the last Configure() set it.
+    [[nodiscard]] const ChainRoute &Route() const { return _route; }
+
+    /// @brief The target @p surface is, with the scene's depth where the scene or
+    /// the overlays depth-test. The swapchain is the one surface this class does
+    /// not own, so its target is @p swapchain.
+    [[nodiscard]] RenderTarget Target(ChainSurface surface, const RenderTarget &swapchain) const;
+
+    /// @brief The vertex stage every full-screen post draw shares.
+    [[nodiscard]] nvrhi::IShader *FullscreenVertexShader() const { return _fullscreenVertexShader; }
 
     /// @brief The framebuffer the scene renders into this frame. Never the
     /// swapchain: the scene is HDR and the swapchain is not.
@@ -231,39 +187,19 @@ public:
     /// be built/rebuilt to match this. Differs from the scene's in format.
     [[nodiscard]] nvrhi::FramebufferInfo OverlayFramebufferInfo() const;
 
-    /// @brief Runs the chain up to the overlay seam: the MSAA resolve, the
-    /// automatic exposure's metering, the bloom, then the tone map. Call after
-    /// the scene draws.
-    void RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame);
+    /// @brief Maps the radiance in @p scene into @p frame's target: the glow
+    /// mixed in, exposed, graded, encoded for display, as @p constants say.
+    /// Without a glow the scene fills its slot, and without metered exposure a
+    /// stand-in does; the shader reads neither unless @p constants ask it to.
+    void Tonemap(const RenderFrame &frame, nvrhi::ITexture *scene, nvrhi::ITexture *glow, nvrhi::IBuffer *exposure,
+                 const TonemapConstants &constants);
 
-    /// @brief Runs the rest of the chain, landing the result in `frame`'s
-    /// swapchain framebuffer. Call after the overlays draw (or straight after
-    /// RunBeforeOverlays when there are none), before ImGui.
-    void RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame);
+    /// @brief Smooths the edges of @p display into @p frame's target.
+    void Fxaa(const RenderFrame &frame, nvrhi::ITexture *display);
 
-    /// @brief Makes the tone map copy its input through instead of mapping it.
-    ///
-    /// For frames whose scene target already holds display values rather than
-    /// radiance — the material debug views, which short-circuit lighting to show
-    /// a channel raw. Mapping those would rescale the very numbers being read.
-    void SetTonemapPassthrough(bool passthrough) { _tonemapPassthrough = passthrough; }
-
-    /// @brief The player's curve, brightness and dither. Takes effect on the
-    /// next frame — nothing is rebuilt, the values ride in push constants.
-    void SetTonemapSettings(const TonemapSettings &settings) { _tonemap = settings; }
-
-    /// @brief The scene's exposure, grade, white balance and glow, as its
-    /// volumes set them for this frame. Takes effect on the next frame.
-    void SetSceneSettings(const PostProcessSettings &settings) { _scene = Sanitized(settings); }
-
-    /// @brief How long the frame took, which the automatic exposure adapts
-    /// over.
-    void SetFrameSeconds(float seconds) { _frameSeconds = seconds; }
-
-    /// @brief Whether bright light glows: the player's choice. Turning it on or
-    /// off builds or drops the bloom's copies there and then, and touches no
-    /// other target.
-    void SetBloomEnabled(bool enabled);
+    /// @brief Copies @p display, already mapped, into @p frame's target: the tone
+    /// map shader told to pass its input through.
+    void Copy(const RenderFrame &frame, nvrhi::ITexture *display);
 
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
@@ -273,34 +209,44 @@ public:
     void Shutdown();
 
 private:
+    /// @brief A full-screen draw's pipeline and the binding set it last drew
+    /// with, rebuilt when what it reads changes.
+    struct FullscreenDraw
+    {
+        nvrhi::GraphicsPipelineHandle pipeline;
+        nvrhi::BindingSetHandle bindings;
+        nvrhi::ITexture *source = nullptr;
+        nvrhi::ITexture *glow = nullptr;
+        nvrhi::IBuffer *exposure = nullptr;
+    };
+
     void Rebuild();
-    /// @brief Builds the bloom's copies when it is on and drops them when off.
-    void ConfigureBloom();
-    /// @brief The textures and constants step @p index reads.
-    [[nodiscard]] nvrhi::BindingSetHandle MakeStepBindings(uint32_t index) const;
-    /// @brief Whether the glow is drawn and mixed in this frame.
-    [[nodiscard]] bool BloomRuns() const;
-    /// @brief Whether the automatic exposure meters this frame.
-    [[nodiscard]] bool ExposureRuns() const;
-    void RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first, uint32_t last);
-    [[nodiscard]] nvrhi::IFramebuffer *FramebufferFor(ChainSurface surface, const RenderFrame *frame) const;
-    [[nodiscard]] nvrhi::ITexture *TextureFor(ChainSurface surface, const RenderFrame *frame) const;
+    /// @brief The pipeline for @p shader drawing into @p destination, logged
+    /// when it cannot be built.
+    [[nodiscard]] nvrhi::GraphicsPipelineHandle MakePipeline(nvrhi::IShader *shader, nvrhi::IBindingLayout *layout,
+                                                             ChainSurface destination) const;
+    /// @brief Binds the tone map shader's inputs, for the tone map and the copy.
+    void BindTonemapInputs(FullscreenDraw &draw, nvrhi::ITexture *source, nvrhi::ITexture *glow,
+                           nvrhi::IBuffer *exposure) const;
+    /// @brief Records @p draw into @p frame's target with @p constants pushed.
+    static void Draw(const RenderFrame &frame, const FullscreenDraw &draw, const void *constants,
+                     uint32_t constantsSize);
+    [[nodiscard]] nvrhi::IFramebuffer *FramebufferFor(ChainSurface surface) const;
+    [[nodiscard]] nvrhi::ITexture *TextureFor(ChainSurface surface) const;
     [[nodiscard]] nvrhi::FramebufferInfo InfoFor(ChainSurface surface) const;
+    /// @brief Whether @p surface carries the scene's depth: where the scene
+    /// draws, and where the overlays depth-test against it.
+    [[nodiscard]] bool CarriesSceneDepth(ChainSurface surface) const;
 
     nvrhi::IDevice *_device = nullptr;
     nvrhi::FramebufferInfo _swapchainInfo;
 
     AaMode _mode = AaMode::None;
     ChainOptions _options;
-    ChainPlan _plan = PlanChain(AaMode::None);
+    ChainRoute _route = RouteChain(AaMode::None);
     uint32_t _msaaSamples = 4;
     uint32_t _width = 0;
     uint32_t _height = 0;
-    TonemapSettings _tonemap;
-    PostProcessSettings _scene;
-    float _frameSeconds = 0.0f;
-    bool _bloomEnabled = true;
-    bool _tonemapPassthrough = false;
 
     // Multisample HDR scene target — used by MSAA and MSAA_FXAA. Its depth is
     // shared with the overlay target, so overlays depth-test against the scene.
@@ -322,25 +268,23 @@ private:
     nvrhi::TextureHandle _ldrColor;
     nvrhi::FramebufferHandle _ldrFramebuffer;
 
-    // Fullscreen post passes. Every one samples a single texture through the same
-    // sampler; they differ in shader, source and destination — so their pipelines
-    // and binding sets are built per chain step.
+    // Full-screen draws. Every one samples through the same sampler; they differ
+    // in shader, source and destination, so each has its own pipeline, built
+    // against the surface it draws into.
     nvrhi::ShaderHandle _fullscreenVertexShader;
     nvrhi::ShaderHandle _tonemapShader;
     nvrhi::ShaderHandle _fxaaShader;
     nvrhi::SamplerHandle _sampler;
     nvrhi::BindingLayoutHandle _tonemapBindingLayout;
     nvrhi::BindingLayoutHandle _fxaaBindingLayout;
+    /// Fills the tone map's exposure slot while nothing metered: the shader
+    /// reads the slot only when some of the exposure is automatic, which is
+    /// exactly when the metering runs.
+    nvrhi::BufferHandle _noExposure;
 
-    struct StepResources
-    {
-        nvrhi::GraphicsPipelineHandle pipeline;
-        nvrhi::BindingSetHandle bindingSet;
-    };
-    std::array<StepResources, kMaxChainSteps> _stepResources;
-
-    BloomPass _bloom;
-    ExposurePass _exposure;
+    FullscreenDraw _tonemap;
+    FullscreenDraw _fxaa;
+    FullscreenDraw _copy;
 };
 
 } // namespace Assisi::Render

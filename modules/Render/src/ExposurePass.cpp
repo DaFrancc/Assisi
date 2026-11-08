@@ -3,7 +3,6 @@
 #include <Assisi/Render/ExposurePass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 
 namespace Assisi::Render
 {
@@ -98,7 +97,6 @@ void ExposurePass::Run(nvrhi::ICommandList *commandList, const ExposureSettings 
     {
         return;
     }
-    ASSISI_PROFILE_GPU_SCOPE(commandList, "pp-exposure");
 
     if (!_stateCleared)
     {

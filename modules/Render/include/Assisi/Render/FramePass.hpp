@@ -83,14 +83,21 @@ private:
 /// timer name; a pass that never asks records nothing and shows no timer. A
 /// pass that declares several timers opens each by name with Begin, which
 /// closes the one before.
+/// @brief When a pass's recorder opens its first timer.
+enum class RecorderTiming : std::uint8_t
+{
+    Lazy,   ///< On the first CommandList or Frame: a pass that records nothing shows nothing.
+    Eager,  ///< At once: a base pass shows in every frame even when it has nothing to draw.
+    Untimed ///< Never; the pass's GPU marker opens at once, for a pass whose callees time themselves.
+};
+
 class Recorder
 {
 public:
     /// @param timers The pass's declared timers, in order; the first is opened
-    ///               by the first CommandList or Frame.
-    /// @param eager  Open the first timer now: a base pass shows in every frame
-    ///               even when it has nothing to draw.
-    Recorder(nvrhi::ICommandList *commandList, std::span<const char *const> timers, bool eager);
+    ///               by the first CommandList or Frame. An untimed pass's
+    ///               marker carries the first.
+    Recorder(nvrhi::ICommandList *commandList, std::span<const char *const> timers, RecorderTiming timing);
     ~Recorder();
 
     Recorder(const Recorder &) = delete;
@@ -139,6 +146,7 @@ private:
 #endif
     nvrhi::ICommandList *_commandList = nullptr;
     std::optional<GpuPassTimerScope> _timer;
+    bool _untimed = false;
     bool _recorded = false;
 };
 
