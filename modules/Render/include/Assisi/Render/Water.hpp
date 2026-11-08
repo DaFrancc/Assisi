@@ -61,15 +61,17 @@ inline constexpr float kWaterCascadeRatio = 5.7f;
 inline constexpr float kWaterBandStartHarmonic = 6.0f;
 
 /// @brief The largest tile holds this many of the longest waves the spectrum
-/// peaks at: few enough that they never visibly repeat, and enough that the
-/// grid steps finely across the spectrum's peak.
-inline constexpr float kWaterTileWavelengths = 8.0f;
+/// peaks at. A body whose energy sits in one band shows that band's tile
+/// repeating across it; this many waves to a tile spread the peak over many
+/// directions and across two cascades whose sizes never line up, so no repeat
+/// shows even on a lake a few tiles wide.
+inline constexpr float kWaterTileWavelengths = 32.0f;
 
 /// @name The largest tile's size, in metres
 /// @{
-/// A pond's waves are a few centimetres long; a tile this size still holds a
-/// dozen of its longest.
-inline constexpr float kWaterMinTileLength = 4.0f;
+/// For water too calm to have a peak: below this the tiles would hold nothing
+/// a mesh or a pixel can show.
+inline constexpr float kWaterMinTileLength = 1.0f;
 /// Holds the longest swell a spectrum here makes.
 inline constexpr float kWaterMaxTileLength = 4000.0f;
 /// @}

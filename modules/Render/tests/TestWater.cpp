@@ -329,7 +329,8 @@ TEST_CASE("The largest tile holds a few of the longest waves, within its limits"
     // The swell peaks longest here: deep-water waves of period T are g·T²/2π long.
     const float swellWavelength =
         kWaterGravity * sea.swell.period * sea.swell.period / (2.0f * std::numbers::pi_v<float>);
-    CHECK(seaCascades.tileLength[0] == doctest::Approx(kWaterTileWavelengths * swellWavelength));
+    CHECK(seaCascades.tileLength[0] ==
+          doctest::Approx(std::min(kWaterTileWavelengths * swellWavelength, kWaterMaxTileLength)));
 
     // Without the swell the wind's own waves size it.
     WaterWaves calm = sea;
@@ -338,7 +339,15 @@ TEST_CASE("The largest tile holds a few of the longest waves, within its limits"
     const float windWavelength = 2.0f * std::numbers::pi_v<float> *kWaterGravity / (windPeak * windPeak);
     CHECK(LayoutCascades(calm).tileLength[0] == doctest::Approx(kWaterTileWavelengths * windWavelength));
 
-    CHECK(LayoutCascades(Pond()).tileLength[0] == kWaterMinTileLength);
+    // A pond's waves are short, and its tiles small with them.
+    const float pondPeak = JonswapPeakFrequency(Pond().wind.windSpeed, Pond().wind.fetch);
+    const float pondWavelength = 2.0f * std::numbers::pi_v<float> * kWaterGravity / (pondPeak * pondPeak);
+    CHECK(LayoutCascades(Pond()).tileLength[0] == doctest::Approx(kWaterTileWavelengths * pondWavelength));
+
+    // Water with no wind has no peak to size the tiles by.
+    WaterWaves still = Pond();
+    still.wind.windSpeed = 0.0f;
+    CHECK(LayoutCascades(still).tileLength[0] == kWaterMinTileLength);
 }
 
 TEST_CASE("Every wavenumber the spectrum holds belongs to exactly one cascade")
