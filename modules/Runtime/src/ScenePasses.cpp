@@ -46,6 +46,15 @@ constexpr const char *kCloudMapShader = "shaders/cloud_map.comp.spv";
 constexpr const char *kCloudMapResolveShader = "shaders/cloud_map_resolve.comp.spv";
 constexpr const char *kCloudShadowShader = "shaders/cloud_shadow.comp.spv";
 
+// The water (see Render::WaterRenderer): its waves' spectrum, written when a
+// body comes into view, the FFT and mips each frame, and the surface.
+constexpr const char *kWaterSpectrumShader = "shaders/water_spectrum.comp.spv";
+constexpr const char *kWaterRowsShader = "shaders/water_fft_rows.comp.spv";
+constexpr const char *kWaterColumnsShader = "shaders/water_fft_columns.comp.spv";
+constexpr const char *kWaterMipsShader = "shaders/water_mips.comp.spv";
+constexpr const char *kWaterVertexShader = "shaders/water.vert.spv";
+constexpr const char *kWaterPixelShader = "shaders/water.frag.spv";
+
 // The SSAO pass's two timers, as its APASS declares them.
 constexpr const char *kOcclusionTimer = "ssao-occlusion";
 constexpr const char *kBlurTimer = "ssao-blur";
@@ -708,7 +717,7 @@ void DepthPrepassPass::Record(Recorder &rec, const SceneFrame &frame, const View
 
 bool DistancePass::Wanted(const SceneFrame &frame) const
 {
-    return frame.occlusion.texture != nullptr;
+    return frame.occlusion.texture != nullptr || frame.waterReadsDistance;
 }
 
 void DistancePass::Record(Recorder &rec, const SceneFrame & /*frame*/, const ViewFrame &view,
@@ -777,6 +786,75 @@ void SkyBackgroundPass::Record(Recorder &rec, const SceneFrame &frame, const Vie
         skyPass.Draw(rec.Frame(out.Get<SceneColor>()), viewProjection, eye, Render::SkySun{}, Render::SkyMoon{},
                      Render::SkySettings{});
     }
+}
+
+// --- water-waves and draw-water ---------------------------------------------
+
+bool WaterWavesPass::Initialize(const ScenePassInit &init)
+{
+    // Non-fatal: without it no water is drawn, and a level is what it was
+    // before there was any.
+    if (!renderer.Initialize(Render::WaterRenderer::InitParams{.device = init.device,
+                                                               .frameLayout = init.meshFrameLayout,
+                                                               .spectrumSpvPath = kWaterSpectrumShader,
+                                                               .rowsSpvPath = kWaterRowsShader,
+                                                               .columnsSpvPath = kWaterColumnsShader,
+                                                               .mipsSpvPath = kWaterMipsShader,
+                                                               .vertexSpvPath = kWaterVertexShader,
+                                                               .pixelSpvPath = kWaterPixelShader}))
+    {
+        Core::Log::Warn("SceneRenderer: water unavailable (its pipelines failed to initialise).");
+        return false;
+    }
+    return true;
+}
+
+bool WaterWavesPass::OnTargetsChanged(const nvrhi::FramebufferInfo &targets)
+{
+    return renderer.RebuildPipeline(targets);
+}
+
+bool WaterWavesPass::Wanted(const SceneFrame &frame) const
+{
+    return frame.settings.waterEnabled && frame.water != nullptr && frame.water->placed > 0u;
+}
+
+void WaterWavesPass::Release()
+{
+    renderer.Release();
+}
+
+bool WaterWavesPass::Record(Recorder &rec, const SceneFrame &frame, Writes<WaterFields> out)
+{
+    // With nothing in view the textures only age, and nothing is recorded.
+    nvrhi::ICommandList *commandList = frame.water->bodies.empty() ? nullptr : rec.CommandList();
+    if (!renderer.Simulate(commandList, *frame.water, frame.waterSeconds))
+    {
+        return false;
+    }
+    out.Get<WaterFields>() = WaterFields{.renderer = &renderer};
+    return true;
+}
+
+bool WaterPass::Wanted(const SceneFrame &frame) const
+{
+    return frame.settings.waterEnabled && frame.water != nullptr && !frame.water->bodies.empty();
+}
+
+void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame & /*view*/,
+                       Reads<WaterFields, SceneDistance, SceneDistancePass, FrameConstants, LightingSystem> in,
+                       Writes<SceneColor, MeshPass> out)
+{
+    Render::WaterRenderer *renderer = in.Get<WaterFields>().renderer;
+    nvrhi::ITexture *distance = in.Get<SceneDistancePass>().DistanceTexture();
+    if (renderer == nullptr || distance == nullptr)
+    {
+        return;
+    }
+    renderer->Draw(rec.Frame(out.Get<SceneColor>()), *frame.water,
+                   Render::WaterDrawView{.camera = frame.viewOrigin,
+                                         .frameBindings = out.Get<MeshPass>().FrameBindingSet(),
+                                         .sceneDistance = distance});
 }
 
 // --- draw-blended -----------------------------------------------------------

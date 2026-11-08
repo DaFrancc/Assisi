@@ -372,6 +372,29 @@ whether they are. These settings only matter in a level with clouds.
 - **In the editor**, F11's **Clouds** checkbox works whatever
   `playerSetsClouds` says.
 
+## Water
+
+Whether a level's [`Ocean`s and `Lake`s](rendering-water.md) are drawn. Water
+shows where the sea is, so whether players may turn it off is your game's
+choice. It is closed unless you open it: set `playerSetsWater` to `true` in
+[`game.json`](game-settings.md#gamejson).
+
+```json
+"water": {
+    "enabled": false
+}
+```
+
+| Key | F11 name | Values | Default |
+|---|---|---|---|
+| `enabled` | **Water** | `true`, `false` | `true` |
+
+- **Read only when your game allows it.** With `playerSetsWater` off, water is
+  always drawn. The file only holds it once a player has chosen.
+- **Off draws no water** and frees the textures its waves are kept in.
+- **In the editor**, F11's **Water** checkbox works whatever `playerSetsWater`
+  says.
+
 ## Frame rate
 
 ```json

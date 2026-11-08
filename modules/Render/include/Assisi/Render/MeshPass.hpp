@@ -475,6 +475,20 @@ public:
     {
         _globalBindingSet.set = nullptr;
         _blendedBindingSet.set = nullptr;
+        _frameBindingSet.set = nullptr;
+    }
+
+    /// @brief The layout of the pass's set 0: the frame's constants, lights,
+    /// shadows, sky and fog. A pipeline that lights a surface as this pass does,
+    /// such as water's, puts it first among its own.
+    [[nodiscard]] nvrhi::IBindingLayout *FrameBindingLayout() const { return _bindingLayout; }
+
+    /// @brief This frame's set 0 for such a pipeline. Its instance slot holds a
+    /// one-row stand-in: the pipeline brings its own instances.
+    /// @pre UpdateFrameConstants() this frame.
+    [[nodiscard]] nvrhi::IBindingSet *FrameBindingSet() const
+    {
+        return GetOrCreateGlobalBindingSet(_frameBindingSet, _noShadowViews.NativeBuffer());
     }
 
 private:
@@ -614,6 +628,8 @@ private:
     mutable nvrhi::BufferHandle _blendedIndirectBuffer;
     mutable uint32_t _blendedIndirectCapacity = 0;
     mutable CachedBindingSet _blendedBindingSet;
+    // FrameBindingSet's, with no instances behind it.
+    mutable CachedBindingSet _frameBindingSet;
     mutable std::vector<InstanceData> _blendedInstances;
     mutable std::vector<BlendedDraw> _blendedDraws;
     mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _blendedCommands;

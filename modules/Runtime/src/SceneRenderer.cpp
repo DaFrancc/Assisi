@@ -12,12 +12,14 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Math/Matrix.hpp>
+#include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
 #include <Assisi/Runtime/PostProcessResolve.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/ScenePasses.generated.hpp>
+#include <Assisi/Runtime/WaterGather.hpp>
 
 namespace Assisi::Runtime
 {
@@ -211,7 +213,9 @@ bool SceneRenderer::Initialize(const InitParams &params)
     }
 
     // The passes' own pieces; each that fails to start says so and stays off.
-    _graph->Initialize(Passes::ScenePassInit{.device = _device, .shadowDepthRenderer = &_shadowDepthRenderer},
+    _graph->Initialize(Passes::ScenePassInit{.device = _device,
+                                             .shadowDepthRenderer = &_shadowDepthRenderer,
+                                             .meshFrameLayout = _meshPass.FrameBindingLayout()},
                        params.framebufferInfo);
     return true;
 }
@@ -353,8 +357,19 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // appends to, so it belongs to none of them.
     _shadowDepthRenderer.BeginFrame(Math::TranslationOf(cameraInShadow));
 
+    // The water in view, before the scene's distance is prepared, which it reads.
+    _waterFrame.Clear();
+    if (_settings.waterEnabled)
+    {
+        ASSISI_PROFILE_SCOPE("water-gather");
+        const Render::Frustum frustum = Render::Frustum::FromViewProjection(projection * view);
+        GatherWater(scene, WaterGatherView{.camera = _viewOrigin, .frustum = &frustum, .drawDistance = camera.farZ},
+                    _waterFrame);
+    }
+    const bool waterReadsDistance = _settings.waterEnabled && !_waterFrame.bodies.empty();
+
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const ScreenOcclusion occlusion = PrepareScreenOcclusion(frame);
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(frame, waterReadsDistance);
 
     // The passes, in the order their declarations fix: each hands what it makes
     // to the ones after it.
@@ -386,6 +401,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                         .shadowPoints = _lighting.ShadowCastingPointLights(),
                                         .dynamicCasters = _dynamicCasters,
                                         .casterInvalidations = _casterInvalidations,
+                                        .water = &_waterFrame,
+                                        .waterSeconds = _waterSeconds,
                                         .occlusion = occlusion,
                                         .fog = fogConstants,
                                         .cameraInShadow = cameraInShadow,
@@ -397,7 +414,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                         .height = frame.height,
                                         .shadowFrameIndex = _shadowFrameIndex,
                                         .fogged = fogged,
-                                        .skyAvailable = _skyPass.IsValid()};
+                                        .skyAvailable = _skyPass.IsValid(),
+                                        .waterReadsDistance = waterReadsDistance && _sceneDistancePass.DistanceTexture() != nullptr};
     const Passes::ViewFrame viewFrame{.projection = projection,
                                       .view = view,
                                       .cameraInView = cameraInView,
@@ -499,23 +517,31 @@ void SceneRenderer::CountFrame() const
     ASSISI_PROFILE_COUNTER("sky-probe/age", static_cast<double>(probeStats.ageFrames));
 }
 
-ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame)
+ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool waterReadsDistance)
 {
     // Released rather than kept while off — pay for what you place.
-    const bool wanted = _settings.ssao.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
-    if (wanted)
+    const bool occlusionWanted = _settings.ssao.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
+    const bool distanceWanted = (occlusionWanted || waterReadsDistance) && _sceneDistancePass.IsValid();
+    const bool distanceHeld =
+        distanceWanted && _sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture);
+    if (distanceWanted && !distanceHeld)
     {
-        if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||
-            !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture()))
-        {
-            Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
-            _settings.ssao.enabled = false;
-        }
+        Core::Log::Warn("SceneRenderer: the scene's distance failed to allocate; ambient occlusion is off and water "
+                        "is not drawn this frame.");
     }
-    if (!wanted || !_settings.ssao.enabled)
+    if (!distanceHeld)
+    {
+        _sceneDistancePass.Release();
+    }
+    if (occlusionWanted &&
+        (!distanceHeld || !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture())))
+    {
+        Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
+        _settings.ssao.enabled = false;
+    }
+    if (!occlusionWanted || !_settings.ssao.enabled)
     {
         _ssaoPass.Release();
-        _sceneDistancePass.Release();
         return ScreenOcclusion{};
     }
     // After Configure: a reallocation swaps the texture handle, and the mesh
@@ -534,6 +560,9 @@ void SceneRenderer::OnSceneReplaced()
     // entity indices are reused across a load, so a level held from the old
     // scene would be read as the new occupant's.
     _lodSelector.Clear();
+
+    // The water's wave textures are kept by entity too.
+    _graph->passes.waterWaves.renderer.Release();
 
     // Reset rather than carried, because the incoming scene's clock starts its own
     // count and a serial that happened to match would skip the very Forget the

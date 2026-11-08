@@ -232,6 +232,8 @@ struct WaterCascades
     /// wavenumber.
     std::array<float, kWaterCascadeCount> minWavenumber{};
     std::array<float, kWaterCascadeCount> maxWavenumber{};
+
+    bool operator==(const WaterCascades &) const = default;
 };
 
 /// @brief The cascades sized to @p waves: the largest tile holds a few of the

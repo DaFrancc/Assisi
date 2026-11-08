@@ -16,6 +16,7 @@
 #include <Assisi/Render/FramePass.hpp>
 #include <Assisi/Render/LocalShadowPass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
+#include <Assisi/Render/WaterRenderer.hpp>
 #include <Assisi/Runtime/IndirectResolve.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -97,6 +98,12 @@ struct SceneDistance
 /// @brief Screen-space occlusion's result, in ScreenOcclusion's texture.
 struct Occlusion
 {
+};
+
+/// @brief The water's waves at this frame's time, and what draws them.
+struct WaterFields
+{
+    Render::WaterRenderer *renderer = nullptr;
 };
 
 /// @brief The scene's colour: what the lit pass, the sky and the see-through

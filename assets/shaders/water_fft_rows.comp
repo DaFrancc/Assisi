@@ -1,0 +1,61 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+// The waves at this frame's time, as the eight fields they add to, through the
+// FFT along x. One workgroup a row of one cascade; water_fft_columns.comp
+// finishes the transform along z.
+
+#include "water/waves.glsl"
+#include "water/fft.glsl"
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// Mirrors Render::WaterRowConstants.
+layout(push_constant) uniform RowConstants
+{
+    vec4  tileLength;
+    float loopSeconds;
+    float choppiness;
+} pc;
+
+layout(binding = 0) uniform texture2DArray uSpectrum;
+layout(binding = 384, rgba32f) uniform writeonly image2DArray uFields01;
+layout(binding = 385, rgba32f) uniform writeonly image2DArray uFields23;
+
+void main()
+{
+    uint row     = gl_WorkGroupID.x;
+    uint cascade = gl_WorkGroupID.y;
+    uint run     = gl_LocalInvocationID.x;
+    int  edge    = -int(kWaterFftSize / 2u);
+    float perTurn = kTwoPi / pc.tileLength[cascade];
+
+    for (uint column = run; column < kWaterFftSize; column += kFftRuns)
+    {
+        ivec2 frequency = ivec2(int(column), int(row)) - ivec2(kWaterFftSize / 2u);
+        vec4  fields01  = vec4(0.0);
+        vec4  fields23  = vec4(0.0);
+        // The first row and column have no mirror inside the grid.
+        if (frequency.x != edge && frequency.y != edge)
+        {
+            vec2  k       = vec2(frequency) * perTurn;
+            vec4  initial = texelFetch(uSpectrum, ivec3(int(column), int(row), int(cascade)), 0);
+            float phase   = LoopedFrequency(DeepWaterFrequency(length(k))) * pc.loopSeconds;
+            vec2  turn    = vec2(cos(phase), sin(phase));
+            vec2  height  = ComplexMultiply(initial.xy, turn) + ComplexMultiply(initial.zw, vec2(turn.x, -turn.y));
+            WaveFields(height, k, pc.choppiness, fields01, fields23);
+        }
+        sFields01[BitReversed(column)] = fields01;
+        sFields23[BitReversed(column)] = fields23;
+    }
+
+    InverseFftShared(run);
+
+    for (uint column = run; column < kWaterFftSize; column += kFftRuns)
+    {
+        ivec3 texel = ivec3(int(column), int(row), int(cascade));
+        imageStore(uFields01, texel, sFields01[column]);
+        imageStore(uFields23, texel, sFields23[column]);
+    }
+}

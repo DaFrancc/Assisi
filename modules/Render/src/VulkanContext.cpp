@@ -328,6 +328,16 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         return false;
     }
 
+    // Water dims what is behind it by a colour, not one number, so shallows
+    // turn the hue of the water: a second output from its fragment shader is
+    // the blend's factor. Core 1.0 but optional; every desktop driver has it.
+    // Lock-step with the enable in CreateLogicalDevice.
+    if (features2.features.dualSrcBlend != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing dualSrcBlend");
+        return false;
+    }
+
     return true;
 }
 
@@ -461,6 +471,8 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     coreFeatures.depthBiasClamp = VK_TRUE;
     // The cascades' per-fragment pancaking. DeviceMeetsRequirements verified it.
     coreFeatures.depthClamp = VK_TRUE;
+    // Water's coloured see-through blend. DeviceMeetsRequirements verified it.
+    coreFeatures.dualSrcBlend = VK_TRUE;
     // Block-compressed textures. Requested only when the device advertises it, for
     // the same reason anisotropy is: asking for a feature the device lacks fails
     // vkCreateDevice outright. Unlike the features above it is not a requirement —

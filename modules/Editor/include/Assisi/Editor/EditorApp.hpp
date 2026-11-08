@@ -1956,6 +1956,10 @@ class EditorApp : public Assisi::App::Application
     // drag/type, or the gizmo) is still being manipulated. The end-of-DrawPanels sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
     bool _captureEditingActive = false;
+    // Frames drawn while a perf capture runs. A capture draws its waves at this
+    // count of fixed frames rather than at the clock, so two runs of a GPU test
+    // picture the same sea.
+    std::uint64_t _capturedFrames = 0;
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;

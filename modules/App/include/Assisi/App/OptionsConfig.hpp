@@ -98,6 +98,11 @@ struct OptionsConfig
     /// CloudsEnabled.
     std::optional<bool> cloudsEnabled;
 
+    /// @brief Whether the player chose to draw a level's water, or nullopt to
+    /// leave it on. Read only when the game lets players choose: see
+    /// WaterEnabled.
+    std::optional<bool> waterEnabled;
+
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
     /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
@@ -132,6 +137,13 @@ struct OptionsConfig
     [[nodiscard]] bool CloudsEnabled(const AppConfig &config) const
     {
         return config.playerSetsClouds && cloudsEnabled ? *cloudsEnabled : true;
+    }
+
+    /// @brief Whether to draw a level's Oceans and Lakes: the player's choice
+    /// when @p config lets players choose and they have, on otherwise.
+    [[nodiscard]] bool WaterEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsWater && waterEnabled ? *waterEnabled : true;
     }
 
     /// @brief The tap interval to run with: the player's when @p config lets

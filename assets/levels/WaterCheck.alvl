@@ -1,0 +1,105 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {"farZ": 3000.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+        "Transform": {"position": [0.0, 14.0, 40.0], "rotation": [0.99756, -0.06976, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {"color": [1.0, 0.97, 0.92], "direction": [0.15, -0.4, 1.0], "intensity": 3.0},
+        "Skybox": {"preset": 0}
+      }
+    },
+    {
+      "name": "Sea",
+      "components": {
+        "Ocean": {"windSpeed": 10.0, "windBearingDegrees": 160.0, "swellHeight": 1.0, "swellPeriod": 11.0, "swellBearingDegrees": 200.0},
+        "Transform": {"position": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Beach",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [-45.0, -2.0, -40.0], "rotation": [0.99863, 0.0, 0.0, -0.05234], "scale": [60.0, 4.0, 120.0]}
+      }
+    },
+    {
+      "name": "Basin floor",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [40.0, -1.5, -80.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [30.0, 21.0, 30.0]}
+      }
+    },
+    {
+      "name": "Basin north",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [40.0, 0.0, -100.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [50.0, 24.0, 10.0]}
+      }
+    },
+    {
+      "name": "Basin south",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [40.0, 0.0, -60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [50.0, 24.0, 10.0]}
+      }
+    },
+    {
+      "name": "Basin west",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [20.0, 0.0, -80.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [10.0, 24.0, 30.0]}
+      }
+    },
+    {
+      "name": "Basin east",
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {"position": [60.0, 0.0, -80.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [10.0, 24.0, 30.0]}
+      }
+    },
+    {
+      "name": "Lake",
+      "components": {
+        "Lake": {"size": [30.0, 30.0], "windSpeed": 5.0, "windBearingDegrees": 160.0},
+        "Transform": {"position": [40.0, 11.0, -80.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Route along the beach",
+      "components": {
+        "CameraLinePath": {"from": [0.0, 6.0, 60.0], "lookAlongPath": true, "lookAt": [0.0, 0.0, 0.0], "order": 0, "seconds": 5.0, "to": [0.0, 6.0, -40.0]}
+      }
+    },
+    {
+      "name": "Route round the lake",
+      "components": {
+        "CameraCirclePath": {"center": [40.0, 0.0, -80.0], "height": 30.0, "lookAt": [40.0, 11.0, -80.0], "order": 1, "radius": 60.0, "seconds": 5.0, "startDegrees": 0.0, "sweepDegrees": 360.0}
+      }
+    }
+  ],
+  "version": 2
+}

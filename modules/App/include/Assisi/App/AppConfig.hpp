@@ -154,6 +154,12 @@ struct AppConfig
     /// starts closed.
     AFIELD() bool playerSetsClouds = false;
 
+    /// @brief Whether a player may turn a level's Oceans and Lakes off from
+    /// their options. Off, water is always drawn. Water shows where the sea
+    /// is, so letting players remove it is the game's decision, and it starts
+    /// closed.
+    AFIELD() bool playerSetsWater = false;
+
     /// @brief Whether the pointer moving over a UI node focuses it, so the keys
     /// act on what is pointed at. Off leaves focus where the keys or a click put it.
     AFIELD() bool uiHoverFocuses = false;

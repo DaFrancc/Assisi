@@ -1032,6 +1032,8 @@ void EditorApp::SetupScene()
     // The same for clouds.
     _sceneRenderer.SetCloudQuality(GetOptions().clouds);
     _sceneRenderer.SetCloudsEnabled(GetOptions().cloudsEnabled.value_or(true));
+    // And for water.
+    _sceneRenderer.SetWaterEnabled(GetOptions().waterEnabled.value_or(true));
 
     _preferences = Assisi::Editor::LoadEditorPreferences();
     _savedPreferences = _preferences;
@@ -1172,6 +1174,16 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
+    if (IsCapturing())
+    {
+        // A sixtieth of a second a frame, whatever the frames took.
+        constexpr double kCaptureFrameSeconds = 1.0 / 60.0;
+        _sceneRenderer.SetWaterSeconds(static_cast<double>(_capturedFrames++) * kCaptureFrameSeconds);
+    }
+    else
+    {
+        _sceneRenderer.SetWaterSeconds(PresentedSimulatedSeconds());
+    }
     if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
         _sceneRenderer.SetViewingCamera(view->entity);

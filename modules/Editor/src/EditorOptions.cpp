@@ -797,6 +797,21 @@ void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
     ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
 }
 
+// A level's Oceans and Lakes. Off is the A/B against the water alone, and frees
+// its wave textures.
+void EditorOptionsPanel::DrawWaterSettings(const Frame &frame)
+{
+    ImGui::TextUnformatted("Water");
+    bool enabled = frame.renderer.WaterEnabled();
+    if (ImGui::Checkbox("Water", &enabled))
+    {
+        frame.renderer.SetWaterEnabled(enabled);
+        frame.options.waterEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the level's Ocean and Lake components.");
+}
+
 // A level's clouds. Off is the A/B against the clouds alone: the light they
 // give the sky stays, so how the level is lit stays the same.
 void EditorOptionsPanel::DrawCloudSettings(const Frame &frame)
@@ -1275,6 +1290,10 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         ImGui::Separator();
 
         DrawCloudSettings(frame);
+
+        ImGui::Separator();
+
+        DrawWaterSettings(frame);
 
         ImGui::Separator();
 
