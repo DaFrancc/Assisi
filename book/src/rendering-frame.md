@@ -96,13 +96,20 @@ maps and cost nothing. A point light costs six times a spot light.
   light's `castsShadows`, `radius`, `shadowPriority` and `shadowAlwaysOn`;
   `MeshRenderer.castsShadows`; anything moving near a shadowed light.
 
-### 8. Light sorting (`light-cull`)
+### 8. Light sorting (`lighting`)
 
-Sorts every point and spot light into the clusters it reaches, so that each
-pixel later checks only the lights near it. Small; its cost grows with the
-number of lights.
+Sends the frame's lights to the graphics card and sorts every point and spot
+light into the clusters it reaches, so that each pixel later checks only the
+lights near it. Small; its cost grows with the number of lights.
 
-### 9. Depth prepass
+### 9. Frame constants (`mesh-constants`)
+
+Gathers what the passes so far made, the shadow maps, the sky reflections and
+the clouds' shadow, and sends the graphics card the camera, the fog and
+everything else every mesh is drawn with this frame. Tiny and the same in
+every level.
+
+### 10. Depth prepass (`cull-dispatch`, `depth-prepass`)
 
 Draws every solid mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
@@ -111,10 +118,15 @@ masked materials cut their holes, so the lit pass never shades a hole. Its cost
 grows with the number of triangles in view, which
 [detail levels](rendering-lod.md) keep down.
 
+With **GPU Cull** on in the editor (see
+[Looking at rendering problems](rendering-debugging.md)), the graphics card
+first picks what is in view and at which detail level, timed as
+`cull-dispatch`, instead of the processor doing it.
+
 - **Changed by:** the number of meshes and triangles in view; masked materials,
   which cost more.
 
-### 10. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
+### 11. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
 
 Finds the creases and corners on screen from the prepass's depth, and works
 out how much to darken the ambient light in them. Three passes over the whole
@@ -122,7 +134,7 @@ screen. Off by default.
 
 - **Changed by:** the `ambientOcclusion` settings; the resolution.
 
-### 11. Lit pass (`draw-scene`)
+### 12. Lit pass (`draw-scene`)
 
 Draws every solid mesh in view again, this time working out the colour of each pixel:
 it reads the material's maps, adds the light of every directional light and of
@@ -136,7 +148,7 @@ each pixel, and the shadow filter.
   the number of directional lights; the shadow `filter` and contact hardening;
   every material; a `Fog`.
 
-### 12. Sky (`sky`)
+### 13. Sky (`sky`)
 
 Draws the sky into every pixel that nothing else covered. Only in a level with
 a sky, or a foggy level with none, where it fills those pixels with the fog's
@@ -145,7 +157,7 @@ the ground's. Its cost grows with how much sky is on screen.
 
 - **Changed by:** `Skybox`; `Fog`; the resolution.
 
-### 13. See-through surfaces (`draw-blended`)
+### 14. See-through surfaces (`draw-blended`)
 
 Draws every surface with a
 [see-through material](rendering-materials.md#see-through-materials) over the
@@ -157,7 +169,7 @@ surface over a pixel.
 - **Changed by:** materials with `Alpha` set to `Blend`; the same lights,
   shadows and fog as the lit pass; the resolution.
 
-### 14. Post-processing (`post-process`, `post-process-output`)
+### 15. Post-processing (`post-process`, `post-process-output`)
 
 Turns the drawn scene into the finished picture:
 
@@ -174,7 +186,7 @@ Turns the drawn scene into the finished picture:
 - **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
   `PostProcessVolume`. See [The level's look](rendering-post-processing.md).
 
-### 15. User interface (`game-ui`)
+### 16. User interface (`game-ui`)
 
 Draws the game's [screens](user-interface.md): menus and HUDs. They are drawn
 after the tone map, so their colours are exactly as you set them. In the editor,

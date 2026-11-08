@@ -7,7 +7,10 @@ record only the passes it cannot do without. A feature whose pass still runs
 when it is switched off costs every player who turned it off, and nothing else
 shows it: the picture looks the same.
 
-Usage: check-passes.py --report <json> --expect <pass,pass,...> -- <capture command...>
+Usage: check-passes.py --report <json> --expect <pass,pass,...> [--expect-file <path>] -- <capture command...>
+
+--expect-file adds the comma-separated names a file holds, such as the base
+passes the build generates from the scene's pass declarations.
 
 The capture command must write its report, with per-pass timing on, to the
 path given as --report.
@@ -26,6 +29,8 @@ def parse_arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--report", required=True, type=Path, help="where the capture writes its JSON report")
     parser.add_argument("--expect", required=True, help="the passes the frame should record, comma separated")
+    parser.add_argument("--expect-file", type=Path, default=None,
+                        help="a file holding more passes the frame should record, comma separated")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="the capture to run, after --")
     arguments = parser.parse_args(argv)
     if arguments.command and arguments.command[0] == "--":
@@ -47,7 +52,10 @@ def main(argv) -> int:
     if subprocess.call(arguments.command) != 0:
         print("check-passes: the capture failed.", file=sys.stderr)
         return 1
-    expected = {name for name in arguments.expect.split(",") if name}
+    listed = arguments.expect
+    if arguments.expect_file is not None:
+        listed += "," + arguments.expect_file.read_text().strip()
+    expected = {name for name in listed.split(",") if name}
     recorded = recorded_passes(arguments.report)
     if recorded == expected:
         print(f"check-passes: the frame recorded exactly {', '.join(sorted(expected))}.")

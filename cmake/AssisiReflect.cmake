@@ -374,6 +374,51 @@ function(assisi_check_component_rules)
     add_custom_target(Assisi-ComponentRuleCheck ALL DEPENDS "${_out}")
 endfunction()
 
+# The render passes one header declares with APASS, ordered and checked, and
+# the walk that records them generated into TARGET:
+#
+#   assisi_generate_passes(
+#     TARGET       Assisi-Runtime
+#     HEADER       include/Assisi/Runtime/ScenePasses.hpp
+#     INCLUDE_ROOT include
+#     GRAPH        Scene
+#     BASE_LIST    "${CMAKE_BINARY_DIR}/generated/passes/scene-base-passes.txt")
+#
+# A wrong order or a resource read before it is written fails the build here.
+# The generated source is compiled into TARGET itself, which calls it directly;
+# its header lands beside the declaring one under TARGET's generated include
+# directory. Outputs are written only when they change, so an edit that leaves
+# the graph as it was recompiles nothing.
+function(assisi_generate_passes)
+    cmake_parse_arguments(_ARG "" "TARGET;HEADER;INCLUDE_ROOT;GRAPH;BASE_LIST" "" ${ARGN})
+    foreach(_required TARGET HEADER INCLUDE_ROOT GRAPH BASE_LIST)
+        if(NOT _ARG_${_required})
+            message(FATAL_ERROR "assisi_generate_passes: ${_required} is required")
+        endif()
+    endforeach()
+
+    cmake_path(ABSOLUTE_PATH _ARG_HEADER BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE _header)
+    cmake_path(ABSOLUTE_PATH _ARG_INCLUDE_ROOT BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE _root)
+    cmake_path(RELATIVE_PATH _header BASE_DIRECTORY "${_root}" OUTPUT_VARIABLE _include)
+    cmake_path(GET _include PARENT_PATH _include_dir)
+    cmake_path(GET _include STEM _stem)
+    set(_generated_root "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    set(_outdir "${_generated_root}/${_include_dir}")
+    set(_outputs "${_outdir}/${_stem}.generated.hpp" "${_outdir}/${_stem}.generated.cpp" "${_ARG_BASE_LIST}")
+
+    add_custom_command(
+        OUTPUT  ${_outputs}
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" "${_header}"
+                --passes "${_outdir}" --graph "${_ARG_GRAPH}" --include "${_include}"
+                --base-list "${_ARG_BASE_LIST}"
+        DEPENDS "${_header}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: ${_ARG_GRAPH} passes"
+        VERBATIM
+    )
+    target_sources(${_ARG_TARGET} PRIVATE "${_outdir}/${_stem}.generated.cpp")
+    target_include_directories(${_ARG_TARGET} PRIVATE "${_generated_root}")
+endfunction()
+
 # Call once on each final executable (or shared library) to force-include
 # all reflection registration code produced by assisi_reflect() calls.
 function(assisi_link_reflections target)

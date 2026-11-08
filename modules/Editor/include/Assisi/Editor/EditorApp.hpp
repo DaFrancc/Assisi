@@ -270,7 +270,6 @@ class EditorApp : public Assisi::App::Application
     /// every panel into it, and submits it. Application drives no UI toolkit of
     /// its own, which is what keeps one out of a game's link.
     void OnRenderUi(Assisi::Render::RenderFrame &frame) override;
-    void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
     void InstallQueuedSystems() override;

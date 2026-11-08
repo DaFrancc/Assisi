@@ -60,13 +60,16 @@ public:
         SsaoSettings settings;
     };
 
-    /// @brief Record the three steps into @p commandList. The result is in
-    /// OcclusionTexture() when it returns.
+    /// @brief Record the occlusion step into @p commandList, unblurred.
     /// @pre Configure succeeded, and the distance it was given holds this frame's.
-    void Render(nvrhi::ICommandList *commandList, const Frame &frame) const;
+    void RenderOcclusion(nvrhi::ICommandList *commandList, const Frame &frame) const;
+
+    /// @brief Record the two blur steps over what RenderOcclusion left. The
+    /// result is in OcclusionTexture() when it returns.
+    void RenderBlur(nvrhi::ICommandList *commandList) const;
 
     /// @brief The blurred visible fraction, one per pixel; null while nothing
-    /// is held. Its handle survives every Render, and changes only with a
+    /// is held. Its handle survives every run, and changes only with a
     /// Configure that reallocates.
     [[nodiscard]] nvrhi::ITexture *OcclusionTexture() const { return _occlusion; }
 

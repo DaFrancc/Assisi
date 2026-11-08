@@ -1054,11 +1054,6 @@ void EditorApp::SetupScene()
     }
 }
 
-void EditorApp::OnResize(int32_t width, int32_t height)
-{
-    _sceneRenderer.Resize(width, height, _camera);
-}
-
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
     if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))

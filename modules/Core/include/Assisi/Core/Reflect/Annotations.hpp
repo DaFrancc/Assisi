@@ -233,6 +233,33 @@
 /// See Assisi/App/SystemCatalog.hpp.
 #define ASYSTEM(...)
 
+/// APASS(name = "...", ...) — marks a struct as a render pass.
+///
+///   APASS(name = "sky", after = "draw-scene")
+///   struct SkyBackgroundPass
+///   {
+///       bool Wanted(const SceneFrame &frame) const;
+///       void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
+///                   Reads<SceneDepth, CloudMap> in, Writes<SceneColor, SkyPass> out);
+///   };
+///
+/// Record's signature is the declaration: reflectgen orders every pass after
+/// the passes that write what it reads, and after or before any pass `after`
+/// and `before` name, and refuses a cycle, a read nothing writes, or two
+/// writers it cannot order. `name` is the pass's timer;
+/// `timers = {"a", "b"}` declares the timers a pass opens one after another
+/// instead; `base` marks a pass every frame records, which has no Wanted.
+///
+/// The struct holds the pass's own state. Its hooks are optional and found by
+/// the compiler: Wanted (false turns the pass off), Release (called while it
+/// is off), Initialize and OnTargetsChanged. See Assisi/Render/FramePass.hpp.
+#define APASS(...)
+
+/// APASSIMPORTS() — marks the struct of references to what a graph's owner
+/// shares with its passes: the objects several passes use, which the passes
+/// reach through Reads<> and Writes<> like everything else.
+#define APASSIMPORTS(...)
+
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
 /// enum must be defined in the same header as the component(s) that use it, and

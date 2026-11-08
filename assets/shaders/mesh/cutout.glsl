@@ -1,5 +1,4 @@
-// A cutout's alpha test, shared by the depth prepass and the lit pass without
-// one.
+// A cutout's alpha test, which the depth prepass runs.
 //
 // Without multisampling a texel is kept or cut whole, exactly as alpha against
 // the cutoff says. With it, the pipeline turns alpha-to-coverage on and the

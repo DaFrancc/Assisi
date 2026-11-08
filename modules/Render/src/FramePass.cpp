@@ -1,0 +1,63 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <Assisi/Render/FramePass.hpp>
+
+#include <Assisi/Core/Assert.hpp>
+
+#include <algorithm>
+#include <cstring>
+
+namespace Assisi::Render
+{
+
+Recorder::Recorder(nvrhi::ICommandList *commandList, std::span<const char *const> timers, bool eager)
+    : _timers(timers), _commandList(commandList)
+{
+    if (eager)
+    {
+        Open(_timers.front());
+    }
+}
+
+Recorder::~Recorder()
+{
+    Close();
+}
+
+nvrhi::ICommandList *Recorder::CommandList()
+{
+    if (!_recorded)
+    {
+        Open(_timers.front());
+    }
+    return _commandList;
+}
+
+void Recorder::Begin(const char *timer)
+{
+    ASSISI_ASSERT(std::ranges::any_of(_timers, [timer](const char *declared) { return std::strcmp(declared, timer) == 0; }),
+                  "a pass opens only the timers its APASS declares");
+    Close();
+    Open(timer);
+}
+
+void Recorder::Open(const char *timer)
+{
+    // The marker before the timer and closed after it, as the profiling macros
+    // nest them, so a capture shows the timer inside its label.
+#if defined(ASSISI_ENABLE_GPU_MARKERS)
+    _marker.emplace(_commandList, timer);
+#endif
+    _timer.emplace(timer);
+    _recorded = true;
+}
+
+void Recorder::Close()
+{
+    _timer.reset();
+#if defined(ASSISI_ENABLE_GPU_MARKERS)
+    _marker.reset();
+#endif
+}
+
+} // namespace Assisi::Render

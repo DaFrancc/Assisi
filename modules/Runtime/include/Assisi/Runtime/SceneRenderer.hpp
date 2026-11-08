@@ -8,11 +8,11 @@
 /// (LightingSystem + its froxel grid) and the shared MeshPass pipeline — behind
 /// one call, so a game's OnRender is a single line rather than a hand-rolled
 /// pipeline dance. It owns the render-side machinery; the game owns the scene
-/// and its per-entity meshes/textures.
+/// and its per-entity meshes/textures. The frame's passes are declared in
+/// ScenePasses.hpp and run in the order reflectgen derives from them.
 ///
 /// Typical lifetime, from an application:
 ///   Initialize(device, GetSceneFramebufferInfo(), w, h, camera);   // once
-///   Resize(w, h, camera);                                          // on window resize
 ///   OnRenderTargetsChanged(framebufferInfo);                       // on AA/MSAA change
 ///   Render(frame, scene, cameraWorld, camera);                     // every frame
 ///
@@ -24,45 +24,35 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/CloudPass.hpp>
-#include <Assisi/Render/CloudQuality.hpp>
 #include <Assisi/Render/FogVolume.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
-#include <Assisi/Render/MeshCuller.hpp>
-#include <Assisi/Render/MeshPass.hpp>
-#include <Assisi/Render/MeshSkinner.hpp>
 #include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
-#include <Assisi/Render/ShadowCadence.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
-#include <Assisi/Render/ShadowPass.hpp>
-#include <Assisi/Render/SkyPass.hpp>
-#include <Assisi/Render/SkyProbe.hpp>
-#include <Assisi/Render/SceneDistancePass.hpp>
-#include <Assisi/Render/SsaoPass.hpp>
-#include <Assisi/Render/SsaoSettings.hpp>
-#include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/IndirectResolve.hpp>
-#include <Assisi/Runtime/LightingSystem.hpp>
-#include <Assisi/Runtime/Renderer.hpp>
-#include <Assisi/Runtime/ShadowCasterGather.hpp>
-#include <Assisi/Runtime/SkyResolve.hpp>
+#include <Assisi/Runtime/ScenePasses.hpp>
 
 #include <nvrhi/nvrhi.h>
 
-#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
 
 namespace Assisi::Runtime
 {
+namespace Passes
+{
+class ScenePassGraph;
+} // namespace Passes
 
 class SceneRenderer
 {
 public:
-    SceneRenderer() = default;
+    SceneRenderer();
+    ~SceneRenderer();
+    SceneRenderer(const SceneRenderer &) = delete;
+    SceneRenderer &operator=(const SceneRenderer &) = delete;
 
     /// @brief Everything Initialize() needs, gathered so callers name what they set.
     struct InitParams
@@ -89,12 +79,10 @@ public:
     /// to build.
     [[nodiscard]] bool Initialize(const InitParams &params);
 
-    /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
-    /// Call from the application's resize hook. No-op until Initialize() succeeds.
-    void Resize(int32_t width, int32_t height, const Camera &camera);
-
-    /// @brief Rebuild just the graphics pipeline after the render-target format
-    /// changes (e.g. an MSAA toggle); binding sets and shaders are reused.
+    /// @brief Rebuild the pipelines that draw into the scene target after its
+    /// format changes (e.g. an MSAA toggle); binding sets and shaders are reused.
+    /// A window resize needs no call: the frame rebuilds the light grid when the
+    /// projection it is drawn with changes.
     /// @return false if the pipeline failed to rebuild. No-op (true) before Initialize().
     [[nodiscard]] bool OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo);
 
@@ -143,15 +131,15 @@ public:
 
     /// @brief Enable/disable view-frustum culling in the default draw path (on by
     /// default). Turning it off submits every mesh, for A/B comparing the cull.
-    void SetFrustumCulling(bool enabled) { _frustumCulling = enabled; }
-    [[nodiscard]] bool FrustumCulling() const { return _frustumCulling; }
+    void SetFrustumCulling(bool enabled) { _settings.frustumCulling = enabled; }
+    [[nodiscard]] bool FrustumCulling() const { return _settings.frustumCulling; }
 
     /// @brief Enable/disable draw-list sorting by sort key (on by default). Off
     /// submits in query order — the image is identical, but LastDrawStats().batches
     /// climbs (identical meshes no longer land adjacent to coalesce), which is how
     /// the sort's instancing payoff is measured.
-    void SetSortDraws(bool enabled) { _sortDraws = enabled; }
-    [[nodiscard]] bool SortDraws() const { return _sortDraws; }
+    void SetSortDraws(bool enabled) { _settings.sortDraws = enabled; }
+    [[nodiscard]] bool SortDraws() const { return _settings.sortDraws; }
 
     /// @brief Take the GPU-driven cull path instead of the CPU extract/sort path
     /// (off by default). A compute pass frustum-culls every object, selects its
@@ -161,8 +149,8 @@ public:
     /// path does not hold. No-op if the culler failed to initialize (falls back to
     /// the CPU path). `SortDraws` doesn't affect this path; `FrustumCulling` gates
     /// the GPU frustum test.
-    void SetGpuCulling(bool enabled) { _gpuCulling = enabled; }
-    [[nodiscard]] bool GpuCulling() const { return _gpuCulling; }
+    void SetGpuCulling(bool enabled) { _settings.gpuCulling = enabled; }
+    [[nodiscard]] bool GpuCulling() const { return _settings.gpuCulling; }
 
     /// @brief The knobs screen-size LOD selection reads (on by default).
     ///
@@ -223,8 +211,8 @@ public:
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
     /// base colour / metallic / roughness / normal / occlusion / emissive.
-    void SetDebugView(Render::MaterialDebugView view) { _debugView = view; }
-    [[nodiscard]] Render::MaterialDebugView DebugView() const { return _debugView; }
+    void SetDebugView(Render::MaterialDebugView view) { _settings.debugView = view; }
+    [[nodiscard]] Render::MaterialDebugView DebugView() const { return _settings.debugView; }
 
     /// @brief Pin the indirect term to a uniform colour and intensity, in place
     /// of whatever the scene would be lit by.
@@ -237,16 +225,19 @@ public:
     /// It overrides rather than adds, and it stays pinned until ClearAmbient().
     void SetAmbient(const Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>&color, float intensity)
     {
-        _ambient = AmbientOverride{.active = true, .color = color, .intensity = intensity};
+        _settings.ambient = AmbientOverride{.active = true, .color = color, .intensity = intensity};
     }
 
     /// @brief Give the scene back its own indirect lighting: a sky lights what
     /// is under it, and a scene without one keeps the flat default.
-    void ClearAmbient() { _ambient = AmbientOverride{}; }
+    void ClearAmbient() { _settings.ambient = AmbientOverride{}; }
 
-    [[nodiscard]] bool AmbientOverridden() const { return _ambient.active; }
-    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>AmbientColor() const { return _ambient.color; }
-    [[nodiscard]] float AmbientIntensity() const { return _ambient.intensity; }
+    [[nodiscard]] bool AmbientOverridden() const { return _settings.ambient.active; }
+    [[nodiscard]] Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>AmbientColor() const
+    {
+        return _settings.ambient.color;
+    }
+    [[nodiscard]] float AmbientIntensity() const { return _settings.ambient.intensity; }
 
     /// @brief Whether the sky is reflected, and how finely. Applied on the next
     /// Render().
@@ -254,20 +245,17 @@ public:
     /// Off lights a sky's scene exactly as it was lit before there was a probe
     /// — hemisphere diffuse, no environment specular — and holds no texture of
     /// it. A scene with no sky, or with a pinned ambient, never has a probe
-    /// whatever these say.
-    void SetEnvironmentSettings(const Render::EnvironmentSettings &settings)
-    {
-        _environmentSettings = Render::Sanitized(settings);
-    }
-    [[nodiscard]] const Render::EnvironmentSettings &EnvironmentSettings() const { return _environmentSettings; }
+    /// whatever these say. A probe that failed to allocate tries again.
+    void SetEnvironmentSettings(const Render::EnvironmentSettings &settings);
+    [[nodiscard]] const Render::EnvironmentSettings &EnvironmentSettings() const { return _settings.environment; }
 
     /// @brief Whether screen-space occlusion darkens the indirect term, and how.
     /// Applied on the next Render().
     ///
-    /// Off draws the frame there was before it existed — no depth prepass, the
-    /// lit pass through its own pipelines — and holds no texture of it.
-    void SetSsaoSettings(const Render::SsaoSettings &settings) { _ssaoSettings = Render::Sanitized(settings); }
-    [[nodiscard]] const Render::SsaoSettings &SsaoSettings() const { return _ssaoSettings; }
+    /// Off draws the frame there was before it existed, and holds no texture
+    /// of it.
+    void SetSsaoSettings(const Render::SsaoSettings &settings) { _settings.ssao = Render::Sanitized(settings); }
+    [[nodiscard]] const Render::SsaoSettings &SsaoSettings() const { return _settings.ssao; }
 
     /// @brief Whether the level's Fog is drawn: the player's choice. Applied on
     /// the next Render().
@@ -275,21 +263,22 @@ public:
     /// Off draws no fog, and the sky's ground below the horizon. The draw
     /// distance the Fog sets still holds, so turning it off changes how the
     /// edge of the world looks, never what is drawn.
-    void SetFogEnabled(bool enabled) { _fogEnabled = enabled; }
-    [[nodiscard]] bool FogEnabled() const { return _fogEnabled; }
+    void SetFogEnabled(bool enabled) { _settings.fogEnabled = enabled; }
+    [[nodiscard]] bool FogEnabled() const { return _settings.fogEnabled; }
 
     /// @brief Whether a level's Clouds are drawn: the player's choice. Applied
     /// on the next Render().
     ///
     /// Off draws no clouds and no cloud shadows, and holds no texture of them.
     /// The sky's ambient light still follows the clouds, so turning them off
-    /// never changes how a level is lit.
-    void SetCloudsEnabled(bool enabled) { _cloudsEnabled = enabled; }
-    [[nodiscard]] bool CloudsEnabled() const { return _cloudsEnabled; }
+    /// never changes how a level is lit. Clouds that failed to allocate try
+    /// again, as they do after SetCloudQuality.
+    void SetCloudsEnabled(bool enabled);
+    [[nodiscard]] bool CloudsEnabled() const { return _settings.cloudsEnabled; }
 
     /// @brief How finely the clouds are drawn. Applied on the next Render().
-    void SetCloudQuality(const Render::CloudQuality &quality) { _cloudQuality = Render::Sanitized(quality); }
-    [[nodiscard]] const Render::CloudQuality &CloudQuality() const { return _cloudQuality; }
+    void SetCloudQuality(const Render::CloudQuality &quality);
+    [[nodiscard]] const Render::CloudQuality &CloudQuality() const { return _settings.cloudQuality; }
 
     /// @brief How the last Render()'s scene is finished, as its
     /// PostProcessVolumes set it where the camera stood. The app hands it to the
@@ -298,7 +287,7 @@ public:
 
     /// @brief The probe as the most recent Render() left it: its face size and
     /// mips (both zero while it holds nothing), and how its bakes have gone.
-    [[nodiscard]] const Render::SkyProbe &SkyProbe() const { return _skyProbe; }
+    [[nodiscard]] const Render::SkyProbe &SkyProbe() const;
 
     /// @brief The shadow knobs, in both halves. Applied on the next Render():
     /// a cascade count, resolution or format change reallocates the array
@@ -306,8 +295,8 @@ public:
     ///
     /// Nothing is allocated until a shadow-casting directional light exists, so
     /// a scene with no sun in it pays neither the memory nor the pass whatever
-    /// these say.
-    void SetShadowSettings(const Render::ShadowSettings &settings) { _shadowSettings = settings; }
+    /// these say. Shadow maps that failed to allocate try again.
+    void SetShadowSettings(const Render::ShadowSettings &settings);
 
     /// @brief The simulated time the next Render happens at, in seconds.
     ///
@@ -323,39 +312,36 @@ public:
     /// hiddenFromOwnCamera in the same blueprint instance as it is not drawn.
     void SetViewingCamera(ECS::Entity camera) { _viewingCamera = camera; }
 
-    [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _shadowSettings; }
+    [[nodiscard]] const Render::ShadowSettings &ShadowSettings() const { return _settings.shadows; }
 
     /// @brief Which shadow diagnostic the mesh shader draws over the lit image.
     /// Runtime only, and off by default — every one of these changes the picture.
-    void SetShadowDebugView(Render::ShadowDebugView view) { _shadowDebugView = view; }
-    [[nodiscard]] Render::ShadowDebugView ShadowDebugView() const { return _shadowDebugView; }
+    void SetShadowDebugView(Render::ShadowDebugView view) { _settings.shadowDebugView = view; }
+    [[nodiscard]] Render::ShadowDebugView ShadowDebugView() const { return _settings.shadowDebugView; }
 
     /// @brief What the shadow pass drew in the most recent Render(); all zero
     /// when nothing casts. Read against the draw stats: cascades at 0 with a sun
     /// in the scene means the pass is inactive, not that it found nothing.
-    [[nodiscard]] Render::ShadowPass::Stats LastShadowStats() const { return _lastShadowStats; }
+    [[nodiscard]] Render::ShadowPass::Stats LastShadowStats() const;
 
     /// @brief Caster-cascade pairs the most recent sun gather drew one level
     /// coarser than on screen. Zero on a frame that redrew no cascade.
-    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const { return _shadowCasters.Result().coarserViews; }
+    [[nodiscard]] std::uint32_t LastShadowLodCoarser() const;
 
     /// @brief What the local-light atlas drew in the most recent Render().
     ///
     /// `droppedByCap` against `unserved` is the reading that matters when a lamp
     /// has no shadow: the first says the importance cap turned it away, the
     /// second says the atlas had no room. They are different settings.
-    [[nodiscard]] Render::LocalShadowPass::Stats LastLocalShadowStats() const { return _lastLocalShadowStats; }
+    [[nodiscard]] Render::LocalShadowPass::Stats LastLocalShadowStats() const;
 
     /// @brief Which light holds which atlas tile and how long its still layer
     /// has stood, for the atlas inspector. Empty while tiles are not cached.
-    [[nodiscard]] std::span<const Render::LocalShadowCache::Residency> CachedShadowTiles() const
-    {
-        return _localShadowPass.CachedTiles();
-    }
+    [[nodiscard]] std::span<const Render::LocalShadowCache::Residency> CachedShadowTiles() const;
 
     /// @brief Shadowed local lights the importance cap turned away in the most
     /// recent Render(). Zero is what "the cap does not bind here" looks like.
-    [[nodiscard]] uint32_t LastShadowDroppedByCap() const { return _lastSelection.droppedByCap; }
+    [[nodiscard]] uint32_t LastShadowDroppedByCap() const;
 
     /// @brief Gather what became of each shadow-casting light every frame, for
     /// an editor that is showing it.
@@ -364,18 +350,7 @@ public:
     /// report is one row per shadow-casting light in the scene, which is work
     /// proportional to content that nobody is reading. A closed panel pays
     /// nothing, the same rule an unplaced feature keeps.
-    void SetShadowDiagnosticsEnabled(bool enabled)
-    {
-        _shadowDiagnosticsEnabled = enabled;
-        // The sun's half is gathered inside its pass, where the draw list it
-        // reads lives and dies within the call — so the pass is told directly
-        // rather than asked afterwards.
-        _shadowPass.SetCascadeCountsEnabled(enabled);
-        if (!enabled)
-        {
-            _shadowDiagnostics.Clear();
-        }
-    }
+    void SetShadowDiagnosticsEnabled(bool enabled);
     [[nodiscard]] bool ShadowDiagnosticsEnabled() const { return _shadowDiagnosticsEnabled; }
 
     /// @brief What the shadow system did to each light in the most recent
@@ -425,72 +400,15 @@ private:
     /// comes back empty and would tell the second half that nothing moved.
     void UpdateShadowMovers(ECS::Scene &scene);
 
-    /// @brief Records the skinning pass: every posed instance's vertices written
-    ///        from its palette, for every later pass to draw.
-    void SkinPosedInstances(const Render::RenderFrame &frame, const ECS::Scene &scene);
-
     /// @brief Redraw every kept cascade and atlas tile on the next frame.
     void ForgetKeptShadows();
 
-    /// @brief Hold the sky probe for @p sky, baking it into @p frame's command
-    /// list when the sky has moved enough to see, and point the mesh pass at
-    /// the result. Releases it while there is no sky to reflect, a pinned
-    /// ambient, or the setting is off.
-    ///
-    /// Before UpdateFrameConstants, which is told through the returned value
-    /// whether an environment answers this frame.
-    [[nodiscard]] SpecularProbe UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky);
-
-    /// @brief Draw this frame's clouds into their sky map and shadow map, and
-    /// point the sky pass and the mesh pass at them; or release both and point
-    /// the passes at none while the sky has no clouds or the player has them
-    /// off.
-    ///
-    /// Before UpdateSkyProbe, whose bake reads the sky map, and before
-    /// UpdateFrameConstants, which takes the returned shadow's constants.
-    [[nodiscard]] Render::CloudShadowConstants UpdateClouds(const Render::RenderFrame &frame,
-                                                            const SkyResolution &sky,
-                                                            const Render::FogConstants &fog);
-
-    /// @brief Hold the prepass pipelines for @p frame.
-    ///
-    /// Every frame with a depth target draws one, because the lit pass then
-    /// shades each pixel once instead of once per overlapping surface: shading
-    /// runs the whole light loop and every shadow filter, and re-rasterising the
-    /// scene as depth alone costs far less than the overdraw it removes. If the
-    /// pipelines fail to build, the frame is lit directly and it is said once.
-    ///
-    /// @return whether this frame draws a depth prepass.
-    [[nodiscard]] bool PrepareDepthPrepass(const Render::RenderFrame &frame);
-
     /// @brief Hold the scene distance target and occlusion's targets for
-    /// @p frame, and point the mesh pass at the result. Releases all of it while
-    /// the setting is off or there is no @p prepass to read depth from, and turns
-    /// the setting off if any of it fails.
+    /// @p frame. Releases all of it while the setting is off, and turns the
+    /// setting off if any of it fails.
     ///
-    /// @return whether this frame runs occlusion.
-    [[nodiscard]] bool PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass);
-
-    /// @brief Fit the sun's cascades and fill them, before the mesh pass reads
-    /// them. Returns what the mesh shader needs to sample the result — a null
-    /// fit when nothing casts, which is what makes the lookup free.
-    ///
-    /// Called after LightingSystem::Gather, which is where the shadow-casting
-    /// sun comes from, and before UpdateFrameConstants, which borrows the fit.
-    /// @p cameraInShadow is the camera measured from the shadow origin.
-    [[nodiscard]] Render::MeshPass::ShadowFrameData RenderSunShadows(const Render::RenderFrame &frame,
-                                                                     ECS::Scene &scene, const Camera &camera,
-                                                                     const glm::mat4 &cameraInShadow);
-
-    /// @brief Choose which local lights hold atlas tiles, draw their faces, and
-    /// stamp each winner's view index into the light record the shader reads.
-    ///
-    /// Between LightingSystem::Gather and LightingSystem::Upload, which is the
-    /// only window in which that stamp reaches the GPU. Fills in @p shadows'
-    /// local half. @p cameraInShadow is the camera measured from the shadow
-    /// origin.
-    void RenderLocalShadows(const Render::RenderFrame &frame, ECS::Scene &scene, const Camera &camera,
-                            const glm::mat4 &cameraInShadow, Render::MeshPass::ShadowFrameData &shadows);
+    /// @return the occlusion's texture, empty when this frame runs none.
+    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(const Render::RenderFrame &frame);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world
@@ -506,13 +424,8 @@ private:
     /// from the atlas's.
     void BuildShadowDiagnostics();
 
-    /// @brief What fraction of the screen's height a light of @p range at
-    /// @p position spans, from a camera at @p cameraPosition.
-    ///
-    /// The selector's coverage input, and the one place the camera enters the
-    /// ordering. A light the camera stands inside saturates at 1.
-    [[nodiscard]] static float LocalLightScreenCoverage(const glm::vec3 &position, float range,
-                                                        const glm::vec3 &cameraPosition, float tanHalfFovY);
+    /// @brief Profiler counters of what the frame drew, on their own tracks.
+    void CountFrame() const;
 
     /// @brief The view LOD selection measures against this frame.
     ///
@@ -522,60 +435,27 @@ private:
     /// them on different levels.
     [[nodiscard]] static LodView CameraLodView(const glm::mat4 &cameraWorld, const Camera &camera);
 
-    /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
-    void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
-
     /// @brief Log each sky warning that was not raised last frame.
     void WarnNewSkyWarnings(const SkyWarnings &warnings);
 
     nvrhi::IDevice *_device = nullptr;
+    // The frame's passes, in the order their declarations fix, and what they
+    // hand one another. Behind a pointer so this header need not include the
+    // generated one.
+    std::unique_ptr<Passes::ScenePassGraph> _graph;
     LightingSystem _lighting;
     Render::MeshPass _meshPass;
-    // GPU-driven cull (stage F1): the compute cull pass + the reused host-side
-    // table builder it uploads from. Initialized alongside the mesh pass; the draw
-    // path uses them only when _gpuCulling is on (else the CPU path runs).
+    // GPU-driven cull (stage F1): the compute cull pass. The draw path uses it
+    // only when GPU culling is on (else the CPU path runs).
     Render::MeshCuller _meshCuller;
-    Render::CullTableBuilder _cullBuilder;
-    // The frame's see-through draws, farthest first: gathered with the rest of
-    // the draw list and drawn after the sky. Kept so a frame allocates nothing.
-    std::vector<Render::DrawItem> _blendedItems;
-    // Poses skinned instances before anything draws them.
-    Render::MeshSkinner _meshSkinner;
-    Render::SkinBatch _skinBatch;
-    // Every shadow map's depth drawing, and the sun's cascades over it. The
-    // renderer is separate because the local-light atlas draws through the same
-    // one, into the same view table, from the same instance buffer.
+    // Every shadow map's depth drawing. Shared because the sun's cascades and
+    // the local-light atlas draw through the same one, into the same view
+    // table, from the same instance buffer.
     Render::ShadowDepthRenderer _shadowDepthRenderer;
-    // The fit is a member because UpdateFrameConstants borrows it after the
-    // pass has drawn with it.
-    Render::ShadowPass _shadowPass;
-    Render::CascadeFit _cascadeFit;
-    SunShadowCasterGather _shadowCasters;
-    // Which cascades still hold the right depth, and this frame's answer. The
-    // plan is a member so a steady state allocates nothing, and because the fit
-    // it publishes is what the mesh pass borrows.
-    Render::SunShadowCadence _sunCadence;
-    Render::SunShadowCadencePlan _sunCadencePlan;
-    // The cascade allocation the kept slices belong to. A different one means
-    // they hold depth of a texture that no longer exists.
-    std::uint32_t _cascadeGeneration = 0;
-    // The clock's cut count as of the last frame drawn. A different one means the
-    // sun teleported and no kept cascade describes where it is now.
-    std::uint32_t _jumpSerial = 0;
     // What the sky resolved to on the last frame, for the panels and gizmos that
     // must show what the renderer used rather than re-deriving it.
     SkyResolution _lastSky;
-    // The local-light half: the shared atlas, who gets a tile in it, and the
-    // casters each tile-holder reaches. Kept as members so a steady state
-    // allocates nothing.
-    Render::LocalShadowPass _localShadowPass;
-    Render::LocalShadowSelector _localShadowSelector;
-    Render::LocalShadowSelection _lastSelection;
-    std::vector<Render::LocalShadowCandidate> _localCandidates;
-    std::vector<Render::LocalShadowRequest> _localRequests;
-    std::vector<Geometry::BoundingSphere> _localLightVolumes;
-    LocalShadowCasterGather _localShadowCasters;
-    // The cached half: which casters are moving, and the two sets the atlas is
+    // Which casters are moving, and the two sets both shadow halves are
     // reconciled against each frame.
     Render::ShadowCasterMobility _casterMobility;
     std::vector<ECS::Entity> _movedEntities;
@@ -605,37 +485,23 @@ private:
     Render::FogVolumeBuffers _fogVolumeBuffers;
     Render::FogVolumeFrame _fogVolumeFrame;
     // Drawn after the opaque geometry, into the pixels it left at the depth
-    // clear. See SkyPass for why that ordering is the cheap one.
+    // clear, and captured into the reflection probe. See SkyPass for why that
+    // ordering is the cheap one.
     Render::SkyPass _skyPass;
-    // The sky captured and prefiltered for reflection, through _skyPass's own
-    // shader. Holds nothing while there is no sky.
-    Render::SkyProbe _skyProbe;
-    Render::EnvironmentSettings _environmentSettings;
-    // The clouds' sky map and shadow, drawn before the probe and the sky read
-    // them. Holds nothing while the sky has no clouds or they are off.
-    Render::CloudPass _cloudPass;
-    Render::CloudQuality _cloudQuality;
-    // What time has done to the clouds, and when it last did: it adds up a
-    // little each frame, so a speed sets how fast they move rather than where
-    // they are.
-    Render::CloudMotion _cloudMotion;
-    std::optional<std::chrono::steady_clock::time_point> _cloudMotionTime;
-    // The depth prepass's depth as a distance, for every screen-space feature.
-    // Holds nothing while occlusion, the only one, is off.
+    // The depth prepass's depth as a distance, for every screen-space feature,
+    // and occlusion, which reads it. Configured before the passes run, since
+    // the frame constants say whether the lit pass reads occlusion; each holds
+    // nothing while the setting is off.
     Render::SceneDistancePass _sceneDistancePass;
-    // Reads that distance, between the prepass and the lit pass. Holds nothing
-    // while the setting is off.
     Render::SsaoPass _ssaoPass;
-    Render::SsaoSettings _ssaoSettings;
     Render::PostProcessSettings _postProcess;
+    // The knobs the passes read.
+    Passes::SceneSettings _settings;
+    // The scene's colour and depth targets, as the passes that draw into them
+    // are handed them: refreshed from each frame's target.
+    SceneColor _sceneColor;
+    SceneDepth _sceneDepth;
 
-    // Projection the froxel grid was last built against; a mismatch in Render()
-    // triggers a rebuild. Identity forces one on the first frame.
-    glm::mat4 _clusterProjection{1.f};
-
-    bool _frustumCulling = true; // default draw path culls off-screen meshes
-    bool _sortDraws = true;      // default draw path sorts by sort key before submit
-    bool _gpuCulling = false;    // GPU-driven cull path; CPU path is the default reference
     // The chosen level per entity, and the knobs that chose it. Shared by the
     // draw path, both shadow gathers and the selection outline, so every one of
     // them draws the same instance as the same geometry.
@@ -644,10 +510,7 @@ private:
     /// Whether the GPU cull is what draws the scene: asked for, and able to.
     /// DrawScene falls back to the CPU path otherwise, and whatever follows the
     /// path that drew has to follow the fallback too.
-    [[nodiscard]] bool GpuCullDraws() const { return _gpuCulling && _meshCuller.IsValid(); }
-    Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
-    AmbientOverride _ambient;                                               // inactive: the scene lights itself
-    Render::ShadowSettings _shadowSettings;                                 // the sun's cascade knobs
+    [[nodiscard]] bool GpuCullDraws() const { return _settings.gpuCulling && _meshCuller.IsValid(); }
     // The sky's authoring warnings as of last frame, so each is said when it
     // appears rather than at the frame rate, and again if it is fixed and comes
     // back.
@@ -662,15 +525,7 @@ private:
     bool _droppedFogVolumesWarned = false;
     // The same for several PostProcessVolumes covering the whole level.
     bool _severalLevelPostProcessWarned = false;
-    bool _fogEnabled = true;
-    bool _cloudsEnabled = true;
-    // Set once the prepass pipelines have failed to build, so the failure is
-    // said once and every later frame is lit directly without retrying.
-    bool _prepassFailed = false;
-    Render::ShadowDebugView _shadowDebugView = Render::ShadowDebugView::None;
-    DrawStats _lastDrawStats;                             // drawn/culled from the last Render(), for the overlay
-    Render::ShadowPass::Stats _lastShadowStats;           // what the shadow pass drew, for the same overlay
-    Render::LocalShadowPass::Stats _lastLocalShadowStats; // the same for the local-light atlas
+    DrawStats _lastDrawStats; // drawn/culled from the last Render(), for the overlay
     // Per-light shadow outcomes for an editor readout. Gathered only while
     // something is looking, which is what keeps a closed panel free.
     Render::ShadowDiagnostics _shadowDiagnostics;

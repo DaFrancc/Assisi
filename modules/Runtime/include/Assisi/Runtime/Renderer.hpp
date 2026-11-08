@@ -18,6 +18,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/LocalShadowPass.hpp>
 #include <Assisi/Runtime/LodSelection.hpp>
+#include <Assisi/Render/FramePass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDepthRenderer.hpp>
@@ -60,14 +61,17 @@ struct DrawStats
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as
-/// named fields rather than a dozen positional arguments. The three references
-/// (scene, meshPass, frame) are required and must outlive the call; the rest have
-/// sensible defaults. Built at the call site with designated initializers.
+/// named fields rather than a dozen positional arguments. The references
+/// (scene, meshPass, recorder) are required and must outlive the call; the rest
+/// have sensible defaults. Built at the call site with designated initializers.
 struct DrawSceneParams
 {
     Assisi::ECS::Scene &scene;                ///< ECS scene to draw.
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
-    const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
+    /// The prepass's recorder, which hands out the command list under the
+    /// `cull-dispatch` and `depth-prepass` timers.
+    Assisi::Render::Recorder &recorder;
+    Assisi::Render::RenderTarget target; ///< The scene's framebuffer and its size.
 
     glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix), measured from @ref origin.
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
@@ -100,12 +104,6 @@ struct DrawSceneParams
     /// bias and each instance's named level, and remembers nothing.
     LodSelector *lodSelector = nullptr;
 
-    /// Which of the mesh pass's pipeline sets draws the list. A DepthPrepass
-    /// draws depth alone and leaves the list prepared for MeshPass::Redraw to
-    /// shade; it is timed as `depth-prepass` rather than `draw-scene`, so the
-    /// lit pass that follows keeps the name it has always been measured under.
-    Assisi::Render::MeshPassStage stage = Assisi::Render::MeshPassStage::Lit;
-
     /// The blueprint instance the camera belongs to: an entity of the same
     /// instance whose MeshRenderer is hiddenFromOwnCamera is not drawn. Invalid hides nothing.
     Assisi::ECS::InstanceId viewerInstance;
@@ -115,12 +113,6 @@ struct DrawSceneParams
     /// down. Neither path draws them itself. Null leaves them undrawn.
     std::vector<Assisi::Render::DrawItem> *blendedItems = nullptr;
 };
-
-/// @brief The GPU timer DrawScene opens around its draws for @p stage.
-[[nodiscard]] constexpr const char *DrawSceneTimerName(Assisi::Render::MeshPassStage stage)
-{
-    return stage == Assisi::Render::MeshPassStage::DepthPrepass ? "depth-prepass" : "draw-scene";
-}
 
 /// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer
 ///        entity in the scene, through the shared mesh pass.
@@ -135,6 +127,9 @@ struct DrawSceneParams
 /// false submits in query order — both for A/B comparing the seam (the image is
 /// identical either way, only the bind counts change). See-through submeshes go
 /// to `blendedItems` instead, always sorted, because their order is the picture.
+///
+/// What it records is the depth prepass, timed as `depth-prepass`; the list
+/// stays prepared for MeshPass::Redraw to shade as the lit pass.
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);
