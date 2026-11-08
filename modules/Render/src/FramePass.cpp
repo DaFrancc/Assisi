@@ -46,7 +46,11 @@ void Recorder::Open(const char *timer)
     // The marker before the timer and closed after it, as the profiling macros
     // nest them, so a capture shows the timer inside its label.
 #if defined(ASSISI_ENABLE_GPU_MARKERS)
-    _marker.emplace(_commandList, timer);
+    if (_commandList != nullptr)
+    {
+        _commandList->beginMarker(timer);
+        _markerOpen = true;
+    }
 #endif
     if (!_untimed)
     {
@@ -58,9 +62,11 @@ void Recorder::Open(const char *timer)
 void Recorder::Close()
 {
     _timer.reset();
-#if defined(ASSISI_ENABLE_GPU_MARKERS)
-    _marker.reset();
-#endif
+    if (_markerOpen)
+    {
+        _commandList->endMarker();
+        _markerOpen = false;
+    }
 }
 
 } // namespace Assisi::Render
