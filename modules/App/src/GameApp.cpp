@@ -560,11 +560,6 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     SetScenePostProcess(_sceneRenderer.ScenePostProcess());
 }
 
-void GameApp::OnResize(int32_t width, int32_t height)
-{
-    _sceneRenderer.Resize(width, height, _fallbackCamera);
-}
-
 void GameApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
     if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))

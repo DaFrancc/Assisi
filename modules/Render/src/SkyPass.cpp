@@ -4,7 +4,6 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/AssetSource.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <cstdint>
@@ -270,8 +269,6 @@ void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, co
     {
         return;
     }
-
-    ASSISI_PROFILE_GPU_PASS(frame.commandList, "sky");
 
     // Pay for what you place: the file is opened on the first frame something
     // asks for a moon disk, and never at all in a level without one.

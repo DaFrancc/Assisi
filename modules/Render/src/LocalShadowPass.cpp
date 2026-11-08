@@ -661,8 +661,6 @@ LocalShadowPass::Stats LocalShadowPass::Render(nvrhi::ICommandList *commandList,
         return stats;
     }
 
-    ASSISI_PROFILE_GPU_PASS(commandList, "shadow-atlas");
-
     const bool caching = _settings.cache.enabled && _moverFramebuffer != nullptr;
     if (!_planned || _plannedFrame != frame.frameIndex)
     {

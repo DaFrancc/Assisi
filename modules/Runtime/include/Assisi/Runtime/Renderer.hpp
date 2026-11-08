@@ -18,6 +18,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/LocalShadowPass.hpp>
 #include <Assisi/Runtime/LodSelection.hpp>
+#include <Assisi/Render/FramePass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDepthRenderer.hpp>
@@ -60,14 +61,17 @@ struct DrawStats
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as
-/// named fields rather than a dozen positional arguments. The three references
-/// (scene, meshPass, frame) are required and must outlive the call; the rest have
-/// sensible defaults. Built at the call site with designated initializers.
+/// named fields rather than a dozen positional arguments. The references
+/// (scene, meshPass, recorder) are required and must outlive the call; the rest
+/// have sensible defaults. Built at the call site with designated initializers.
 struct DrawSceneParams
 {
     Assisi::ECS::Scene &scene;                ///< ECS scene to draw.
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
-    const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
+    /// The prepass's recorder, which hands out the command list under the
+    /// `cull-dispatch` and `depth-prepass` timers.
+    Assisi::Render::Recorder &recorder;
+    Assisi::Render::RenderTarget target; ///< The scene's framebuffer and its size.
 
     glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix), measured from @ref origin.
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).

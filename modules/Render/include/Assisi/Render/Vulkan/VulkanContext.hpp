@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Window
@@ -306,12 +307,8 @@ private:
     float _lastGpuFrameMs = 0.0f;
     double _lastGpuWaitMs = 0.0;
 
-    // Per-pass timing. Capacity is fixed, well above the timers the editor's
-    // frame opens with every feature on; a pass past it is dropped with
-    // one warning rather than growing the pool mid-frame, since allocating a
-    // query between BeginFrame and EndFrame would be a hitch inside the thing
-    // being measured. A query is two timestamps, so the headroom costs nothing.
-    static constexpr uint32_t kMaxTimedPasses = 64;
+    // Per-pass timing, one slot per timer a frame can open (see GpuMarker.hpp).
+    static constexpr uint32_t kMaxTimedPasses = Render::kMaxTimedPasses;
 
     struct PassTimerSlot
     {

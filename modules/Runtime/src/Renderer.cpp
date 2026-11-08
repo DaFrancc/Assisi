@@ -32,7 +32,9 @@ Assisi::Geometry::LodRange LodRangeFor(const Assisi::Render::MeshBuffer &mesh, u
 
 namespace
 {
-/// The GPU timer around DrawScene's draws, which are the depth prepass.
+/// The GPU timers DrawScene opens, which the prepass's APASS declares: the GPU
+/// path's cull, then the draws, which are the depth prepass.
+constexpr const char *kCullTimer = "cull-dispatch";
 constexpr const char *kPrepassTimer = "depth-prepass";
 
 /// Whether @p entity's mesh is left out for its own camera, of @p viewerInstance.
@@ -171,7 +173,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     {
         // Recording the compute dispatch, not running it — the cull's real cost is
         // GPU-side. A CPU spike here means buffer uploads, not culling.
-        ASSISI_PROFILE_GPU_PASS(params.frame.commandList, "cull-dispatch");
+        params.recorder.Begin(kCullTimer);
         Assisi::Render::CullView view{.frustumPlanes = frustum.Planes()};
         if (lodSelector != nullptr)
         {
@@ -179,7 +181,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
             view.tanHalfFovY = lodSelector->View().tanHalfFovY;
             view.lodBias = lodSelector->Settings().bias;
         }
-        params.culler->Cull(params.frame.commandList, view, tables, params.frustumCulling);
+        params.culler->Cull(params.recorder.CommandList(), view, tables, params.frustumCulling);
     }
 
     Assisi::Render::MeshPass::IndirectDrawInputs inputs;
@@ -191,10 +193,10 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
 
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
-        ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "submit-indirect");
-        const Assisi::Render::GpuPassTimerScope drawTimer{kPrepassTimer};
-        submitStats =
-            params.meshPass.SubmitIndirect(params.frame, inputs, Assisi::Render::MeshPassStage::DepthPrepass);
+        params.recorder.Begin(kPrepassTimer);
+        const Assisi::Render::RenderFrame frame = params.recorder.Frame(params.target);
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "submit-indirect");
+        submitStats = params.meshPass.SubmitIndirect(frame, inputs, Assisi::Render::MeshPassStage::DepthPrepass);
     }
 
     // Survivor tallies read back from the GPU (a few frames stale). Identical
@@ -212,12 +214,6 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
 /// DrawScene but for sorting what it gathered for the blended pass.
 DrawStats DrawAndGather(const DrawSceneParams &params)
 {
-    // A label and a CPU scope, not a GPU timer: the GPU path times its cull
-    // dispatch and its draw separately, and pass timers cannot nest. Each path
-    // opens the prepass timer around its draw alone, which on the CPU path is
-    // everything this function records.
-    ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-scene");
-
     Assisi::ECS::Scene &scene = params.scene;
     const Assisi::Render::MeshPass &meshPass = params.meshPass;
     const glm::mat4 &view = params.view;
@@ -353,9 +349,10 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
 
     Assisi::Render::MeshPass::SubmitStats submitStats;
     {
-        ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-submit");
-        const Assisi::Render::GpuPassTimerScope drawTimer{kPrepassTimer};
-        submitStats = meshPass.Submit(params.frame, items, Assisi::Render::MeshPassStage::DepthPrepass);
+        params.recorder.Begin(kPrepassTimer);
+        const Assisi::Render::RenderFrame frame = params.recorder.Frame(params.target);
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "draw-submit");
+        submitStats = meshPass.Submit(frame, items, Assisi::Render::MeshPassStage::DepthPrepass);
     }
 
     stats.drawnItems = submitStats.instances;

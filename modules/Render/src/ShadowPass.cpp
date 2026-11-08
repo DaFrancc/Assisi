@@ -335,8 +335,6 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Sun
         }
     }
 
-    ASSISI_PROFILE_GPU_PASS(commandList, "shadow-cascades");
-
     // Each draw below numbers its views from zero, so each gets the casters
     // whose bits name its views, shifted to start there.
     const std::uint32_t stillBits = ShadowViewBits(static_cast<std::uint32_t>(redraw.size()));

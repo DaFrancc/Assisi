@@ -168,7 +168,7 @@ leaf-shaped shadow.
 
 Masked materials cost a little more to draw than opaque ones, so use `Mask` only
 on materials that have holes. The holes themselves are not lit: the
-[depth prepass](rendering-frame.md#9-depth-prepass-cull-dispatch-depth-prepass) finds them, and the lit pass
+[depth prepass](rendering-frame.md#10-depth-prepass-cull-dispatch-depth-prepass) finds them, and the lit pass
 skips them. `levels/PerfCutouts.alvl`, rows of cards with a hole in each, is the
 level to measure them on.
 
@@ -229,7 +229,7 @@ Things to know about see-through materials:
   volume.
 - **They cost more than solid surfaces.** A pixel covered by three panes is
   shaded three times, and the
-  [depth prepass](rendering-frame.md#9-depth-prepass-cull-dispatch-depth-prepass)
+  [depth prepass](rendering-frame.md#10-depth-prepass-cull-dispatch-depth-prepass)
   saves them no work. Keep large areas of overlapping glass to a minimum. A level
   with no see-through materials pays nothing for them.
 - **A glTF material set to `BLEND` imports as `Blend`.**

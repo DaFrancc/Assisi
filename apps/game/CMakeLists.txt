@@ -288,10 +288,13 @@ if (ASSISI_BUILD_TESTS)
        "\"bloom\": {\"enabled\": false}, \"clouds\": {\"enabled\": false}, \"environment\": {\"enabled\": false}, "
        "\"fog\": {\"enabled\": false}, "
        "\"shadows\": {\"local\": {\"enabled\": false}, \"sun\": {\"enabled\": false}}}\n")
-  set(_gpu_base_passes "clear-targets,depth-prepass,draw-scene,lighting,post-process,post-process-output,ui")
+  # The app's own passes around the scene; the scene's base passes are the ones
+  # its pass declarations mark base, which the build writes out.
+  set(_gpu_app_base_passes "clear-targets,post-process,post-process-output,ui")
   add_test(NAME Gpu-BasePasses
     COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/check-passes.py"
-            --report "${_gpu_dir}/base-passes.json" --expect "${_gpu_base_passes}" --
+            --report "${_gpu_dir}/base-passes.json" --expect "${_gpu_app_base_passes}"
+            --expect-file "${CMAKE_BINARY_DIR}/generated/passes/scene-base-passes.txt" --
             "$<TARGET_FILE:Assisi-GameEditor>" -l levels/PerfBlank.alvl --no-editor-visuals --vulkan-validation
             --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}
             --capture-options "${_gpu_dir}/everything-off.json" --capture-passes

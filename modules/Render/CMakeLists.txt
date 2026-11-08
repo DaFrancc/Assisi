@@ -81,6 +81,7 @@ target_sources(Assisi-Render
     "src/FogVolume.cpp"
     "src/FogVolumeBuffers.cpp"
     "src/FrameCapture.cpp"
+    "src/FramePass.cpp"
     "src/Frustum.cpp"
     "src/GpuMarker.cpp"
     "src/GpuTelemetry.cpp"

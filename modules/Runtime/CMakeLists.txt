@@ -45,6 +45,7 @@ target_sources(Assisi-Runtime
     "src/Naming.cpp"
     "src/PostProcessResolve.cpp"
     "src/Renderer.cpp"
+    "src/ScenePasses.cpp"
     "src/SceneRenderer.cpp"
     "src/SceneRendererShadows.cpp"
     "src/ShadowCasterGather.cpp"
@@ -94,6 +95,16 @@ assisi_reflect(
     include/Assisi/Runtime/PostProcessVolume.hpp
     include/Assisi/Runtime/SkyComponents.hpp
     include/Assisi/Runtime/TimeOfDay.hpp
+)
+
+# The scene's render passes: ordered from their declarations and recorded by
+# the walk generated here.
+assisi_generate_passes(
+  TARGET       Assisi-Runtime
+  HEADER       include/Assisi/Runtime/ScenePasses.hpp
+  INCLUDE_ROOT include
+  GRAPH        Scene
+  BASE_LIST    "${CMAKE_BINARY_DIR}/generated/passes/scene-base-passes.txt"
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)
