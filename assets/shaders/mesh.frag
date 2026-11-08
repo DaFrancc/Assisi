@@ -10,6 +10,7 @@
 #include "sky/fog.glsl"
 #include "sky/fog_volumes.glsl"
 #include "mesh/cloud_shadow.glsl"
+#include "mesh/varyings.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"

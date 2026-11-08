@@ -362,6 +362,17 @@ protected:
         return _config.physicsHz > 0.0 ? static_cast<double>(_simTick) / _config.physicsHz : 0.0;
     }
 
+    /// @brief The simulated time this frame is drawn at: SimulatedSeconds, and
+    /// the share of the next step the render blend draws. What continuous motion
+    /// that every machine must agree on, such as waves, is drawn from: smooth at
+    /// any frame rate, and the same on every machine sharing the tick.
+    [[nodiscard]] double PresentedSimulatedSeconds() const
+    {
+        return _config.physicsHz > 0.0
+                   ? (static_cast<double>(_simTick) + static_cast<double>(_interpolationAlpha)) / _config.physicsHz
+                   : 0.0;
+    }
+
     /// @brief Fraction of a fixed physics step left unconsumed by the current
     /// frame — in [0, 1). The render blend draws fixed-step motion this far
     /// between the last two steps (see ECS::SetBlendAlpha), so motion stays

@@ -27,6 +27,7 @@
     - [Shadows](rendering-shadows.md)
     - [Smooth shading and shadows](rendering-smooth-shading.md)
     - [Sky and time of day](rendering-sky.md)
+    - [Water](rendering-water.md)
     - [Detail levels](rendering-lod.md)
     - [The level's look](rendering-post-processing.md)
     - [Graphics settings](rendering-settings.md)

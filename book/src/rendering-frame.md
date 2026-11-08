@@ -36,7 +36,7 @@ with how many of them move.
 
 The name in brackets after each pass is what it is called in a profiler capture
 (see [Looking at rendering problems](rendering-debugging.md#the-profiler)).
-Passes 2 to 14 draw the scene, so a capture shows them inside `scene`.
+Passes 2 to 16 draw the scene, so a capture shows them inside `scene`.
 
 ### 1. Clear (`clear-targets`)
 
@@ -159,7 +159,26 @@ the ground's. Its cost grows with how much sky is on screen.
 
 - **Changed by:** `Skybox`; `Fog`; the resolution.
 
-### 14. See-through surfaces (`draw-blended`)
+### 14. Water's waves (`water-waves`)
+
+Moves the waves of each [`Ocean` and `Lake`](rendering-water.md) in view on to
+this frame's time. Its cost is the same whatever the screen's size, once for
+each body in view; a body out of view costs nothing, and a level with no water
+runs no pass at all. The first frame a body comes into view also works out its
+waves' starting sizes, once.
+
+- **Changed by:** the number of `Ocean`s and `Lake`s in view; the `water`
+  setting.
+
+### 15. Water (`draw-water`)
+
+Draws the water's surface over the finished scene and sky, before the other
+see-through surfaces, which are usually in front of it. Its cost grows with
+the screen area the water covers.
+
+- **Changed by:** `Ocean`, `Lake`; the resolution and MSAA.
+
+### 16. See-through surfaces (`draw-blended`)
 
 Draws every surface with a
 [see-through material](rendering-materials.md#see-through-materials) over the
@@ -171,7 +190,7 @@ surface over a pixel.
 - **Changed by:** materials with `Alpha` set to `Blend`; the same lights,
   shadows and fog as the lit pass; the resolution.
 
-### 15. Post-processing (`pp-resolve`, `pp-exposure`, `pp-bloom`, `pp-tonemap`, `overlays`, `pp-overlay-resolve`, `pp-fxaa`, `pp-blit`)
+### 17. Post-processing (`pp-resolve`, `pp-exposure`, `pp-bloom`, `pp-tonemap`, `overlays`, `pp-overlay-resolve`, `pp-fxaa`, `pp-blit`)
 
 Turns the drawn scene into the finished picture. Each step is a pass of its
 own, and only the steps your settings need appear in a capture:
@@ -193,7 +212,7 @@ own, and only the steps your settings need appear in a capture:
 - **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
   `PostProcessVolume`. See [The level's look](rendering-post-processing.md).
 
-### 16. User interface (`game-ui`)
+### 18. User interface (`game-ui`)
 
 Draws the game's [screens](user-interface.md): menus and HUDs. They are drawn
 after the tone map, so their colours are exactly as you set them. In the editor,
@@ -203,7 +222,7 @@ the editor's own windows are drawn after this.
 
 | You change | Pass |
 |---|---|
-| Resolution, MSAA samples | Lit pass, sky, see-through surfaces, prepass, post-processing |
+| Resolution, MSAA samples | Lit pass, sky, water, see-through surfaces, prepass, post-processing |
 | `antiAliasing.mode` | Post-processing, and MSAA's cost in the lit pass |
 | `toneMap` | Post-processing (free) |
 | `bloom` | Post-processing |
@@ -220,6 +239,8 @@ the editor's own windows are drawn after this.
 | A `DirectionalLight` | Lit pass, everywhere; sun shadows if it casts |
 | `Skybox`, `TimeOfDay`, `Sun`, `Moon` | Sky, sky reflections, sun shadows |
 | `Clouds` | Clouds, sky, sky reflections, lit pass |
+| `Ocean`, `Lake` | Water's waves, water; and the scene distance, if ambient occlusion is off |
+| `water` | Water's waves, water |
 | `Fog` | Lit pass, sky; and, through the draw distance, everything `Camera.farZ` changes |
 | `Camera.farZ` | Light grid; how far the sun shadows reach |
 | A material's `Alpha` set to `Mask` | Prepass, lit pass, shadows |

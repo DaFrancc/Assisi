@@ -32,6 +32,8 @@
 #include <Assisi/Render/SkyProbe.hpp>
 #include <Assisi/Render/SsaoPass.hpp>
 #include <Assisi/Render/SsaoSettings.hpp>
+#include <Assisi/Render/WaterFrame.hpp>
+#include <Assisi/Render/WaterRenderer.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/IndirectResolve.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -77,6 +79,7 @@ struct SceneSettings
     Render::ShadowDebugView shadowDebugView = Render::ShadowDebugView::None;
     bool fogEnabled = true;
     bool cloudsEnabled = true;
+    bool waterEnabled = true;
     bool frustumCulling = true;
     bool sortDraws = true;
     bool gpuCulling = false;
@@ -98,6 +101,10 @@ struct SceneFrame
     /// Casters moving this frame, and those whose shadows changed sides.
     std::span<const Render::ShadowMover> dynamicCasters;
     std::span<const Render::ShadowMover> casterInvalidations;
+    /// The water in view, and the time its waves are drawn at on the shared
+    /// clock.
+    const Render::WaterFrame *water = nullptr;
+    double waterSeconds = 0.0;
     ScreenOcclusion occlusion;
     Render::FogConstants fog;
     /// The camera measured from the shadow origin.
@@ -114,6 +121,9 @@ struct SceneFrame
     bool fogged = false;
     /// Whether the sky pass built, which the clouds and the probe draw through.
     bool skyAvailable = false;
+    /// Whether the water reads the scene's distance this frame, which then
+    /// runs whether or not ambient occlusion does.
+    bool waterReadsDistance = false;
 };
 
 /// @brief One view of the scene: the camera's, and later each eye's.
@@ -133,6 +143,9 @@ struct ScenePassInit
 {
     nvrhi::IDevice *device = nullptr;
     ShadowDepthRenderer *shadowDepthRenderer = nullptr;
+    /// The mesh pass's set 0, which a pipeline lighting surfaces as it does
+    /// puts first.
+    nvrhi::IBindingLayout *meshFrameLayout = nullptr;
 };
 
 /// @brief The objects SceneRenderer owns and several passes use.
@@ -326,6 +339,34 @@ struct SkyBackgroundPass
     bool Wanted(const SceneFrame &frame) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<SceneDepth, CloudMap> in,
                 Writes<SceneColor, SkyPass> out);
+};
+
+/// @brief Brings every Ocean and Lake in view to this frame's time: their
+/// waves' FFT and its mips.
+///
+/// On while the level holds water, in view or not, so a body's textures are
+/// kept while the camera looks away; off, they are freed.
+APASS(name = "water-waves")
+struct WaterWavesPass
+{
+    bool Initialize(const ScenePassInit &init);
+    bool OnTargetsChanged(const nvrhi::FramebufferInfo &targets);
+    bool Wanted(const SceneFrame &frame) const;
+    void Release();
+    bool Record(Recorder &rec, const SceneFrame &frame, Writes<WaterFields> out);
+
+    Render::WaterRenderer renderer;
+};
+
+/// @brief Draws the water over the finished scene and sky, before the other
+/// see-through surfaces, which are usually in front of it.
+APASS(name = "draw-water", after = "sky", before = "draw-blended")
+struct WaterPass
+{
+    bool Wanted(const SceneFrame &frame) const;
+    void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
+                Reads<WaterFields, SceneDistance, SceneDistancePass, FrameConstants, LightingSystem> in,
+                Writes<SceneColor, MeshPass> out);
 };
 
 /// @brief Draws the see-through surfaces over the finished scene and sky,

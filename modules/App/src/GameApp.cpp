@@ -224,6 +224,7 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     _sceneRenderer.SetFogEnabled(true);
     _sceneRenderer.SetCloudQuality(options.clouds);
     _sceneRenderer.SetCloudsEnabled(true);
+    _sceneRenderer.SetWaterEnabled(true);
 
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -321,6 +322,7 @@ bool GameApp::SetupRenderer()
     _sceneRenderer.SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
     _sceneRenderer.SetCloudQuality(GetOptions().clouds);
     _sceneRenderer.SetCloudsEnabled(GetOptions().CloudsEnabled(GetConfig()));
+    _sceneRenderer.SetWaterEnabled(GetOptions().WaterEnabled(GetConfig()));
     return true;
 }
 
@@ -555,6 +557,7 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     }
 
     _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer.SetWaterSeconds(PresentedSimulatedSeconds());
     _sceneRenderer.SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
     _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
     SetScenePostProcess(_sceneRenderer.ScenePostProcess());

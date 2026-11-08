@@ -1,18 +1,7 @@
-// mesh.frag's inputs: varyings, per-frame constants, clustered lights and the
-// shadow view table.
-
-layout(location = 0) in vec3  vWorldPos;
-layout(location = 1) in vec3  vNormal;
-layout(location = 2) in vec2  vTexCoord;
-layout(location = 3) in float vViewZ;
-layout(location = 4) in vec3  vTangent;
-layout(location = 5) in float vTangentSign;
-layout(location = 6) in flat uint vMaterialIndex; // row into the material table
-// What SmoothSurfaceLift measures the curved surface from; mesh.vert says what
-// it holds.
-layout(location = 7) in float vPlaneDistance;
-
-layout(location = 0) out vec4 outColor;
+// The scene's per-frame constants, clustered lights and the shadow view table,
+// for the shaders that light surfaces: mesh.frag and water.frag.
+//
+// Uses vViewZ, which the including shader declares as an input.
 
 // Mirrors Render::FrameConstants and mesh.vert's copy; the member order is the
 // layout.

@@ -317,6 +317,12 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             }
         }
 
+        // Present means chosen, as with the fog.
+        if (json.contains("water") && json.at("water").contains("enabled"))
+        {
+            cfg.waterEnabled = json.at("water").at("enabled").get<bool>();
+        }
+
         if (json.contains("window"))
         {
             const auto &window = json.at("window");
@@ -559,6 +565,11 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.fogEnabled)
     {
         json["fog"]["enabled"] = *options.fogEnabled;
+    }
+
+    if (options.waterEnabled)
+    {
+        json["water"]["enabled"] = *options.waterEnabled;
     }
 
     // Only a volume the player set: every other bus follows the game's own

@@ -141,13 +141,14 @@ private:
     void Close();
 
     std::span<const char *const> _timers;
-#if defined(ASSISI_ENABLE_GPU_MARKERS)
-    std::optional<GpuMarkerScope> _marker;
-#endif
     nvrhi::ICommandList *_commandList = nullptr;
     std::optional<GpuPassTimerScope> _timer;
     bool _untimed = false;
     bool _recorded = false;
+    // Whether a debug label is open on the command list. A flag rather than an
+    // optional GpuMarkerScope, whose destructor GCC's -O3 flow analysis reads
+    // as using an uninitialised list.
+    bool _markerOpen = false;
 };
 
 /// @brief Whether a pass has a hook of the given name, and whether that hook

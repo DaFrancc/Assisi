@@ -102,6 +102,7 @@ private:
     /// @brief The clouds section: the switch, the tier buttons, the sky map's
     /// size and the steps along each ray.
     static void DrawCloudSettings(const Frame &frame);
+    static void DrawWaterSettings(const Frame &frame);
     /// @brief The bloom section: the switch, the intensity and the scatter.
     static void DrawBloomSettings(const Frame &frame);
 

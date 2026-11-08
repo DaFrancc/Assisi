@@ -276,6 +276,22 @@ public:
     void SetCloudsEnabled(bool enabled);
     [[nodiscard]] bool CloudsEnabled() const { return _settings.cloudsEnabled; }
 
+    /// @brief Whether a level's Oceans and Lakes are drawn: the player's
+    /// choice. Applied on the next Render().
+    ///
+    /// Off draws no water and holds no texture of it.
+    void SetWaterEnabled(bool enabled) { _settings.waterEnabled = enabled; }
+    [[nodiscard]] bool WaterEnabled() const { return _settings.waterEnabled; }
+
+    /// @brief The time the next Render's waves are drawn at, in seconds on the
+    /// shared clock: every machine that gives the same time draws the same
+    /// waves.
+    void SetWaterSeconds(double seconds) { _waterSeconds = seconds; }
+
+    /// @brief The water the last Render() drew: each body in view and its
+    /// patches.
+    [[nodiscard]] const Render::WaterFrame &LastWater() const { return _waterFrame; }
+
     /// @brief How finely the clouds are drawn. Applied on the next Render().
     void SetCloudQuality(const Render::CloudQuality &quality);
     [[nodiscard]] const Render::CloudQuality &CloudQuality() const { return _settings.cloudQuality; }
@@ -404,11 +420,12 @@ private:
     void ForgetKeptShadows();
 
     /// @brief Hold the scene distance target and occlusion's targets for
-    /// @p frame. Releases all of it while the setting is off, and turns the
-    /// setting off if any of it fails.
+    /// @p frame: the distance while occlusion or @p waterReadsDistance wants it,
+    /// occlusion's own while its setting is on. Releases what neither wants,
+    /// and turns occlusion's setting off if its targets fail.
     ///
     /// @return the occlusion's texture, empty when this frame runs none.
-    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(const Render::RenderFrame &frame);
+    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(const Render::RenderFrame &frame, bool waterReadsDistance);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world
@@ -467,6 +484,11 @@ private:
     uint64_t _lastMoverTick = 0;
     // See SetSimulationSeconds.
     double _simulationSeconds = 0.0;
+    // See SetWaterSeconds.
+    double _waterSeconds = 0.0;
+    // The water in view this frame, gathered before the passes and kept for
+    // its capacity.
+    Render::WaterFrame _waterFrame;
     // See SetViewingCamera.
     ECS::Entity _viewingCamera = ECS::NullEntity;
     // Entities that lost their Transform or MeshRenderer since the last look,

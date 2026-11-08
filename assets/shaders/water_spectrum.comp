@@ -1,0 +1,51 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Each wave's start, h0(k) and its mirror's conj(h0(-k)), for every texel of
+// every cascade. Run once when a body's waves come into view or change; the
+// time is added each frame by water_fft_rows.comp. Render::InitialWave is
+// this on the CPU.
+
+#include "water/waves.glsl"
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Mirrors Render::WaterSpectrumConstants.
+layout(push_constant) uniform SpectrumConstants
+{
+    vec4  tileLength;
+    vec4  minWavenumber;
+    vec4  maxWavenumber;
+    vec4  wind;    // peak, alpha, youth, bearing in radians
+    vec4  swell;   // the same
+    vec4  spreads; // x, y = the wind's spread and swell; z, w = the swell's
+    uvec4 seed;    // x
+} pc;
+
+layout(binding = 384, rgba32f) uniform writeonly image2DArray uSpectrum;
+
+float Amplitude(uint cascade, vec2 k)
+{
+    float kLength = length(k);
+    if (kLength <= 0.0 || kLength < pc.minWavenumber[cascade] || kLength >= pc.maxWavenumber[cascade])
+    {
+        return 0.0;
+    }
+    float step   = kTwoPi / pc.tileLength[cascade];
+    float energy = WavenumberSpectrum(WaveShape(pc.wind, pc.spreads.x, pc.spreads.y), k, kLength) +
+                   WavenumberSpectrum(WaveShape(pc.swell, pc.spreads.z, pc.spreads.w), k, kLength);
+    return sqrt(0.5 * energy * step * step);
+}
+
+void main()
+{
+    uvec3 texel     = gl_GlobalInvocationID;
+    uint  cascade   = texel.z;
+    ivec2 frequency = ivec2(texel.xy) - ivec2(kWaterFftSize / 2u);
+    float perTurn   = kTwoPi / pc.tileLength[cascade];
+    float inverseRoot2 = 1.0 / sqrt(2.0);
+
+    vec2 wave   = GaussianPair(pc.seed.x, cascade, frequency) * inverseRoot2 * Amplitude(cascade, vec2(frequency) * perTurn);
+    vec2 mirror = GaussianPair(pc.seed.x, cascade, -frequency) * inverseRoot2 * Amplitude(cascade, vec2(-frequency) * perTurn);
+    imageStore(uSpectrum, ivec3(texel), vec4(wave, mirror.x, -mirror.y));
+}
