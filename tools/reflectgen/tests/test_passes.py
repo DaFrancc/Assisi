@@ -209,6 +209,14 @@ class EmitTest(unittest.TestCase):
         self.assertNotIn("ViewFrame", reflect_passes.render_source(graph, "Game/T.generated.hpp"))
 
 
+class BaseTest(unittest.TestCase):
+    def test_a_base_pass_cannot_turn_itself_off(self):
+        with self.assertRaises(ValueError) as caught:
+            graph_of("APASS(name = \"a\", base)\nstruct APass\n{\n"
+                     "    bool Record(Recorder &rec, const TestFrame &frame, Writes<X> out);\n};\n")
+        self.assertIn("base pass whose Record returns bool", str(caught.exception))
+
+
 class UntimedTest(unittest.TestCase):
     def test_an_untimed_pass_cannot_list_timers(self):
         with self.assertRaises(ValueError) as caught:

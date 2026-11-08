@@ -274,6 +274,10 @@ def parse_passes(text: str, path: Path, prefix: str) -> tuple:
 
         body, _ = _struct_body(text, match.end() - 1)
         returns_bool, recorder, view, reads, writes = _parse_record(body, struct, prefix, where)
+        if base and returns_bool:
+            raise ValueError(
+                f"{where} is a base pass whose Record returns bool. A base pass records every frame, so it "
+                f"cannot turn itself off: Record returns void.")
         passes.append(PassInfo(struct=struct, name=name, after=after, before=before, base=base, untimed=untimed,
                                timers=timers,
                                returns_bool=returns_bool, recorder=recorder, view=view, reads=reads,
