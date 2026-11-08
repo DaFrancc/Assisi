@@ -75,6 +75,10 @@
 
 - [Multiple worlds](multiple-worlds.md)
 - [Your own asset kinds](asset-kinds.md)
+- [Adding a render pass](render-passes.md)
+    - [Tutorial: a vignette](render-pass-vignette.md)
+    - [Tutorial: a blur](render-pass-blur.md)
+    - [Example: automatic exposure](render-pass-exposure.md)
 - [Multiplayer basics](multiplayer.md)
 - [Troubleshooting and FAQ](troubleshooting.md)
 - [Attributions](attributions.md)

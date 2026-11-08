@@ -7,7 +7,8 @@ goes, and which setting or component to change when a frame takes too long.
 
 You don't call or configure any of this yourself. The engine runs the same
 passes for every level; your levels and the player's settings decide how much
-work each one does.
+work each one does. To add a pass to the engine, see
+[Adding a render pass](render-passes.md).
 
 ## Preparing the frame
 
