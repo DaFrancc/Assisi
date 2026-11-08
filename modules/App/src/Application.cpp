@@ -9,6 +9,7 @@
 #endif
 
 // --- Engine headers ---------------------------------------------------------
+#include <Assisi/App/AppPasses.generated.hpp>
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
 #include <Assisi/App/CrashReporter.hpp>
@@ -37,7 +38,7 @@
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
-#include <Assisi/Render/SceneDepth.hpp>
+#include <Assisi/Runtime/ScenePasses.generated.hpp>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -372,16 +373,18 @@ bool Application::InitializePresentation()
                                       .swapchainFramebufferInfo = vulkanContext->GetFramebufferInfo(),
                                       .vertexShaderSpvPath = "shaders/fullscreen.vert.spv",
                                       .tonemapShaderSpvPath = "shaders/tonemap.frag.spv",
-                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv",
-                                      .bloomDownShaderSpvPath = "shaders/bloom_down.frag.spv",
-                                      .bloomUpShaderSpvPath = "shaders/bloom_up.frag.spv",
-                                      .exposureHistogramShaderSpvPath = "shaders/exposure_histogram.comp.spv",
-                                      .exposureAdaptShaderSpvPath = "shaders/exposure_adapt.comp.spv"}))
+                                      .fxaaShaderSpvPath = "shaders/fxaa.frag.spv"}))
         {
             Core::Log::Fatal("Failed to initialize post-process pipeline.");
             return false;
         }
         ConfigurePostProcess();
+        // A pass that fails to build stays off and has said why; the tone map,
+        // which every frame needs, failed fatally above.
+        _passes = std::make_unique<Passes::AppPassGraph>();
+        _passes->Initialize(Passes::AppPassInit{.device = vulkanContext->GetDevice(),
+                                                .fullscreenVertexShader = _postProcess.FullscreenVertexShader()},
+                            vulkanContext->GetFramebufferInfo());
 
         // Built against the swapchain, which the UI draws onto after the post
         // chain has finished with it.
@@ -490,6 +493,8 @@ Application::~Application()
         _uiPlaceholderTexture = Render::Texture{};
         _uiFontAtlas = Render::Texture{};
         _uiTextures.clear();
+        _readback = FrameReadback{};
+        _passes.reset();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -649,6 +654,13 @@ constexpr double kSlowFrameMs = 8.0;
 /// The longest frame the automatic exposure adapts over in one go, so a hitch
 /// or the first frame does not jump it as far as a long pause would.
 constexpr double kMaxExposureFrameSeconds = 0.25;
+
+/// The GPU timers opened inside the app's hooks rather than by a declared pass:
+/// the editor's three overlay passes.
+constexpr std::uint32_t kHookPassTimers = 3;
+static_assert(Passes::kAppPassTimerCount + Runtime::Passes::kScenePassTimerCount + kHookPassTimers <=
+              Render::kMaxTimedPasses,
+              "the frame opens more GPU timers than the timer pool holds");
 
 /// Waits until `target` while wasting as little CPU as possible. sleep_for()
 /// overshoots its request by a scheduler-dependent amount, so we can't sleep the
@@ -1227,112 +1239,51 @@ void Application::RenderFrame()
         return; // minimized, or swapchain is stale and about to be resized
     }
 
-    // The scene always renders into PostProcess's HDR offscreen target — the
-    // swapchain cannot hold radiance. Everything else about `frame` (commandList,
-    // width, height) is unchanged.
-    Render::RenderFrame sceneFrame = *frame;
-    sceneFrame.framebuffer = _postProcess.SceneFramebuffer();
-    sceneFrame.colorTexture = _postProcess.SceneColorTexture();
-    sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
+    // Each image the passes name, at the surface this frame's route puts it on.
+    // The scene always draws offscreen, in HDR: the swapchain cannot hold
+    // radiance.
+    const Render::RenderTarget swapchain{.framebuffer = frame->framebuffer,
+                                         .colorTexture = frame->colorTexture,
+                                         .depthTexture = frame->depthTexture,
+                                         .width = frame->width,
+                                         .height = frame->height};
+    const Render::ChainRoute &route = _postProcess.Route();
+    Passes::SceneTarget sceneTarget{_postProcess.Target(route.sceneTarget, swapchain)};
+    Passes::SceneHdr sceneHdr{_postProcess.Target(route.sceneHdr, swapchain)};
+    Passes::ToneMapped toneMapped{_postProcess.Target(route.toneMapped, swapchain)};
+    Passes::Display display{_postProcess.Target(route.display, swapchain)};
+    Passes::Screen screen{swapchain};
+    Passes::AppImports imports{.frameHooks = *this,
+                               .postProcess = _postProcess,
+                               .quadPass = _uiPass,
+                               .sceneTarget = sceneTarget,
+                               .sceneHdr = sceneHdr,
+                               .toneMapped = toneMapped,
+                               .display = display,
+                               .screen = screen};
 
+    // The window-refresh callback also draws, so the time between draws is
+    // measured here rather than taken from the loop.
+    const Clock::time_point now = Clock::now();
+    const float frameSeconds =
+        static_cast<float>(std::min(Seconds(now - _lastPostProcess).count(), kMaxExposureFrameSeconds));
+    _lastPostProcess = now;
+
+    // The game UI is part of the finished frame, so it draws before the capture.
+    // A redraw from the window-refresh callback shows the last frame's list,
+    // which is still current. Null only if that callback fires during bring-up,
+    // before the UI exists.
+    const Passes::AppFrame appFrame{.tonemap = _options.tonemap,
+                                    .gameUi = _ui && _uiShown ? &_ui->GetDrawList() : nullptr,
+                                    .clearColor = Math::ToLinear(_config.clearColor),
+                                    .frameSeconds = frameSeconds,
+                                    .route = route,
+                                    .bloomEnabled = _options.bloomEnabled,
+                                    .captureFrame = (_captureImagePending && !_closeRequested) ||
+                                                    !_frameImagePath.empty()};
+    if (_passes)
     {
-        // The last unscoped thing inside `render` — small, but an unnamed gap
-        // between two slices is exactly what sends you looking in the wrong place.
-        ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
-        // The scene target holds radiance, so the sRGB clear colour is decoded on
-        // the way in — same treatment any sRGB texture gets. The tone map puts it
-        // back where it was.
-        const Assisi::Math::Color4<Assisi::Math::ColorSpace::Linear> clearLinear =
-            Assisi::Math::ToLinear(_config.clearColor);
-        sceneFrame.commandList->clearTextureFloat(
-            sceneFrame.colorTexture, nvrhi::AllSubresources,
-            nvrhi::Color(clearLinear.r, clearLinear.g, clearLinear.b, _config.clearColor.a));
-        if (sceneFrame.depthTexture)
-        {
-            sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
-                                                             Assisi::Render::kSceneDepthFar, false, 0);
-        }
-    }
-
-    {
-        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "scene");
-        OnRender(sceneFrame);
-    }
-
-    {
-        // Resolve, bloom, then tone map: the chain's HDR half. The look rides in push
-        // constants, so handing it over per frame is what makes an editor slider
-        // land on the next frame with nothing to rebuild.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
-        _postProcess.SetTonemapSettings(_options.tonemap);
-        _postProcess.SetBloomEnabled(_options.bloomEnabled);
-        _postProcess.SetSceneSettings(_scenePostProcess);
-        // The window-refresh callback also draws, so the time between draws is
-        // measured here rather than taken from the loop.
-        const Clock::time_point now = Clock::now();
-        _postProcess.SetFrameSeconds(
-            static_cast<float>(std::min(Seconds(now - _lastPostProcess).count(), kMaxExposureFrameSeconds)));
-        _lastPostProcess = now;
-        _postProcess.RunBeforeOverlays(frame->commandList, *frame);
-    }
-
-    // Display-referred content, drawn into the tone-mapped image rather than
-    // through the tone map. The target still carries the scene's depth, so
-    // overlays occlude against the scene exactly as they did.
-    if (nvrhi::IFramebuffer *overlayFramebuffer = _postProcess.OverlayFramebuffer())
-    {
-        Render::RenderFrame overlayFrame = *frame;
-        overlayFrame.framebuffer = overlayFramebuffer;
-        overlayFrame.depthTexture = _postProcess.SceneDepthTexture();
-
-        // A scope, not a pass: the overlay passes open their own pass timers.
-        ASSISI_PROFILE_GPU_SCOPE(overlayFrame.commandList, "overlays");
-        OnRenderOverlays(overlayFrame);
-    }
-
-    {
-        // Whatever is left: the overlay resolve, and FXAA or the final copy.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process-output");
-        _postProcess.RunAfterOverlays(frame->commandList, *frame);
-    }
-
-    // The game UI is part of the finished frame, so it draws before the capture
-    // below. A redraw from the window-refresh callback lands here without a Sync
-    // and shows the last one's list, which is still current. Null only if that
-    // callback fires during bring-up, before the UI exists.
-    if (_ui && _uiShown)
-    {
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "game-ui");
-        _uiPass.Draw(frame->commandList, frame->framebuffer, _ui->GetDrawList());
-    }
-
-    // The finished frame, before the debug UI draws over it.
-    Render::FrameCapture frameCapture;
-    bool captureImage = false;
-    if (_captureImagePending && !_closeRequested)
-    {
-        captureImage = frameCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
-        if (!captureImage)
-        {
-            RequestClose();
-        }
-    }
-
-    // A picture an app asked for, which unlike the capture's does not end the run.
-    Render::FrameCapture requestedCapture;
-    std::string requestedPath;
-    requestedPath.swap(_frameImagePath);
-    const bool requestedImage =
-        !requestedPath.empty() &&
-        requestedCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
-
-    {
-        // One scope, because what happens inside belongs to whoever overrode
-        // this: bringing a UI toolkit up, drawing into it and submitting it are
-        // that layer's business, and an application that draws no UI spends
-        // nothing here.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "ui");
-        OnRenderUi(*frame);
+        _passes->Run(imports, frame->commandList, appFrame);
     }
 
     // What reaches the screen, debug UI and all. After the UI, which is also
@@ -1350,15 +1301,16 @@ void Application::RenderFrame()
 
     // After EndFrame, which submits the list the copy was recorded on. The flag
     // stays set so the capture's report is not written a second time.
-    if (captureImage)
+    if (_readback.captured)
     {
-        FinishCaptureImage(*vulkanContext, frameCapture);
+        FinishCaptureImage(*vulkanContext, _readback.capture);
         RequestClose();
     }
-    if (requestedImage)
+    if (_readback.requestedTaken)
     {
-        (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
+        (void)_readback.requested.Write(vulkanContext->GetDevice(), _readback.requestedPath);
     }
+    _readback = FrameReadback{};
     // Read back frames later rather than now: waiting here would stall this
     // frame on the GPU, and the PNG encode is a worker's job.
     if (screenshotRecorded)
@@ -1374,6 +1326,44 @@ void Application::RenderFrame()
         }
     }
     CollectScreenshots(vulkanContext->GetDevice());
+}
+
+void Application::DrawScene(Render::RenderFrame &frame, Passes::SceneLook &look)
+{
+    OnRender(frame);
+    // The app sets both while it draws, so they are read after.
+    look = Passes::SceneLook{.settings = Render::Sanitized(_scenePostProcess), .passthrough = _tonemapPassthrough};
+}
+
+void Application::DrawOverlays(Render::RenderFrame &frame)
+{
+    OnRenderOverlays(frame);
+}
+
+void Application::DrawUi(Render::RenderFrame &frame)
+{
+    // What happens inside belongs to whoever overrode this: bringing a UI
+    // toolkit up, drawing into it and submitting it are that layer's business,
+    // and an application that draws no UI spends nothing here.
+    OnRenderUi(frame);
+}
+
+void Application::CaptureFrame(nvrhi::ICommandList *commandList, nvrhi::ITexture *screen)
+{
+    nvrhi::IDevice *device = Render::RenderSystem::GetVulkanContext()->GetDevice();
+    if (_captureImagePending && !_closeRequested)
+    {
+        _readback.captured = _readback.capture.Record(device, commandList, screen);
+        if (!_readback.captured)
+        {
+            RequestClose();
+        }
+    }
+
+    // A picture an app asked for, which unlike the capture's does not end the run.
+    _readback.requestedPath.swap(_frameImagePath);
+    _readback.requestedTaken =
+        !_readback.requestedPath.empty() && _readback.requested.Record(device, commandList, screen);
 }
 
 void Application::CollectScreenshots(nvrhi::IDevice *device)

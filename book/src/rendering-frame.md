@@ -35,6 +35,7 @@ with how many of them move.
 
 The name in brackets after each pass is what it is called in a profiler capture
 (see [Looking at rendering problems](rendering-debugging.md#the-profiler)).
+Passes 2 to 14 draw the scene, so a capture shows them inside `scene`.
 
 ### 1. Clear (`clear-targets`)
 
@@ -169,19 +170,24 @@ surface over a pixel.
 - **Changed by:** materials with `Alpha` set to `Blend`; the same lights,
   shadows and fog as the lit pass; the resolution.
 
-### 15. Post-processing (`post-process`, `post-process-output`)
+### 15. Post-processing (`pp-resolve`, `pp-exposure`, `pp-bloom`, `pp-tonemap`, `overlays`, `pp-overlay-resolve`, `pp-fxaa`, `pp-blit`)
 
-Turns the drawn scene into the finished picture:
+Turns the drawn scene into the finished picture. Each step is a pass of its
+own, and only the steps your settings need appear in a capture:
 
-1. With MSAA, each pixel's samples are combined into one.
+1. With MSAA, each pixel's samples are combined into one (`pp-resolve`).
 2. With automatic exposure, the picture's brightness is measured
    (`pp-exposure`).
 3. **Bloom**, if it is on, spreads a soft glow around the brightest light
    (`pp-bloom`).
 4. The **tone map** balances the colours, applies the exposure, and turns light
-   values into screen colours, with the level's contrast and saturation.
-5. In the editor, the selection outline, icons and wire shapes are drawn.
-6. FXAA, if it is on, or a copy to the screen.
+   values into screen colours, with the level's contrast and saturation
+   (`pp-tonemap`). When no step follows it, it draws straight onto the screen.
+5. In the editor, the selection outline, icons and wire shapes are drawn
+   (`overlays`). With MSAA, their samples are then combined
+   (`pp-overlay-resolve`).
+6. FXAA, if it is on (`pp-fxaa`), or else a copy onto the screen when the
+   picture was finished somewhere else (`pp-blit`).
 
 - **Changed by:** the `antiAliasing`, `bloom` and `toneMap` settings; a
   `PostProcessVolume`. See [The level's look](rendering-post-processing.md).

@@ -10,10 +10,10 @@
 namespace Assisi::Render
 {
 
-Recorder::Recorder(nvrhi::ICommandList *commandList, std::span<const char *const> timers, bool eager)
-    : _timers(timers), _commandList(commandList)
+Recorder::Recorder(nvrhi::ICommandList *commandList, std::span<const char *const> timers, RecorderTiming timing)
+    : _timers(timers), _commandList(commandList), _untimed(timing == RecorderTiming::Untimed)
 {
-    if (eager)
+    if (timing != RecorderTiming::Lazy)
     {
         Open(_timers.front());
     }
@@ -48,7 +48,10 @@ void Recorder::Open(const char *timer)
 #if defined(ASSISI_ENABLE_GPU_MARKERS)
     _marker.emplace(_commandList, timer);
 #endif
-    _timer.emplace(timer);
+    if (!_untimed)
+    {
+        _timer.emplace(timer);
+    }
     _recorded = true;
 }
 

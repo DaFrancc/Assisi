@@ -6,6 +6,7 @@
 ///        override the hooks, and call Run() from main().
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/App/AppPasses.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/App/PlayerSettings.hpp>
@@ -43,6 +44,11 @@
 namespace Assisi::App
 {
 
+namespace Passes
+{
+class AppPassGraph;
+}
+
 /// @brief Base class for all Assisi applications.
 ///
 /// Required overrides:
@@ -67,7 +73,10 @@ namespace Assisi::App
 ///     (e.g. its sample count) — rebuild any graphics pipelines built against
 ///     the old one (see Render::MeshPass::RebuildPipeline)
 ///   - OnShutdown()              — called after the loop exits
-class Application
+///
+/// The frame itself is the declared passes of AppPasses.hpp; this class hosts
+/// the hooks above in them.
+class Application : private Passes::FrameHooks
 {
 public:
     Application();
@@ -426,7 +435,7 @@ protected:
     /// @brief Tells the post chain that this frame's scene target holds display
     /// values rather than radiance, so the tone map must copy it through. For the
     /// material debug views, which show a channel raw.
-    void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
+    void SetTonemapPassthrough(bool passthrough) { _tonemapPassthrough = passthrough; }
 
     /// @brief How the scene is finished from this frame on: its exposure,
     /// grade, white balance and glow, as its PostProcessVolumes set them at the
@@ -493,6 +502,13 @@ private:
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
+
+    /// The hooks above, hosted in the frame's passes. Final, so an app keeps
+    /// overriding OnRender and its siblings rather than these.
+    void DrawScene(Render::RenderFrame &frame, Passes::SceneLook &look) final;
+    void DrawOverlays(Render::RenderFrame &frame) final;
+    void DrawUi(Render::RenderFrame &frame) final;
+    void CaptureFrame(nvrhi::ICommandList *commandList, nvrhi::ITexture *screen) final;
     /// Reads the UI settings, loads the string tables and themes they list,
     /// and keeps them for the sprite sheets, which load once OnStart has run.
     void LoadUiSettings();
@@ -607,9 +623,13 @@ private:
     Core::AssetStore _assets;
 
     Render::PostProcess _postProcess;
+    /// The frame's passes, built with the renderer: a headless process has none.
+    std::unique_ptr<Passes::AppPassGraph> _passes;
     Render::PostProcessSettings _scenePostProcess;
-    /// When the post chain last ran, which the automatic exposure adapts over.
+    /// When the last frame was drawn, which the automatic exposure adapts over.
     std::chrono::steady_clock::time_point _lastPostProcess{};
+    /// See SetTonemapPassthrough.
+    bool _tonemapPassthrough = false;
     Core::EventQueue _universalEvents{Core::EventScope::Universal};
     bool _initialized = false;
 
@@ -649,6 +669,18 @@ private:
 
     /// See CaptureNextFrame. Empty when no picture is asked for.
     std::string _frameImagePath;
+
+    /// The finished frame, read back by CaptureFrame and written once the frame
+    /// is submitted: the capture's picture, and the one CaptureNextFrame asked for.
+    struct FrameReadback
+    {
+        Render::FrameCapture capture;
+        Render::FrameCapture requested;
+        std::string requestedPath;
+        bool captured = false;
+        bool requestedTaken = false;
+    };
+    FrameReadback _readback;
 
     /// See ScreenshotNextFrame. Empty when none is asked for.
     std::string _screenshotPath;

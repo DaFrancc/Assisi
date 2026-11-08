@@ -4,10 +4,9 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
+#include <Assisi/Render/Exposure.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
-#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 
 namespace Assisi::Render
 {
@@ -25,34 +24,16 @@ const char *SurfaceName(ChainSurface surface)
     }
     return "Swapchain";
 }
-
-/// Capture and debug-marker label for a chain step. Lower-case and hyphenated
-/// to match the surrounding scope names rather than the enumerator spelling.
-const char *StageName(ChainStage stage)
-{
-    switch (stage)
-    {
-    case ChainStage::Resolve:  return "pp-resolve";
-    case ChainStage::Tonemap:  return "pp-tonemap";
-    case ChainStage::Overlays: return "pp-overlays";
-    case ChainStage::Blit:     return "pp-blit";
-    case ChainStage::Fxaa:     break;
-    }
-    return "pp-fxaa";
-}
 } // namespace
 
 void PostProcess::Shutdown()
 {
     // Drop every NVRHI handle so the underlying GPU objects are freed now, while
     // the device is still alive. Order-independent — they're ref-counted.
-    for (StepResources &step : _stepResources)
-    {
-        step.bindingSet = nullptr;
-        step.pipeline = nullptr;
-    }
-    _bloom.Shutdown();
-    _exposure.Shutdown();
+    _tonemap = FullscreenDraw{};
+    _fxaa = FullscreenDraw{};
+    _copy = FullscreenDraw{};
+    _noExposure = nullptr;
     _fxaaBindingLayout = nullptr;
     _tonemapBindingLayout = nullptr;
     _sampler = nullptr;
@@ -111,58 +92,14 @@ bool PostProcess::Initialize(const InitParams &params)
     samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
     _sampler = _device->createSampler(samplerDesc);
 
-    if (!_bloom.Initialize(_device, _fullscreenVertexShader, params.bloomDownShaderSpvPath,
-                           params.bloomUpShaderSpvPath))
-    {
-        Core::Log::Error("PostProcess: could not build the bloom.");
-        return false;
-    }
-    if (!_exposure.Initialize(_device, params.exposureHistogramShaderSpvPath, params.exposureAdaptShaderSpvPath))
-    {
-        Core::Log::Error("PostProcess: could not build the automatic exposure.");
-        return false;
-    }
-    return true;
-}
-
-void PostProcess::SetBloomEnabled(bool enabled)
-{
-    _bloomEnabled = enabled;
-    if (_sceneColor == nullptr || _bloomEnabled == _bloom.Ready())
-    {
-        return;
-    }
-    ConfigureBloom();
-    // The tone map reads the glow, or the scene in its place.
-    for (uint32_t i = 0; i < _plan.stepCount; ++i)
-    {
-        if (_stepResources[i].bindingSet != nullptr)
-        {
-            _stepResources[i].bindingSet = MakeStepBindings(i);
-        }
-    }
-}
-
-void PostProcess::ConfigureBloom()
-{
-    if (_bloomEnabled)
-    {
-        _bloom.Configure(_width, _height, _sceneColor);
-    }
-    else
-    {
-        _bloom.Configure(0u, 0u, nullptr);
-    }
-}
-
-bool PostProcess::BloomRuns() const
-{
-    return _bloom.Ready() && !_tonemapPassthrough && _scene.bloomIntensity > 0.0f;
-}
-
-bool PostProcess::ExposureRuns() const
-{
-    return !_tonemapPassthrough && _scene.exposure.automatic > 0.0f;
+    nvrhi::BufferDesc noExposure;
+    noExposure.byteSize = sizeof(ExposureState);
+    noExposure.structStride = sizeof(ExposureState);
+    noExposure.initialState = nvrhi::ResourceStates::ShaderResource;
+    noExposure.keepInitialState = true;
+    noExposure.debugName = "PostProcess::NoExposure";
+    _noExposure = _device->createBuffer(noExposure);
+    return _noExposure != nullptr;
 }
 
 void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples, ChainOptions options)
@@ -182,17 +119,15 @@ void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32
     _mode = mode;
     _msaaSamples = msaaSamples;
     _options = options;
-    _plan = PlanChain(mode, options);
+    _route = RouteChain(mode, options);
     Rebuild();
 }
 
 void PostProcess::Rebuild()
 {
-    for (StepResources &step : _stepResources)
-    {
-        step.bindingSet = nullptr;
-        step.pipeline = nullptr;
-    }
+    _tonemap = FullscreenDraw{};
+    _fxaa = FullscreenDraw{};
+    _copy = FullscreenDraw{};
     _msaaColor = nullptr;
     _msaaDepth = nullptr;
     _msaaFramebuffer = nullptr;
@@ -207,23 +142,6 @@ void PostProcess::Rebuild()
     const nvrhi::Format ldrFormat =
         _swapchainInfo.colorFormats.empty() ? nvrhi::Format::UNKNOWN : _swapchainInfo.colorFormats[0];
     const nvrhi::Format depthFormat = _swapchainInfo.depthFormat;
-
-    // Which surfaces this chain actually touches. Allocating from the plan is
-    // what keeps an app that asked for no overlays from paying for the seam.
-    const auto uses = [this](ChainSurface surface) {
-                          if (_plan.sceneTarget == surface)
-                          {
-                              return true;
-                          }
-                          for (uint32_t i = 0; i < _plan.stepCount; ++i)
-                          {
-                              if (_plan.steps[i].source == surface || _plan.steps[i].destination == surface)
-                              {
-                                  return true;
-                              }
-                          }
-                          return false;
-                      };
 
     const auto makeColor = [this](nvrhi::Format format, uint32_t sampleCount, bool shaderResource,
                                   const char *debugName) {
@@ -265,7 +183,9 @@ void PostProcess::Rebuild()
                                      return _device->createFramebuffer(desc);
                                  };
 
-    if (uses(ChainSurface::SceneMultisample))
+    // Only the surfaces this route touches are allocated, which is what keeps
+    // an app that asked for no overlays from paying for the seam.
+    if (_route.sceneTarget == ChainSurface::SceneMultisample)
     {
         _msaaColor = makeColor(kSceneColorFormat, _msaaSamples, /*shaderResource=*/ false, "PostProcess::MSAAColor");
         _msaaDepth = makeDepth(_msaaSamples, "PostProcess::MSAADepth");
@@ -274,15 +194,14 @@ void PostProcess::Rebuild()
 
     // Always present: the tone map reads it in every configuration. It only needs
     // its own depth when the scene draws into it, which is when MSAA is off.
-    const bool sceneDrawsHere = (_plan.sceneTarget == ChainSurface::SceneHdr);
     _sceneColor = makeColor(kSceneColorFormat, 1, /*shaderResource=*/ true, "PostProcess::SceneColor");
-    if (sceneDrawsHere)
+    if (_route.sceneTarget == ChainSurface::SceneHdr)
     {
         _sceneDepth = makeDepth(1, "PostProcess::SceneDepth");
     }
     _sceneFramebuffer = makeFramebuffer(_sceneColor, _sceneDepth);
 
-    if (uses(ChainSurface::OverlayMultisample))
+    if (_route.toneMapped == ChainSurface::OverlayMultisample)
     {
         // Shares the scene's depth buffer rather than owning one: overlays must
         // test against what the scene wrote, and a depth buffer cannot be copied
@@ -292,75 +211,139 @@ void PostProcess::Rebuild()
         _overlayMsaaFramebuffer = makeFramebuffer(_overlayMsaaColor, _msaaDepth);
     }
 
-    if (uses(ChainSurface::Ldr))
+    if (_route.toneMapped == ChainSurface::Ldr || _route.display == ChainSurface::Ldr)
     {
         _ldrColor = makeColor(ldrFormat, 1, /*shaderResource=*/ true, "PostProcess::LdrColor");
         // Depth only where overlays draw straight into it (no MSAA), for the same
         // reason the multisample overlay target has one.
-        const bool overlaysDrawHere = _plan.OverlaySurface() == ChainSurface::Ldr;
-        _ldrFramebuffer = makeFramebuffer(_ldrColor, overlaysDrawHere ? _sceneDepth.Get() : nullptr);
+        _ldrFramebuffer = makeFramebuffer(_ldrColor, CarriesSceneDepth(ChainSurface::Ldr) ? _sceneDepth.Get() : nullptr);
     }
 
-    // Read from the scene target just made, so built again with it.
-    ConfigureBloom();
-    _exposure.Configure(_sceneColor, _width, _height);
-
-    // One pipeline and binding set per fullscreen step: each is built against the
-    // framebuffer it draws into and bound to the texture it reads.
-    for (uint32_t i = 0; i < _plan.stepCount; ++i)
+    // Each draw is built against the surface it draws into; its bindings follow
+    // on its first draw, from the textures it is handed.
+    _tonemap.pipeline = MakePipeline(_tonemapShader, _tonemapBindingLayout, _route.toneMapped);
+    if (_route.fxaa)
     {
-        const ChainStep &step = _plan.steps[i];
-        if (step.stage == ChainStage::Resolve || step.stage == ChainStage::Overlays)
-        {
-            continue; // no pipeline of ours
-        }
-
-        const bool isFxaa = (step.stage == ChainStage::Fxaa);
-        nvrhi::IBindingLayout *layout = isFxaa ? _fxaaBindingLayout.Get() : _tonemapBindingLayout.Get();
-
-        nvrhi::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
-        pipelineDesc.VS = _fullscreenVertexShader;
-        pipelineDesc.PS = isFxaa ? _fxaaShader : _tonemapShader;
-        pipelineDesc.addBindingLayout(layout);
-        pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
-        // The overlay target carries the scene's depth buffer, which these passes
-        // must leave exactly as the scene wrote it — the overlays still need it.
-        pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
-        pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
-
-        _stepResources[i].pipeline = _device->createGraphicsPipeline(pipelineDesc, InfoFor(step.destination));
-        if (_stepResources[i].pipeline == nullptr)
-        {
-            Core::Log::Error("PostProcess: failed to create the pipeline for the pass writing {}.",
-                             SurfaceName(step.destination));
-            continue;
-        }
-
-        _stepResources[i].bindingSet = MakeStepBindings(i);
+        _fxaa.pipeline = MakePipeline(_fxaaShader, _fxaaBindingLayout, ChainSurface::Swapchain);
+    }
+    if (_route.CopiesToSwapchain())
+    {
+        _copy.pipeline = MakePipeline(_tonemapShader, _tonemapBindingLayout, ChainSurface::Swapchain);
     }
 }
 
-nvrhi::BindingSetHandle PostProcess::MakeStepBindings(uint32_t index) const
+nvrhi::GraphicsPipelineHandle PostProcess::MakePipeline(nvrhi::IShader *shader, nvrhi::IBindingLayout *layout,
+                                                        ChainSurface destination) const
 {
-    const ChainStep &step = _plan.steps[index];
-    const bool isFxaa = (step.stage == ChainStage::Fxaa);
-    nvrhi::ITexture *source = TextureFor(step.source, nullptr);
-    nvrhi::BindingSetDesc bindingSetDesc;
-    bindingSetDesc.addItem(
-        nvrhi::BindingSetItem::PushConstants(0, isFxaa ? sizeof(glm::vec2) : sizeof(TonemapConstants)));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, source));
-    if (!isFxaa)
+    nvrhi::GraphicsPipelineDesc pipelineDesc;
+    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    pipelineDesc.VS = _fullscreenVertexShader;
+    pipelineDesc.PS = shader;
+    pipelineDesc.addBindingLayout(layout);
+    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::None;
+    // The overlay target carries the scene's depth buffer, which these passes
+    // must leave exactly as the scene wrote it — the overlays still need it.
+    pipelineDesc.renderState.depthStencilState.depthTestEnable = false;
+    pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+
+    nvrhi::GraphicsPipelineHandle pipeline = _device->createGraphicsPipeline(pipelineDesc, InfoFor(destination));
+    if (pipeline == nullptr)
     {
-        // The glow for the tone map. Without one, and for the Blit, which
-        // shares the tone map's shader, the source fills the slot; the shader
-        // reads it only while it mixes glow in.
-        nvrhi::ITexture *glow = step.stage == ChainStage::Tonemap ? _bloom.Output() : nullptr;
-        bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, glow != nullptr ? glow : source));
-        bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _exposure.State()));
+        Core::Log::Error("PostProcess: failed to create the pipeline for the pass writing {}.",
+                         SurfaceName(destination));
     }
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
-    return _device->createBindingSet(bindingSetDesc, isFxaa ? _fxaaBindingLayout.Get() : _tonemapBindingLayout.Get());
+    return pipeline;
+}
+
+void PostProcess::BindTonemapInputs(FullscreenDraw &draw, nvrhi::ITexture *source, nvrhi::ITexture *glow,
+                                    nvrhi::IBuffer *exposure) const
+{
+    if (draw.bindings != nullptr && draw.source == source && draw.glow == glow && draw.exposure == exposure)
+    {
+        return;
+    }
+    draw.source = source;
+    draw.glow = glow;
+    draw.exposure = exposure;
+
+    nvrhi::BindingSetDesc desc;
+    desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(TonemapConstants)));
+    desc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, source));
+    // Without a glow the source fills the slot; the shader reads it only while
+    // it mixes glow in.
+    desc.addItem(nvrhi::BindingSetItem::Texture_SRV(1, glow != nullptr ? glow : source));
+    desc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, exposure != nullptr ? exposure : _noExposure.Get()));
+    desc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
+    draw.bindings = _device->createBindingSet(desc, _tonemapBindingLayout);
+}
+
+void PostProcess::Draw(const RenderFrame &frame, const FullscreenDraw &draw, const void *constants,
+                       uint32_t constantsSize)
+{
+    if (!draw.pipeline || !draw.bindings)
+    {
+        return;
+    }
+    {
+        // Where a full-screen step's CPU cost actually is: nvrhi resolves the
+        // binding set and commits the barriers the target needs here, while the
+        // draw below is three vertices and a command.
+        ASSISI_PROFILE_SCOPE("graphics-state");
+        nvrhi::GraphicsState state;
+        state.pipeline = draw.pipeline;
+        state.framebuffer = frame.framebuffer;
+        state.addBindingSet(draw.bindings);
+        state.viewport.addViewportAndScissorRect(
+            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+        frame.commandList->setGraphicsState(state);
+    }
+    {
+        ASSISI_PROFILE_SCOPE("push-constants");
+        frame.commandList->setPushConstants(constants, constantsSize);
+    }
+    {
+        ASSISI_PROFILE_SCOPE("draw");
+        nvrhi::DrawArguments drawArgs;
+        drawArgs.vertexCount = 3;
+        frame.commandList->draw(drawArgs);
+    }
+}
+
+void PostProcess::Tonemap(const RenderFrame &frame, nvrhi::ITexture *scene, nvrhi::ITexture *glow,
+                          nvrhi::IBuffer *exposure, const TonemapConstants &constants)
+{
+    BindTonemapInputs(_tonemap, scene, glow, exposure);
+    Draw(frame, _tonemap, &constants, sizeof(constants));
+}
+
+void PostProcess::Fxaa(const RenderFrame &frame, nvrhi::ITexture *display)
+{
+    if (_fxaa.bindings == nullptr || _fxaa.source != display)
+    {
+        _fxaa.source = display;
+        nvrhi::BindingSetDesc desc;
+        desc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::vec2)));
+        desc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, display));
+        desc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
+        _fxaa.bindings = _device->createBindingSet(desc, _fxaaBindingLayout);
+    }
+    const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width), 1.0f / static_cast<float>(frame.height));
+    Draw(frame, _fxaa, &texelSize, sizeof(texelSize));
+}
+
+void PostProcess::Copy(const RenderFrame &frame, nvrhi::ITexture *display)
+{
+    BindTonemapInputs(_copy, display, nullptr, nullptr);
+    // The shader returns its input before it reads anything else, so the rest
+    // of the constants are never looked at.
+    TonemapConstants constants;
+    constants.passthrough = 1u;
+    Draw(frame, _copy, &constants, sizeof(constants));
+}
+
+bool PostProcess::CarriesSceneDepth(ChainSurface surface) const
+{
+    return surface == _route.sceneTarget || (_route.overlays && surface == _route.toneMapped);
 }
 
 nvrhi::FramebufferInfo PostProcess::InfoFor(ChainSurface surface) const
@@ -379,49 +362,54 @@ nvrhi::FramebufferInfo PostProcess::InfoFor(ChainSurface surface) const
     info.sampleCount = IsMultisampleSurface(surface) ? _msaaSamples : 1;
     // Only the targets the scene or the overlays draw into carry depth; the tone
     // map's own output does not when nothing after it depth-tests.
-    const bool hasDepth = (surface == _plan.sceneTarget) || (surface == _plan.OverlaySurface());
-    info.depthFormat = hasDepth ? _swapchainInfo.depthFormat : nvrhi::Format::UNKNOWN;
+    info.depthFormat = CarriesSceneDepth(surface) ? _swapchainInfo.depthFormat : nvrhi::Format::UNKNOWN;
     return info;
+}
+
+RenderTarget PostProcess::Target(ChainSurface surface, const RenderTarget &swapchain) const
+{
+    if (surface == ChainSurface::Swapchain)
+    {
+        return swapchain;
+    }
+    return RenderTarget{.framebuffer = FramebufferFor(surface),
+                        .colorTexture = TextureFor(surface),
+                        .depthTexture = CarriesSceneDepth(surface) ? SceneDepthTexture() : nullptr,
+                        .width = _width,
+                        .height = _height};
 }
 
 nvrhi::IFramebuffer *PostProcess::SceneFramebuffer() const
 {
-    return FramebufferFor(_plan.sceneTarget, nullptr);
+    return FramebufferFor(_route.sceneTarget);
 }
 
 nvrhi::ITexture *PostProcess::SceneColorTexture() const
 {
-    return _plan.sceneTarget == ChainSurface::SceneMultisample ? _msaaColor.Get() : _sceneColor.Get();
+    return TextureFor(_route.sceneTarget);
 }
 
 nvrhi::ITexture *PostProcess::SceneDepthTexture() const
 {
-    return _plan.sceneTarget == ChainSurface::SceneMultisample ? _msaaDepth.Get() : _sceneDepth.Get();
+    return _route.sceneTarget == ChainSurface::SceneMultisample ? _msaaDepth.Get() : _sceneDepth.Get();
 }
 
 nvrhi::FramebufferInfo PostProcess::SceneFramebufferInfo() const
 {
-    return InfoFor(_plan.sceneTarget);
+    return InfoFor(_route.sceneTarget);
 }
 
 nvrhi::IFramebuffer *PostProcess::OverlayFramebuffer() const
 {
-    if (!_plan.Has(ChainStage::Overlays))
-    {
-        return nullptr;
-    }
-    return _plan.OverlaySurface() == ChainSurface::OverlayMultisample ? _overlayMsaaFramebuffer.Get()
-                                                                      : _ldrFramebuffer.Get();
+    return _route.overlays ? FramebufferFor(_route.toneMapped) : nullptr;
 }
 
 nvrhi::FramebufferInfo PostProcess::OverlayFramebufferInfo() const
 {
-    return InfoFor(_plan.OverlaySurface());
+    return InfoFor(_route.overlays ? _route.toneMapped : ChainSurface::Swapchain);
 }
 
-// `frame` may be null when the caller is asking about an offscreen surface —
-// the swapchain is the one surface this class does not own.
-nvrhi::IFramebuffer *PostProcess::FramebufferFor(ChainSurface surface, const RenderFrame *frame) const
+nvrhi::IFramebuffer *PostProcess::FramebufferFor(ChainSurface surface) const
 {
     switch (surface)
     {
@@ -431,10 +419,10 @@ nvrhi::IFramebuffer *PostProcess::FramebufferFor(ChainSurface surface, const Ren
     case ChainSurface::Ldr:                return _ldrFramebuffer;
     case ChainSurface::Swapchain:          break;
     }
-    return frame != nullptr ? frame->framebuffer : nullptr;
+    return nullptr;
 }
 
-nvrhi::ITexture *PostProcess::TextureFor(ChainSurface surface, const RenderFrame *frame) const
+nvrhi::ITexture *PostProcess::TextureFor(ChainSurface surface) const
 {
     switch (surface)
     {
@@ -444,102 +432,7 @@ nvrhi::ITexture *PostProcess::TextureFor(ChainSurface surface, const RenderFrame
     case ChainSurface::Ldr:                return _ldrColor;
     case ChainSurface::Swapchain:          break;
     }
-    return frame != nullptr ? frame->colorTexture : nullptr;
-}
-
-void PostProcess::RunBeforeOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame)
-{
-    RunSteps(commandList, frame, 0, _plan.IndexOf(ChainStage::Overlays));
-}
-
-void PostProcess::RunAfterOverlays(nvrhi::ICommandList *commandList, const RenderFrame &frame)
-{
-    const uint32_t overlays = _plan.IndexOf(ChainStage::Overlays);
-    // IndexOf returns stepCount when there is no overlay seam, which makes this
-    // an empty range — RunBeforeOverlays already ran the whole chain.
-    RunSteps(commandList, frame, overlays < _plan.stepCount ? overlays + 1 : _plan.stepCount, _plan.stepCount);
-}
-
-void PostProcess::RunSteps(nvrhi::ICommandList *commandList, const RenderFrame &frame, uint32_t first,
-                           uint32_t last)
-{
-    for (uint32_t i = first; i < last; ++i)
-    {
-        const ChainStep &step = _plan.steps[i];
-        if (step.stage == ChainStage::Overlays)
-        {
-            continue; // the app's, not ours
-        }
-
-        // Both read the resolved scene, before the tone map draws it.
-        if (step.stage == ChainStage::Tonemap && ExposureRuns())
-        {
-            _exposure.Run(commandList, _scene.exposure, _frameSeconds);
-        }
-        const bool bloom = step.stage == ChainStage::Tonemap && BloomRuns();
-        if (bloom)
-        {
-            _bloom.Run(commandList, _scene.bloomScatter);
-        }
-
-        // The chain's shape is data, so a step is only identifiable in a capture
-        // by the stage it runs. Two steps of the same stage appear as siblings
-        // of the same name, which is what they are.
-        ASSISI_PROFILE_GPU_SCOPE(commandList, StageName(step.stage));
-
-        if (step.stage == ChainStage::Resolve)
-        {
-            commandList->resolveTexture(TextureFor(step.destination, &frame), nvrhi::AllSubresources,
-                                        TextureFor(step.source, &frame), nvrhi::AllSubresources);
-            continue;
-        }
-
-        const StepResources &resources = _stepResources[i];
-        if (!resources.pipeline || !resources.bindingSet)
-        {
-            continue;
-        }
-
-        {
-            // Where a full-screen step's CPU cost actually is: nvrhi resolves
-            // the binding set and commits the barriers the target needs here,
-            // while the draw below is three vertices and a command.
-            ASSISI_PROFILE_SCOPE("graphics-state");
-            nvrhi::GraphicsState state;
-            state.pipeline = resources.pipeline;
-            state.framebuffer = FramebufferFor(step.destination, &frame);
-            state.addBindingSet(resources.bindingSet);
-            state.viewport.addViewportAndScissorRect(
-                nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-            commandList->setGraphicsState(state);
-        }
-
-        {
-            ASSISI_PROFILE_SCOPE("push-constants");
-            if (step.stage == ChainStage::Fxaa)
-            {
-                const glm::vec2 texelSize(1.0f / static_cast<float>(frame.width),
-                                          1.0f / static_cast<float>(frame.height));
-                commandList->setPushConstants(&texelSize, sizeof(texelSize));
-            }
-            else
-            {
-                // A Blit is the tone map shader told to copy: by the time it runs, the
-                // image it is moving has already been mapped, exposed and graded.
-                const bool copyThrough = (step.stage == ChainStage::Blit) || _tonemapPassthrough;
-                const TonemapConstants constants =
-                    MakeTonemapConstants(_tonemap, _scene, bloom ? _scene.bloomIntensity : 0.0f, copyThrough);
-                commandList->setPushConstants(&constants, sizeof(constants));
-            }
-        }
-
-        {
-            ASSISI_PROFILE_SCOPE("draw");
-            nvrhi::DrawArguments drawArgs;
-            drawArgs.vertexCount = 3;
-            commandList->draw(drawArgs);
-        }
-    }
+    return nullptr;
 }
 
 } // namespace Assisi::Render

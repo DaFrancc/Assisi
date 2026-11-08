@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-App)
 target_sources(Assisi-App
   PUBLIC
     "include/Assisi/App/AppConfig.hpp"
+    "include/Assisi/App/AppPasses.hpp"
     "include/Assisi/App/Application.hpp"
     "include/Assisi/App/AnimationSystems.hpp"
     "include/Assisi/App/AudioSystems.hpp"
@@ -35,6 +36,7 @@ target_sources(Assisi-App
     "include/Assisi/App/WorldFrame.hpp"
   PRIVATE
     "src/AppConfig.cpp"
+    "src/AppPasses.cpp"
     "src/Application.cpp"
     "src/AnimationSystems.cpp"
     "src/AudioSystems.cpp"
@@ -129,6 +131,16 @@ assisi_reflect(
     include/Assisi/App/PlayerSystems.hpp
     include/Assisi/App/MotionSystems.hpp
     include/Assisi/App/SystemRegistry.hpp
+)
+
+# The frame's passes around the scene: ordered from their declarations and
+# recorded by the walk generated here.
+assisi_generate_passes(
+  TARGET       Assisi-App
+  HEADER       include/Assisi/App/AppPasses.hpp
+  INCLUDE_ROOT include
+  GRAPH        App
+  BASE_LIST    "${CMAKE_BINARY_DIR}/generated/passes/app-base-passes.txt"
 )
 
 add_library(Assisi::App ALIAS Assisi-App)
