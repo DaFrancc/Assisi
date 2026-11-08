@@ -26,6 +26,8 @@ add_executable(Assisi-Render-Tests
   TestSceneDepth.cpp
   TestSsao.cpp
   TestTonemap.cpp
+  TestWater.cpp
+  TestWaterGrid.cpp
   TestWhiteBalance.cpp
 )
 
