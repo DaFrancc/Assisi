@@ -341,7 +341,7 @@ TEST_CASE("The largest tile holds a few of the longest waves, within its limits"
 
     // A pond's waves are short, and its tiles small with them.
     const float pondPeak = JonswapPeakFrequency(Pond().wind.windSpeed, Pond().wind.fetch);
-    const float pondWavelength = 2.0f * std::numbers::pi_v<float> * kWaterGravity / (pondPeak * pondPeak);
+    const float pondWavelength = 2.0f * std::numbers::pi_v<float> *kWaterGravity / (pondPeak * pondPeak);
     CHECK(LayoutCascades(Pond()).tileLength[0] == doctest::Approx(kWaterTileWavelengths * pondWavelength));
 
     // Water with no wind has no peak to size the tiles by.

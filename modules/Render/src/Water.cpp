@@ -269,12 +269,15 @@ float JonswapSpectrum(float omega, float peakFrequency, float alpha)
 
 float SignificantWaveHeight(const WaveSpectrum &spectrum)
 {
-    if (spectrum.peakFrequency <= 0.0f)
+    if (spectrum.peakFrequency <= 0.0f || spectrum.alpha <= 0.0f)
     {
         return 0.0f;
     }
-    return kSignificantHeightDeviations *
-           static_cast<float>(std::sqrt(SpectrumVariance(spectrum.peakFrequency, spectrum.alpha)));
+    // The spectrum's shape only scales with its peak, so its variance is
+    // α·g²/ωp⁴ times one integral, taken once; the gather asks this of every
+    // body every frame.
+    const float peak2 = spectrum.peakFrequency * spectrum.peakFrequency;
+    return kSignificantHeightDeviations * kWaterGravity * std::sqrt(spectrum.alpha * JonswapShapeVariance()) / peak2;
 }
 
 float SpreadExponent(float omega, const WaveSpectrum &spectrum)

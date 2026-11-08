@@ -145,5 +145,15 @@ Water adds two passes to the frame (see
 Water also needs the scene's depth as a distance, which ambient occlusion
 already makes; with ambient occlusion off, water makes it itself.
 
+Measured on an RTX 3070 at 1920 × 1080 with 8× MSAA, flying
+`levels/WaterCheck.alvl`'s camera route, where the sea and the lake are both in
+view and the water fills most of the screen:
+
+| Pass | Time per frame |
+|---|---|
+| `water-waves`, both bodies | 0.17 ms |
+| `draw-water` | 0.74 ms |
+| `scene-distance`, made for the water | 0.04 ms |
+
 A player can be allowed to turn water off; see
 [Water](rendering-settings.md#water) in the graphics settings.
