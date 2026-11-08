@@ -11,6 +11,7 @@
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -1024,17 +1025,19 @@ TEST_CASE("Clouds beside the sky's Skybox are part of that sky")
     (void)scene.Add<Skybox>(sun);
     CHECK_FALSE(ResolveSky(scene).clouds.present);
 
-    (void)scene.Add<Runtime::Clouds>(sun, Runtime::Clouds{.preset = Runtime::CloudPreset::Overcast,
-                                                          .changeRate = 3.f,
-                                                          .windSpeed = 12.f,
-                                                          .windBearingDegrees = 45.f,
-                                                          .seed = 99u});
+    (void)scene.Add<Runtime::Clouds>(
+        sun, Runtime::Clouds{.preset = Runtime::CloudPreset::Overcast, .changeRate = 3.f, .seed = 99u});
+    // No Wind, so still air: the clouds hang where they are.
+    CHECK(ResolveSky(scene).clouds.settings.windSpeed == 0.f);
+
+    // The level's wind, on an entity of its own.
+    (void)scene.Add<Runtime::Wind>(scene.Create(), Runtime::Wind{.speed = 12.f, .bearingDegrees = 45.f});
     const Runtime::SkyResolution resolved = ResolveSky(scene);
     REQUIRE(resolved.clouds.present);
     CHECK(resolved.clouds.settings.coverage ==
           doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Overcast)].coverage));
-    // The change rate, the wind and the seed are the component's whatever the
-    // preset.
+    // The change rate and the seed are the component's whatever the preset, and
+    // the wind is the level's.
     CHECK(resolved.clouds.settings.changeRate == doctest::Approx(3.f));
     CHECK(resolved.clouds.settings.windSpeed == doctest::Approx(12.f));
     CHECK(resolved.clouds.settings.windBearingDegrees == doctest::Approx(45.f));
@@ -1060,12 +1063,12 @@ TEST_CASE("A cloud preset answers the cloud fields; Custom reads them")
                            .thickness = 700.f,
                            .density = 0.3f,
                            .puffiness = 0.2f};
-    const Assisi::Render::CloudSettings fair = Runtime::ToCloudSettings(clouds);
+    const Assisi::Render::CloudSettings fair = Runtime::ToCloudSettings(clouds, Runtime::kStillAir);
     CHECK(fair.coverage == doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Fair)].coverage));
     CHECK(fair.baseHeight != doctest::Approx(3000.f));
 
     clouds.preset = Runtime::CloudPreset::Custom;
-    const Assisi::Render::CloudSettings custom = Runtime::ToCloudSettings(clouds);
+    const Assisi::Render::CloudSettings custom = Runtime::ToCloudSettings(clouds, Runtime::kStillAir);
     CHECK(custom.coverage == doctest::Approx(0.9f));
     CHECK(custom.baseHeight == doctest::Approx(3000.f));
     CHECK(custom.thickness == doctest::Approx(700.f));

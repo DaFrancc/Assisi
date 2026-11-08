@@ -543,6 +543,8 @@ private:
     bool _multipleSunsWarned = false;
     // The same for a scene with several Fogs.
     bool _severalFogsWarned = false;
+    // The same for a scene with several Winds.
+    bool _severalWindsWarned = false;
     // The same for fog volumes past what a frame draws.
     bool _droppedFogVolumesWarned = false;
     // The same for several PostProcessVolumes covering the whole level.

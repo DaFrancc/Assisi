@@ -26,6 +26,7 @@
 #include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 #include <array>
 #include <cstddef>
@@ -271,15 +272,15 @@ enum class CloudPreset : std::uint8_t
 /// sky. Without a Skybox there they are not drawn, and the log says so. Without
 /// this component a level has no clouds and pays nothing for them.
 ///
-/// The wind carries them as time passes, in the editor as in the game, whether
-/// or not the scene's clock runs. Each machine moves its own: clouds are
-/// scenery, and nothing in play depends on where they are.
+/// The level's Wind carries them as time passes, in the editor as in the game,
+/// whether or not the scene's clock runs. Each machine moves its own: clouds
+/// are scenery, and nothing in play depends on where they are.
 ACOMP()
 struct Clouds
 {
     /// Which kind of sky this is. Every value but Custom answers the five
-    /// fields below, which grey out. The change rate, the wind and the seed are
-    /// never greyed: they work with every preset.
+    /// fields below, which grey out. The change rate and the seed are never
+    /// greyed: they work with every preset.
     AFIELD(radioBroadcast) CloudPreset preset = CloudPreset::Scattered;
 
     /// How much of the sky is cloud, from 0 (clear) to 1 (overcast).
@@ -300,10 +301,6 @@ struct Clouds
     /// as real cumulus, which form and fade over a quarter of an hour.
     AFIELD(min = 0, max = 10) float changeRate = Assisi::Render::kDefaultCloudChangeRate;
 
-    /// How fast the wind carries the clouds, in metres per second.
-    AFIELD(min = 0, max = 100) float windSpeed = Assisi::Render::kDefaultCloudWindSpeed;
-    /// The compass bearing they move toward: 0 north, 90 east.
-    AFIELD() float windBearingDegrees = Assisi::Render::kDefaultCloudWindBearingDegrees;
     /// Which sky of this kind: the same settings with another seed give other
     /// clouds.
     AFIELD() uint32_t seed = 0;
@@ -451,7 +448,7 @@ static_assert(kSkyPresets.size() == static_cast<std::size_t>(SkyPreset::Custom) 
 
 /// @brief Every cloud preset, in the order @ref CloudPreset declares them. The
 /// change rate, the wind and the seed are left at their defaults: the
-/// component's own always replace them.
+/// component's own and the level's wind always replace them.
 inline constexpr std::array<Assisi::Render::CloudSettings, static_cast<std::size_t>(CloudPreset::Custom) + 1>
 kCloudPresets{{
     // Fair: a third of the sky, in heaped clouds shorter than they are wide.
@@ -478,8 +475,9 @@ kCloudPresets{{
 static_assert(kCloudPresets.size() == static_cast<std::size_t>(CloudPreset::Custom) + 1,
               "Every CloudPreset needs a row in kCloudPresets, and Custom has to stay last.");
 
-/// @brief The component's clouds as the render side wants them.
-[[nodiscard]] inline Assisi::Render::CloudSettings ToCloudSettings(const Clouds &clouds)
+/// @brief The component's clouds, carried by @p wind, as the render side wants
+/// them.
+[[nodiscard]] inline Assisi::Render::CloudSettings ToCloudSettings(const Clouds &clouds, const Wind &wind)
 {
     Assisi::Render::CloudSettings settings = kCloudPresets[static_cast<std::size_t>(clouds.preset)];
     if (clouds.preset == CloudPreset::Custom)
@@ -491,8 +489,8 @@ static_assert(kCloudPresets.size() == static_cast<std::size_t>(CloudPreset::Cust
         settings.puffiness = clouds.puffiness;
     }
     settings.changeRate = clouds.changeRate;
-    settings.windSpeed = clouds.windSpeed;
-    settings.windBearingDegrees = clouds.windBearingDegrees;
+    settings.windSpeed = wind.speed;
+    settings.windBearingDegrees = wind.bearingDegrees;
     settings.seed = clouds.seed;
     return Assisi::Render::Sanitized(settings);
 }

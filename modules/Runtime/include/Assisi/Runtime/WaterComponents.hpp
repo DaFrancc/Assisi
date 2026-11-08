@@ -4,10 +4,11 @@
 /// @file WaterComponents.hpp
 /// @brief Open water: the endless Ocean, and the Lake within its rectangle.
 ///
-/// Each puts water at its entity's height, with waves the wind raises over it.
-/// The components differ in how the water behaves: an ocean also carries swell
-/// from storms far away, and a lake's size limits how far the wind blows over
-/// it, so a small lake, a pond, gets small waves without being told to.
+/// Each puts water at its entity's height, with waves the level's Wind raises
+/// over it. The components differ in how the water behaves: an ocean also
+/// carries swell from storms far away, and a lake's size limits how far the
+/// wind blows over it, so a small lake, a pond, gets small waves without being
+/// told to.
 ///
 /// Not replicable: water is level data, which every machine reads from the
 /// same file. The waves depend only on these fields and the shared clock, so
@@ -25,10 +26,6 @@ namespace Assisi::Runtime
 
 /// @name What water starts with
 /// @{
-/// A fresh breeze over the sea; a light one over a lake.
-inline constexpr float kDefaultOceanWindSpeed = 8.f;
-inline constexpr float kDefaultLakeWindSpeed = 4.f;
-inline constexpr float kDefaultWaterWindBearingDegrees = 90.f;
 inline constexpr float kDefaultWaterSpread = 0.2f;
 inline constexpr float kDefaultSwellHeight = 1.f;
 inline constexpr float kDefaultSwellBearingDegrees = 60.f;
@@ -50,10 +47,6 @@ struct Ocean
     /// The colour of light that has crossed little water, which crests show
     /// when the sun is behind them.
     AFIELD() Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear> crestColor{0.03f, 0.16f, 0.15f};
-    /// The local wind, in metres per second. A gale is about twenty.
-    AFIELD(min = 0, max = 40) float windSpeed = kDefaultOceanWindSpeed;
-    /// The compass bearing the wind blows toward: 0 north, 90 east.
-    AFIELD() float windBearingDegrees = kDefaultWaterWindBearingDegrees;
     /// From 0, waves travel close to the wind, to 1, every way equally.
     AFIELD(min = 0, max = 1) float spread = kDefaultWaterSpread;
     /// The swell's significant height, in metres, as a forecast gives it: about
@@ -86,8 +79,6 @@ struct Lake
     /// can blow only this far over the water, which keeps a small lake's waves
     /// small.
     AFIELD() glm::vec2 size{40.f, 40.f};
-    AFIELD(min = 0, max = 40) float windSpeed = kDefaultLakeWindSpeed;
-    AFIELD() float windBearingDegrees = kDefaultWaterWindBearingDegrees;
     AFIELD(min = 0, max = 1) float spread = kDefaultWaterSpread;
     AFIELD(min = 0, max = 2) float choppiness = kDefaultLakeChoppiness;
     AFIELD(min = 0.1) float clarity = kDefaultLakeClarity;

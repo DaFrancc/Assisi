@@ -148,6 +148,10 @@ entity**, the one with the `DirectionalLight`. That light *is* the sun.
 | `Moon` | A moon that rises, sets, goes through phases and lights the world at night. Needs a `Sun` on the same entity. |
 | `Clouds` | Clouds that drift with the wind and shadow the ground. Pick a **preset**: `Fair`, `Scattered`, `Broken` or `Overcast`. Needs a `Skybox` on the same entity. |
 
+The wind isn't part of the sky: add a [`Wind`](rendering-wind.md) to any
+entity, and both the clouds and the water move with it. Without one the air is
+still.
+
 For the clock to move while the game runs, add the **`TimeOfDay` system** to
 the level's systems list. Without it the time stays where you set it, which is
 fine for a level that's always noon.

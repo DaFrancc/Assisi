@@ -9,6 +9,7 @@
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/WaterFrame.hpp>
 #include <Assisi/Runtime/WaterComponents.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 namespace Assisi::Runtime
 {
@@ -23,16 +24,17 @@ struct WaterGatherView
     float drawDistance = 0.0f;
 };
 
-/// @brief An Ocean's waves.
-[[nodiscard]] Render::WaterWaves OceanWaves(const Ocean &ocean);
+/// @brief An Ocean's waves under @p wind.
+[[nodiscard]] Render::WaterWaves OceanWaves(const Ocean &ocean, const Wind &wind);
 
-/// @brief A Lake's waves, its wind blowing over a rectangle @p extent metres
+/// @brief A Lake's waves, @p wind blowing over a rectangle @p extent metres
 /// wide whose x axis points along @p axisX in the world: the fetch is the
 /// rectangle's width along the wind.
-[[nodiscard]] Render::WaterWaves LakeWaves(const Lake &lake, glm::vec2 extent, glm::vec2 axisX);
+[[nodiscard]] Render::WaterWaves LakeWaves(const Lake &lake, const Wind &wind, glm::vec2 extent, glm::vec2 axisX);
 
 /// @brief Fills @p frame with every Ocean and Lake @p view sees, and the
-/// patches that draw each. A body none of whose patches is in view is left out.
+/// patches that draw each, under the scene's wind. A body none of whose
+/// patches is in view is left out.
 void GatherWater(const ECS::Scene &scene, const WaterGatherView &view, Render::WaterFrame &frame);
 
 } // namespace Assisi::Runtime

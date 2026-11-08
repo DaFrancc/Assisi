@@ -42,8 +42,6 @@
         },
         "Clouds": {
           "preset": 1,
-          "windSpeed": 0.0,
-          "windBearingDegrees": 90.0,
           "changeRate": 0.0
         },
         "Sun": {

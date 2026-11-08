@@ -4,6 +4,7 @@
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -69,12 +70,12 @@ void AddBody(Render::WaterBody body, const WaterGatherView &view, Render::WaterF
 
 } // namespace
 
-Render::WaterWaves OceanWaves(const Ocean &ocean)
+Render::WaterWaves OceanWaves(const Ocean &ocean, const Wind &wind)
 {
     return Render::Sanitized(Render::WaterWaves{
-            .wind = Render::WindSea{.windSpeed = ocean.windSpeed,
+            .wind = Render::WindSea{.windSpeed = wind.speed,
                                     .fetch = Render::kOceanFetch,
-                                    .bearingDegrees = ocean.windBearingDegrees,
+                                    .bearingDegrees = wind.bearingDegrees,
                                     .spread = ocean.spread},
             .swell = Render::Swell{.height = ocean.swellHeight,
                                    .period = ocean.swellPeriod,
@@ -83,15 +84,15 @@ Render::WaterWaves OceanWaves(const Ocean &ocean)
             .seed = ocean.seed});
 }
 
-Render::WaterWaves LakeWaves(const Lake &lake, glm::vec2 extent, glm::vec2 axisX)
+Render::WaterWaves LakeWaves(const Lake &lake, const Wind &wind, glm::vec2 extent, glm::vec2 axisX)
 {
-    const glm::vec2 wind = BearingDirection(lake.windBearingDegrees);
+    const glm::vec2 along = BearingDirection(wind.bearingDegrees);
     const glm::vec2 axisZ(-axisX.y, axisX.x);
-    const float fetch = std::abs(glm::dot(wind, axisX)) * extent.x + std::abs(glm::dot(wind, axisZ)) * extent.y;
+    const float fetch = std::abs(glm::dot(along, axisX)) * extent.x + std::abs(glm::dot(along, axisZ)) * extent.y;
     return Render::Sanitized(Render::WaterWaves{
-            .wind = Render::WindSea{.windSpeed = lake.windSpeed,
+            .wind = Render::WindSea{.windSpeed = wind.speed,
                                     .fetch = fetch,
-                                    .bearingDegrees = lake.windBearingDegrees,
+                                    .bearingDegrees = wind.bearingDegrees,
                                     .spread = lake.spread},
             .swell = Render::Swell{},
             .choppiness = lake.choppiness,
@@ -101,6 +102,7 @@ Render::WaterWaves LakeWaves(const Lake &lake, glm::vec2 extent, glm::vec2 axisX
 void GatherWater(const ECS::Scene &scene, const WaterGatherView &view, Render::WaterFrame &frame)
 {
     frame.Clear();
+    const Wind wind = ResolveWind(scene).wind;
     for (auto [entity, world, ocean] : scene.Query<ECS::WorldMatrix, Ocean>())
     {
         Render::WaterBody body;
@@ -108,7 +110,7 @@ void GatherWater(const ECS::Scene &scene, const WaterGatherView &view, Render::W
         // sit on the world's own grid wherever the entity was put.
         body.region.origin = glm::dvec3(0.0, ECS::WorldPositionOf(world).y, 0.0);
         body.key = KeyOf(entity);
-        body.waves = OceanWaves(ocean);
+        body.waves = OceanWaves(ocean, wind);
         body.look = LookOf(ocean.color, ocean.crestColor, ocean.clarity);
         AddBody(body, view, frame);
     }
@@ -131,7 +133,7 @@ void GatherWater(const ECS::Scene &scene, const WaterGatherView &view, Render::W
         Render::WaterBody body;
         body.region = Render::WaterRegion{.origin = ECS::WorldPositionOf(world), .axisX = axisX, .halfExtent = 0.5f * extent};
         body.key = KeyOf(entity);
-        body.waves = LakeWaves(lake, extent, axisX);
+        body.waves = LakeWaves(lake, wind, extent, axisX);
         body.look = LookOf(lake.color, lake.crestColor, lake.clarity);
         AddBody(body, view, frame);
     }

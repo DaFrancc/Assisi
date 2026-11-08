@@ -82,14 +82,20 @@ TEST_CASE("cloud settings are brought into range")
     CHECK(tamed.windBearingDegrees == doctest::Approx(90.0f));
 }
 
-TEST_CASE("the wind blows toward its bearing, at its speed")
+TEST_CASE("the clouds move toward the wind's bearing, faster than the wind near the ground")
 {
+    // Up where the clouds are, the wind outruns the wind 10 m up.
+    const double aloft = 5.0 * kCloudWindScale;
     const glm::dvec2 north = CloudWindVelocity(CloudSettings{.windSpeed = 5.0f, .windBearingDegrees = 0.0f});
     CHECK(north.x == doctest::Approx(0.0));
-    CHECK(north.y == doctest::Approx(-5.0));
+    CHECK(north.y == doctest::Approx(-aloft));
     const glm::dvec2 east = CloudWindVelocity(CloudSettings{.windSpeed = 5.0f, .windBearingDegrees = 90.0f});
-    CHECK(east.x == doctest::Approx(5.0));
+    CHECK(east.x == doctest::Approx(aloft));
     CHECK(east.y == doctest::Approx(0.0).epsilon(1e-9));
+    CHECK(kCloudWindScale > 1.0);
+
+    // Still air by default.
+    CHECK(glm::length(CloudWindVelocity(CloudSettings{})) == 0.0);
 }
 
 TEST_CASE("the clouds stay put in the world as the camera moves, and move with the wind")
@@ -182,8 +188,10 @@ TEST_CASE("the clouds change shape at their change rate, and not at all at zero"
     {
         motion = AdvanceClouds(motion, settings, 0.1);
     }
-    CHECK(motion.drift.x == doctest::Approx(10.0));
-    CHECK(motion.churn.x == doctest::Approx(10.0));
+    // A second at the clouds' own speed.
+    const double carried = 10.0 * kCloudWindScale;
+    CHECK(motion.drift.x == doctest::Approx(carried));
+    CHECK(motion.churn.x == doctest::Approx(carried));
     CHECK(motion.rise == doctest::Approx(1.0));
 
     const glm::dvec3 camera(0.0);
@@ -201,7 +209,7 @@ TEST_CASE("the clouds change shape at their change rate, and not at all at zero"
 
     // A stall moves the clouds no further than the longest step.
     const CloudMotion stalled = AdvanceClouds(CloudMotion{}, settings, 30.0);
-    CHECK(stalled.drift.x == doctest::Approx(10.0 * kMaxCloudDriftStep));
+    CHECK(stalled.drift.x == doctest::Approx(carried * kMaxCloudDriftStep));
 }
 
 TEST_CASE("a noise offset keeps its precision however far out the camera is")
