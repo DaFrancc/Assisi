@@ -5,6 +5,7 @@
 /// @brief Which wind a scene has.
 
 #include <Assisi/ECS/SceneFwd.hpp>
+#include <Assisi/Render/Gusts.hpp>
 #include <Assisi/Runtime/WindComponents.hpp>
 
 #include <cstdint>
@@ -23,5 +24,8 @@ struct WindResolution
 
 /// @brief The scene's wind: its first Wind, or still air.
 [[nodiscard]] WindResolution ResolveWind(const ECS::Scene &scene);
+
+/// @brief @p wind as the gusts take it: its direction across the world.
+[[nodiscard]] Render::Gusts GustsOf(const Wind &wind);
 
 } // namespace Assisi::Runtime

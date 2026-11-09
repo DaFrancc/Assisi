@@ -3,7 +3,7 @@
 
 // Places one vertex of a water patch: on the body's grid, blended toward the
 // coarser level near the patch's outer range, clamped inside a lake, and moved
-// by every cascade's waves.
+// by every cascade's waves, each as tall as the gusts and the shore leave it.
 
 #include "water/surface.glsl"
 
@@ -57,12 +57,13 @@ void main()
 
     // Each cascade at the mip whose texels match the vertex spacing, so a
     // coarse vertex takes the waves averaged over its patch, not one point.
-    float vertexSpacing = spacing * (1.0 + morph);
-    vec3  displacement  = vec3(0.0);
+    float     vertexSpacing = spacing * (1.0 + morph);
+    vec3      displacement  = vec3(0.0);
+    WaveScale scale         = WaveScaleAt(grid, local);
     for (uint cascade = 0u; cascade < kSurfaceCascadeCount; ++cascade)
     {
         float lod    = max(log2(vertexSpacing * float(kSurfaceFftSize) / uWater.tileLength[cascade]), 0.0);
-        float weight = 1.0 - smoothstep(kDisplacementFadeStartLod, kDisplacementFadeEndLod, lod);
+        float weight = scale.cascades[cascade] * (1.0 - smoothstep(kDisplacementFadeStartLod, kDisplacementFadeEndLod, lod));
         if (weight > 0.0)
         {
             vec3 uv = vec3(WaterUv(grid, cascade), float(cascade));

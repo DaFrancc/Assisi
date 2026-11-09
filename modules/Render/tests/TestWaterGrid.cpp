@@ -99,7 +99,7 @@ TEST_CASE("Neighbouring patches differ by at most one level, and the blend betwe
         uint32_t borders = 0u;
         for (const WaterNode &node : nodes)
         {
-            for (const glm::vec2 outside : PointsAcrossEdges(node, kWaterFinestSpacing * 0.5f))
+            for (const glm::vec2 outside : PointsAcrossEdges(node, kWaterMaxFinestSpacing * 0.5f))
             {
                 const std::vector<const WaterNode *> across = NodesAt(nodes, outside);
                 if (across.empty())
@@ -114,8 +114,8 @@ TEST_CASE("Neighbouring patches differ by at most one level, and the blend betwe
                     // On the shared edge the finer patch has blended all the way
                     // to the coarser level, and the coarser not begun to blend.
                     const float distance = DistanceFromCamera(outside, height);
-                    CHECK(WaterMorph(distance, node.level) == doctest::Approx(1.0f));
-                    CHECK(WaterMorph(distance, neighbour.level) == doctest::Approx(0.0f));
+                    CHECK(WaterMorph(distance, node.level, kWaterMaxFinestSpacing) == doctest::Approx(1.0f));
+                    CHECK(WaterMorph(distance, neighbour.level, kWaterMaxFinestSpacing) == doctest::Approx(0.0f));
                     ++borders;
                 }
             }
@@ -136,6 +136,25 @@ TEST_CASE("The finest patches surround the camera, and rise with it")
     const std::vector<const WaterNode *> belowHigh = NodesAt(nodes, glm::vec2(0.0f));
     REQUIRE(belowHigh.size() == 1u);
     CHECK(belowHigh.front()->level > 2u);
+}
+
+TEST_CASE("Short waves get a finer mesh near the camera, within limits")
+{
+    // A pond's waves a quarter of a metre long get eight vertices each.
+    CHECK(WaterFinestSpacing(0.25f) == doctest::Approx(0.25f / kWaterVerticesPerWavelength));
+    CHECK(WaterFinestSpacing(100.0f) == doctest::Approx(kWaterMaxFinestSpacing));
+    CHECK(WaterFinestSpacing(0.01f) == doctest::Approx(kWaterMinFinestSpacing));
+    CHECK(WaterFinestSpacing(0.0f) == doctest::Approx(kWaterMaxFinestSpacing));
+
+    WaterGridView view = ViewFrom(glm::dvec3(5.0, 1.5, 5.0), 3000.0f);
+    view.finestSpacing = WaterFinestSpacing(0.25f);
+    std::vector<WaterNode> nodes;
+    SelectWaterNodes(Sea(), view, nodes);
+    const std::vector<const WaterNode *> below = NodesAt(nodes, glm::vec2(0.0f));
+    REQUIRE(below.size() == 1u);
+    CHECK(below.front()->level == 0u);
+    CHECK(below.front()->size == doctest::Approx(WaterNodeSize(0u, view.finestSpacing)));
+    CHECK(below.front()->size < WaterNodeSize(0u, kWaterMaxFinestSpacing));
 }
 
 TEST_CASE("Nothing is drawn past the draw distance or with the camera that far above")
@@ -209,7 +228,7 @@ TEST_CASE("Patches sit on a grid fixed to the water, the same far from the origi
 
     // Moved a whole number of the coarsest node's size, the patches are the
     // same around the camera, hundreds of kilometres out.
-    const double coarsest = static_cast<double>(WaterNodeSize(kMaxWaterLevels - 1u));
+    const double coarsest = static_cast<double>(WaterNodeSize(kMaxWaterLevels - 1u, kWaterMaxFinestSpacing));
     const glm::dvec3 far = near + glm::dvec3(coarsest * 3.0, 0.0, -coarsest * 2.0);
     std::vector<WaterNode> nodesFar;
     SelectWaterNodes(Sea(), ViewFrom(far, 3000.0f), nodesFar);

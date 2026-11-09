@@ -853,6 +853,7 @@ void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &
     }
     renderer->Draw(rec.Frame(out.Get<SceneColor>()), *frame.water,
                    Render::WaterDrawView{.camera = frame.viewOrigin,
+                                         .seconds = frame.waterSeconds,
                                          .frameBindings = out.Get<MeshPass>().FrameBindingSet(),
                                          .sceneDistance = distance});
 }

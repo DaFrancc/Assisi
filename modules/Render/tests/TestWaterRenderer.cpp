@@ -55,7 +55,8 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
 {
     const WaterBody sea = Sea();
     const glm::dvec3 camera(123456.25, 4.0, -98765.5);
-    const WaterDrawConstants constants = MakeWaterDrawConstants(sea, camera);
+    const Gusts gusts{.toward = glm::vec2(0.6f, -0.8f), .speed = 7.0f, .gustFactor = 1.4f};
+    const WaterDrawConstants constants = MakeWaterDrawConstants(sea, gusts, camera, 1234.5);
 
     // Each cascade's offset is the camera's place in its tile.
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
@@ -71,15 +72,37 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
     CHECK(constants.surface.x == doctest::Approx(-5.5f));
     CHECK(constants.surface.y == doctest::Approx(1.7f));
     CHECK(constants.color.w == doctest::Approx(9.0f));
-    // An ocean reaches past anything drawn.
+    // An ocean reaches past anything drawn, and its waves grow from no shore.
     CHECK(constants.bounds.x < -1.0e8f);
     CHECK(constants.bounds.w > 1.0e8f);
+    CHECK(constants.wind.z == 0.0f);
+    // All the wind reaches it, and its ripples are as the wind raises them.
+    CHECK(constants.wind.w == doctest::Approx(1.0f));
+    CHECK(constants.ripples.x == doctest::Approx(1.0f));
+    // The gusts are found around the camera, and each cascade says how much of
+    // it follows them.
+    const GustConstants expected = MakeGustConstants(gusts, camera, 1234.5);
+    CHECK(constants.gusts.cell == expected.cell);
+    CHECK(constants.gusts.wind == expected.wind);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CHECK(constants.rippleShare[static_cast<glm::length_t>(c)] == doctest::Approx(RippleShare(sea.cascades, c)));
+    }
 
     // A lake's rectangle is measured from the camera in its own frame.
     WaterBody lake = Sea();
     lake.region = WaterRegion{.origin = glm::dvec3(100.0, 20.0, -50.0), .axisX = glm::vec2(1.0f, 0.0f),
                               .halfExtent = glm::vec2(15.0f, 10.0f)};
-    const WaterDrawConstants lakeConstants = MakeWaterDrawConstants(lake, glm::dvec3(110.0, 25.0, -45.0));
+    lake.waves.wind.fetch = 500.0f;
+    lake.crossing = 30.0f;
+    lake.windInBody = glm::vec2(1.0f, 0.0f);
+    lake.windShare = 0.3f;
+    lake.look.ripples = 0.5f;
+    const WaterDrawConstants lakeConstants = MakeWaterDrawConstants(lake, gusts, glm::dvec3(110.0, 25.0, -45.0), 0.0);
+    CHECK(lakeConstants.wind.x == doctest::Approx(1.0f));
+    CHECK(lakeConstants.wind.z == doctest::Approx(30.0f));
+    CHECK(lakeConstants.wind.w == doctest::Approx(0.3f));
+    CHECK(lakeConstants.ripples.x == doctest::Approx(0.5f));
     CHECK(lakeConstants.bounds.x == doctest::Approx(-25.0f));
     CHECK(lakeConstants.bounds.y == doctest::Approx(-15.0f));
     CHECK(lakeConstants.bounds.z == doctest::Approx(5.0f));

@@ -19,6 +19,8 @@ Wind Sanitized(Wind wind)
     wind.speed = std::isfinite(wind.speed) ? std::clamp(wind.speed, kStillAir.speed, kMaxWindSpeed) : kStillAir.speed;
     wind.bearingDegrees = std::isfinite(wind.bearingDegrees) ? std::fmod(wind.bearingDegrees, kFullTurnDegrees)
                                                              : kStillAir.bearingDegrees;
+    wind.gustFactor = std::isfinite(wind.gustFactor) ? std::clamp(wind.gustFactor, kSteadyGustFactor, kMaxGustFactor)
+                                                     : kDefaultGustFactor;
     return wind;
 }
 
@@ -37,6 +39,15 @@ WindResolution ResolveWind(const ECS::Scene &scene)
         }
     }
     return resolution;
+}
+
+Render::Gusts GustsOf(const Wind &wind)
+{
+    const float bearing = glm::radians(wind.bearingDegrees);
+    // North is -z and east +x, so a bearing turns from -z toward +x.
+    return Render::Gusts{.toward = glm::vec2(std::sin(bearing), -std::cos(bearing)),
+                         .speed = wind.speed,
+                         .gustFactor = wind.gustFactor};
 }
 
 } // namespace Assisi::Runtime

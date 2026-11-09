@@ -29,8 +29,16 @@ namespace Assisi::Render
 /// @brief Quads along each side of the patch.
 inline constexpr uint32_t kWaterPatchQuads = 32u;
 
-/// @brief Metres between the vertices of the finest level.
-inline constexpr float kWaterFinestSpacing = 0.25f;
+/// @name Metres between the vertices of the finest level
+/// @{
+/// A body's finest level puts this many vertices along its longest waves, so
+/// they keep their shape in the mesh where the camera is close.
+inline constexpr float kWaterVerticesPerWavelength = 8.0f;
+/// The coarsest it gets, for long waves: shorter ones show in the shading.
+inline constexpr float kWaterMaxFinestSpacing = 0.25f;
+/// The finest it gets, for a pond's waves a few centimetres long.
+inline constexpr float kWaterMinFinestSpacing = 0.02f;
+/// @}
 
 /// @brief A level is drawn out to this many of its own node sizes from the
 /// camera.
@@ -73,6 +81,8 @@ struct WaterGridView
     /// How far the waves can move the surface from its plane in any direction,
     /// in metres, so a node is not culled while its waves still show.
     float waveReach = 0.0f;
+    /// Metres between the vertices of the finest level (WaterFinestSpacing).
+    float finestSpacing = kWaterMaxFinestSpacing;
 };
 
 /// @brief One patch to draw.
@@ -86,15 +96,20 @@ struct WaterNode
     uint32_t level = 0u;
 };
 
-/// @brief The side of a node at @p level, in metres.
-[[nodiscard]] float WaterNodeSize(uint32_t level);
+/// @brief The finest level's vertex spacing for a body whose longest waves are
+/// @p longestWavelength metres long; the coarsest spacing for still water.
+[[nodiscard]] float WaterFinestSpacing(float longestWavelength);
+
+/// @brief The side of a node at @p level, in metres, for a grid whose finest
+/// level's vertices are @p finestSpacing apart.
+[[nodiscard]] float WaterNodeSize(uint32_t level, float finestSpacing);
 
 /// @brief How far from the camera @p level is drawn, in metres.
-[[nodiscard]] float WaterLodRange(uint32_t level);
+[[nodiscard]] float WaterLodRange(uint32_t level, float finestSpacing);
 
 /// @brief How far a vertex @p distance metres from the camera, in a patch at
 /// @p level, has blended toward the next level: 0 not at all, 1 wholly.
-[[nodiscard]] float WaterMorph(float distance, uint32_t level);
+[[nodiscard]] float WaterMorph(float distance, uint32_t level, float finestSpacing);
 
 /// @brief @p world measured in @p region's own frame from its centre, along
 /// its x and z axes.

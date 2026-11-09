@@ -4,8 +4,11 @@
 const float kPi    = 3.14159265359;
 const float kTwoPi = 6.28318530718;
 
-// Must match Render::kWaterGravity, kWaterFftSize and kWaterLoopSeconds.
+// Must match Render::kWaterGravity, kWaterTensionPerDensity, kShortestWaterWave,
+// kWaterFftSize and kWaterLoopSeconds.
 const float kWaterGravity     = 9.81;
+const float kWaterTensionPerDensity = 7.29e-5;
+const float kShortestWaterWave      = 0.004;
 const uint  kWaterFftSize     = 256u;
 const uint  kWaterFftLog2     = 8u;
 const float kWaterLoopSeconds = 1024.0;
@@ -17,6 +20,10 @@ const float kJonswapPeakEnhancement = 3.3;
 const float kJonswapWidthBelow      = 0.07;
 const float kJonswapWidthAbove      = 0.09;
 const float kJonswapLowestShare     = 0.1;
+// Render::kGrownWindRatio, and how fast a young sea's extra energy fades above
+// its peak, Render::kPeakFalloffPerAge.
+const float kGrownWindRatio    = 1.17;
+const float kPeakFalloffPerAge = 0.31622777;
 
 // Hasselmann's spread, as Horvath fits it.
 const float kSpreadBelowScale         = 6.97;
@@ -41,10 +48,12 @@ const float kUniformScale  = 1.0 / 16777216.0;
 const float kUniformCentre = 0.5;
 
 // One JONSWAP spectrum: x = peak frequency, y = alpha, z = youth, w = bearing
-// in radians; and its spread and swell, as Render::WaveSpectrum holds them.
+// in radians; its alpha far above the peak; and its spread and swell, as
+// Render::WaveSpectrum holds them.
 struct WaveShape
 {
     vec4  peakAlphaYouthBearing;
+    float tailAlpha;
     float spread;
     float swell;
 };
@@ -77,8 +86,11 @@ vec2 GaussianPair(uint seed, uint cascade, ivec2 frequency)
     return vec2(radius * cos(angle), radius * sin(angle));
 }
 
-float JonswapSpectrum(float omega, float peak, float alpha)
+// Render::JonswapSpectrum.
+float JonswapSpectrum(float omega, WaveShape shape)
 {
+    float peak  = shape.peakAlphaYouthBearing.x;
+    float alpha = shape.peakAlphaYouthBearing.y;
     if (peak <= 0.0 || alpha <= 0.0 || omega < peak * kJonswapLowestShare)
     {
         return 0.0;
@@ -89,7 +101,10 @@ float JonswapSpectrum(float omega, float peak, float alpha)
     float ratio       = peak / omega;
     float ratio2      = ratio * ratio;
     float omega2      = omega * omega;
-    return alpha * kWaterGravity * kWaterGravity / (omega2 * omega2 * omega) * exp(-kJonswapRise * ratio2 * ratio2) *
+    float inverseAge  = shape.peakAlphaYouthBearing.z + kGrownWindRatio;
+    float peakShare   = omega <= peak ? 1.0 : exp(-kPeakFalloffPerAge * inverseAge * (omega / peak - 1.0));
+    float alphaHere   = shape.tailAlpha + (alpha - shape.tailAlpha) * peakShare;
+    return alphaHere * kWaterGravity * kWaterGravity / (omega2 * omega2 * omega) * exp(-kJonswapRise * ratio2 * ratio2) *
            enhancement;
 }
 
@@ -144,6 +159,12 @@ float DeepWaterFrequency(float k)
     return sqrt(kWaterGravity * max(k, 0.0));
 }
 
+float WaveFrequency(float k)
+{
+    float kPositive = max(k, 0.0);
+    return sqrt(kWaterGravity * kPositive + kWaterTensionPerDensity * kPositive * kPositive * kPositive);
+}
+
 float LoopedFrequency(float omega)
 {
     float turn = kTwoPi / kWaterLoopSeconds;
@@ -163,7 +184,7 @@ float WavenumberSpectrum(WaveShape shape, vec2 k, float kLength)
     vec2  toward  = vec2(sin(bearing), -cos(bearing));
     float theta   = atan(toward.x * k.y - toward.y * k.x, dot(toward, k));
     float omegaPerK = kWaterGravity / (2.0 * omega);
-    return JonswapSpectrum(omega, peak, shape.peakAlphaYouthBearing.y) *
+    return JonswapSpectrum(omega, shape) *
            DirectionalSpread(theta, SpreadExponent(omega, shape), shape.spread) * omegaPerK / kLength;
 }
 

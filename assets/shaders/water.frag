@@ -96,19 +96,27 @@ struct Slopes
 
 Slopes SlopesHere()
 {
+    vec2      axisX = uWater.axes.xy;
+    vec2      local = vec2(dot(vGridPos, axisX), dot(vGridPos, vec2(-axisX.y, axisX.x)));
+    WaveScale scale = WaveScaleAt(vGridPos, local);
+    float     finer = uWater.surface.z * scale.ripples * scale.ripples;
+
     Slopes slopes;
     slopes.mean       = vec2(0.0);
-    slopes.covariance = vec3(uWater.surface.z, uWater.surface.z, 0.0);
+    slopes.covariance = vec3(finer, finer, 0.0);
     for (uint cascade = 0u; cascade < kSurfaceCascadeCount; ++cascade)
     {
         vec3  uv     = vec3(WaterUv(vGridPos, cascade), float(cascade));
         vec4  moment = texture(sampler2DArray(uSlopes, uWaterSampler), uv);
         float crossMoment = texture(sampler2DArray(uDisplacement, uWaterSampler), uv).w;
         float trust = clamp(textureQueryLod(sampler2DArray(uSlopes, uWaterSampler), uv.xy).y / kTrustedVarianceLod, 0.0, 1.0);
+        // A cascade scaled by s has its slopes' means scaled by s and their
+        // squares by s².
+        float s = scale.cascades[cascade];
         // Bands are independent: their means add, and so do their variances.
-        slopes.mean += moment.xy;
-        slopes.covariance +=
-            trust * vec3(max(moment.zw - moment.xy * moment.xy, vec2(0.0)), crossMoment - moment.x * moment.y);
+        slopes.mean += s * moment.xy;
+        slopes.covariance += trust * s * s *
+                             vec3(max(moment.zw - moment.xy * moment.xy, vec2(0.0)), crossMoment - moment.x * moment.y);
     }
     slopes.covariance.xy = max(slopes.covariance.xy, vec2(kMinSlopeVariance));
     return slopes;

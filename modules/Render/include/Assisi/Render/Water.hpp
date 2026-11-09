@@ -102,6 +102,42 @@ inline constexpr float kDefaultSwellPeriod = 10.0f;
 /// most crests fold over themselves.
 inline constexpr float kMaxWaterChoppiness = 2.0f;
 
+/// @brief Water's surface tension over its density, σ/ρ, in m³/s², at 20 °C.
+/// It is what holds ripples a few centimetres long together, and it makes them
+/// travel faster than gravity alone would: twice as fast at one centimetre.
+inline constexpr float kWaterTensionPerDensity = 7.29e-5f;
+
+/// @brief The shortest wave the spectrum holds, in metres. Viscosity damps a
+/// ripple this short to a third of its height within a fifth of a second in
+/// clean water, faster under the film natural water carries, so the wind keeps
+/// none shorter; and surface tension makes shorter ones so fast that their
+/// phase after minutes would be lost to float precision.
+inline constexpr float kShortestWaterWave = 0.004f;
+
+/// @name Ripples, and how they follow the gusts
+/// @{
+/// Waves shorter than this grow and die within one gust, so they follow the
+/// wind where they are; longer ones follow the steady wind. By Plant's growth
+/// rate, 0.04·(u*/c)²·ω, a wave this long in a 2 m/s wind grows in about 45 s,
+/// about the time a gust takes to pass.
+inline constexpr float kRippleWavelength = 0.1f;
+/// The wind, 10 m up, below which the water stays glassy and at which ripples
+/// are fully grown, in metres per second. Waves begin to grow at a 10 m wind of
+/// 0.6 to 1.6 m/s (Kahma and Donelan, 1988), and tanks show them readily at 2.4
+/// to 3.3 m/s.
+inline constexpr float kRippleOnsetSpeed = 1.0f;
+inline constexpr float kRippleGrownSpeed = 3.0f;
+/// Cox and Munk's mean square slope of a clean sea, 0.003 + 0.00512·U: the
+/// ripples' steepness grows with the wind this way.
+inline constexpr float kRippleSlopeBase = 0.003f;
+inline constexpr float kRippleSlopePerSpeed = 0.00512f;
+/// @}
+
+/// @brief The height of a sea's waves near its peak grows as the fetch to this
+/// power, at a fixed wind: JONSWAP's α goes as F^-0.22 and its ωp as F^-1/3,
+/// and that height as √α/ωp².
+inline constexpr float kFetchGrowthExponent = 2.0f / 3.0f - 0.22f / 2.0f;
+
 /// @brief The waves a local wind raises.
 struct WindSea
 {
@@ -153,6 +189,54 @@ struct WaterWaves
 /// @brief @p waves with every field finite and in range.
 [[nodiscard]] WaterWaves Sanitized(WaterWaves waves);
 
+/// @name A lake's limits and defaults: an open lake's
+/// @{
+/// Silty water: deep green-brown, and greener where light has crossed little
+/// of it.
+inline constexpr glm::vec3 kDefaultLakeColor{0.006f, 0.02f, 0.016f};
+inline constexpr glm::vec3 kDefaultLakeCrestColor{0.03f, 0.1f, 0.06f};
+inline constexpr float kDefaultLakeSpread = 0.2f;
+inline constexpr float kDefaultLakeChoppiness = 0.6f;
+/// A lake is clouded with silt: metres before all but a third of the light is
+/// gone.
+inline constexpr float kDefaultLakeClarity = 4.0f;
+inline constexpr float kMinLakeClarity = 0.1f;
+/// Open water, with a little of the wind kept off by its banks.
+inline constexpr float kDefaultLakeShelter = 0.2f;
+/// Ripples as the wind raises them; twice that is choppy.
+inline constexpr float kDefaultLakeRipples = 1.0f;
+inline constexpr float kMaxLakeRipples = 2.0f;
+/// @}
+
+/// @brief What makes a lake the kind it is: how it looks, how much of the wind
+/// reaches it, and how its waves move.
+struct LakeSettings
+{
+    /// The colour light comes back from deep water in, linear.
+    glm::vec3 color = kDefaultLakeColor;
+    /// The colour of light that has crossed little water, which crests show
+    /// when the sun is behind them, linear.
+    glm::vec3 crestColor = kDefaultLakeCrestColor;
+    /// From 0, waves travel close to the wind, to 1, every way equally.
+    float spread = kDefaultLakeSpread;
+    /// How far the surface is pulled toward each crest.
+    float choppiness = kDefaultLakeChoppiness;
+    /// How far light goes into the water before all but a third of it is gone,
+    /// in metres.
+    float clarity = kDefaultLakeClarity;
+    /// How much of the level's wind its banks and trees keep off: 0 none, 1 all.
+    float shelter = kDefaultLakeShelter;
+    /// How strongly its ripples show: 0 glassy, 1 as the wind raises them.
+    float ripples = kDefaultLakeRipples;
+    /// Which lake of the kind the rest describes.
+    uint32_t seed = 0u;
+
+    bool operator==(const LakeSettings &) const = default;
+};
+
+/// @brief @p settings with every field finite and in range.
+[[nodiscard]] LakeSettings Sanitized(LakeSettings settings);
+
 /// @brief One JONSWAP spectrum, as the GPU takes it: where it peaks, how much
 /// energy it holds and how it spreads around its bearing. A wind sea and a swell
 /// both come to one of these.
@@ -160,8 +244,13 @@ struct WaveSpectrum
 {
     /// ωp, in radians per second. Zero holds no waves.
     float peakFrequency = 0.0f;
-    /// JONSWAP's α: how much energy the sea holds overall.
+    /// JONSWAP's α: how much energy the sea holds overall, at its peak.
     float alpha = 0.0f;
+    /// α far above the peak: the open sea's for the same wind, never more than
+    /// alpha. Short waves are set by the wind where they are, not by how far it
+    /// has blown, so a pond's ripples are the sea's, and only its waves near the
+    /// peak hold a young sea's extra energy.
+    float tailAlpha = 0.0f;
     /// U·ωp/g less a fully grown sea's: how young the sea is, which widens the
     /// spread of the waves shorter than the peak.
     float youth = 0.0f;
@@ -194,9 +283,9 @@ struct WaveSpectrum
 [[nodiscard]] WaveSpectrum SpectrumOf(const Swell &swell);
 
 /// @brief The JONSWAP spectrum: how much the height of the sea varies, per unit
-/// of angular frequency, at @p omega, for a sea peaking at @p peakFrequency
-/// with energy @p alpha.
-[[nodiscard]] float JonswapSpectrum(float omega, float peakFrequency, float alpha);
+/// of angular frequency, at @p omega, for @p spectrum. Its α is the spectrum's
+/// own up to the peak and falls to its tailAlpha above it.
+[[nodiscard]] float JonswapSpectrum(float omega, const WaveSpectrum &spectrum);
 
 /// @brief The significant wave height of @p spectrum, in metres: four standard
 /// deviations of the surface's height, what a sailor reports as the height of
@@ -216,8 +305,14 @@ struct WaveSpectrum
 /// circle.
 [[nodiscard]] float DirectionalSpread(float theta, float exponent, float spread);
 
-/// @brief The angular frequency of a deep-water wave of wavenumber @p k.
+/// @brief The angular frequency of a deep-water wave of wavenumber @p k under
+/// gravity alone: how the spectrum, measured in frequency, shares its energy
+/// out by wavenumber.
 [[nodiscard]] float DeepWaterFrequency(float k);
+
+/// @brief The angular frequency a deep-water wave of wavenumber @p k travels
+/// at, with surface tension as well as gravity: ω² = g·k + (σ/ρ)·k³.
+[[nodiscard]] float WaveFrequency(float k);
 
 /// @brief @p omega rounded down to a whole number of turns per
 /// kWaterLoopSeconds, which is what makes the waves loop.
@@ -238,9 +333,28 @@ struct WaterCascades
     bool operator==(const WaterCascades &) const = default;
 };
 
+/// @brief The wavelength the longer of @p waves' wind sea and swell peaks at,
+/// in metres; zero for still water.
+[[nodiscard]] float LongestWavelength(const WaterWaves &waves);
+
 /// @brief The cascades sized to @p waves: the largest tile holds a few of the
 /// longest peak waves, and each after is kWaterCascadeRatio smaller.
 [[nodiscard]] WaterCascades LayoutCascades(const WaterWaves &waves);
+
+/// @brief How much of @p cascade's band is ripples, shorter than
+/// kRippleWavelength: from 0, none of it, to 1, all of it, measured along the
+/// logarithm of the wavenumber.
+[[nodiscard]] float RippleShare(const WaterCascades &cascades, uint32_t cascade);
+
+/// @brief How tall ripples stand in a local wind of @p localSpeed, as a share
+/// of their height in the steady wind of @p steadySpeed that raised the
+/// spectrum: none below kRippleOnsetSpeed, and above it as Cox and Munk's
+/// slopes grow with the wind.
+[[nodiscard]] float RippleStrength(float localSpeed, float steadySpeed);
+
+/// @brief How tall a lake's longer waves stand @p localFetch metres downwind of
+/// its shore, as a share of their height over the lake's whole @p fetch.
+[[nodiscard]] float FetchGrowth(float localFetch, float fetch);
 
 /// @brief The wave a texel of an FFT texture of side @p size holds, as whole
 /// cycles across its tile along x and z; the texture's middle is zero.

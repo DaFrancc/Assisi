@@ -57,6 +57,8 @@ struct WaterSpectrumConstants
     glm::vec4 swell{0.0f};
     /// The wind's spread and swell, then the swell's.
     glm::vec4 spreads{0.0f};
+    /// x = the wind's alpha far above its peak, y = the swell's.
+    glm::vec4 tailAlpha{0.0f};
     glm::uvec4 seed{0u};
 };
 
@@ -84,6 +86,15 @@ struct WaterDrawConstants
     glm::vec4 surface{0.0f};
     glm::vec4 color{0.0f};
     glm::vec4 crestColor{0.0f};
+    /// Per cascade, how much of its band is ripples that follow the gusts.
+    glm::vec4 rippleShare{0.0f};
+    /// xy = which way the wind blows in the body's frame; z = the longest
+    /// stretch of it the wind crosses, zero for endless water, whose waves do
+    /// not grow from a shore; w = the share of the level's wind that reaches it.
+    glm::vec4 wind{0.0f};
+    /// x = how strongly its ripples show, 1 as the wind raises them.
+    glm::vec4 ripples{0.0f};
+    GustConstants gusts;
 };
 
 /// @brief What one view's water is drawn with.
@@ -91,15 +102,18 @@ struct WaterDrawView
 {
     /// What the lit pass measures from.
     glm::dvec3 camera{0.0};
+    /// The shared clock the gusts move with, in seconds.
+    double seconds = 0.0;
     /// The mesh pass's frame bindings, set 0 of the surface pipeline.
     nvrhi::IBindingSet *frameBindings = nullptr;
     /// The scene's depth per pixel, as SceneDistancePass makes it.
     nvrhi::ITexture *sceneDistance = nullptr;
 };
 
-/// @brief The constants water.vert and water.frag draw @p body with, seen from
-/// @p camera.
-[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, glm::dvec3 camera);
+/// @brief The constants water.vert and water.frag draw @p body with in
+/// @p gusts, seen from @p camera at @p seconds.
+[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gusts, glm::dvec3 camera,
+                                                        double seconds);
 
 /// @brief water_spectrum.comp's constants for @p body.
 [[nodiscard]] WaterSpectrumConstants MakeWaterSpectrumConstants(const WaterBody &body);

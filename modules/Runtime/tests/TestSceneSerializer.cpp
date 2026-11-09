@@ -1254,7 +1254,7 @@ TEST_CASE("SceneSerializer: the wind round-trips")
 
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, Wind{.speed = 17.f, .bearingDegrees = 215.f}) != nullptr);
+    REQUIRE(scene.Add(e, Wind{.speed = 17.f, .bearingDegrees = 215.f, .gustFactor = 1.8f}) != nullptr);
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
@@ -1262,4 +1262,5 @@ TEST_CASE("SceneSerializer: the wind round-trips")
     REQUIRE(read != nullptr);
     CHECK(read->speed == doctest::Approx(17.f));
     CHECK(read->bearingDegrees == doctest::Approx(215.f));
+    CHECK(read->gustFactor == doctest::Approx(1.8f));
 }

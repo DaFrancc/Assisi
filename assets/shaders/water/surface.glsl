@@ -1,6 +1,9 @@
 // What water.vert and water.frag share: the body's constants, its wave
 // textures, the scene's distance and the patches to draw, all in set 1 beside
-// the mesh pass's frame in set 0.
+// the mesh pass's frame in set 0; and how tall each cascade's waves stand at a
+// point, where the gusts and the distance from the shore change them.
+
+#include "wind/gusts.glsl"
 
 // Must match Render::kWaterFftSize and kWaterCascadeCount, and WaterGrid.hpp's
 // kWaterPatchQuads, kWaterRangeScale and kWaterMorphStart.
@@ -29,6 +32,15 @@ layout(set = 1, binding = 256) uniform WaterConstants
     vec4 color;
     // rgb = the colour crests glow with against the sun.
     vec4 crestColor;
+    // Per cascade, how much of its band is ripples that follow the gusts.
+    vec4 rippleShare;
+    // xy = which way the wind blows in the body's frame; z = the longest
+    // stretch of it the wind crosses, zero for endless water; w = the share of
+    // the level's wind that reaches it.
+    vec4 wind;
+    // x = how strongly its ripples show, 1 as the wind raises them.
+    vec4 ripples;
+    GustConstants gusts;
 } uWater;
 
 layout(set = 1, binding = 0) uniform texture2DArray uDisplacement;
@@ -57,4 +69,81 @@ vec2 CascadeOffset(uint cascade)
 vec2 WaterUv(vec2 fromCamera, uint cascade)
 {
     return (fromCamera + CascadeOffset(cascade)) / uWater.tileLength[cascade] + 0.5 / float(kSurfaceFftSize);
+}
+
+// Must match Render::kRippleOnsetSpeed, kRippleGrownSpeed, kRippleSlopeBase,
+// kRippleSlopePerSpeed and kFetchGrowthExponent.
+const float kRippleOnsetSpeed    = 1.0;
+const float kRippleGrownSpeed    = 3.0;
+const float kRippleSlopeBase     = 0.003;
+const float kRippleSlopePerSpeed = 0.00512;
+const float kFetchGrowthExponent = 2.0 / 3.0 - 0.22 / 2.0;
+
+// A wind this close to parallel with one of the body's axes crosses no shore
+// along it.
+const float kMinWindAcross = 1.0e-4;
+
+// Render::RippleStrength.
+float RippleStrength(float localSpeed, float steadySpeed)
+{
+    if (!(steadySpeed > 0.0) || !(localSpeed > 0.0))
+    {
+        return 0.0;
+    }
+    float onset = smoothstep(kRippleOnsetSpeed, kRippleGrownSpeed, localSpeed);
+    return onset * sqrt((kRippleSlopeBase + kRippleSlopePerSpeed * localSpeed) /
+                        (kRippleSlopeBase + kRippleSlopePerSpeed * steadySpeed));
+}
+
+// How far upwind the shore is from @p local, the body's frame measured from the
+// camera: back along the wind to the rectangle's edge.
+float LocalFetch(vec2 local)
+{
+    vec2  wind  = uWater.wind.xy;
+    float fetch = uWater.wind.z;
+    if (wind.x > kMinWindAcross)
+    {
+        fetch = min(fetch, (local.x - uWater.bounds.x) / wind.x);
+    }
+    else if (wind.x < -kMinWindAcross)
+    {
+        fetch = min(fetch, (uWater.bounds.z - local.x) / -wind.x);
+    }
+    if (wind.y > kMinWindAcross)
+    {
+        fetch = min(fetch, (local.y - uWater.bounds.y) / wind.y);
+    }
+    else if (wind.y < -kMinWindAcross)
+    {
+        fetch = min(fetch, (uWater.bounds.w - local.y) / -wind.y);
+    }
+    return fetch;
+}
+
+// How tall each cascade's waves stand at a point, as a share of the spectrum's:
+// the ripples follow the gust there, as much of it as the body's shelter lets
+// through and as strongly as its ripples are set to show, and the longer waves
+// the distance from the shore upwind. @p fromCamera is along world x and z,
+// @p local the same point in the body's frame.
+struct WaveScale
+{
+    vec4  cascades;
+    // The ripples' share, which the slopes finer than any cascade follow too.
+    float ripples;
+};
+
+WaveScale WaveScaleAt(vec2 fromCamera, vec2 local)
+{
+    float share   = uWater.wind.w;
+    float steady  = uWater.gusts.wind.z * share;
+    float ripples = uWater.ripples.x * RippleStrength(GustSpeedNear(uWater.gusts, fromCamera) * share, steady);
+    float growth  = 1.0;
+    if (uWater.wind.z > 0.0)
+    {
+        growth = pow(clamp(LocalFetch(local) / uWater.wind.z, 0.0, 1.0), kFetchGrowthExponent);
+    }
+    WaveScale scale;
+    scale.cascades = mix(vec4(growth), vec4(ripples), uWater.rippleShare);
+    scale.ripples  = ripples;
+    return scale;
 }
