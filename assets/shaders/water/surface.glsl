@@ -42,6 +42,11 @@ layout(set = 1, binding = 256) uniform WaterConstants
     vec4 wind;
     // x = how strongly its ripples show, 1 as the wind raises them.
     vec4 ripples;
+    // Cascade c's place in its blending noise, in metres: [c / 2].xy or .zw.
+    vec4 breakupOffsets[2];
+    // Per cascade, 1 where its tile would repeat across the body, so it is
+    // drawn twice and blended; 0 where it is drawn once.
+    vec4 breakup;
     GustConstants gusts;
 } uWater;
 
@@ -73,10 +78,40 @@ vec2 WaterUv(vec2 fromCamera, uint cascade)
     return (fromCamera + CascadeOffset(cascade)) / uWater.tileLength[cascade] + 0.5 / float(kSurfaceFftSize);
 }
 
+// Must match Render::kWaterBreakupCellTiles and kWaterBreakupPeriod.
+const float kBreakupCellTiles = 1.5;
+const int   kBreakupPeriod    = 64;
+// How far a broken-up cascade's second copy is shifted, in tiles: far enough
+// that the two copies are unrelated where they meet.
+const vec2 kBreakupShift = vec2(0.37, 0.61);
+// Stretches the blending noise so most of the surface shows mostly one copy.
+const float kBreakupContrast = 1.5;
+const float kQuarterTurn     = 1.57079632679;
+
+// How much of each of a cascade's two copies shows @p fromCamera metres from
+// the camera, as amplitudes whose squares add to one, so the waves keep their
+// height. A cascade whose tile would repeat across the body is drawn twice,
+// the second copy shifted, and the two blended by noise that changes every
+// tile and a half, so no two neighbouring tiles match; a shift keeps every wave
+// travelling its own way. Any other cascade is drawn once.
+vec2 BreakupWeights(vec2 fromCamera, uint cascade)
+{
+    if (uWater.breakup[cascade] == 0.0)
+    {
+        return vec2(1.0, 0.0);
+    }
+    vec4  pair   = uWater.breakupOffsets[cascade / 2u];
+    vec2  offset = (cascade & 1u) == 0u ? pair.xy : pair.zw;
+    vec2  cell   = (fromCamera + offset) / (uWater.tileLength[cascade] * kBreakupCellTiles);
+    float noise  = GradientNoise(vec3(cell, 0.0), kBreakupPeriod, cascade + 1u);
+    float angle  = clamp(0.5 + kBreakupContrast * noise, 0.0, 1.0) * kQuarterTurn;
+    return vec2(cos(angle), sin(angle));
+}
+
 // Must match Render::kRippleOnsetSpeed, kRippleGrownSpeed, kRippleSlopeBase,
 // kRippleSlopePerSpeed and kFetchGrowthExponent.
-const float kRippleOnsetSpeed    = 1.0;
-const float kRippleGrownSpeed    = 3.0;
+const float kRippleOnsetSpeed    = 3.0;
+const float kRippleGrownSpeed    = 6.0;
 const float kRippleSlopeBase     = 0.003;
 const float kRippleSlopePerSpeed = 0.00512;
 const float kFetchGrowthExponent = 2.0 / 3.0 - 0.22 / 2.0;

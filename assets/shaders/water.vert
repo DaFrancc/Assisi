@@ -66,8 +66,15 @@ void main()
         float weight = scale.cascades[cascade] * (1.0 - smoothstep(kDisplacementFadeStartLod, kDisplacementFadeEndLod, lod));
         if (weight > 0.0)
         {
-            vec3 uv = vec3(WaterUv(grid, cascade), float(cascade));
-            displacement += weight * textureLod(sampler2DArray(uDisplacement, uWaterSampler), uv, lod).xyz;
+            vec3 uv      = vec3(WaterUv(grid, cascade), float(cascade));
+            vec2 copies  = BreakupWeights(grid, cascade);
+            vec3 sampled = copies.x * textureLod(sampler2DArray(uDisplacement, uWaterSampler), uv, lod).xyz;
+            if (copies.y > 0.0)
+            {
+                vec3 shifted = uv + vec3(kBreakupShift, 0.0);
+                sampled += copies.y * textureLod(sampler2DArray(uDisplacement, uWaterSampler), shifted, lod).xyz;
+            }
+            displacement += weight * sampled;
         }
     }
 

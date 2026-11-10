@@ -46,6 +46,18 @@ inline constexpr float kUnresolvedWaterSlopeVariance = 0.0015f;
 /// what hides the line where water meets ground.
 inline constexpr float kWaterShoreFade = 0.4f;
 
+/// @name Breaking up a tile that would repeat across a lake
+/// @{
+/// A cascade whose tile fits more than this many times across a lake's shorter
+/// side is drawn twice, shifted, and blended by noise, so no two neighbouring
+/// tiles match.
+inline constexpr float kWaterRepeatsHidden = 2.0f;
+/// The blending noise changes every this many of the cascade's tiles.
+inline constexpr float kWaterBreakupCellTiles = 1.5f;
+/// The noise repeats after this many of its cells each way.
+inline constexpr uint32_t kWaterBreakupPeriod = 64u;
+/// @}
+
 /// @brief water_spectrum.comp's push constants, field for field.
 struct WaterSpectrumConstants
 {
@@ -98,6 +110,11 @@ struct WaterDrawConstants
     glm::vec4 wind{0.0f};
     /// x = how strongly its ripples show, 1 as the wind raises them.
     glm::vec4 ripples{0.0f};
+    /// Cascade c's place in its blending noise, in metres: [c / 2].xy or .zw.
+    std::array<glm::vec4, 2> breakupOffsets{};
+    /// Per cascade, 1 where its tile would repeat across the body, so it is
+    /// drawn twice and blended; 0 where it is drawn once.
+    glm::vec4 breakup{0.0f};
     GustConstants gusts;
 };
 

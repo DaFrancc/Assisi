@@ -123,11 +123,13 @@ inline constexpr float kShortestWaterWave = 0.004f;
 /// about the time a gust takes to pass.
 inline constexpr float kRippleWavelength = 0.1f;
 /// The wind, 10 m up, below which the water stays glassy and at which ripples
-/// are fully grown, in metres per second. Waves begin to grow at a 10 m wind of
-/// 0.6 to 1.6 m/s (Kahma and Donelan, 1988), and tanks show them readily at 2.4
-/// to 3.3 m/s.
-inline constexpr float kRippleOnsetSpeed = 1.0f;
-inline constexpr float kRippleGrownSpeed = 3.0f;
+/// are fully grown, in metres per second. Clean water in a tank ripples from
+/// about 1 m/s (Kahma and Donelan, 1988), but natural water carries a surface
+/// film that holds ripples back: by Plant's growth rate against Lamb's damping
+/// ten times strengthened, waves 3 to 10 cm long need 4.6 to 6.6 m/s, and
+/// glassy slicks cover lakes below about 6 m/s.
+inline constexpr float kRippleOnsetSpeed = 3.0f;
+inline constexpr float kRippleGrownSpeed = 6.0f;
 /// Cox and Munk's mean square slope of a clean sea, 0.003 + 0.00512·U: the
 /// ripples' steepness grows with the wind this way.
 inline constexpr float kRippleSlopeBase = 0.003f;

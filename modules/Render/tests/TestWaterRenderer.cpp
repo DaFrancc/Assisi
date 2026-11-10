@@ -104,3 +104,32 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
     CHECK(lakeConstants.bounds.w == doctest::Approx(5.0f));
     CHECK(lakeConstants.surface.x == doctest::Approx(-5.0f));
 }
+
+TEST_CASE("A lake's tiles that would repeat across it are broken up, and the ocean's never are")
+{
+    const Gusts gusts{.speed = 4.0f, .gustFactor = 1.5f};
+    const glm::dvec3 camera(10.0, 2.0, 5.0);
+    const WaterDrawConstants sea = MakeWaterDrawConstants(Sea(), gusts, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(sea.breakup[static_cast<glm::length_t>(c)] == 0.0f);
+    }
+
+    // A pond 30 by 20 m, rocked by a swell about 3 m long: its largest tiles
+    // are wider than it, its smallest fit many times across it.
+    WaterBody pond = Sea();
+    pond.region = WaterRegion{.axisX = glm::vec2(1.0f, 0.0f), .halfExtent = glm::vec2(15.0f, 10.0f)};
+    pond.waves = WaterWaves{.wind = WindSea{.windSpeed = 2.0f, .fetch = 30.0f},
+                            .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants pondConstants = MakeWaterDrawConstants(pond, gusts, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        const bool repeats = pond.cascades.tileLength[c] * kWaterRepeatsHidden < 20.0f;
+        CHECK((pondConstants.breakup[static_cast<glm::length_t>(c)] == 1.0f) == repeats);
+    }
+    CHECK(pondConstants.breakup[0] == 0.0f);
+    CHECK(pondConstants.breakup[kWaterCascadeCount - 1u] == 1.0f);
+}

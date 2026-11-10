@@ -401,6 +401,8 @@ TEST_CASE("Ripples need a breath of wind, and grow steeper as it rises")
     CHECK(RippleStrength(0.5f, 4.0f) == 0.0f);
     CHECK(RippleStrength(kRippleOnsetSpeed, 4.0f) == 0.0f);
     CHECK(RippleStrength(2.0f, 0.0f) == 0.0f);
+    // Natural water's surface film keeps a light breeze from raising any.
+    CHECK(RippleStrength(2.5f, 2.5f) == 0.0f);
     // In the steady wind itself, once grown, ripples are as the spectrum made
     // them.
     CHECK(RippleStrength(6.0f, 6.0f) == doctest::Approx(1.0f));

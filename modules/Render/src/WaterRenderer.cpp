@@ -35,7 +35,7 @@ constexpr size_t kMinNodeCapacity = 256u;
 static_assert(sizeof(WaterSpectrumConstants) == 128u,
               "Must match water_spectrum.comp's push constants, and stay within the 128 bytes Vulkan guarantees.");
 static_assert(sizeof(WaterRowConstants) == 24u, "Must match water_fft_rows.comp's push constants.");
-static_assert(sizeof(WaterDrawConstants) == 224u, "Must match water/surface.glsl's WaterConstants.");
+static_assert(sizeof(WaterDrawConstants) == 272u, "Must match water/surface.glsl's WaterConstants.");
 static_assert(sizeof(WaterNode) == 16u, "Must match water/surface.glsl's WaterNode.");
 
 nvrhi::TextureHandle MakeWaveTexture(nvrhi::IDevice *device, nvrhi::Format format, uint32_t mips, const char *name)
@@ -106,6 +106,22 @@ WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gu
     constants.swellShare = PerCascade(shares.swell);
     constants.wind = glm::vec4(body.windInBody, endless ? 0.0f : body.crossing, body.windShare);
     constants.ripples = glm::vec4(body.look.ripples, 0.0f, 0.0f, 0.0f);
+
+    // Endless water's tiles are hidden under its long waves; a lake's that would
+    // repeat across it are broken up.
+    const float shorterSide = endless ? 0.0f : 2.0f * std::min(body.region.halfExtent.x, body.region.halfExtent.y);
+    std::array<glm::vec2, kWaterCascadeCount> breakupOffsets{};
+    std::array<float, kWaterCascadeCount> breakup{};
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        const double noisePeriod = static_cast<double>(body.cascades.tileLength[c] * kWaterBreakupCellTiles) *
+                                   static_cast<double>(kWaterBreakupPeriod);
+        breakupOffsets[c] = CascadeOffset(cameraAcross, noisePeriod);
+        breakup[c] = body.cascades.tileLength[c] * kWaterRepeatsHidden < shorterSide ? 1.0f : 0.0f;
+    }
+    constants.breakupOffsets = {glm::vec4(breakupOffsets[0], breakupOffsets[1]),
+                                glm::vec4(breakupOffsets[2], breakupOffsets[3])};
+    constants.breakup = PerCascade(breakup);
     constants.gusts = MakeGustConstants(gusts, camera, seconds);
     return constants;
 }
