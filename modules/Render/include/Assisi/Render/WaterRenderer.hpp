@@ -46,6 +46,18 @@ inline constexpr float kUnresolvedWaterSlopeVariance = 0.0015f;
 /// what hides the line where water meets ground.
 inline constexpr float kWaterShoreFade = 0.4f;
 
+/// @name When a cascade is not drawn
+/// @{
+/// A cascade is not drawn if its slope variance stays under this even in the
+/// strongest gust, and its swell and longer wind waves stay under the height
+/// below. Slopes this faint, about a quarter of a degree, blur the sun's
+/// reflection by no more than the sun's own width.
+inline constexpr float kMinShownWaterSlopeVariance = 2.0e-5f;
+/// A millimetre's spread of height, squared: waves lower than this do not
+/// visibly move the surface.
+inline constexpr float kMinShownWaterHeightVariance = 1.0e-6f;
+/// @}
+
 /// @name Breaking up a tile that would repeat across a lake
 /// @{
 /// A cascade whose tile fits more than this many times across a lake's shorter
@@ -115,6 +127,9 @@ struct WaterDrawConstants
     /// Per cascade, 1 where its tile would repeat across the body, so it is
     /// drawn twice and blended; 0 where it is drawn once.
     glm::vec4 breakup{0.0f};
+    /// Per cascade, 0 where it is too faint to see in any gust (see
+    /// kMinShownWaterSlopeVariance), so it is not read at all; 1 where it is drawn.
+    glm::vec4 shown{0.0f};
     GustConstants gusts;
 };
 

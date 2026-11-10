@@ -47,6 +47,9 @@ layout(set = 1, binding = 256) uniform WaterConstants
     // Per cascade, 1 where its tile would repeat across the body, so it is
     // drawn twice and blended; 0 where it is drawn once.
     vec4 breakup;
+    // Per cascade, 0 where even the strongest gust leaves its slopes too faint
+    // to change a pixel, so it is not read at all; 1 where it is drawn.
+    vec4 shown;
     GustConstants gusts;
 } uWater;
 

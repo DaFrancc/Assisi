@@ -495,23 +495,29 @@ CascadeShares ShareCascades(const WaterWaves &waves, const WaterCascades &cascad
         double swellSlopes = 0.0;
         double rippleSlopes = 0.0;
         double total = 0.0;
+        double steadyHeights = 0.0;
         for (uint32_t i = 0; i < kShareSteps; ++i)
         {
             const float k = low * std::exp((static_cast<float>(i) + 0.5f) * step);
             const float omega = DeepWaterFrequency(k);
-            // The slope variance in one step of ln k: k²·F(k)·k·step, where
-            // F(k) = S(ω)·dω/dk = S(ω)·g/(2ω).
-            const double weight = static_cast<double>(k * k * k * kWaterGravity / (2.0f * omega) * step);
-            const double windSlopes = static_cast<double>(JonswapSpectrum(omega, wind)) * weight;
-            const double swellHere = static_cast<double>(JonswapSpectrum(omega, swell)) * weight;
-            swellSlopes += swellHere;
-            rippleSlopes += k >= ripple ? windSlopes : 0.0;
-            total += windSlopes + swellHere;
+            // The height variance in one step of ln k: F(k)·k·step, where
+            // F(k) = S(ω)·dω/dk = S(ω)·g/(2ω); the slopes' is k² times it.
+            const double heightWeight = static_cast<double>(k * kWaterGravity / (2.0f * omega) * step);
+            const double slopeWeight = heightWeight * static_cast<double>(k * k);
+            const double windHere = static_cast<double>(JonswapSpectrum(omega, wind));
+            const double swellHere = static_cast<double>(JonswapSpectrum(omega, swell));
+            const bool isRipple = k >= ripple;
+            swellSlopes += swellHere * slopeWeight;
+            rippleSlopes += isRipple ? windHere * slopeWeight : 0.0;
+            total += (windHere + swellHere) * slopeWeight;
+            steadyHeights += (swellHere + (isRipple ? 0.0 : windHere)) * heightWeight;
         }
+        shares.steadyHeightVariance[c] = static_cast<float>(steadyHeights);
         if (total > 0.0)
         {
             shares.swell[c] = static_cast<float>(swellSlopes / total);
             shares.ripples[c] = static_cast<float>(rippleSlopes / total);
+            shares.slopeVariance[c] = static_cast<float>(total);
         }
     }
     return shares;

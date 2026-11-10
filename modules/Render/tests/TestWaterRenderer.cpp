@@ -133,3 +133,45 @@ TEST_CASE("A lake's tiles that would repeat across it are broken up, and the oce
     CHECK(pondConstants.breakup[0] == 0.0f);
     CHECK(pondConstants.breakup[kWaterCascadeCount - 1u] == 1.0f);
 }
+
+TEST_CASE("A calm pond's ripple tiles are not drawn, and a windy pond's are")
+{
+    // The pond preset's waters: a faint swell, most of the wind kept off.
+    WaterBody pond = Sea();
+    pond.region = WaterRegion{.axisX = glm::vec2(1.0f, 0.0f), .halfExtent = glm::vec2(15.0f, 10.0f)};
+    pond.windShare = 0.3f;
+    pond.look.ripples = 0.7f;
+    const glm::dvec3 camera(0.0, 2.0, 12.0);
+
+    // Even its strongest gust stays under the wind ripples need, so its
+    // finest tile, which holds nothing but ripples, shows nothing; its swell
+    // still rocks it.
+    const Gusts breeze{.speed = 6.0f, .gustFactor = 1.5f};
+    pond.waves = WaterWaves{.wind = WindSea{.windSpeed = breeze.speed * pond.windShare, .fetch = 20.0f},
+                            .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants calm = MakeWaterDrawConstants(pond, breeze, camera, 0.0);
+    // The tiles holding the swell stay drawn, however gentle their slopes.
+    CHECK(calm.shown[0] == 1.0f);
+    CHECK(calm.shown[1] == 1.0f);
+    CHECK(calm.shown[kWaterCascadeCount - 1u] == 0.0f);
+
+    // A long, slow swell barely tilts the surface but still lifts it a
+    // centimetre, so its tile is drawn.
+    WaterBody rolling = pond;
+    rolling.waves.swell.period = 4.0f;
+    rolling.cascades = LayoutCascades(rolling.waves);
+    CHECK(ShareCascades(rolling.waves, rolling.cascades).slopeVariance[0] < kMinShownWaterSlopeVariance);
+    CHECK(MakeWaterDrawConstants(rolling, breeze, camera, 0.0).shown[0] == 1.0f);
+
+    // A gale reaches it, and every tile shows.
+    const Gusts gale{.speed = 30.0f, .gustFactor = 1.5f};
+    pond.waves.wind.windSpeed = gale.speed * pond.windShare;
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants windy = MakeWaterDrawConstants(pond, gale, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(windy.shown[static_cast<glm::length_t>(c)] == 1.0f);
+    }
+}

@@ -20,6 +20,9 @@ layout(location = 2) in vec2  vGridPos;
 layout(location = 3) in float vViewZ;
 layout(location = 4) in float vPlaneDistance;
 layout(location = 5) in float vCrest;
+layout(location = 6) in vec4  vWaveScale;
+layout(location = 7) in float vRippleScale;
+layout(location = 8) in vec4  vFirstCopy;
 
 // What the water sends toward the eye, added to the scene; and how much of
 // what is behind it still shows, per colour, which the blend multiplies it by.
@@ -96,23 +99,24 @@ struct Slopes
 
 Slopes SlopesHere()
 {
-    vec2      axisX = uWater.axes.xy;
-    vec2      local = vec2(dot(vGridPos, axisX), dot(vGridPos, vec2(-axisX.y, axisX.x)));
-    WaveScale scale = WaveScaleAt(vGridPos, local);
-    float     finer = uWater.surface.z * scale.ripples * scale.ripples;
+    float finer = uWater.surface.z * vRippleScale * vRippleScale;
 
     Slopes slopes;
     slopes.mean       = vec2(0.0);
     slopes.covariance = vec3(finer, finer, 0.0);
     for (uint cascade = 0u; cascade < kSurfaceCascadeCount; ++cascade)
     {
-        vec3  uv     = vec3(WaterUv(vGridPos, cascade), float(cascade));
-        vec2  copies = BreakupWeights(vGridPos, cascade);
-        float trust  = clamp(textureQueryLod(sampler2DArray(uSlopes, uWaterSampler), uv.xy).y / kTrustedVarianceLod, 0.0, 1.0);
-        vec2  mean   = vec2(0.0);
-        vec3  spread = vec3(0.0);
-        // The same for every pixel of a body, so the implicit mips below stay
-        // defined.
+        // Hidden for the whole body, so the implicit mips below stay defined.
+        if (uWater.shown[cascade] == 0.0)
+        {
+            continue;
+        }
+        vec3  uv        = vec3(WaterUv(vGridPos, cascade), float(cascade));
+        float trust     = clamp(textureQueryLod(sampler2DArray(uSlopes, uWaterSampler), uv.xy).y / kTrustedVarianceLod, 0.0, 1.0);
+        float first     = vFirstCopy[cascade];
+        vec2  copies    = vec2(first, sqrt(max(1.0 - first * first, 0.0)));
+        vec2  mean      = vec2(0.0);
+        vec3  spread    = vec3(0.0);
         uint copyCount = uWater.breakup[cascade] != 0.0 ? 2u : 1u;
         for (uint copy = 0u; copy < copyCount; ++copy)
         {
@@ -128,7 +132,7 @@ Slopes SlopesHere()
         }
         // A cascade scaled by s has its slopes' means scaled by s and their
         // squares by s².
-        float s = scale.cascades[cascade];
+        float s = vWaveScale[cascade];
         // Bands are independent: their means add, and so do their variances.
         slopes.mean += s * mean;
         slopes.covariance += trust * s * s * spread;

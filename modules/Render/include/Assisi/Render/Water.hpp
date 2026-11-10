@@ -361,11 +361,15 @@ struct WaterCascades
 
 /// @brief How each cascade's slopes divide between the swell and the wind
 /// sea's ripples, the waves shorter than kRippleWavelength, by energy; the rest
-/// is the wind sea's longer waves.
+/// is the wind sea's longer waves. And how much it holds at full strength: the
+/// variance of its slopes, and of the height of its swell and longer wind
+/// waves, which no gust switches off.
 struct CascadeShares
 {
     std::array<float, kWaterCascadeCount> swell{};
     std::array<float, kWaterCascadeCount> ripples{};
+    std::array<float, kWaterCascadeCount> slopeVariance{};
+    std::array<float, kWaterCascadeCount> steadyHeightVariance{};
 };
 
 /// @brief The shares of @p waves' slopes in each of @p cascades. A cascade
