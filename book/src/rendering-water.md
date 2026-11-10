@@ -130,8 +130,9 @@ The presets:
 | `MountainLake` | Clear, cold, deep blue water, 10 metres clear. The slopes around it keep 60% of the wind off. |
 | `Swamp` | Still brown water, half a metre clear. Almost no wind reaches it, and few ripples form. |
 
-`Custom` uses the values the fields themselves hold. They start as an open
-lake's, not as the preset you switched from.
+Picking a preset in the editor fills the greyed fields with its numbers.
+Switching to `Custom` keeps them, so to make your own kind of water, pick the
+preset closest to it, switch to `Custom`, and change the fields from there.
 
 Put a `Lake` where ground surrounds it at or above its height, so that the
 ground hides its edges.

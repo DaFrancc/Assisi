@@ -273,3 +273,32 @@ TEST_CASE("A body none of whose patches is in view is left out")
     REQUIRE(empty.Add(flat, Lake{.size = glm::vec2(0.0f, 20.0f)}) != nullptr);
     CHECK(Gather(empty, From(glm::dvec3(0.0, 2.0, 0.0))).bodies.empty());
 }
+
+TEST_CASE("Leaving a lake preset for Custom starts from the preset, and picking one shows its numbers")
+{
+    using Runtime::LakePreset;
+
+    for (const LakePreset preset : {LakePreset::Pond, LakePreset::Lake, LakePreset::MountainLake, LakePreset::Swamp})
+    {
+        CAPTURE(static_cast<int>(preset));
+        // Its fields as a level saved before they followed the preset left them.
+        Lake lake{.preset = preset, .seed = 4u};
+        const Render::LakeSettings expected = Runtime::ToLakeSettings(lake);
+        lake.preset = LakePreset::Custom;
+        Runtime::SettleLakePreset(lake, preset);
+        CHECK(Runtime::ToLakeSettings(lake) == expected);
+    }
+
+    // Picking a preset fills the greyed fields with what it draws.
+    const Render::LakeSettings &swamp = Runtime::kLakePresets[static_cast<std::size_t>(LakePreset::Swamp)];
+    Lake picked{.preset = LakePreset::Custom, .ripples = 2.0f};
+    picked.preset = LakePreset::Swamp;
+    Runtime::SettleLakePreset(picked, LakePreset::Custom);
+    CHECK(picked.ripples == swamp.ripples);
+    CHECK(picked.shelter == swamp.shelter);
+
+    // An edit that leaves the preset alone leaves the fields alone.
+    Lake custom{.preset = LakePreset::Custom, .ripples = 2.0f};
+    Runtime::SettleLakePreset(custom, LakePreset::Custom);
+    CHECK(custom.ripples == 2.0f);
+}

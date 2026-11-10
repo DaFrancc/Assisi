@@ -178,8 +178,7 @@ kLakePresets{{
                                  .swellHeight = 0.005f,
                                  .swellPeriod = 1.6f},
 
-    // Custom: the defaults again, so departing from a preset starts where the
-    // fields already are.
+    // Custom: the defaults, which the component's own fields replace.
     Assisi::Render::LakeSettings{},
 }};
 
@@ -204,6 +203,29 @@ static_assert(kLakePresets.size() == static_cast<std::size_t>(LakePreset::Custom
     }
     settings.seed = lake.seed;
     return Assisi::Render::Sanitized(settings);
+}
+
+/// @brief After an edit moved @p lake's preset off @p previous, fills its
+/// greyed fields with the preset's numbers: they then show the lake in use, and
+/// a switch to Custom starts from the preset that was showing. Nothing if the
+/// preset did not change.
+inline void SettleLakePreset(Lake &lake, LakePreset previous)
+{
+    if (lake.preset == previous)
+    {
+        return;
+    }
+    const LakePreset source = lake.preset == LakePreset::Custom ? previous : lake.preset;
+    const Assisi::Render::LakeSettings &settings = kLakePresets[static_cast<std::size_t>(source)];
+    lake.color = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(settings.color);
+    lake.crestColor = Assisi::Math::Color3<Assisi::Math::ColorSpace::Linear>(settings.crestColor);
+    lake.spread = settings.spread;
+    lake.choppiness = settings.choppiness;
+    lake.clarity = settings.clarity;
+    lake.shelter = settings.shelter;
+    lake.ripples = settings.ripples;
+    lake.swellHeight = settings.swellHeight;
+    lake.swellPeriod = settings.swellPeriod;
 }
 
 } // namespace Assisi::Runtime

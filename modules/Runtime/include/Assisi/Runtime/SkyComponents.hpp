@@ -404,8 +404,7 @@ kSkyPresets{{
                                 .sunEdgeSoftness = Assisi::Render::kMinSunEdgeSoftness,
                                 .sunDiskColor = glm::vec3(1.0f)},
 
-    // Custom: the defaults again, which is what makes departing from a preset
-    // start where the knobs already are rather than somewhere else.
+    // Custom: never read, since a Custom sky is its knobs.
     Assisi::Render::SkySettings{},
 }};
 
@@ -446,6 +445,33 @@ static_assert(kSkyPresets.size() == static_cast<std::size_t>(SkyPreset::Custom) 
                                        .sunDiskColor = skybox.sunDiskColor};
 }
 
+/// @brief After an edit moved @p skybox's preset off @p previous, fills its
+/// knobs with the preset's numbers: the greyed knobs then show the sky in use,
+/// and a switch to Custom starts from the preset that was showing. Nothing if
+/// the preset did not change.
+inline void SettleSkyPreset(Skybox &skybox, SkyPreset previous)
+{
+    if (skybox.preset == previous)
+    {
+        return;
+    }
+    const Assisi::Render::SkySettings &settings =
+        PresetSettings(skybox.preset == SkyPreset::Custom ? previous : skybox.preset);
+    skybox.airScattering = settings.airScattering;
+    skybox.airThickness = settings.airThickness;
+    skybox.hazeScattering = settings.hazeScattering;
+    skybox.hazeForwardness = settings.hazeForwardness;
+    skybox.skyBounce = settings.skyBounce;
+    skybox.groundColor = settings.groundColor;
+    skybox.nightColor = settings.nightColor;
+    skybox.exposure = settings.exposure;
+    skybox.sunSizeDegrees = settings.sunSizeDegrees;
+    skybox.sunEdgeSoftness = settings.sunEdgeSoftness;
+    skybox.sunLimbDarkening = settings.sunLimbDarkening;
+    skybox.sunDiskIntensity = settings.sunDiskIntensity;
+    skybox.sunDiskColor = settings.sunDiskColor;
+}
+
 /// @brief Every cloud preset, in the order @ref CloudPreset declares them. The
 /// change rate, the wind and the seed are left at their defaults: the
 /// component's own and the level's wind always replace them.
@@ -467,8 +493,7 @@ kCloudPresets{{
     Assisi::Render::CloudSettings{
         .coverage = 0.97f, .baseHeight = 800.0f, .thickness = 1500.0f, .density = 0.08f, .puffiness = 0.15f},
 
-    // Custom: the defaults again, so departing from a preset starts where the
-    // fields already are.
+    // Custom: the defaults, which the component's own fields replace.
     Assisi::Render::CloudSettings{},
 }};
 
@@ -493,6 +518,24 @@ static_assert(kCloudPresets.size() == static_cast<std::size_t>(CloudPreset::Cust
     settings.windBearingDegrees = wind.bearingDegrees;
     settings.seed = clouds.seed;
     return Assisi::Render::Sanitized(settings);
+}
+
+/// @brief After an edit moved @p clouds' preset off @p previous, fills its five
+/// greyed fields with the preset's numbers, as SettleSkyPreset does for a sky.
+/// Nothing if the preset did not change.
+inline void SettleCloudPreset(Clouds &clouds, CloudPreset previous)
+{
+    if (clouds.preset == previous)
+    {
+        return;
+    }
+    const CloudPreset source = clouds.preset == CloudPreset::Custom ? previous : clouds.preset;
+    const Assisi::Render::CloudSettings &settings = kCloudPresets[static_cast<std::size_t>(source)];
+    clouds.coverage = settings.coverage;
+    clouds.height = settings.baseHeight;
+    clouds.thickness = settings.thickness;
+    clouds.density = settings.density;
+    clouds.puffiness = settings.puffiness;
 }
 
 } // namespace Assisi::Runtime

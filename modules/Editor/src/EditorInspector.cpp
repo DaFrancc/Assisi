@@ -39,7 +39,9 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WaterComponents.hpp>
 
 #include <imgui.h>
 
@@ -767,6 +769,59 @@ bool SettleAfterEdit(BoundBaseline &baseline, std::span<const Assisi::Core::Refl
     // undo puts both back.
     const bool restored = RestoreBoundBaseline(baseline, fields, object, editedField);
     return Assisi::Core::Reflect::SettleDependentBounds(fields, object) || restored;
+}
+
+/// @brief @p component's preset as its raw value if it is one of the components
+/// with presets, read before an edit so SettlePresetFields can tell whether it
+/// moved.
+std::optional<std::uint8_t> PresetBeforeEdit(const void *component, Assisi::Core::Reflect::ComponentId id)
+{
+    using Assisi::Core::Reflect::ComponentIdOf;
+    if (id == ComponentIdOf<Assisi::Physics::CharacterLocomotion>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Physics::CharacterLocomotion *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Lake>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Lake *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Skybox>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Skybox *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Clouds>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Clouds *>(component)->preset);
+    }
+    return std::nullopt;
+}
+
+/// @brief Fills a component's greyed fields from its preset if an edit moved
+/// the preset off @p before, in the edit's own gesture so one undo takes back
+/// both.
+void SettlePresetFields(void *component, Assisi::Core::Reflect::ComponentId id, std::uint8_t before)
+{
+    using Assisi::Core::Reflect::ComponentIdOf;
+    if (id == ComponentIdOf<Assisi::Physics::CharacterLocomotion>())
+    {
+        Assisi::Physics::SettleLocomotionPreset(*static_cast<Assisi::Physics::CharacterLocomotion *>(component),
+                                                static_cast<Assisi::Physics::LocomotionPreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Lake>())
+    {
+        Assisi::Runtime::SettleLakePreset(*static_cast<Assisi::Runtime::Lake *>(component),
+                                          static_cast<Assisi::Runtime::LakePreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Skybox>())
+    {
+        Assisi::Runtime::SettleSkyPreset(*static_cast<Assisi::Runtime::Skybox *>(component),
+                                         static_cast<Assisi::Runtime::SkyPreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Clouds>())
+    {
+        Assisi::Runtime::SettleCloudPreset(*static_cast<Assisi::Runtime::Clouds *>(component),
+                                           static_cast<Assisi::Runtime::CloudPreset>(before));
+    }
 }
 
 } // namespace
@@ -2700,6 +2755,7 @@ void EditorApp::DrawInspector()
                 DrawClockedAimNotice();
             }
 
+            const std::optional<std::uint8_t> presetBefore = PresetBeforeEdit(compPtr, meta->id);
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // The field widgets write component memory by offset, bypassing
             // Scene::GetMut's change stamping, so the change is reported by hand.
@@ -2707,6 +2763,10 @@ void EditorApp::DrawInspector()
             // is what re-propagates the edit.
             if (edited)
             {
+                if (presetBefore.has_value())
+                {
+                    SettlePresetFields(const_cast<void *>(compPtr), meta->id, *presetBefore);
+                }
                 // In the same gesture as the edit, so one undo takes back both:
                 // a moved node changes the handles its neighbours draw with.
                 Assisi::Editor::SettleSplines(const_cast<void *>(compPtr), meta->fields);
