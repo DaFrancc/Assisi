@@ -58,14 +58,12 @@ void AddBody(Render::WaterBody body, const WaterGatherView &view, Render::WaterF
     body.significantHeight = std::sqrt(windHeight * windHeight + swellHeight * swellHeight);
     body.waveReach = kReachPerHeight * body.significantHeight * (1.0f + body.waves.choppiness);
 
-    Render::SelectWaterNodes(
-            body.region,
-            Render::WaterGridView{.camera = view.camera,
-                                  .frustum = view.frustum,
-                                  .drawDistance = view.drawDistance,
-                                  .waveReach = body.waveReach,
-                                  .finestSpacing = Render::WaterFinestSpacing(Render::LongestWavelength(body.waves))},
-            frame.scratch);
+    Render::SelectWaterNodes(body.region,
+                             Render::WaterGridView{.camera = view.camera,
+                                                   .frustum = view.frustum,
+                                                   .drawDistance = view.drawDistance,
+                                                   .waveReach = body.waveReach},
+                             frame.scratch);
     if (frame.scratch.empty())
     {
         return;

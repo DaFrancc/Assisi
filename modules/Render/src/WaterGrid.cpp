@@ -63,8 +63,7 @@ bool InFrustum(const Walk &walk, glm::dvec2 corner, double size)
 
 void Visit(const Walk &walk, glm::dvec2 corner, uint32_t level)
 {
-    const float finest = walk.view->finestSpacing;
-    const double size = static_cast<double>(WaterNodeSize(level, finest));
+    const double size = static_cast<double>(WaterNodeSize(level));
     const bool covers = corner.x < walk.coverMax.x && corner.y < walk.coverMax.y && corner.x + size > walk.coverMin.x &&
                                    corner.y + size > walk.coverMin.y;
     const double distance = DistanceToNode(walk, corner, size);
@@ -72,7 +71,7 @@ void Visit(const Walk &walk, glm::dvec2 corner, uint32_t level)
     {
         return;
     }
-    if (level > 0u && distance < static_cast<double>(WaterLodRange(level - 1u, finest)))
+    if (level > 0u && distance < static_cast<double>(WaterLodRange(level - 1u)))
     {
         const double half = size * 0.5;
         for (const glm::dvec2 child : {corner, corner + glm::dvec2(half, 0.0), corner + glm::dvec2(0.0, half),
@@ -88,28 +87,19 @@ void Visit(const Walk &walk, glm::dvec2 corner, uint32_t level)
 
 } // namespace
 
-float WaterFinestSpacing(float longestWavelength)
+float WaterNodeSize(uint32_t level)
 {
-    if (!(longestWavelength > 0.0f))
-    {
-        return kWaterMaxFinestSpacing;
-    }
-    return std::clamp(longestWavelength / kWaterVerticesPerWavelength, kWaterMinFinestSpacing, kWaterMaxFinestSpacing);
+    return static_cast<float>(kWaterPatchQuads) * kWaterFinestSpacing * std::exp2(static_cast<float>(level));
 }
 
-float WaterNodeSize(uint32_t level, float finestSpacing)
+float WaterLodRange(uint32_t level)
 {
-    return static_cast<float>(kWaterPatchQuads) * finestSpacing * std::exp2(static_cast<float>(level));
+    return kWaterRangeScale * WaterNodeSize(level);
 }
 
-float WaterLodRange(uint32_t level, float finestSpacing)
+float WaterMorph(float distance, uint32_t level)
 {
-    return kWaterRangeScale * WaterNodeSize(level, finestSpacing);
-}
-
-float WaterMorph(float distance, uint32_t level, float finestSpacing)
-{
-    const float range = WaterLodRange(level, finestSpacing);
+    const float range = WaterLodRange(level);
     const float start = range * kWaterMorphStart;
     return std::clamp((distance - start) / (range - start), 0.0f, 1.0f);
 }
@@ -153,11 +143,11 @@ void SelectWaterNodes(const WaterRegion &region, const WaterGridView &view, std:
     const glm::dvec2 cover = walk.coverMax - walk.coverMin;
     const double needed = 0.5 * std::max(cover.x, cover.y);
     uint32_t top = 0u;
-    while (top + 1u < kMaxWaterLevels && static_cast<double>(WaterNodeSize(top, view.finestSpacing)) < needed)
+    while (top + 1u < kMaxWaterLevels && static_cast<double>(WaterNodeSize(top)) < needed)
     {
         ++top;
     }
-    const double rootSize = static_cast<double>(WaterNodeSize(top, view.finestSpacing));
+    const double rootSize = static_cast<double>(WaterNodeSize(top));
     const glm::dvec2 first = glm::floor(walk.coverMin / rootSize);
     const glm::dvec2 last = glm::ceil(walk.coverMax / rootSize);
     for (double z = first.y; z < last.y; z += 1.0)
