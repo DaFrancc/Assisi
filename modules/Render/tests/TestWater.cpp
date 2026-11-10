@@ -167,15 +167,27 @@ TEST_CASE("The JONSWAP spectrum peaks at its peak frequency, and no wind raises 
 TEST_CASE("Swell has the height and period it was given")
 {
     for (const Swell &swell : {Swell{.height = 1.5f, .period = 11.0f}, Swell{.height = 4.0f, .period = 18.0f},
-                               Swell{.height = 0.3f, .period = 6.0f}})
+                               Swell{.height = 0.3f, .period = 6.0f}, Swell{.height = 0.015f, .period = 1.4f}})
     {
         CAPTURE(swell.height);
         const WaveSpectrum spectrum = SpectrumOf(swell);
         CHECK(spectrum.peakFrequency == doctest::Approx(2.0 * std::numbers::pi / static_cast<double>(swell.period)));
-        CHECK(4.0 * std::sqrt(SpectrumVariance(spectrum)) == doctest::Approx(swell.height).epsilon(0.01));
-        CHECK(SignificantWaveHeight(spectrum) == doctest::Approx(swell.height).epsilon(0.01));
+        const double height = static_cast<double>(swell.height);
+        CHECK(4.0 * std::sqrt(SpectrumVariance(spectrum)) / height == doctest::Approx(1.0).epsilon(0.01));
+        CHECK(static_cast<double>(SignificantWaveHeight(spectrum)) / height == doctest::Approx(1.0).epsilon(0.01));
     }
     CHECK(SpectrumOf(Swell{.height = 0.0f}).peakFrequency == 0.0f);
+}
+
+TEST_CASE("Swell arrives smooth: far above its peak it holds almost nothing")
+{
+    // The short waves a storm raised died out on the way, so swell on calm
+    // water is glassy and does not glitter.
+    const WaveSpectrum swell = SpectrumOf(Swell{.height = 0.015f, .period = 1.4f});
+    WaveSpectrum untouched = swell;
+    untouched.tailAlpha = untouched.alpha;
+    const float far = 10.0f * swell.peakFrequency;
+    CHECK(JonswapSpectrum(far, swell) < 0.05f * JonswapSpectrum(far, untouched));
 }
 
 TEST_CASE("A longer fetch grows longer, taller waves")

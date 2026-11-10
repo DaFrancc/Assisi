@@ -200,13 +200,14 @@ struct WaterWaves
 inline constexpr glm::vec3 kDefaultLakeColor{0.006f, 0.02f, 0.016f};
 inline constexpr glm::vec3 kDefaultLakeCrestColor{0.03f, 0.1f, 0.06f};
 inline constexpr float kDefaultLakeSpread = 0.2f;
-inline constexpr float kDefaultLakeChoppiness = 0.6f;
+inline constexpr float kDefaultLakeChoppiness = 0.4f;
 /// A lake is clouded with silt: metres before all but a third of the light is
 /// gone.
 inline constexpr float kDefaultLakeClarity = 4.0f;
 inline constexpr float kMinLakeClarity = 0.1f;
-/// Open water, with a little of the wind kept off by its banks.
-inline constexpr float kDefaultLakeShelter = 0.2f;
+/// Half the wind kept off by its banks and the trees round it, as most small
+/// water has.
+inline constexpr float kDefaultLakeShelter = 0.5f;
 /// Ripples as the wind raises them; twice that is choppy.
 inline constexpr float kDefaultLakeRipples = 1.0f;
 inline constexpr float kMaxLakeRipples = 2.0f;
@@ -261,10 +262,10 @@ struct WaveSpectrum
     float peakFrequency = 0.0f;
     /// JONSWAP's α: how much energy the sea holds overall, at its peak.
     float alpha = 0.0f;
-    /// α far above the peak: the open sea's for the same wind, never more than
-    /// alpha. Short waves are set by the wind where they are, not by how far it
-    /// has blown, so a pond's ripples are the sea's, and only its waves near the
-    /// peak hold a young sea's extra energy.
+    /// α far above the peak, never more than alpha. A wind sea's is the open
+    /// sea's for the same wind: short waves are set by the wind where they are,
+    /// not by how far it has blown, so a pond's ripples are the sea's. A swell's
+    /// is zero: its short waves died out on the way, so it arrives glassy.
     float tailAlpha = 0.0f;
     /// U·ωp/g less a fully grown sea's: how young the sea is, which widens the
     /// spread of the waves shorter than the peak.

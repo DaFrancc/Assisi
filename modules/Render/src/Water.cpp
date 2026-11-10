@@ -337,15 +337,17 @@ WaveSpectrum SpectrumOf(const Swell &swell)
     {
         return WaveSpectrum{};
     }
-    // Hs = 4·√(α·g²/ωp⁴·shape), solved for α.
+    // Swell arrives smooth: its tail fades to nothing above the peak, as a fully
+    // grown sea's extra energy does. Hs = 4·√(α·g²/ωp⁴·(shape - faded tail)),
+    // solved for α.
     const float peak = kTwoPi / swell.period;
     const float peak2 = peak * peak;
     const float deviation = swell.height / kSignificantHeightDeviations;
-    const float alpha =
-        deviation * deviation * peak2 * peak2 / (kWaterGravity * kWaterGravity * JonswapShapeVariance());
+    const float shape = JonswapShapeVariance() - TabledTailDeficit(kGrownWindRatio);
+    const float alpha = deviation * deviation * peak2 * peak2 / (kWaterGravity * kWaterGravity * shape);
     return WaveSpectrum{.peakFrequency = peak,
                         .alpha = alpha,
-                        .tailAlpha = alpha,
+                        .tailAlpha = 0.0f,
                         .youth = 0.0f,
                         .bearingDegrees = swell.bearingDegrees,
                         .spread = swell.spread,

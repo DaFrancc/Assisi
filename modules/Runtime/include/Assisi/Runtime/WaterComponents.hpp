@@ -162,7 +162,7 @@ kLakePresets{{
     Assisi::Render::LakeSettings{.color = glm::vec3(0.002f, 0.012f, 0.03f),
                                  .crestColor = glm::vec3(0.02f, 0.12f, 0.16f),
                                  .clarity = 10.0f,
-                                 .shelter = 0.4f,
+                                 .shelter = 0.6f,
                                  .swellHeight = 0.02f,
                                  .swellPeriod = 1.8f},
 
