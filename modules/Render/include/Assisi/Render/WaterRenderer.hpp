@@ -147,9 +147,11 @@ struct WaterDrawView
 };
 
 /// @brief The constants water.vert and water.frag draw @p body with in
-/// @p gusts, seen from @p camera at @p seconds.
-[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gusts, glm::dvec3 camera,
-                                                        double seconds);
+/// @p gusts, seen from @p camera at @p seconds. @p shares is
+/// ShareCascades of its waves and cascades, which change far less often than
+/// once a frame.
+[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const CascadeShares &shares,
+                                                        const Gusts &gusts, glm::dvec3 camera, double seconds);
 
 /// @brief water_spectrum.comp's constants for @p body.
 [[nodiscard]] WaterSpectrumConstants MakeWaterSpectrumConstants(const WaterBody &body);
@@ -212,6 +214,8 @@ private:
         const nvrhi::IBuffer *drawSetNodes = nullptr;
         WaterCascades cascades;
         WaterWaves waves;
+        /// How each cascade's slopes divide, for the waves the spectrum holds.
+        CascadeShares shares;
         uint32_t idleFrames = 0u;
         bool spectrumWritten = false;
     };

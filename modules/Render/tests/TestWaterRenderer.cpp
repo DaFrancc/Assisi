@@ -27,6 +27,13 @@ WaterBody Sea()
     return body;
 }
 
+/// @p body's surface constants, its cascade shares worked out as the renderer
+/// caches them.
+WaterDrawConstants DrawConstants(const WaterBody &body, const Gusts &gusts, glm::dvec3 camera, double seconds)
+{
+    return MakeWaterDrawConstants(body, ShareCascades(body.waves, body.cascades), gusts, camera, seconds);
+}
+
 } // namespace
 
 TEST_CASE("The spectrum's constants carry each cascade's band and both spectra")
@@ -56,7 +63,7 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
     const WaterBody sea = Sea();
     const glm::dvec3 camera(123456.25, 4.0, -98765.5);
     const Gusts gusts{.toward = glm::vec2(0.6f, -0.8f), .speed = 7.0f, .gustFactor = 1.4f};
-    const WaterDrawConstants constants = MakeWaterDrawConstants(sea, gusts, camera, 1234.5);
+    const WaterDrawConstants constants = DrawConstants(sea, gusts, camera, 1234.5);
 
     // Each cascade's offset is the camera's place in its tile.
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
@@ -93,7 +100,7 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
     lake.windInBody = glm::vec2(1.0f, 0.0f);
     lake.windShare = 0.3f;
     lake.look.ripples = 0.5f;
-    const WaterDrawConstants lakeConstants = MakeWaterDrawConstants(lake, gusts, glm::dvec3(110.0, 25.0, -45.0), 0.0);
+    const WaterDrawConstants lakeConstants = DrawConstants(lake, gusts, glm::dvec3(110.0, 25.0, -45.0), 0.0);
     CHECK(lakeConstants.wind.x == doctest::Approx(1.0f));
     CHECK(lakeConstants.wind.z == doctest::Approx(30.0f));
     CHECK(lakeConstants.wind.w == doctest::Approx(0.3f));
@@ -109,7 +116,7 @@ TEST_CASE("A lake's tiles that would repeat across it are broken up, and the oce
 {
     const Gusts gusts{.speed = 4.0f, .gustFactor = 1.5f};
     const glm::dvec3 camera(10.0, 2.0, 5.0);
-    const WaterDrawConstants sea = MakeWaterDrawConstants(Sea(), gusts, camera, 0.0);
+    const WaterDrawConstants sea = DrawConstants(Sea(), gusts, camera, 0.0);
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
         CAPTURE(c);
@@ -123,7 +130,7 @@ TEST_CASE("A lake's tiles that would repeat across it are broken up, and the oce
     pond.waves = WaterWaves{.wind = WindSea{.windSpeed = 2.0f, .fetch = 30.0f},
                             .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
     pond.cascades = LayoutCascades(pond.waves);
-    const WaterDrawConstants pondConstants = MakeWaterDrawConstants(pond, gusts, camera, 0.0);
+    const WaterDrawConstants pondConstants = DrawConstants(pond, gusts, camera, 0.0);
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
         CAPTURE(c);
@@ -150,7 +157,7 @@ TEST_CASE("A calm pond's ripple tiles are not drawn, and a windy pond's are")
     pond.waves = WaterWaves{.wind = WindSea{.windSpeed = breeze.speed * pond.windShare, .fetch = 20.0f},
                             .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
     pond.cascades = LayoutCascades(pond.waves);
-    const WaterDrawConstants calm = MakeWaterDrawConstants(pond, breeze, camera, 0.0);
+    const WaterDrawConstants calm = DrawConstants(pond, breeze, camera, 0.0);
     // The tiles holding the swell stay drawn, however gentle their slopes.
     CHECK(calm.shown[0] == 1.0f);
     CHECK(calm.shown[1] == 1.0f);
@@ -162,13 +169,13 @@ TEST_CASE("A calm pond's ripple tiles are not drawn, and a windy pond's are")
     rolling.waves.swell.period = 4.0f;
     rolling.cascades = LayoutCascades(rolling.waves);
     CHECK(ShareCascades(rolling.waves, rolling.cascades).slopeVariance[0] < kMinShownWaterSlopeVariance);
-    CHECK(MakeWaterDrawConstants(rolling, breeze, camera, 0.0).shown[0] == 1.0f);
+    CHECK(DrawConstants(rolling, breeze, camera, 0.0).shown[0] == 1.0f);
 
     // A gale reaches it, and every tile shows.
     const Gusts gale{.speed = 30.0f, .gustFactor = 1.5f};
     pond.waves.wind.windSpeed = gale.speed * pond.windShare;
     pond.cascades = LayoutCascades(pond.waves);
-    const WaterDrawConstants windy = MakeWaterDrawConstants(pond, gale, camera, 0.0);
+    const WaterDrawConstants windy = DrawConstants(pond, gale, camera, 0.0);
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
         CAPTURE(c);

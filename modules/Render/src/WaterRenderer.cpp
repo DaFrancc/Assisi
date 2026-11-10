@@ -71,8 +71,8 @@ glm::vec4 ShapeOf(const WaveSpectrum &spectrum)
 
 } // namespace
 
-WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gusts, glm::dvec3 camera,
-                                          double seconds)
+WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const CascadeShares &shares, const Gusts &gusts,
+                                          glm::dvec3 camera, double seconds)
 {
     WaterDrawConstants constants;
     const glm::dvec2 cameraAcross(camera.x, camera.z);
@@ -101,7 +101,6 @@ WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gu
                                   kUnresolvedWaterSlopeVariance, kWaterShoreFade);
     constants.color = glm::vec4(body.look.color, body.look.clarity);
     constants.crestColor = glm::vec4(body.look.crestColor, 0.0f);
-    const CascadeShares shares = ShareCascades(body.waves, body.cascades);
     constants.rippleShare = PerCascade(shares.ripples);
     constants.swellShare = PerCascade(shares.swell);
     constants.wind = glm::vec4(body.windInBody, endless ? 0.0f : body.crossing, body.windShare);
@@ -426,6 +425,7 @@ bool WaterRenderer::Simulate(nvrhi::ICommandList *commandList, const WaterFrame 
                                      sizeof(constants));
             field->waves = body.waves;
             field->cascades = body.cascades;
+            field->shares = ShareCascades(body.waves, body.cascades);
             field->spectrumWritten = true;
         }
         SimulateField(commandList, *field, body, loopSeconds);
@@ -519,7 +519,8 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
             continue;
         }
 
-        const WaterDrawConstants constants = MakeWaterDrawConstants(body, frame.gusts, view.camera, view.seconds);
+        const WaterDrawConstants constants =
+            MakeWaterDrawConstants(body, field.shares, frame.gusts, view.camera, view.seconds);
         commandList->writeBuffer(_constants, &constants, sizeof(constants));
 
         nvrhi::GraphicsState state;
