@@ -32,8 +32,10 @@ layout(set = 1, binding = 256) uniform WaterConstants
     vec4 color;
     // rgb = the colour crests glow with against the sun.
     vec4 crestColor;
-    // Per cascade, how much of its band is ripples that follow the gusts.
+    // Per cascade, how much of its slopes are ripples that follow the gusts.
     vec4 rippleShare;
+    // Per cascade, how much of its slopes are swell, which nothing here scales.
+    vec4 swellShare;
     // xy = which way the wind blows in the body's frame; z = the longest
     // stretch of it the wind crosses, zero for endless water; w = the share of
     // the level's wind that reaches it.
@@ -122,9 +124,10 @@ float LocalFetch(vec2 local)
 
 // How tall each cascade's waves stand at a point, as a share of the spectrum's:
 // the ripples follow the gust there, as much of it as the body's shelter lets
-// through and as strongly as its ripples are set to show, and the longer waves
-// the distance from the shore upwind. @p fromCamera is along world x and z,
-// @p local the same point in the body's frame.
+// through and as strongly as its ripples are set to show; the longer wind waves
+// follow the distance from the shore upwind; the swell stays as it is. The
+// three parts add as variances. @p fromCamera is along world x and z, @p local
+// the same point in the body's frame.
 struct WaveScale
 {
     vec4  cascades;
@@ -143,7 +146,8 @@ WaveScale WaveScaleAt(vec2 fromCamera, vec2 local)
         growth = pow(clamp(LocalFetch(local) / uWater.wind.z, 0.0, 1.0), kFetchGrowthExponent);
     }
     WaveScale scale;
-    scale.cascades = mix(vec4(growth), vec4(ripples), uWater.rippleShare);
+    vec4 longShare = max(vec4(1.0) - uWater.rippleShare - uWater.swellShare, vec4(0.0));
+    scale.cascades = sqrt(uWater.swellShare + longShare * growth * growth + uWater.rippleShare * ripples * ripples);
     scale.ripples  = ripples;
     return scale;
 }

@@ -79,15 +79,10 @@ TEST_CASE("The surface's constants place the waves and the body as the camera se
     // All the wind reaches it, and its ripples are as the wind raises them.
     CHECK(constants.wind.w == doctest::Approx(1.0f));
     CHECK(constants.ripples.x == doctest::Approx(1.0f));
-    // The gusts are found around the camera, and each cascade says how much of
-    // it follows them.
+    // The gusts are found around the camera.
     const GustConstants expected = MakeGustConstants(gusts, camera, 1234.5);
     CHECK(constants.gusts.cell == expected.cell);
     CHECK(constants.gusts.wind == expected.wind);
-    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
-    {
-        CHECK(constants.rippleShare[static_cast<glm::length_t>(c)] == doctest::Approx(RippleShare(sea.cascades, c)));
-    }
 
     // A lake's rectangle is measured from the camera in its own frame.
     WaterBody lake = Sea();

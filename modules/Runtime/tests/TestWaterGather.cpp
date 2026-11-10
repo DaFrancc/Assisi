@@ -93,13 +93,14 @@ TEST_CASE("An Ocean is endless water at its entity's height, with the level's wi
     CHECK(again.bodies.front().key == body.key);
 }
 
-TEST_CASE("Without a Wind the air is still, so only swell moves the sea")
+TEST_CASE("Without a Wind the air is still, so only swell moves the water")
 {
     ECS::Scene scene;
     const ECS::Entity sea = Place(scene, Transform{});
     REQUIRE(scene.Add(sea, Ocean{.swellHeight = 0.0f}) != nullptr);
-    const ECS::Entity lake = Place(scene, Transform{.position = glm::dvec3(0.0, 5.0, 0.0)});
-    REQUIRE(scene.Add(lake, Lake{.size = glm::vec2(30.0f, 30.0f)}) != nullptr);
+    const ECS::Entity still = Place(scene, Transform{.position = glm::dvec3(0.0, 5.0, 0.0)});
+    REQUIRE(scene.Add(still, Lake{.preset = Runtime::LakePreset::Custom, .swellHeight = 0.0f, .size = glm::vec2(30.0f, 30.0f)}) !=
+            nullptr);
 
     const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 8.0, 0.0)));
     REQUIRE(frame.bodies.size() == 2u);
@@ -110,6 +111,14 @@ TEST_CASE("Without a Wind the air is still, so only swell moves the sea")
         CHECK(body.windInBody == glm::vec2(0.0f));
     }
     CHECK(frame.gusts.speed == 0.0f);
+
+    // A lake with a swell keeps rocking in still air.
+    ECS::Scene rockingScene;
+    const ECS::Entity rocking = Place(rockingScene, Transform{});
+    REQUIRE(rockingScene.Add(rocking, Lake{.size = glm::vec2(30.0f, 30.0f)}) != nullptr);
+    const Render::WaterFrame rockingFrame = Gather(rockingScene, From(glm::dvec3(0.0, 3.0, 0.0)));
+    REQUIRE(rockingFrame.bodies.size() == 1u);
+    CHECK(rockingFrame.bodies.front().significantHeight > 0.0f);
 }
 
 TEST_CASE("A Lake turns and scales with its entity")
@@ -153,7 +162,6 @@ TEST_CASE("A Lake's fetch is the longest stretch the wind crosses, so a pond's w
     const Render::WaterWaves big =
         Runtime::LakeWaves(long_, east, glm::vec2(3000.0f, 3000.0f), glm::vec2(1.0f, 0.0f));
     CHECK(WindHeight(pond) < WindHeight(big) / 10.0f);
-    CHECK(pond.swell.height == 0.0f);
 
     // Blowing corner to corner across a square, the wind crosses its diagonal.
     const Wind southEast{.speed = 8.0f, .bearingDegrees = 135.0f};

@@ -92,8 +92,9 @@ inline constexpr float kOceanFetch = 1.0e5f;
 /// @{
 /// Metres of significant height.
 inline constexpr float kMaxSwellHeight = 10.0f;
-/// Seconds between crests.
-inline constexpr float kMinSwellPeriod = 4.0f;
+/// Seconds between crests. An ocean's swell is at least 4 s (its component's
+/// range); a lake's gentle swell can be as short as this.
+inline constexpr float kMinSwellPeriod = 1.0f;
 inline constexpr float kMaxSwellPeriod = 25.0f;
 inline constexpr float kDefaultSwellPeriod = 10.0f;
 /// @}
@@ -166,6 +167,9 @@ struct Swell
     float period = kDefaultSwellPeriod;
     /// The compass bearing the swell travels toward: 0 north, 90 east.
     float bearingDegrees = 0.0f;
+    /// From 0, long crests close to the bearing, as a storm's swell arrives,
+    /// to 1, waves travel every way equally.
+    float spread = 0.0f;
 
     bool operator==(const Swell &) const = default;
 };
@@ -206,6 +210,13 @@ inline constexpr float kDefaultLakeShelter = 0.2f;
 /// Ripples as the wind raises them; twice that is choppy.
 inline constexpr float kDefaultLakeRipples = 1.0f;
 inline constexpr float kMaxLakeRipples = 2.0f;
+/// Long, low waves that keep open water rocking whatever the wind.
+inline constexpr float kDefaultLakeSwellHeight = 0.03f;
+inline constexpr float kDefaultLakeSwellPeriod = 2.0f;
+inline constexpr float kMaxLakeSwellHeight = 0.5f;
+inline constexpr float kMaxLakeSwellPeriod = 4.0f;
+/// A lake's swell comes back off every bank, so it travels most ways at once.
+inline constexpr float kLakeSwellSpread = 0.6f;
 /// @}
 
 /// @brief What makes a lake the kind it is: how it looks, how much of the wind
@@ -228,6 +239,10 @@ struct LakeSettings
     float shelter = kDefaultLakeShelter;
     /// How strongly its ripples show: 0 glassy, 1 as the wind raises them.
     float ripples = kDefaultLakeRipples;
+    /// The height of its gentle swell, in metres; 0 is none.
+    float swellHeight = kDefaultLakeSwellHeight;
+    /// Seconds between the swell's crests: longer swell is longer and slower.
+    float swellPeriod = kDefaultLakeSwellPeriod;
     /// Which lake of the kind the rest describes.
     uint32_t seed = 0u;
 
@@ -341,10 +356,18 @@ struct WaterCascades
 /// longest peak waves, and each after is kWaterCascadeRatio smaller.
 [[nodiscard]] WaterCascades LayoutCascades(const WaterWaves &waves);
 
-/// @brief How much of @p cascade's band is ripples, shorter than
-/// kRippleWavelength: from 0, none of it, to 1, all of it, measured along the
-/// logarithm of the wavenumber.
-[[nodiscard]] float RippleShare(const WaterCascades &cascades, uint32_t cascade);
+/// @brief How each cascade's slopes divide between the swell and the wind
+/// sea's ripples, the waves shorter than kRippleWavelength, by energy; the rest
+/// is the wind sea's longer waves.
+struct CascadeShares
+{
+    std::array<float, kWaterCascadeCount> swell{};
+    std::array<float, kWaterCascadeCount> ripples{};
+};
+
+/// @brief The shares of @p waves' slopes in each of @p cascades. A cascade
+/// holding no waves has none of either.
+[[nodiscard]] CascadeShares ShareCascades(const WaterWaves &waves, const WaterCascades &cascades);
 
 /// @brief How tall ripples stand in a local wind of @p localSpeed, as a share
 /// of their height in the steady wind of @p steadySpeed that raised the

@@ -86,8 +86,12 @@ struct WaterDrawConstants
     glm::vec4 surface{0.0f};
     glm::vec4 color{0.0f};
     glm::vec4 crestColor{0.0f};
-    /// Per cascade, how much of its band is ripples that follow the gusts.
+    /// Per cascade, how much of its slopes are the wind sea's ripples, which
+    /// follow the gusts.
     glm::vec4 rippleShare{0.0f};
+    /// Per cascade, how much of its slopes are swell, which neither gusts nor
+    /// the shore change.
+    glm::vec4 swellShare{0.0f};
     /// xy = which way the wind blows in the body's frame; z = the longest
     /// stretch of it the wind crosses, zero for endless water, whose waves do
     /// not grow from a shore; w = the share of the level's wind that reaches it.

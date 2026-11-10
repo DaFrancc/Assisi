@@ -117,7 +117,10 @@ Render::WaterWaves LakeWaves(const Lake &lake, const Wind &wind, glm::vec2 exten
                                     .fetch = LakeCrossing(wind, extent, axisX),
                                     .bearingDegrees = wind.bearingDegrees,
                                     .spread = settings.spread},
-            .swell = Render::Swell{},
+            .swell = Render::Swell{.height = settings.swellHeight,
+                                   .period = settings.swellPeriod,
+                                   .bearingDegrees = wind.bearingDegrees,
+                                   .spread = Render::kLakeSwellSpread},
             .choppiness = settings.choppiness,
             .seed = settings.seed});
 }

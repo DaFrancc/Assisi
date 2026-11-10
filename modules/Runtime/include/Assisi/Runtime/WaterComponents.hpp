@@ -92,8 +92,8 @@ enum class LakePreset : std::uint8_t
 ACOMP()
 struct Lake
 {
-    /// Which kind of lake this is. Every value but Custom answers the seven
-    /// fields from the colour to the ripples, which grey out. The size and the
+    /// Which kind of lake this is. Every value but Custom answers the nine
+    /// fields from the colour to the swell, which grey out. The size and the
     /// seed are never greyed: they work with every preset.
     AFIELD(radioBroadcast) LakePreset preset = LakePreset::Lake;
 
@@ -117,6 +117,12 @@ struct Lake
     /// How strongly its ripples show: 0 glassy, as under a film of oil or
     /// pollen, 1 as the wind raises them, 2 choppy.
     AFIELD(min = 0, max = 2, radioListen = {source = preset, value = Custom, behavior = grey}) float ripples = Assisi::Render::kDefaultLakeRipples;
+    /// The height of the long, low waves that keep it rocking whatever the
+    /// wind, in metres. 0 leaves it still when the air is.
+    AFIELD(min = 0, max = 0.5, radioListen = {source = preset, value = Custom, behavior = grey}) float swellHeight = Assisi::Render::kDefaultLakeSwellHeight;
+    /// Seconds between the swell's crests, from 1 to 4: longer swell is longer
+    /// and slower.
+    AFIELD(min = 1, max = 4, radioListen = {source = preset, value = Custom, behavior = grey}) float swellPeriod = Assisi::Render::kDefaultLakeSwellPeriod;
 
     /// Width along the entity's x and z, in metres, scaled with it. The wind
     /// can blow only this far over the water, so a small lake keeps only the
@@ -136,15 +142,17 @@ struct Lake
 /// ripples.
 inline constexpr std::array<Assisi::Render::LakeSettings, static_cast<std::size_t>(LakePreset::Custom) + 1>
 kLakePresets{{
-    // Pond: most of the wind kept off, soft ripples, and murky green water a
-    // metre and a half clear.
+    // Pond: most of the wind kept off, soft ripples, a faint slow swell, and
+    // murky green water a metre and a half clear.
     Assisi::Render::LakeSettings{.color = glm::vec3(0.008f, 0.018f, 0.01f),
                                  .crestColor = glm::vec3(0.03f, 0.08f, 0.04f),
                                  .spread = 0.3f,
                                  .choppiness = 0.4f,
                                  .clarity = 1.5f,
                                  .shelter = 0.7f,
-                                 .ripples = 0.7f},
+                                 .ripples = 0.7f,
+                                 .swellHeight = 0.015f,
+                                 .swellPeriod = 1.4f},
 
     // Lake: the defaults.
     Assisi::Render::LakeSettings{},
@@ -154,17 +162,21 @@ kLakePresets{{
     Assisi::Render::LakeSettings{.color = glm::vec3(0.002f, 0.012f, 0.03f),
                                  .crestColor = glm::vec3(0.02f, 0.12f, 0.16f),
                                  .clarity = 10.0f,
-                                 .shelter = 0.4f},
+                                 .shelter = 0.4f,
+                                 .swellHeight = 0.02f,
+                                 .swellPeriod = 1.8f},
 
-    // Swamp: brown and half a metre clear, with almost no wind and few
-    // ripples.
+    // Swamp: brown and half a metre clear, with almost no wind, few ripples
+    // and hardly any swell.
     Assisi::Render::LakeSettings{.color = glm::vec3(0.012f, 0.01f, 0.004f),
                                  .crestColor = glm::vec3(0.06f, 0.05f, 0.02f),
                                  .spread = 0.4f,
                                  .choppiness = 0.2f,
                                  .clarity = 0.5f,
                                  .shelter = 0.85f,
-                                 .ripples = 0.25f},
+                                 .ripples = 0.25f,
+                                 .swellHeight = 0.005f,
+                                 .swellPeriod = 1.6f},
 
     // Custom: the defaults again, so departing from a preset starts where the
     // fields already are.
@@ -187,6 +199,8 @@ static_assert(kLakePresets.size() == static_cast<std::size_t>(LakePreset::Custom
         settings.clarity = lake.clarity;
         settings.shelter = lake.shelter;
         settings.ripples = lake.ripples;
+        settings.swellHeight = lake.swellHeight;
+        settings.swellPeriod = lake.swellPeriod;
     }
     settings.seed = lake.seed;
     return Assisi::Render::Sanitized(settings);

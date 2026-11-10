@@ -35,7 +35,7 @@ constexpr size_t kMinNodeCapacity = 256u;
 static_assert(sizeof(WaterSpectrumConstants) == 128u,
               "Must match water_spectrum.comp's push constants, and stay within the 128 bytes Vulkan guarantees.");
 static_assert(sizeof(WaterRowConstants) == 24u, "Must match water_fft_rows.comp's push constants.");
-static_assert(sizeof(WaterDrawConstants) == 208u, "Must match water/surface.glsl's WaterConstants.");
+static_assert(sizeof(WaterDrawConstants) == 224u, "Must match water/surface.glsl's WaterConstants.");
 static_assert(sizeof(WaterNode) == 16u, "Must match water/surface.glsl's WaterNode.");
 
 nvrhi::TextureHandle MakeWaveTexture(nvrhi::IDevice *device, nvrhi::Format format, uint32_t mips, const char *name)
@@ -101,12 +101,9 @@ WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const Gusts &gu
                                   kUnresolvedWaterSlopeVariance, kWaterShoreFade);
     constants.color = glm::vec4(body.look.color, body.look.clarity);
     constants.crestColor = glm::vec4(body.look.crestColor, 0.0f);
-    std::array<float, kWaterCascadeCount> shares{};
-    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
-    {
-        shares[c] = RippleShare(body.cascades, c);
-    }
-    constants.rippleShare = PerCascade(shares);
+    const CascadeShares shares = ShareCascades(body.waves, body.cascades);
+    constants.rippleShare = PerCascade(shares.ripples);
+    constants.swellShare = PerCascade(shares.swell);
     constants.wind = glm::vec4(body.windInBody, endless ? 0.0f : body.crossing, body.windShare);
     constants.ripples = glm::vec4(body.look.ripples, 0.0f, 0.0f, 0.0f);
     constants.gusts = MakeGustConstants(gusts, camera, seconds);

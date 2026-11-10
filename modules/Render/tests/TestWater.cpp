@@ -350,30 +350,37 @@ TEST_CASE("No ripple shorter than the shortest wave is raised")
     }
 }
 
-TEST_CASE("Each cascade knows how much of its band is ripples")
+TEST_CASE("Each cascade's slopes are shared out by energy between swell, ripples and longer wind waves")
 {
-    for (const WaterWaves &waves : {OpenSea(), Pond()})
+    // A pond in a light breeze: every wave the wind raises is a ripple, however
+    // wide a band the cascade holding it spans.
+    const WaterWaves breeze{.wind = WindSea{.windSpeed = 1.8f, .fetch = 20.0f, .spread = 0.3f}, .swell = Swell{}};
+    const WaterCascades breezeCascades = LayoutCascades(breeze);
+    const CascadeShares breezeShares = ShareCascades(breeze, breezeCascades);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
-        const WaterCascades cascades = LayoutCascades(waves);
-        float previous = 0.0f;
-        for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
-        {
-            CAPTURE(c);
-            const float share = RippleShare(cascades, c);
-            CHECK(share >= 0.0f);
-            CHECK(share <= 1.0f);
-            // Each cascade is finer than the last, so no less of it is ripples.
-            CHECK(share >= previous);
-            previous = share;
-        }
+        CAPTURE(c);
+        CHECK(breezeShares.swell[c] == 0.0f);
     }
-    // The open sea's cascades hold nothing shorter than a few centimetres...
-    const WaterCascades sea = LayoutCascades(OpenSea());
-    CHECK(RippleShare(sea, 0u) == 0.0f);
-    // ...and a pond's finest holds nothing longer.
-    const WaterCascades pond = LayoutCascades(Pond());
-    CHECK(RippleShare(pond, kWaterCascadeCount - 1u) == doctest::Approx(1.0f));
-    CHECK(RippleShare(pond, kWaterCascadeCount) == 0.0f);
+    CHECK(breezeShares.ripples[0] > 0.95f);
+
+    // The same pond rocked by a gentle swell: the largest cascade holds the
+    // swell, which no gust may switch off, and the finest the ripples.
+    WaterWaves rocking = breeze;
+    rocking.swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread};
+    const WaterCascades rockingCascades = LayoutCascades(rocking);
+    const CascadeShares rockingShares = ShareCascades(rocking, rockingCascades);
+    CHECK(rockingShares.swell[0] > 0.95f);
+    CHECK(rockingShares.ripples[kWaterCascadeCount - 1u] > 0.95f);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(rockingShares.swell[c] + rockingShares.ripples[c] <= 1.0f + 1.0e-5f);
+    }
+
+    // The open sea's largest cascade holds no ripples.
+    const WaterWaves sea = OpenSea();
+    CHECK(ShareCascades(sea, LayoutCascades(sea)).ripples[0] == 0.0f);
 }
 
 TEST_CASE("Ripples need a breath of wind, and grow steeper as it rises")

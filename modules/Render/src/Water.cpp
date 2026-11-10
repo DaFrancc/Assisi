@@ -98,6 +98,9 @@ constexpr uint32_t kTailAgeEntries = static_cast<uint32_t>(kMaxTabledAge / kTail
 constexpr uint32_t kTailSteps = 2000u;
 /// @}
 
+/// Steps of ln k across a cascade's band when sharing out its slopes.
+constexpr uint32_t kShareSteps = 64u;
+
 /// Mixed into a draw's key for the second of its two uniform numbers: the
 /// golden ratio's bits, so the two never share a hash.
 constexpr uint32_t kSecondDrawKey = 0x9E3779B9u;
@@ -133,6 +136,7 @@ Swell Sanitized(Swell swell)
     swell.height = ClampFinite(swell.height, 0.0f, kMaxSwellHeight, defaults.height);
     swell.period = ClampFinite(swell.period, kMinSwellPeriod, kMaxSwellPeriod, defaults.period);
     swell.bearingDegrees = WrapBearing(swell.bearingDegrees, defaults.bearingDegrees);
+    swell.spread = ClampFinite(swell.spread, 0.0f, 1.0f, defaults.spread);
     return swell;
 }
 
@@ -287,6 +291,8 @@ LakeSettings Sanitized(LakeSettings settings)
     settings.clarity = ClampFinite(settings.clarity, kMinLakeClarity, std::numeric_limits<float>::max(), defaults.clarity);
     settings.shelter = ClampFinite(settings.shelter, 0.0f, 1.0f, defaults.shelter);
     settings.ripples = ClampFinite(settings.ripples, 0.0f, kMaxLakeRipples, defaults.ripples);
+    settings.swellHeight = ClampFinite(settings.swellHeight, 0.0f, kMaxLakeSwellHeight, defaults.swellHeight);
+    settings.swellPeriod = ClampFinite(settings.swellPeriod, kMinSwellPeriod, kMaxLakeSwellPeriod, defaults.swellPeriod);
     return settings;
 }
 
@@ -342,7 +348,7 @@ WaveSpectrum SpectrumOf(const Swell &swell)
                         .tailAlpha = alpha,
                         .youth = 0.0f,
                         .bearingDegrees = swell.bearingDegrees,
-                        .spread = 0.0f,
+                        .spread = swell.spread,
                         .swell = 1.0f};
 }
 
@@ -466,22 +472,47 @@ WaterCascades LayoutCascades(const WaterWaves &waves)
     return cascades;
 }
 
-float RippleShare(const WaterCascades &cascades, uint32_t cascade)
+CascadeShares ShareCascades(const WaterWaves &waves, const WaterCascades &cascades)
 {
-    if (cascade >= kWaterCascadeCount)
-    {
-        return 0.0f;
-    }
-    // The largest cascade's band starts at zero; its first wave is one across
-    // the tile.
-    const float low = std::max(cascades.minWavenumber[cascade], kTwoPi / cascades.tileLength[cascade]);
-    const float high = cascades.maxWavenumber[cascade];
+    const WaveSpectrum wind = SpectrumOf(waves.wind);
+    const WaveSpectrum swell = SpectrumOf(waves.swell);
+    const float shortest = kTwoPi / kShortestWaterWave;
     const float ripple = kTwoPi / kRippleWavelength;
-    if (!(high > low))
+    CascadeShares shares;
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
-        return 0.0f;
+        // The largest cascade's band starts at zero; its first wave is one
+        // across the tile.
+        const float low = std::max(cascades.minWavenumber[c], kTwoPi / cascades.tileLength[c]);
+        const float high = std::min(cascades.maxWavenumber[c], shortest);
+        if (!(high > low))
+        {
+            continue;
+        }
+        const float step = std::log(high / low) / static_cast<float>(kShareSteps);
+        double swellSlopes = 0.0;
+        double rippleSlopes = 0.0;
+        double total = 0.0;
+        for (uint32_t i = 0; i < kShareSteps; ++i)
+        {
+            const float k = low * std::exp((static_cast<float>(i) + 0.5f) * step);
+            const float omega = DeepWaterFrequency(k);
+            // The slope variance in one step of ln k: k²·F(k)·k·step, where
+            // F(k) = S(ω)·dω/dk = S(ω)·g/(2ω).
+            const double weight = static_cast<double>(k * k * k * kWaterGravity / (2.0f * omega) * step);
+            const double windSlopes = static_cast<double>(JonswapSpectrum(omega, wind)) * weight;
+            const double swellHere = static_cast<double>(JonswapSpectrum(omega, swell)) * weight;
+            swellSlopes += swellHere;
+            rippleSlopes += k >= ripple ? windSlopes : 0.0;
+            total += windSlopes + swellHere;
+        }
+        if (total > 0.0)
+        {
+            shares.swell[c] = static_cast<float>(swellSlopes / total);
+            shares.ripples[c] = static_cast<float>(rippleSlopes / total);
+        }
     }
-    return std::clamp(std::log(high / std::max(ripple, low)) / std::log(high / low), 0.0f, 1.0f);
+    return shares;
 }
 
 float RippleStrength(float localSpeed, float steadySpeed)
