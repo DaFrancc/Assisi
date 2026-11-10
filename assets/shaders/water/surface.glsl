@@ -90,6 +90,10 @@ const vec2 kBreakupShift = vec2(0.37, 0.61);
 // Stretches the blending noise so most of the surface shows mostly one copy.
 const float kBreakupContrast = 1.5;
 const float kQuarterTurn     = 1.57079632679;
+// The noise is read halfway between its lattice planes. Gradient noise is zero
+// at every lattice point, so on a plane through them the copies would blend
+// evenly on a regular grid, which shows the repeat again.
+const float kBreakupSliceDepth = 0.5;
 
 // How much of each of a cascade's two copies shows @p fromCamera metres from
 // the camera, as amplitudes whose squares add to one, so the waves keep their
@@ -106,7 +110,7 @@ vec2 BreakupWeights(vec2 fromCamera, uint cascade)
     vec4  pair   = uWater.breakupOffsets[cascade / 2u];
     vec2  offset = (cascade & 1u) == 0u ? pair.xy : pair.zw;
     vec2  cell   = (fromCamera + offset) / (uWater.tileLength[cascade] * kBreakupCellTiles);
-    float noise  = GradientNoise(vec3(cell, 0.0), kBreakupPeriod, cascade + 1u);
+    float noise  = GradientNoise(vec3(cell, kBreakupSliceDepth), kBreakupPeriod, cascade + 1u);
     float angle  = clamp(0.5 + kBreakupContrast * noise, 0.0, 1.0) * kQuarterTurn;
     return vec2(cos(angle), sin(angle));
 }
