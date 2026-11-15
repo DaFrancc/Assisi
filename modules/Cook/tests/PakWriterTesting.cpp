@@ -13,6 +13,7 @@
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/PakProvider.hpp>
 
 namespace Assisi::Cook::Testing
@@ -155,7 +156,7 @@ std::vector<ManifestEntry> WriteEqualBlobs(const std::filesystem::path &cookedRo
     std::vector<ManifestEntry> manifest;
     for (std::uint32_t i = 0; i < count; ++i)
     {
-        manifest.push_back(WriteBlob(cookedRoot, std::format("slice{:03}", i), bytesEach));
+        manifest.push_back(WriteBlob(cookedRoot, Core::Format("slice{:03}", i), bytesEach));
     }
     return manifest;
 }

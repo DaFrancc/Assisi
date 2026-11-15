@@ -2,6 +2,7 @@
 
 #include <Assisi/Geometry/CollisionData.hpp>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/Float.hpp>
 
@@ -333,7 +334,7 @@ void FitPrimitive(const Part &part, std::span<const glm::vec3> points, const Nod
 
 std::string PartName(const CollisionNode &node, std::size_t part, std::size_t parts)
 {
-    return parts == 1 ? node.name : std::format("{}_{}", node.name, part + 1);
+    return parts == 1 ? node.name : Core::Format("{}_{}", node.name, part + 1);
 }
 
 } // namespace

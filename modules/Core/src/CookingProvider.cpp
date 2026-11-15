@@ -2,6 +2,7 @@
 #include <Assisi/Core/CookingProvider.hpp>
 
 #include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
@@ -38,12 +39,12 @@ class ProviderCookContext final : public AssetCookContext
         const std::optional<AssetId> id = IdFor(vpath);
         if (!id)
         {
-            return std::unexpected(std::format("\"{}\" is not a file in the asset tree", vpath));
+            return std::unexpected(Format("\"{}\" is not a file in the asset tree", vpath));
         }
         std::expected<std::vector<std::byte>, AssetError> bytes = _source->Open(*id);
         if (!bytes)
         {
-            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, ToString(bytes.error())));
+            return std::unexpected(Format("\"{}\" can't be read: {}", vpath, ToString(bytes.error())));
         }
         return std::move(*bytes);
     }

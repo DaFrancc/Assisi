@@ -14,6 +14,7 @@
 #endif
 
 #include <Assisi/Core/Diagnostics.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 namespace Assisi::Core
@@ -48,9 +49,9 @@ const std::string &LaunchStamp()
 #endif
                                          if (const time_zone *zone = LocalZone())
                                          {
-                                             return std::format("{:%Y%m%d-%H%M%S}-{}", zone->to_local(nowUtc), pid);
+                                             return Format("{:%Y%m%d-%H%M%S}-{}", zone->to_local(nowUtc), pid);
                                          }
-                                         return std::format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
+                                         return Format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
                                      }();
     return stamp;
 }

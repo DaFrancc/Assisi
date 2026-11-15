@@ -41,9 +41,11 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/Key.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <imgui.h>
 #include <imgui_internal.h> // ImGui input watchdog: ActiveId/HoveredWindow introspection
@@ -123,9 +125,9 @@ std::string ScreenshotStamp()
     const std::chrono::sys_seconds now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     if (const std::chrono::time_zone *zone = Assisi::Core::LocalZone(); zone != nullptr)
     {
-        return std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
+        return Core::Format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
     }
-    return std::format("{:%Y-%m-%d-%H-%M-%S}", now);
+    return Core::Format("{:%Y-%m-%d-%H-%M-%S}", now);
 }
 
 /// A screenshot path named for now and not yet taken, or empty when the folder
@@ -151,7 +153,7 @@ std::string NextScreenshotPath(std::string &stamp, uint32_t &taken)
     for (uint32_t shot = taken + 1; shot <= kMaxScreenshotsPerSecond; ++shot)
     {
         const std::string name =
-            shot == 1 ? std::format("screenshot-{}.png", stamp) : std::format("screenshot-{}-{}.png", stamp, shot);
+            shot == 1 ? Core::Format("screenshot-{}.png", stamp) : Core::Format("screenshot-{}-{}.png", stamp, shot);
         const std::filesystem::path candidate = folder / name;
         if (!std::filesystem::exists(candidate, error))
         {
@@ -166,7 +168,8 @@ std::string NextScreenshotPath(std::string &stamp, uint32_t &taken)
 } // namespace
 
 EditorApp::EditorApp(EditorConfig config)
-    : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
+    : _editorConfig(std::move(config)), _sceneRenderer(std::make_unique<Assisi::Runtime::SceneRenderer>()),
+    _options(std::make_unique<EditorOptionsPanel>())
 {
     DeclareEditorEvents();
     // Before Initialize, which loads the post-process shaders through it.
@@ -203,7 +206,7 @@ void EditorApp::DrawOptionsWindow()
 {
     const FrameStatsView stats = GetFrameStats();
     const bool applyDisplay = _options->Draw({.input = GetInput(),
-                                              .renderer = _sceneRenderer,
+                                              .renderer = *_sceneRenderer,
                                               .options = GetOptions(),
                                               .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
@@ -235,7 +238,7 @@ void EditorApp::DrawOptionsWindow()
     // this overlay, and the inspector line on a selected light. Asked for here,
     // once, so the renderer has a single answer rather than two writers racing
     // to turn it off — and so a game, which has neither reader, never pays it.
-    _sceneRenderer.SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
+    _sceneRenderer->SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
 }
 
 bool EditorApp::SelectedEntityCastsLocalShadows() const
@@ -428,7 +431,7 @@ void EditorApp::OnStart()
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
     _worlds.SetServices({.cache = &_assetCache,
-                         .renderer = &_sceneRenderer,
+                         .renderer = _sceneRenderer.get(),
                          .jobs = &Jobs(),
                          .universalEvents = &GetUniversalEvents(),
                          .input = &GetInput(),
@@ -987,14 +990,14 @@ void EditorApp::SetupScene()
     // The engine's default scene-render path: lighting plus the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo, so it is already correct if options.json saved an MSAA mode.
-    if (!_sceneRenderer.Initialize({.device = device,
-                                    .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .width = fbSize.Width,
-                                    .height = fbSize.Height,
-                                    .camera = _camera,
-                                    .bindlessLayout = _assetCache.BindlessLayout(),
-                                    .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer()}))
+    if (!_sceneRenderer->Initialize({.device = device,
+                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                     .width = fbSize.Width,
+                                     .height = fbSize.Height,
+                                     .camera = _camera,
+                                     .bindlessLayout = _assetCache.BindlessLayout(),
+                                     .bindlessTable = _assetCache.BindlessTable(),
+                                     .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         RequestClose();
         return;
@@ -1018,22 +1021,22 @@ void EditorApp::SetupScene()
                                        /*persistLayout=*/ !IsRestrictedViewer());
     _debugUiBrought = true;
 
-    _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
+    _sceneRenderer->SetGpuCulling(_editorConfig.gpuCulling);
     // The saved shadow knobs, applied once here; the options panel pushes every
     // later edit. Nothing is allocated until a level with a sun in it loads.
-    _sceneRenderer.SetShadowSettings(GetOptions().shadows);
+    _sceneRenderer->SetShadowSettings(GetOptions().shadows);
     // The same for the sky probe, which holds nothing until a sky does.
-    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
+    _sceneRenderer->SetEnvironmentSettings(GetOptions().environment);
     // And for screen-space occlusion, which holds nothing while it is off.
-    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer->SetSsaoSettings(GetOptions().ambientOcclusion);
     // The author's own choice whatever the game allows its players: the editor
     // is where fog is compared on and off.
-    _sceneRenderer.SetFogEnabled(GetOptions().fogEnabled.value_or(true));
+    _sceneRenderer->SetFogEnabled(GetOptions().fogEnabled.value_or(true));
     // The same for clouds.
-    _sceneRenderer.SetCloudQuality(GetOptions().clouds);
-    _sceneRenderer.SetCloudsEnabled(GetOptions().cloudsEnabled.value_or(true));
+    _sceneRenderer->SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer->SetCloudsEnabled(GetOptions().cloudsEnabled.value_or(true));
     // And for water.
-    _sceneRenderer.SetWaterEnabled(GetOptions().waterEnabled.value_or(true));
+    _sceneRenderer->SetWaterEnabled(GetOptions().waterEnabled.value_or(true));
 
     _preferences = Assisi::Editor::LoadEditorPreferences();
     _savedPreferences = _preferences;
@@ -1058,7 +1061,7 @@ void EditorApp::SetupScene()
 
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    if (!_sceneRenderer->OnRenderTargetsChanged(framebufferInfo))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -1073,7 +1076,7 @@ void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebuffer
 
 void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || !_scene)
+    if (!_sceneRenderer->IsValid() || !_scene)
     {
         return;
     }
@@ -1151,7 +1154,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A material debug view puts channel values in the scene target instead of
     // radiance, and the tone map must not rescale numbers meant to be read off
     // the screen.
-    SetTonemapPassthrough(_sceneRenderer.DebugView() != Assisi::Render::MaterialDebugView::None);
+    SetTonemapPassthrough(_sceneRenderer->DebugView() != Assisi::Render::MaterialDebugView::None);
 
     // The propagation bookmark comes from the world, not the renderer: one renderer
     // serves several worlds once more than one is resident.
@@ -1173,34 +1176,34 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer->SetSimulationSeconds(SimulatedSeconds());
     if (IsCapturing())
     {
         // A sixtieth of a second a frame, whatever the frames took.
         constexpr double kCaptureFrameSeconds = 1.0 / 60.0;
-        _sceneRenderer.SetWaterSeconds(static_cast<double>(_capturedFrames++) * kCaptureFrameSeconds);
+        _sceneRenderer->SetWaterSeconds(static_cast<double>(_capturedFrames++) * kCaptureFrameSeconds);
     }
     else
     {
-        _sceneRenderer.SetWaterSeconds(PresentedSimulatedSeconds());
+        _sceneRenderer->SetWaterSeconds(PresentedSimulatedSeconds());
     }
     if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _sceneRenderer.SetViewingCamera(view->entity);
-        _sceneRenderer.Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
-        SetScenePostProcess(_sceneRenderer.ScenePostProcess());
+        _sceneRenderer->SetViewingCamera(view->entity);
+        _sceneRenderer->Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
+        SetScenePostProcess(_sceneRenderer->ScenePostProcess());
         return;
     }
 
     // The editor's camera is nobody's eyes, so it sees every body.
-    _sceneRenderer.SetViewingCamera(Assisi::ECS::NullEntity);
-    _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
-    SetScenePostProcess(_sceneRenderer.ScenePostProcess());
+    _sceneRenderer->SetViewingCamera(Assisi::ECS::NullEntity);
+    _sceneRenderer->Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
+    SetScenePostProcess(_sceneRenderer->ScenePostProcess());
 }
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
 {
-    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene || _editorHidden)
+    if (!_overlaysBuilt || !_sceneRenderer->IsValid() || !_scene || _editorHidden)
     {
         return;
     }
@@ -1208,11 +1211,11 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     // projected from somewhere the viewport is not looking from.
     if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _overlays.Render(frame, *_scene, view->world, view->camera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, view->world, view->camera, *_sceneRenderer);
         return;
     }
 
-    _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
+    _overlays.Render(frame, *_scene, _cameraWorld, _camera, *_sceneRenderer);
 }
 
 void EditorApp::OnPreUpdate(float dt)
@@ -1434,9 +1437,9 @@ void EditorApp::OnUpdate(float dt)
     // the default is what hands a level back its own indirect lighting — a pinned
     // ambient overrides the sky, and a level's sky is most of what lights it.
     if (InBlueprintMode())
-        _sceneRenderer.SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
+        _sceneRenderer->SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
     else
-        _sceneRenderer.ClearAmbient();
+        _sceneRenderer->ClearAmbient();
 
     // A travel a game system asked for last frame. Systems run inside the walk over
     // the resident worlds, and travelling from there would invalidate that walk and
@@ -1702,9 +1705,9 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
                                                    ? (*definition)->members[tag->memberIndex].name
-                                                   : std::format("#{}", tag->memberIndex);
+                                                   : Core::Format("#{}", tag->memberIndex);
 
-                return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
+                return Core::Format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
         }
     }
@@ -1712,7 +1715,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
     if (const auto *name = _scene->Get<Assisi::Runtime::Name>(entity); name != nullptr && !name->value.Empty())
         return std::string{name->value.View()};
 
-    return std::format("Entity [{}:{}]", entity.index, entity.generation);
+    return Core::Format("Entity [{}:{}]", entity.index, entity.generation);
 }
 
 bool EditorApp::IsEditable() const

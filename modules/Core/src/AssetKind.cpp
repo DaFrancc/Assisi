@@ -2,6 +2,7 @@
 #include <Assisi/Core/AssetKind.hpp>
 
 #include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <algorithm>
@@ -21,7 +22,7 @@ class StandaloneCookContext final : public AssetCookContext
 
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> Read(std::string_view vpath) const override
     {
-        return std::unexpected(std::format("\"{}\" can't be read: this cook has no other files", vpath));
+        return std::unexpected(Format("\"{}\" can't be read: this cook has no other files", vpath));
     }
 
     [[nodiscard]] std::optional<AssetId> IdFor(std::string_view) const override { return std::nullopt; }

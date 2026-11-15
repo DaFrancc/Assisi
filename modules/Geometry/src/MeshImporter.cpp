@@ -7,6 +7,7 @@
 #include "GltfSource.hpp"
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
 
@@ -663,11 +664,11 @@ std::expected<std::vector<uint32_t>, std::string> OrderJoints(const fastgltf::Sk
         const size_t node = skin.joints[joint];
         if (node >= scene.reached.size() || !scene.reached[node])
         {
-            return std::unexpected(std::format("joint {} is not in the scene", joint));
+            return std::unexpected(Core::Format("joint {} is not in the scene", joint));
         }
         if (!jointOfNode.emplace(node, joint).second)
         {
-            return std::unexpected(std::format("node {} is listed as a joint twice", node));
+            return std::unexpected(Core::Format("node {} is listed as a joint twice", node));
         }
     }
 
@@ -743,8 +744,8 @@ std::expected<BuiltSkeleton, MeshImportError> BuildSkeleton(const fastgltf::Asse
     if (skin.joints.size() > kMaxJoints)
     {
         return InvalidSkin(virtualPath, skin,
-                           std::format("it has {} joints, more than the {} a skeleton can have", skin.joints.size(),
-                                       kMaxJoints));
+                           Core::Format("it has {} joints, more than the {} a skeleton can have", skin.joints.size(),
+                                        kMaxJoints));
     }
     const std::vector<glm::mat4> inverseBinds = ReadInverseBinds(asset, skin);
     if (inverseBinds.empty())
@@ -819,8 +820,8 @@ struct InfluenceList
 bool ReadInfluenceSet(const fastgltf::Asset &asset, const fastgltf::Primitive &primitive, uint32_t set,
                       std::vector<InfluenceList> &lists)
 {
-    const fastgltf::Attribute *joints = primitive.findAttribute(std::format("JOINTS_{}", set));
-    const fastgltf::Attribute *weights = primitive.findAttribute(std::format("WEIGHTS_{}", set));
+    const fastgltf::Attribute *joints = primitive.findAttribute(Core::Format("JOINTS_{}", set));
+    const fastgltf::Attribute *weights = primitive.findAttribute(Core::Format("WEIGHTS_{}", set));
     const bool hasJoints = joints != primitive.attributes.end();
     const bool hasWeights = weights != primitive.attributes.end();
     if (!hasJoints && !hasWeights)

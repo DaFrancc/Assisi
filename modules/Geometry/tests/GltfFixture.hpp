@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Format.hpp>
 
 namespace GltfFixture
 {
@@ -69,9 +70,9 @@ public:
 
         const uint32_t index = _accessorCount++;
         const char *separator = index == 0 ? "" : ",";
-        _views += std::format(R"({}{{"buffer":0,"byteOffset":{},"byteLength":{}}})", separator, offset, length);
-        _accessors += std::format(R"({}{{"bufferView":{},"componentType":{},"count":{},"type":"{}"{}}})", separator,
-                                  index, componentType, values.size() / ComponentsOf(type), type, extraKeys);
+        _views += Assisi::Core::Format(R"({}{{"buffer":0,"byteOffset":{},"byteLength":{}}})", separator, offset, length);
+        _accessors += Assisi::Core::Format(R"({}{{"bufferView":{},"componentType":{},"count":{},"type":"{}"{}}})", separator,
+                                           index, componentType, values.size() / ComponentsOf(type), type, extraKeys);
         return index;
     }
 
@@ -92,15 +93,15 @@ public:
     void WriteInto(const std::filesystem::path &root, std::string_view stem, std::string_view sceneKeys) const
     {
         const std::string gltf =
-            std::format(R"({{"asset":{{"version":"2.0"}},"scene":0,{},"buffers":[{{"uri":"{}.bin","byteLength":{}}}],)"
-                        R"("bufferViews":[{}],"accessors":[{}]}})",
-                        sceneKeys, stem, _bytes.size(), _views, _accessors);
+            Assisi::Core::Format(R"({{"asset":{{"version":"2.0"}},"scene":0,{},"buffers":[{{"uri":"{}.bin","byteLength":{}}}],)"
+                                 R"("bufferViews":[{}],"accessors":[{}]}})",
+                                 sceneKeys, stem, _bytes.size(), _views, _accessors);
         {
-            std::ofstream file(root / std::format("{}.gltf", stem), std::ios::binary);
+            std::ofstream file(root / Assisi::Core::Format("{}.gltf", stem), std::ios::binary);
             file.write(gltf.data(), static_cast<std::streamsize>(gltf.size()));
         }
         {
-            std::ofstream file(root / std::format("{}.bin", stem), std::ios::binary);
+            std::ofstream file(root / Assisi::Core::Format("{}.bin", stem), std::ios::binary);
             file.write(reinterpret_cast<const char *>(_bytes.data()), static_cast<std::streamsize>(_bytes.size()));
         }
     }

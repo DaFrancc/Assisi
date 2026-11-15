@@ -19,6 +19,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -39,6 +40,7 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 #include <Assisi/Runtime/WaterComponents.hpp>
@@ -989,7 +991,7 @@ bool EditorApp::EditListField(void *fp, const Assisi::Core::Reflect::FieldMeta &
     std::byte *list = static_cast<std::byte *>(fp);
     const std::size_t count = ops.size(list);
     // The count is shown but kept out of the ID, so the node stays open as rows come and go.
-    const std::string label = std::format("{} ({})###{}", field.name, count, field.name);
+    const std::string label = Core::Format("{} ({})###{}", field.name, count, field.name);
     if (!ImGui::TreeNode(label.c_str()))
     {
         return false;
@@ -1170,7 +1172,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             if (empty)
                 preview = "(none)";
             else if (!_scene->IsAlive(*ref))
-                preview = std::format("[{}:{}] (dangling)", ref->index, ref->generation);
+                preview = Core::Format("[{}:{}] (dangling)", ref->index, ref->generation);
             else
                 preview = DescribeEntity(*ref);
 
@@ -1246,11 +1248,11 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                                       if (!id.IsValid())
                                           return "(none)";
                                       if (_world == nullptr)
-                                          return std::format("instance {}", id.value);
+                                          return Core::Format("instance {}", id.value);
                                       const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
                                       if (row == nullptr)
-                                          return std::format("instance {} (missing)", id.value);
-                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                          return Core::Format("instance {} (missing)", id.value);
+                                      return Core::Format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
                                   };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
@@ -1964,7 +1966,7 @@ void EditorApp::DrawLightShadowVerdict()
         return;
     }
 
-    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer.ShadowReportFor(_selectedEntity);
+    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer->ShadowReportFor(_selectedEntity);
     if (report == nullptr)
     {
         // The gather runs a frame behind the selection, and a scene with local
@@ -2042,7 +2044,7 @@ void EditorApp::DrawLodVerdict()
     }
 
     const Assisi::Runtime::LodReport lod =
-        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
+        _sceneRenderer->LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
 
     if (lod.levelCount <= 1)
     {
@@ -2052,7 +2054,7 @@ void EditorApp::DrawLodVerdict()
         return;
     }
 
-    const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
+    const int32_t pinned = _sceneRenderer->PinnedLod(_selectedEntity);
 
     // "pinned" and "forced" are worth telling apart: one of them is about this
     // entity and the other is about every entity, and only one of them is
@@ -2070,7 +2072,7 @@ void EditorApp::DrawLodVerdict()
     // produces can pass 1 and would read as impossible on its own.
     // Within the slider's display precision of 1, or a drag that lands at
     // 1.0000001 would print "x 1.00 bias".
-    const float bias = _sceneRenderer.LodSettings().bias;
+    const float bias = _sceneRenderer->LodSettings().bias;
     if (std::abs(bias - 1.f) < 0.005f)
     {
         ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));
@@ -2086,7 +2088,7 @@ void EditorApp::DrawLodVerdict()
     // The switch points on either side, each named only where there is one: a
     // threshold is tuned by watching the size approach the number beside it.
     std::string switches;
-    if (!_sceneRenderer.LodSettings().enabled)
+    if (!_sceneRenderer->LodSettings().enabled)
     {
         switches = "selection is off - every instance draws LOD0";
     }
@@ -2098,7 +2100,7 @@ void EditorApp::DrawLodVerdict()
     {
         if (lod.regainAt > 0.f)
         {
-            switches = std::format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
+            switches = Core::Format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
         }
         if (lod.dropBelow > 0.f)
         {
@@ -2106,7 +2108,7 @@ void EditorApp::DrawLodVerdict()
             {
                 switches += "    ";
             }
-            switches += std::format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
+            switches += Core::Format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
         }
         else
         {
@@ -2122,20 +2124,20 @@ void EditorApp::DrawLodPin(int32_t pinned, uint32_t levelCount)
 {
     // Only the levels this chain actually has, unlike the viewport-wide force,
     // which stands over meshes of every depth and can only offer a range.
-    const std::string preview = pinned < 0 ? "Auto" : std::format("LOD{}", pinned);
+    const std::string preview = pinned < 0 ? "Auto" : Core::Format("LOD{}", pinned);
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
     if (ImGui::BeginCombo("Pin this instance", preview.c_str()))
     {
         if (ImGui::Selectable("Auto", pinned < 0))
         {
-            _sceneRenderer.PinLod(_selectedEntity, -1);
+            _sceneRenderer->PinLod(_selectedEntity, -1);
         }
         for (uint32_t level = 0; level < levelCount; ++level)
         {
-            const std::string label = std::format("LOD{}", level);
+            const std::string label = Core::Format("LOD{}", level);
             if (ImGui::Selectable(label.c_str(), pinned == static_cast<int32_t>(level)))
             {
-                _sceneRenderer.PinLod(_selectedEntity, static_cast<int32_t>(level));
+                _sceneRenderer->PinLod(_selectedEntity, static_cast<int32_t>(level));
             }
         }
         ImGui::EndCombo();
@@ -2234,7 +2236,7 @@ void EditorApp::DrawTimeOfDayControls()
     {
         return;
     }
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
     bool edited = false;
 
     // Scrubbing goes through Jump rather than writing the field, so a scrub
@@ -2362,7 +2364,7 @@ void EditorApp::DrawMoonReadout()
         return;
     }
 
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
 
     bool waxing = true;
     if (const Assisi::Runtime::TimeOfDay *clock = _scene->Get<Assisi::Runtime::TimeOfDay>(_selectedEntity))
@@ -2376,7 +2378,7 @@ void EditorApp::DrawMoonReadout()
 
     // The fallback is a flat white disk, which looks like a perfectly plausible
     // moon — which is exactly why it needs a line saying it is the fallback.
-    switch (_sceneRenderer.MoonTextureState())
+    switch (_sceneRenderer->MoonTextureState())
     {
     case Assisi::Render::SkyPass::MoonTexture::Loaded:
         ImGui::TextDisabled("texture: loaded");
@@ -2453,7 +2455,7 @@ void EditorApp::DrawInspector()
             const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(row->source);
             const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
                                                ? (*definition)->members[tag->memberIndex].name
-                                               : std::format("#{}", tag->memberIndex);
+                                               : Core::Format("#{}", tag->memberIndex);
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});
             ImGui::Text("%s of %s", memberPath.c_str(), row->source.c_str());
