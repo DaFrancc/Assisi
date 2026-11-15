@@ -39,6 +39,7 @@
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Runtime/ScenePasses.generated.hpp>
+#include <Assisi/Core/Format.hpp>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -120,7 +121,7 @@ Application::Application()
     }
     // One file per launch, named for when the process started: a single truncated
     // log is destroyed by the relaunch after the crash it explains.
-    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string logName = Core::Format("assisi-{}.log", Core::LaunchStamp());
     const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
 
     // Backstop retention, deliberately *before* this run's log exists — the one
@@ -281,7 +282,7 @@ bool Application::InitializeCore()
         return true;
     }
     const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
-    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string logName = Core::Format("assisi-{}.log", Core::LaunchStamp());
     const std::string crashStem = CrashFileStem(Core::LaunchStamp());
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
     Core::PruneOldFiles(userRoot, "crash-", kCrashLogExtension, _config.keepDumps,

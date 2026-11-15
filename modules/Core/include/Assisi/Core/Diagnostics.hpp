@@ -9,7 +9,7 @@
 /// meant to record, because the player relaunches before sending it.
 ///
 /// Usage:
-///   const std::string name = std::format("assisi-{}.log", LaunchStamp());
+///   const std::string name = Format("assisi-{}.log", LaunchStamp());
 ///   PruneOldFiles(dir, "assisi-", ".log", 5, name);
 
 #include <chrono>

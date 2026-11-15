@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Editor/ListEdit.hpp>
 
+#include <Assisi/Core/Format.hpp>
+
 #include <format>
 
 namespace Assisi::Editor
@@ -62,7 +64,7 @@ bool ApplyListEdit(const ContainerOps &ops, std::byte *container, ListEdit edit)
 Core::Reflect::FieldMeta ElementFieldMeta(const Core::Reflect::FieldMeta &list, std::size_t row)
 {
     Core::Reflect::FieldMeta element;
-    element.name = std::format("[{}]", row);
+    element.name = Core::Format("[{}]", row);
     element.type = list.container->elementType;
     element.container = list.container->element;
     element.structSpec = list.structSpec;

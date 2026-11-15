@@ -24,6 +24,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Editor/SystemSearch.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <imgui.h>
 
@@ -206,12 +207,12 @@ std::string WhereNeeded(const Assisi::App::World &world, const std::string &name
     std::string where;
     if (Requires(world.systemNames, name))
     {
-        where = std::format("Named by {}.", selfNoun);
+        where = Core::Format("Named by {}.", selfNoun);
     }
     const std::vector<std::string> sources = Assisi::App::SourcesRequiring(world, name);
     if (!sources.empty())
     {
-        where += std::format("{}Included by {}.", where.empty() ? "" : "\n", Assisi::App::QuotedNames(sources));
+        where += Core::Format("{}Included by {}.", where.empty() ? "" : "\n", Assisi::App::QuotedNames(sources));
     }
     return where;
 }

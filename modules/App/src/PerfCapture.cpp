@@ -10,6 +10,7 @@
 #include <format>
 #include <utility>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <nlohmann/json.hpp>
@@ -114,9 +115,9 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
         // Not a verdict either way. The run was too short for NVML to have
         // sampled the clock enough times to say whether it held, and inventing a
         // trend from a handful of readings is worse than admitting the gap.
-        guard.reason = std::format("only {} independent GPU telemetry readings (need {}): the run was too short "
-                                   "to judge clock stability - measure for longer, not for more frames",
-                                   guard.telemetrySamples, kMinTelemetrySamples);
+        guard.reason = Core::Format("only {} independent GPU telemetry readings (need {}): the run was too short "
+                                    "to judge clock stability - measure for longer, not for more frames",
+                                    guard.telemetrySamples, kMinTelemetrySamples);
         return guard;
     }
 
@@ -148,15 +149,15 @@ ClockGuard EvaluateClockGuard(std::span<const PerfSample> samples)
 
     if (guard.clockDrift > kMaxClockDrift)
     {
-        guard.reason = std::format("core clock trended {:.1f}% across the run ({:.0f} -> {:.0f} MHz), over the "
-                                   "{:.0f}% limit",
-                                   guard.clockDrift * 100.0, earlyMedian, lateMedian, kMaxClockDrift * 100.0);
+        guard.reason = Core::Format("core clock trended {:.1f}% across the run ({:.0f} -> {:.0f} MHz), over the "
+                                    "{:.0f}% limit",
+                                    guard.clockDrift * 100.0, earlyMedian, lateMedian, kMaxClockDrift * 100.0);
         return guard;
     }
     if (guard.temperatureRiseC > kMaxTemperatureRiseC)
     {
-        guard.reason = std::format("temperature climbed {} C during the run, over the {} C limit",
-                                   guard.temperatureRiseC, kMaxTemperatureRiseC);
+        guard.reason = Core::Format("temperature climbed {} C during the run, over the {} C limit",
+                                    guard.temperatureRiseC, kMaxTemperatureRiseC);
         return guard;
     }
 
@@ -238,11 +239,11 @@ std::string PerfCapture::FormatReport() const
     const ClockGuard guard = EvaluateClockGuard(_samples);
 
     std::string report;
-    report += std::format("\n=== perf capture: {} ===\n", _config.levelPath.empty() ? "(no level)" : _config.levelPath);
-    report += std::format("  device      {}\n", _deviceName.empty() ? "(unknown)" : _deviceName);
-    report += std::format("  resolution  {}x{}\n", _width, _height);
-    report += std::format("  frames      {} measured, {} warm-up, over {:.2f} s\n", cpu.count, _warmupSeen,
-                          _elapsedMs / 1000.0);
+    report += Core::Format("\n=== perf capture: {} ===\n", _config.levelPath.empty() ? "(no level)" : _config.levelPath);
+    report += Core::Format("  device      {}\n", _deviceName.empty() ? "(unknown)" : _deviceName);
+    report += Core::Format("  resolution  {}x{}\n", _width, _height);
+    report += Core::Format("  frames      {} measured, {} warm-up, over {:.2f} s\n", cpu.count, _warmupSeen,
+                           _elapsedMs / 1000.0);
 
     // The protocol asks for at least 500 frames. A shorter run is legitimate
     // while iterating but must never be quoted, so it says so in the report
@@ -252,20 +253,20 @@ std::string PerfCapture::FormatReport() const
         report += "  NOTE        fewer than 500 frames: usable for iteration, not for a ledger entry\n";
     }
 
-    report += std::format("  gpu frame   median {:.3f} ms   IQR {:.3f}   min {:.3f}   max {:.3f}\n", gpu.median,
-                          gpu.Iqr(), gpu.min, gpu.max);
-    report += std::format("  cpu frame   median {:.3f} ms   IQR {:.3f}   min {:.3f}   max {:.3f}\n", cpu.median,
-                          cpu.Iqr(), cpu.min, cpu.max);
+    report += Core::Format("  gpu frame   median {:.3f} ms   IQR {:.3f}   min {:.3f}   max {:.3f}\n", gpu.median,
+                           gpu.Iqr(), gpu.min, gpu.max);
+    report += Core::Format("  cpu frame   median {:.3f} ms   IQR {:.3f}   min {:.3f}   max {:.3f}\n", cpu.median,
+                           cpu.Iqr(), cpu.min, cpu.max);
 
     if (guard.trustworthy)
     {
-        report += std::format("  clock guard PASS (trend {:.2f}%, spread {:.1f}%, temp {:+d} C, {} readings)\n",
-                              guard.clockDrift * 100.0, guard.clockSpread * 100.0, guard.temperatureRiseC,
-                              guard.telemetrySamples);
+        report += Core::Format("  clock guard PASS (trend {:.2f}%, spread {:.1f}%, temp {:+d} C, {} readings)\n",
+                               guard.clockDrift * 100.0, guard.clockSpread * 100.0, guard.temperatureRiseC,
+                               guard.telemetrySamples);
     }
     else
     {
-        report += std::format("  clock guard DISCARD - {}\n", guard.reason);
+        report += Core::Format("  clock guard DISCARD - {}\n", guard.reason);
     }
 
     if (_passes.empty())
@@ -278,7 +279,7 @@ std::string PerfCapture::FormatReport() const
         for (const PassSeries &series : _passes)
         {
             const Distribution pass = Summarize(series.milliseconds);
-            report += std::format("    {:<16} {:.3f}  ({:.3f})  x{}\n", series.name, pass.median, pass.Iqr(),
+            report += Core::Format("    {:<16} {:.3f}  ({:.3f})  x{}\n", series.name, pass.median, pass.Iqr(),
                                   pass.count);
         }
     }

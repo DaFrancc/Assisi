@@ -3,6 +3,7 @@
 
 #include <Assisi/Mondrian/StringTable.hpp>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/ShortString.hpp>
 
@@ -162,7 +163,7 @@ template <typename T> T ReadAt(const std::byte *at)
 
 template <typename T> std::string Show(const std::string &format, T value)
 {
-    return std::vformat(format, std::make_format_args(value));
+    return Core::VFormat(format, std::make_format_args(value));
 }
 
 /// @p value as @p format shows it, without the sign of a value that shows as
