@@ -11,6 +11,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Diagnostics.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Render/AssetSource.hpp>
@@ -282,7 +283,7 @@ void NameInModule(const std::string &path, std::span<NamedFrame *const> frames, 
     std::vector<std::string> command{"addr2line", "-e", path, "-f", "-C", "-a"};
     for (const std::uint64_t address : asked)
     {
-        command.push_back(std::format("0x{:x}", address));
+        command.push_back(Core::Format("0x{:x}", address));
     }
     const std::optional<std::string> output = OutputOf(command);
     if (!output)
@@ -450,16 +451,16 @@ std::string StackText(const std::vector<NamedFrame> &frames)
     for (std::size_t i = 0; i < std::min(frames.size(), kShownFrames); ++i)
     {
         const NamedFrame &frame = frames[i];
-        text += frame.function.empty() ? std::format("{} + 0x{:x}", frame.module, frame.offset) : frame.function;
+        text += frame.function.empty() ? Core::Format("{} + 0x{:x}", frame.module, frame.offset) : frame.function;
         if (!frame.location.empty())
         {
-            text += std::format("\n    {}", frame.location);
+            text += Core::Format("\n    {}", frame.location);
         }
         text += '\n';
     }
     if (frames.size() > kShownFrames)
     {
-        text += std::format("... and {} more in the crash log\n", frames.size() - kShownFrames);
+        text += Core::Format("... and {} more in the crash log\n", frames.size() - kShownFrames);
     }
     return text;
 }
@@ -609,7 +610,7 @@ protected:
             RefuseStart();
             return;
         }
-        Fill(*screen, "title", std::format("{} stopped", GetConfig().title.View()));
+        Fill(*screen, "title", Core::Format("{} stopped", GetConfig().title.View()));
         Fill(*screen, "reason", _summary.reason);
         Fill(*screen, "stack", _summary.stack);
         Fill(*screen, "files", _summary.files);
@@ -803,12 +804,12 @@ bool WriteStack(const std::filesystem::path &log, const std::vector<NamedFrame> 
     for (std::size_t i = 0; i < frames.size(); ++i)
     {
         const NamedFrame &frame = frames[i];
-        stack += std::format("  #{:<2} {}", i, frame.function.empty() ? "??" : frame.function);
+        stack += Core::Format("  #{:<2} {}", i, frame.function.empty() ? "??" : frame.function);
         if (!frame.location.empty())
         {
-            stack += std::format("  at {}", frame.location);
+            stack += Core::Format("  at {}", frame.location);
         }
-        stack += std::format("  ({} + 0x{:x})\n", frame.module, frame.offset);
+        stack += Core::Format("  ({} + 0x{:x})\n", frame.module, frame.offset);
     }
     stack += "\n";
 
@@ -843,7 +844,7 @@ std::int32_t RunCrashReporter(const CrashReportLaunch &launch)
     const std::string stem = CrashFileStem(launch.stamp);
     const std::filesystem::path log = userRoot / (stem + std::string(kCrashLogExtension));
     const std::filesystem::path dump = userRoot / (stem + std::string(kCrashDumpExtension));
-    const std::filesystem::path runLog = userRoot / std::format("assisi-{}.log", launch.stamp);
+    const std::filesystem::path runLog = userRoot / Core::Format("assisi-{}.log", launch.stamp);
 
     (void)ClaimCrashDump(userRoot / kCrashDumpFolderName, dump);
 

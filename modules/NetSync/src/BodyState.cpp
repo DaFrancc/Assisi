@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/Math/Float.hpp>
 
@@ -210,8 +211,8 @@ namespace
 /// "@p name: mine vs host's".
 template <typename T> std::string Difference(std::string_view name, const T &mine, const T &host)
 {
-    return std::format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
-                       Core::Reflect::PredictedFieldText(host));
+    return Core::Format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
+                        Core::Reflect::PredictedFieldText(host));
 }
 
 } // namespace

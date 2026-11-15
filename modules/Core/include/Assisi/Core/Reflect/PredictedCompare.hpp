@@ -11,6 +11,7 @@
 /// builds — so a float agrees within a tolerance, and a vector, quaternion or
 /// matrix component by component. Everything else agrees exactly.
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
@@ -106,11 +107,11 @@ template <typename T> [[nodiscard]] std::string PredictedFieldText(const T &valu
     }
     else if constexpr (std::is_enum_v<T>)
     {
-        return std::format("{}", std::to_underlying(value));
+        return Core::Format("{}", std::to_underlying(value));
     }
     else if constexpr (std::formattable<T, char>)
     {
-        return std::format("{}", value);
+        return Core::Format("{}", value);
     }
     else
     {
@@ -127,7 +128,7 @@ template <typename T>
     {
         return {};
     }
-    return std::format("{}: {} vs {}", name, PredictedFieldText(lhs), PredictedFieldText(rhs));
+    return Core::Format("{}: {} vs {}", name, PredictedFieldText(lhs), PredictedFieldText(rhs));
 }
 
 } // namespace Assisi::Core::Reflect

@@ -9,6 +9,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -75,7 +76,7 @@ void ServerApp::OnStart()
                            : _options.role == ServerRole::Client ? "client"
                                                                  : "offline";
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
-              _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
+              _options.tickLimit > 0 ? Assisi::Core::Format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.

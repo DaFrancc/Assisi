@@ -34,6 +34,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <imgui.h>
 
@@ -442,7 +443,7 @@ void EditorApp::DrawPredictedEntities(const Assisi::NetSync::ReplicationClient &
         const Assisi::NetSync::ReplicationClient::EntityPredictionCounts *counts = client.PredictionCountsOf(netId);
         // The NetId keeps two entities of one name apart, in the label and in
         // the id ImGui keeps each node's open state under.
-        const std::string label = std::format("{} [{}]", EntityDisplayName(client.EntityOf(netId)), netId.value);
+        const std::string label = Core::Format("{} [{}]", EntityDisplayName(client.EntityOf(netId)), netId.value);
         if (counts == nullptr || !ImGui::TreeNode(label.c_str()))
         {
             continue;
@@ -644,8 +645,8 @@ void EditorApp::DrawNetworkWindow()
     // Where this session actually is. "It says Hosting" and "a client can reach
     // it at this address" are different claims, and only the second is what
     // someone on the other machine types into their Join field.
-    LabelledValue("Endpoint", _networkedPlay->Session().IsHost() ? std::format("listening on :{}", _netPort)
-                                                    : std::format("{}:{}", _netAddress.data(), _netPort));
+    LabelledValue("Endpoint", _networkedPlay->Session().IsHost() ? Core::Format("listening on :{}", _netPort)
+                                                    : Core::Format("{}:{}", _netAddress.data(), _netPort));
 
     if (_networkedPlay->Session().IsHost())
         DrawHostAuthoringWarnings();
@@ -654,8 +655,8 @@ void EditorApp::DrawNetworkWindow()
     ImGui::SameLine(kValueColumn);
     ImGui::TextColored(PingColor(stats.pingMs), "%d ms", stats.pingMs);
 
-    LabelledValue("Bandwidth in", std::format("{:.1f} kB/s", stats.inBytesPerSec / 1024.f));
-    LabelledValue("Bandwidth out", std::format("{:.1f} kB/s", stats.outBytesPerSec / 1024.f));
+    LabelledValue("Bandwidth in", Core::Format("{:.1f} kB/s", stats.inBytesPerSec / 1024.f));
+    LabelledValue("Bandwidth out", Core::Format("{:.1f} kB/s", stats.outBytesPerSec / 1024.f));
 
     if (_networkedPlay->Session().IsHost())
     {
@@ -680,8 +681,8 @@ void EditorApp::DrawNetworkWindow()
                                        : "Select a replicated entity with a rigid body.");
         }
 
-        LabelledValue("Clients", std::format("{}", stats.clientCount));
-        LabelledValue("Replicated entities", std::format("{}", stats.replicatedEntities));
+        LabelledValue("Clients", Core::Format("{}", stats.clientCount));
+        LabelledValue("Replicated entities", Core::Format("{}", stats.replicatedEntities));
 
         // What this session is *capable* of sending, shown rather than inferred.
         // Sending is opt-out, so a future engine module marking a new type
@@ -703,10 +704,10 @@ void EditorApp::DrawNetworkWindow()
             ImGui::TextDisabled("Per-entity: untick components in the inspector's Sends list.");
             ImGui::TreePop();
         }
-        LabelledValue("Snapshots sent", std::format("{}", stats.snapshotsSent));
-        LabelledValue("Bytes sent", std::format("{}", stats.bytesSent));
+        LabelledValue("Snapshots sent", Core::Format("{}", stats.snapshotsSent));
+        LabelledValue("Bytes sent", Core::Format("{}", stats.bytesSent));
         if (stats.snapshotsSent > 0)
-            LabelledValue("Avg snapshot", std::format("{} B", stats.bytesSent / stats.snapshotsSent));
+            LabelledValue("Avg snapshot", Core::Format("{} B", stats.bytesSent / stats.snapshotsSent));
 
         // Zero is the normal state. A number that stays high means the byte
         // budget is binding and correction *frequency* is degrading — which the
@@ -715,7 +716,7 @@ void EditorApp::DrawNetworkWindow()
         ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.dirtyBacklog > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%u entit%s",
                            stats.dirtyBacklog, stats.dirtyBacklog == 1 ? "y" : "ies");
-        LabelledValue("Keyframe sweeps", std::format("{}", stats.keyframeSweeps));
+        LabelledValue("Keyframe sweeps", Core::Format("{}", stats.keyframeSweeps));
 
         // --- relevancy ------------------------------------------------------
         // Its own group because boundary thrash is invisible otherwise: it looks
@@ -723,8 +724,8 @@ void EditorApp::DrawNetworkWindow()
         // exists to prevent. Watch for enters climbing in lockstep with exits.
         if (ImGui::TreeNodeEx("Relevancy", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            LabelledValue("Largest set", std::format("{} of {}", stats.relevantEntities, stats.replicatedEntities));
-            LabelledValue("Entered", std::format("{}", stats.relevancyEnters));
+            LabelledValue("Largest set", Core::Format("{} of {}", stats.relevantEntities, stats.replicatedEntities));
+            LabelledValue("Entered", Core::Format("{}", stats.relevancyEnters));
 
             const bool thrashing = stats.relevancyExits > 0 && stats.relevancyEnters > stats.relevancyExits * 2;
             ImGui::TextUnformatted("Left");
@@ -746,7 +747,7 @@ void EditorApp::DrawNetworkWindow()
         // rejected one is lying or mismatched.
         if (ImGui::TreeNodeEx("Messages", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            LabelledValue("Intents accepted", std::format("{}", stats.intentsAccepted));
+            LabelledValue("Intents accepted", Core::Format("{}", stats.intentsAccepted));
             NetCounterRow("Intents rejected", stats.intentsRejected,
                           "A field outside its declared range, an event sent as an intent, or an entity the "
                           "sender does not control. Rejected, never clamped.");
@@ -756,8 +757,8 @@ void EditorApp::DrawNetworkWindow()
                           "A client tick outside the accepted window - too old to act on, or too far ahead "
                           "to have happened.");
 
-            LabelledValue("Events sent", std::format("{}", stats.eventsSent));
-            LabelledValue("Announcements", std::format("{}", stats.announcementsSent));
+            LabelledValue("Events sent", Core::Format("{}", stats.eventsSent));
+            LabelledValue("Announcements", Core::Format("{}", stats.announcementsSent));
             NetCounterRow("Events held", stats.eventsHeld,
                           "Waiting for the entity they are about to reach that client. A number that stays "
                           "high means events about entities the client will never be told about.");
@@ -768,11 +769,11 @@ void EditorApp::DrawNetworkWindow()
     }
     else
     {
-        LabelledValue("Server tick", std::format("{}", stats.serverTick));
-        LabelledValue("Mirrored entities", std::format("{}", stats.replicatedEntities));
-        LabelledValue("Snapshots applied", std::format("{}", stats.snapshotsApplied));
+        LabelledValue("Server tick", Core::Format("{}", stats.serverTick));
+        LabelledValue("Mirrored entities", Core::Format("{}", stats.replicatedEntities));
+        LabelledValue("Snapshots applied", Core::Format("{}", stats.snapshotsApplied));
 
-        LabelledValue("Events received", std::format("{}", stats.eventsReceived));
+        LabelledValue("Events received", Core::Format("{}", stats.eventsReceived));
         NetCounterRow("Announcements waiting", stats.eventsHeld,
                       "Reliable events that arrived ahead of the world they describe, held until the applied "
                       "tick catches up.");
@@ -794,14 +795,14 @@ void EditorApp::DrawNetworkWindow()
         }
 
         ImGui::SeparatorText("Corrections");
-        LabelledValue("Corrections/s", std::format("{:.1f}", _correctionsPerSecond));
-        LabelledValue("Correction bytes/s", std::format("{:.0f} B/s", _correctionBytesPerSecond));
+        LabelledValue("Corrections/s", Core::Format("{:.1f}", _correctionsPerSecond));
+        LabelledValue("Correction bytes/s", Core::Format("{:.0f} B/s", _correctionBytesPerSecond));
 
         // The measurement that has to justify the correction cadence, since no
         // determinism argument can: the client starts from state that crossed a
         // wire, applies corrections the server never applies, and adds bodies on a
         // different schedule, so "same binary" buys nothing here.
-        LabelledValue("Divergence (mean)", std::format("{:.1f} mm", stats.divergenceMean * 1000.f));
+        LabelledValue("Divergence (mean)", Core::Format("{:.1f} mm", stats.divergenceMean * 1000.f));
         ImGui::TextUnformatted("Divergence (max)");
         ImGui::SameLine(kValueColumn);
         ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
@@ -809,8 +810,8 @@ void EditorApp::DrawNetworkWindow()
 
         // How often the host disagreed with what this client predicted. Every
         // replay is a correction the player may feel.
-        LabelledValue("Predictions kept", std::format("{}", stats.predictionsKept));
-        LabelledValue("Rollbacks", std::format("{}", stats.predictionsReplayed));
+        LabelledValue("Predictions kept", Core::Format("{}", stats.predictionsKept));
+        LabelledValue("Rollbacks", Core::Format("{}", stats.predictionsReplayed));
         NetCounterRow("Hard snaps", stats.hardSnaps,
                       "The host's word was older than any tick this client kept, so it was snapped to with "
                       "nothing replayed on top.");
@@ -833,7 +834,7 @@ void EditorApp::DrawNetworkWindow()
             }
             if (syncTest || stats.syncTestReplays > 0)
             {
-                LabelledValue("Ticks stepped twice", std::format("{}", stats.syncTestReplays));
+                LabelledValue("Ticks stepped twice", Core::Format("{}", stats.syncTestReplays));
                 NetCounterRow("Fields that differed", stats.syncTestDifferences,
                               "Each is in the log with both values. Zero is the only right answer.");
             }
@@ -898,9 +899,9 @@ void EditorApp::DrawNetworkWindow()
         ImGui::TextColored(stats.inputBufferDepth == 0 ? kWarnColor : ImVec4{0.4f, 0.9f, 0.4f, 1.f}, "%u command%s",
                            stats.inputBufferDepth, stats.inputBufferDepth == 1 ? "" : "s");
 
-        LabelledValue("Clock lead", std::format("{} ticks", stats.clockLead));
-        LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
-        LabelledValue("Clock rate", std::format("{:.3f}x", stats.clockRate));
+        LabelledValue("Clock lead", Core::Format("{} ticks", stats.clockLead));
+        LabelledValue("Clock corrections", Core::Format("{}", stats.clockCorrections));
+        LabelledValue("Clock rate", Core::Format("{:.3f}x", stats.clockRate));
 
         if (_joinPhase == JoinPhase::Connecting)
             // %f takes a double through varargs, so the float promotes either

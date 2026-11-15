@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/PakFormat.hpp>
 
 #include <algorithm>
@@ -57,7 +58,7 @@ std::expected<std::vector<std::byte>, CookError> ReadBlob(const std::filesystem:
     std::ifstream in(path, std::ios::binary);
     if (!in)
     {
-        return std::unexpected(Failure(vpath, std::format("has no cooked blob at '{}'", path.generic_string())));
+        return std::unexpected(Failure(vpath, Core::Format("has no cooked blob at '{}'", path.generic_string())));
     }
     std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     std::vector<std::byte> bytes(chars.size());
@@ -88,7 +89,7 @@ std::expected<PackedSlice, CookError> PackSlice(const std::filesystem::path &coo
     if (!id)
     {
         return std::unexpected(
-            Failure(entry.vpath, std::format("has a manifest id '{}' that is not a GUID", entry.guid)));
+            Failure(entry.vpath, Core::Format("has a manifest id '{}' that is not a GUID", entry.guid)));
     }
 
     std::expected<std::vector<std::byte>, CookError> blob =
@@ -103,7 +104,7 @@ std::expected<PackedSlice, CookError> PackSlice(const std::filesystem::path &coo
     if (!kind)
     {
         return std::unexpected(Failure(
-            entry.vpath, std::format("has a cooked blob that does not read: {}", Core::ToString(kind.error()))));
+            entry.vpath, Core::Format("has a cooked blob that does not read: {}", Core::ToString(kind.error()))));
     }
 
     PackedSlice slice;
@@ -123,7 +124,7 @@ std::expected<PackedSlice, CookError> PackSlice(const std::filesystem::path &coo
         if (!compressed)
         {
             return std::unexpected(
-                Failure(entry.vpath, std::format("did not compress: {}", Core::ToString(compressed.error()))));
+                Failure(entry.vpath, Core::Format("did not compress: {}", Core::ToString(compressed.error()))));
         }
         if (compressed->size() < blob->size())
         {
@@ -319,9 +320,9 @@ std::expected<PakReport, CookError> WritePak(const std::filesystem::path &cooked
         const auto [slot, inserted] = byPath.try_emplace(Core::DerivedAssetId(entry.vpath), &entry);
         if (!inserted)
         {
-            return std::unexpected(Failure(entry.vpath, std::format("shares a path id with '{}', so one of them "
-                                                                    "could not be found by path; rename either",
-                                                                    slot->second->vpath)));
+            return std::unexpected(Failure(entry.vpath, Core::Format("shares a path id with '{}', so one of them "
+                                                                     "could not be found by path; rename either",
+                                                                     slot->second->vpath)));
         }
     }
 

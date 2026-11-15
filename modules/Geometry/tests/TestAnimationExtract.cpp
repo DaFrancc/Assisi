@@ -25,6 +25,7 @@
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/AnimationFile.hpp>
 #include <Assisi/Geometry/AnimationImport.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -72,7 +73,7 @@ std::string TwoAnimations(GltfBuffer &buffer, float lastWalkKey = 2.f)
 {
     const uint32_t walkTimes =
         buffer.Add(std::vector<float>{0.f, 1.f, lastWalkKey}, kFloat, "SCALAR",
-                   std::format(R"(,"min":[0],"max":[{}])", lastWalkKey));
+                   Assisi::Core::Format(R"(,"min":[0],"max":[{}])", lastWalkKey));
     const uint32_t walkMoves =
         buffer.Add(std::vector<float>{0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 2.f, 0.f, 0.f}, kFloat, "VEC3");
     const uint32_t turnTimes = buffer.Add(std::vector<float>{0.f, 2.f}, kFloat, "SCALAR", R"(,"min":[0],"max":[2])");
@@ -83,7 +84,7 @@ std::string TwoAnimations(GltfBuffer &buffer, float lastWalkKey = 2.f)
                                          kFloat, "VEC4");
     const uint32_t kneeScales =
         buffer.Add(std::vector<float>{1.f, 1.f, 1.f, 2.f, 2.f, 2.f}, kFloat, "VEC3");
-    return std::format(
+    return Assisi::Core::Format(
         R"("animations":[)"
         R"({{"name":"walk","samplers":[{{"input":{},"output":{}}},{{"input":{},"output":{}}}],)"
         R"("channels":[{{"sampler":0,"target":{{"node":2,"path":"translation"}}}},)"

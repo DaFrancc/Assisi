@@ -2,6 +2,7 @@
 
 #include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/AssetDocument.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/Reflect/StructRegistry.hpp>
@@ -56,8 +57,8 @@ std::expected<void, MarkupError> LoadTables(const UiConfig &config, const Source
         if (!text)
         {
             return std::unexpected(
-                InSettings(std::format("'{}' is listed as a string table and could not be read ({}).", vpath,
-                                       text.error())));
+                InSettings(Core::Format("'{}' is listed as a string table and could not be read ({}).", vpath,
+                                        text.error())));
         }
         std::expected<StringTable, MarkupError> table = CompileStringTable(*text, EmptyTextFor(config));
         if (!table)
@@ -157,7 +158,7 @@ std::expected<void, MarkupError> CheckThemeSprites(const ScreenRules &rules)
             {
                 const ThemedPatch value{.patch = token.values[mode], .tokens = {}};
                 const std::string where =
-                    std::format("the token ${}, in the mode '{}',", token.name.View(), document.modes[mode].View());
+                    Core::Format("the token ${}, in the mode '{}',", token.name.View(), document.modes[mode].View());
                 if (const std::expected<void, MarkupError> checked = CheckLookSprite(rules, value, where, theme.vpath);
                     !checked)
                 {

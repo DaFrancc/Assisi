@@ -7,6 +7,7 @@
 #include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Math/Float.hpp>
 
 #include <cmath>
@@ -510,7 +511,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         for (size_t i = 0; i < bad.size() && i < 8; ++i)
             list += (i == 0 ? "" : ", ") + bad[i];
         if (bad.size() > 8)
-            list += std::format(", ... ({} more)", bad.size() - 8);
+            list += Core::Format(", ... ({} more)", bad.size() - 8);
 
         Core::Log::Error("SceneSerializer: {} entity reference(s) name an entity the file does not declare: {}.",
                          bad.size(), list);

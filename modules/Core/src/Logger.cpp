@@ -4,6 +4,7 @@
 #include <iterator>
 #include <mutex>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 namespace Assisi::Core
@@ -105,7 +106,7 @@ void Logger::Log(LogLevel level, std::string_view message)
     {
         return;
     }
-    Emit(level, std::format("{} {}", LevelPrefix(level), message));
+    Emit(level, Format("{} {}", LevelPrefix(level), message));
 }
 
 void Logger::Log(LogLevel level, std::source_location loc, std::string_view message)
@@ -114,7 +115,7 @@ void Logger::Log(LogLevel level, std::source_location loc, std::string_view mess
     {
         return;
     }
-    Emit(level, std::format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message));
+    Emit(level, Format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message));
 }
 
 Logger &GetLogger()

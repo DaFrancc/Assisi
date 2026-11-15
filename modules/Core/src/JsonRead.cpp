@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/Reflect/JsonRead.hpp>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <format>
@@ -284,14 +285,14 @@ bool ReadNumberArray(const nlohmann::json &j, const char *component, const char 
 
     if (!value->is_array())
     {
-        Reject(component, field, std::format("an array of {} numbers", count), *value);
+        Reject(component, field, Core::Format("an array of {} numbers", count), *value);
         return false;
     }
     // Before a single element is read, so a hand-edited "scale": [1, 1] is
     // refused rather than indexed past the end.
     if (value->size() != count)
     {
-        Reject(component, field, std::format("an array of {} numbers, not {}", count, value->size()),
+        Reject(component, field, Core::Format("an array of {} numbers, not {}", count, value->size()),
                *value);
         return false;
     }
@@ -301,7 +302,7 @@ bool ReadNumberArray(const nlohmann::json &j, const char *component, const char 
         const nlohmann::json &element = (*value)[i];
         if (!element.is_number())
         {
-            Reject(component, field, std::format("a number in every slot (slot {} is not one)", i), *value);
+            Reject(component, field, Core::Format("a number in every slot (slot {} is not one)", i), *value);
             return false;
         }
         out[i] = element.get<T>();

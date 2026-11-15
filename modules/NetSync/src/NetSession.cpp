@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/NetSession.hpp>
 
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
@@ -49,7 +50,7 @@ bool NetSession::EnsureTransport()
     std::expected<std::unique_ptr<Net::NetTransport>, Net::NetTransportError> created = Net::NetTransport::Create();
     if (!created)
     {
-        _lastError = std::format("could not start networking: {}", Net::ToString(created.error()));
+        _lastError = Core::Format("could not start networking: {}", Net::ToString(created.error()));
         Core::Log::Error("NetSession: {}", _lastError);
         return false;
     }
@@ -67,7 +68,7 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
 
     if (!_transport->Listen(port))
     {
-        _lastError = std::format("could not listen on port {}: {}", port, _transport->LastError());
+        _lastError = Core::Format("could not listen on port {}: {}", port, _transport->LastError());
         Core::Log::Error("NetSession: {}", _lastError);
         _transport.reset();
         return false;
@@ -96,7 +97,7 @@ bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHa
     _connection = _transport->Connect(address, port);
     if (_connection == Net::InvalidConnection)
     {
-        _lastError = std::format("could not connect to {}:{}: {}", address, port, _transport->LastError());
+        _lastError = Core::Format("could not connect to {}:{}: {}", address, port, _transport->LastError());
         Core::Log::Error("NetSession: {}", _lastError);
         _transport.reset();
         return false;
@@ -387,21 +388,21 @@ std::string NetSession::StatusText() const
     switch (_role)
     {
     case SessionRole::Offline:
-        return _lastError.empty() ? "Offline" : std::format("Offline - {}", _lastError);
+        return _lastError.empty() ? "Offline" : Core::Format("Offline - {}", _lastError);
 
     case SessionRole::Host:
-        return std::format("Hosting - {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
+        return Core::Format("Hosting - {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
 
     case SessionRole::Client:
         if (!_client->RejectMessage().empty())
-            return std::format("Rejected - {}", _client->RejectMessage());
+            return Core::Format("Rejected - {}", _client->RejectMessage());
         if (_client->IsAwaitingLevel())
-            return std::format("Loading the host's level ({})...", _client->Handshake().level.path);
+            return Core::Format("Loading the host's level ({})...", _client->Handshake().level.path);
         if (!_client->IsSynchronized())
             return "Connecting...";
         if (!_client->IsWorldComplete())
-            return std::format("Joining - {} entities so far", _client->ReplicatedEntityCount());
-        return std::format("Connected - {} entities", _client->ReplicatedEntityCount());
+            return Core::Format("Joining - {} entities so far", _client->ReplicatedEntityCount());
+        return Core::Format("Connected - {} entities", _client->ReplicatedEntityCount());
     }
     return "Offline";
 }

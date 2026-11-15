@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/NetProtocol.hpp>
 
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
@@ -64,11 +65,11 @@ std::string InputActionDescription()
 std::string QuantizationDescription()
 {
     const BodyQuantization &q = Quantization();
-    return std::format("body cell={:g} positionBits={} linearMax={:g} linearBits={} "
-                       "angularMax={:g} angularBits={}",
-                       Math::kWorldCellSize, q.positionBits,
-                       static_cast<double>(q.linearVelocityMax), q.linearVelocityBits,
-                       static_cast<double>(q.angularVelocityMax), q.angularVelocityBits);
+    return Core::Format("body cell={:g} positionBits={} linearMax={:g} linearBits={} "
+                        "angularMax={:g} angularBits={}",
+                        Math::kWorldCellSize, q.positionBits,
+                        static_cast<double>(q.linearVelocityMax), q.linearVelocityBits,
+                        static_cast<double>(q.angularVelocityMax), q.angularVelocityBits);
 }
 
 } // namespace
@@ -109,8 +110,8 @@ std::string NetProtocolSummary()
     // The quantization goes in the summary, not just the hash: a refused
     // connection should say which field the two builds disagree about, and this
     // string is what a rejection carries.
-    return std::format("{} net={} {} {} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
-                       QuantizationDescription(), InputActionDescription(), Core::ToHex64(NetProtocolHash()));
+    return Core::Format("{} net={} {} {} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
+                        QuantizationDescription(), InputActionDescription(), Core::ToHex64(NetProtocolHash()));
 }
 
 void WriteMessageType(MessageType type, Core::BitWriter &writer)
