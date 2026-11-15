@@ -17,6 +17,7 @@
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -390,7 +391,7 @@ void EditorApp::StopPlay()
         // Every entity was destroyed and revived, and the clock went back to the
         // hour play started at — so the cascades hold depth from a sun that has
         // now moved, cast by geometry that has been rebuilt underneath them.
-        _sceneRenderer.OnSceneReplaced();
+        _sceneRenderer->OnSceneReplaced();
     }
 
     // A joined session loaded the *host's* level into this world, retargeting its

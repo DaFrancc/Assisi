@@ -33,13 +33,18 @@
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+} // namespace Assisi::Runtime
 
 namespace Assisi::App
 {
@@ -178,7 +183,8 @@ class GameApp : public Application
     /// MountContent, before the post-process shaders load.
     std::optional<CookedAssetSource> _assetSource;
 
-    Runtime::SceneRenderer _sceneRenderer;
+    /// Held by pointer so a game's own files need not include the renderer.
+    std::unique_ptr<Runtime::SceneRenderer> _sceneRenderer;
 
     /// What every world's physics reads collision models through, over the
     /// package above. Declared before the worlds, which hold it.

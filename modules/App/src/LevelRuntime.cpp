@@ -12,6 +12,7 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <cstddef>

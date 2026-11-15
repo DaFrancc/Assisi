@@ -52,7 +52,6 @@
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/DoubleClick.hpp>
@@ -83,6 +82,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+} // namespace Assisi::Runtime
 
 namespace Assisi::Editor
 {
@@ -1698,8 +1702,9 @@ class EditorApp : public Assisi::App::Application
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
-    // OnRender is a single Render() call.
-    Assisi::Runtime::SceneRenderer _sceneRenderer;
+    // OnRender is a single Render() call. Held by pointer so only the files
+    // that render include the renderer, and through it every pass.
+    std::unique_ptr<Assisi::Runtime::SceneRenderer> _sceneRenderer;
 
     // Resolves each entity's mesh/materialOverrides ids to shared GPU resources;
     // owns every mesh, texture, and material the scene draws (deduped by path).
