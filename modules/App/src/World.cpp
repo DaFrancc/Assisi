@@ -10,6 +10,7 @@
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>

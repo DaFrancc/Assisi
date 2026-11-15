@@ -40,6 +40,7 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
 
 #include <imgui.h>
@@ -1910,7 +1911,7 @@ void EditorApp::DrawLightShadowVerdict()
         return;
     }
 
-    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer.ShadowReportFor(_selectedEntity);
+    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer->ShadowReportFor(_selectedEntity);
     if (report == nullptr)
     {
         // The gather runs a frame behind the selection, and a scene with local
@@ -1988,7 +1989,7 @@ void EditorApp::DrawLodVerdict()
     }
 
     const Assisi::Runtime::LodReport lod =
-        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
+        _sceneRenderer->LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
 
     if (lod.levelCount <= 1)
     {
@@ -1998,7 +1999,7 @@ void EditorApp::DrawLodVerdict()
         return;
     }
 
-    const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
+    const int32_t pinned = _sceneRenderer->PinnedLod(_selectedEntity);
 
     // "pinned" and "forced" are worth telling apart: one of them is about this
     // entity and the other is about every entity, and only one of them is
@@ -2016,7 +2017,7 @@ void EditorApp::DrawLodVerdict()
     // produces can pass 1 and would read as impossible on its own.
     // Within the slider's display precision of 1, or a drag that lands at
     // 1.0000001 would print "x 1.00 bias".
-    const float bias = _sceneRenderer.LodSettings().bias;
+    const float bias = _sceneRenderer->LodSettings().bias;
     if (std::abs(bias - 1.f) < 0.005f)
     {
         ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));
@@ -2032,7 +2033,7 @@ void EditorApp::DrawLodVerdict()
     // The switch points on either side, each named only where there is one: a
     // threshold is tuned by watching the size approach the number beside it.
     std::string switches;
-    if (!_sceneRenderer.LodSettings().enabled)
+    if (!_sceneRenderer->LodSettings().enabled)
     {
         switches = "selection is off - every instance draws LOD0";
     }
@@ -2074,14 +2075,14 @@ void EditorApp::DrawLodPin(int32_t pinned, uint32_t levelCount)
     {
         if (ImGui::Selectable("Auto", pinned < 0))
         {
-            _sceneRenderer.PinLod(_selectedEntity, -1);
+            _sceneRenderer->PinLod(_selectedEntity, -1);
         }
         for (uint32_t level = 0; level < levelCount; ++level)
         {
             const std::string label = Core::Format("LOD{}", level);
             if (ImGui::Selectable(label.c_str(), pinned == static_cast<int32_t>(level)))
             {
-                _sceneRenderer.PinLod(_selectedEntity, static_cast<int32_t>(level));
+                _sceneRenderer->PinLod(_selectedEntity, static_cast<int32_t>(level));
             }
         }
         ImGui::EndCombo();
@@ -2180,7 +2181,7 @@ void EditorApp::DrawTimeOfDayControls()
     {
         return;
     }
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
     bool edited = false;
 
     // Scrubbing goes through Jump rather than writing the field, so a scrub
@@ -2308,7 +2309,7 @@ void EditorApp::DrawMoonReadout()
         return;
     }
 
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
 
     bool waxing = true;
     if (const Assisi::Runtime::TimeOfDay *clock = _scene->Get<Assisi::Runtime::TimeOfDay>(_selectedEntity))
@@ -2322,7 +2323,7 @@ void EditorApp::DrawMoonReadout()
 
     // The fallback is a flat white disk, which looks like a perfectly plausible
     // moon — which is exactly why it needs a line saying it is the fallback.
-    switch (_sceneRenderer.MoonTextureState())
+    switch (_sceneRenderer->MoonTextureState())
     {
     case Assisi::Render::SkyPass::MoonTexture::Loaded:
         ImGui::TextDisabled("texture: loaded");

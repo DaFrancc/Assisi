@@ -18,7 +18,6 @@
 // The whole of what a LevelResult return needs, and none of SceneSerializer.hpp's
 // nlohmann — see that split's own file comment.
 #include <Assisi/Runtime/LevelError.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +34,8 @@ namespace Assisi::Runtime
 // everywhere. Callers that build a header include that themselves.
 struct LevelHeader;
 class InstanceTable;
+// Held by reference only; its header brings every render pass with it.
+class SceneRenderer;
 } // namespace Assisi::Runtime
 
 namespace Assisi::App

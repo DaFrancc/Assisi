@@ -28,6 +28,7 @@
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;

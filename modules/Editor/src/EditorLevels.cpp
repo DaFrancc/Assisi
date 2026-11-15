@@ -1133,7 +1133,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // never call it from OnImGui. See the Load button in DrawLevelsWindow.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, _sceneRenderer},
+        Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, *_sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::ClearFirst, .header = &header});
     if (!loaded)
     {

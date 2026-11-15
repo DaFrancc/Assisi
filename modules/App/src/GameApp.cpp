@@ -16,6 +16,7 @@
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -62,7 +63,8 @@ constexpr std::int16_t kUnlimitedFps = -1;
 }
 } // namespace
 
-GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
+GameApp::GameApp(GameLaunch launch)
+    : _sceneRenderer(std::make_unique<Runtime::SceneRenderer>()), _launch(std::move(launch))
 {
     if (_launch.benchmark)
     {
@@ -117,7 +119,7 @@ void GameApp::OnStart()
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
     _worlds.SetServices({.cache = &_assetCache,
-                         .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
+                         .renderer = HasPresentation() ? _sceneRenderer.get() : nullptr,
                          .jobs = &Jobs(),
                          .universalEvents = &GetUniversalEvents(),
                          .input = HasPresentation() ? &GetInput() : nullptr,
@@ -219,13 +221,13 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     options.environment = Render::EnvironmentSettings{};
     options.ambientOcclusion = Render::SsaoSettings{};
     options.clouds = Render::CloudTierSettings(Render::CloudTier::Ultra);
-    _sceneRenderer.SetShadowSettings(options.shadows);
-    _sceneRenderer.SetEnvironmentSettings(options.environment);
-    _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
-    _sceneRenderer.SetFogEnabled(true);
-    _sceneRenderer.SetCloudQuality(options.clouds);
-    _sceneRenderer.SetCloudsEnabled(true);
-    _sceneRenderer.SetWaterEnabled(true);
+    _sceneRenderer->SetShadowSettings(options.shadows);
+    _sceneRenderer->SetEnvironmentSettings(options.environment);
+    _sceneRenderer->SetSsaoSettings(options.ambientOcclusion);
+    _sceneRenderer->SetFogEnabled(true);
+    _sceneRenderer->SetCloudQuality(options.clouds);
+    _sceneRenderer->SetCloudsEnabled(true);
+    _sceneRenderer->SetWaterEnabled(true);
 
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -302,14 +304,14 @@ bool GameApp::SetupRenderer()
     // feature is invalid, so the cache is told before it loads anything.
     _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
 
-    if (!_sceneRenderer.Initialize({.device = device,
-                                    .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .width = fbSize.Width,
-                                    .height = fbSize.Height,
-                                    .camera = _fallbackCamera,
-                                    .bindlessLayout = _assetCache.BindlessLayout(),
-                                    .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer()}))
+    if (!_sceneRenderer->Initialize({.device = device,
+                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                     .width = fbSize.Width,
+                                     .height = fbSize.Height,
+                                     .camera = _fallbackCamera,
+                                     .bindlessLayout = _assetCache.BindlessLayout(),
+                                     .bindlessTable = _assetCache.BindlessTable(),
+                                     .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         Core::Log::Error("Game: the scene render path failed to build; there is nothing to draw with.");
         return false;
@@ -317,13 +319,13 @@ bool GameApp::SetupRenderer()
 
     // The player's saved knobs. Nothing is allocated until content needs it — no
     // shadow map until a sun loads, no probe until a sky does.
-    _sceneRenderer.SetShadowSettings(GetOptions().shadows);
-    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
-    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
-    _sceneRenderer.SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
-    _sceneRenderer.SetCloudQuality(GetOptions().clouds);
-    _sceneRenderer.SetCloudsEnabled(GetOptions().CloudsEnabled(GetConfig()));
-    _sceneRenderer.SetWaterEnabled(GetOptions().WaterEnabled(GetConfig()));
+    _sceneRenderer->SetShadowSettings(GetOptions().shadows);
+    _sceneRenderer->SetEnvironmentSettings(GetOptions().environment);
+    _sceneRenderer->SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer->SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
+    _sceneRenderer->SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer->SetCloudsEnabled(GetOptions().CloudsEnabled(GetConfig()));
+    _sceneRenderer->SetWaterEnabled(GetOptions().WaterEnabled(GetConfig()));
     return true;
 }
 
@@ -520,7 +522,7 @@ void GameApp::OnUpdate(float dt)
 
 void GameApp::OnRender(Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || _world == nullptr)
+    if (!_sceneRenderer->IsValid() || _world == nullptr)
     {
         return;
     }
@@ -557,16 +559,16 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         _world->systems.RunRender(renderCtx);
     }
 
-    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    _sceneRenderer.SetWaterSeconds(PresentedSimulatedSeconds());
-    _sceneRenderer.SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
-    _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
-    SetScenePostProcess(_sceneRenderer.ScenePostProcess());
+    _sceneRenderer->SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer->SetWaterSeconds(PresentedSimulatedSeconds());
+    _sceneRenderer->SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
+    _sceneRenderer->Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
+    SetScenePostProcess(_sceneRenderer->ScenePostProcess());
 }
 
 void GameApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    if (!_sceneRenderer->OnRenderTargetsChanged(framebufferInfo))
     {
         Core::Log::Error("Game: failed to rebuild the mesh pass pipeline after a render-target change.");
     }
