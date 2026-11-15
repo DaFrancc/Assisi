@@ -1657,6 +1657,11 @@ add_subdirectory(apps/sglc)
 if (ASSISI_BUILD_TESTS)
     add_subdirectory(tools/reflectgen)
     add_subdirectory(tools/assisi)
+
+    # Engine code formats through Core::Format; see the script for why.
+    add_test(NAME NoStdFormat
+             COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/cmake/AssisiNoStdFormat.cmake")
 endif()
 
 # Must be last: it counts ACOMP(replicable) types across every header that has

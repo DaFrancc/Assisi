@@ -8,6 +8,8 @@
 
 #include "AnimatorTesting.hpp"
 
+#include <Assisi/Core/Format.hpp>
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
@@ -46,7 +48,7 @@ bool Refuses(std::string_view source, uint32_t line, std::string_view says)
         MESSAGE("compiled, but should have been refused");
         return false;
     }
-    const std::string where = std::format("characters/hero.sgl:{}:", line);
+    const std::string where = Core::Format("characters/hero.sgl:{}:", line);
     const bool found =
         compiled.error().find(says) != std::string::npos && compiled.error().find(where) != std::string::npos;
     if (!found)

@@ -4,6 +4,7 @@
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Geometry/AnimationFile.hpp>
@@ -78,10 +79,10 @@ bool EnsureSidecar(const fs::path &clipFile)
 /// animation's position appended when an earlier one took that name.
 std::string ClipFileName(std::string_view name, std::size_t index, std::unordered_set<std::string> &taken)
 {
-    std::string file = std::format("{}.glb", SafeName(name));
+    std::string file = Core::Format("{}.glb", SafeName(name));
     if (!taken.insert(file).second)
     {
-        file = std::format("{}_{}.glb", SafeName(name), index);
+        file = Core::Format("{}_{}.glb", SafeName(name), index);
         taken.insert(file);
     }
     return file;
@@ -119,7 +120,7 @@ std::expected<ExtractedAnimations, AnimationExtractError> ExtractGltfAnimations(
         return std::unexpected(AnimationExtractError::NoAnimations);
     }
 
-    const fs::path directory = sourceFile->parent_path() / std::format("{}{}", StemOf(gltfVirtualPath), kClipFolderSuffix);
+    const fs::path directory = sourceFile->parent_path() / Core::Format("{}{}", StemOf(gltfVirtualPath), kClipFolderSuffix);
     std::error_code madeDirectory;
     fs::create_directories(directory, madeDirectory);
     if (madeDirectory)

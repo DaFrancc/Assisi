@@ -6,6 +6,7 @@
 #ifndef NDEBUG
 
 #    include <Assisi/Core/Abort.hpp>
+#    include <Assisi/Core/Format.hpp>
 
 #    include <cstdint>
 #    include <format>
@@ -37,8 +38,8 @@ void ReportContractViolation(const ContractViolation &violation)
 
     // Through Abort, so the failure lands in the log and the crash report quotes
     // it, even in a windowed build with no console.
-    AbortAt(std::format("Contract violation: {}  {}", violation.condition,
-                        violation.message != nullptr ? violation.message : ""),
+    AbortAt(Format("Contract violation: {}  {}", violation.condition,
+                   violation.message != nullptr ? violation.message : ""),
             violation.file, static_cast<std::uint32_t>(violation.line));
 }
 

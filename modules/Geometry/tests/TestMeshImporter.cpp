@@ -14,6 +14,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -914,10 +915,10 @@ fs::path WriteSmoothCube()
     const uint32_t normal = buffer.Add(normals, GltfFixture::kFloat, "VEC3");
     const uint32_t index = buffer.Add(indices, GltfFixture::kUnsignedShort, "SCALAR");
     return buffer.Write("assisi_geometry_test_smoothing", "cube",
-                        std::format(R"("scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],)"
-                                    R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{},"NORMAL":{}}},)"
-                                    R"("indices":{},"material":0}}]}}],"materials":[{{"name":"Body"}}])",
-                                    position, normal, index));
+                        Assisi::Core::Format(R"("scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],)"
+                                             R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{},"NORMAL":{}}},)"
+                                             R"("indices":{},"material":0}}]}}],"materials":[{{"name":"Body"}}])",
+                                             position, normal, index));
 }
 } // namespace
 

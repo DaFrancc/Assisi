@@ -43,6 +43,7 @@
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/Key.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <imgui.h>
 #include <imgui_internal.h> // ImGui input watchdog: ActiveId/HoveredWindow introspection
@@ -122,9 +123,9 @@ std::string ScreenshotStamp()
     const std::chrono::sys_seconds now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     if (const std::chrono::time_zone *zone = Assisi::Core::LocalZone(); zone != nullptr)
     {
-        return std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
+        return Core::Format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
     }
-    return std::format("{:%Y-%m-%d-%H-%M-%S}", now);
+    return Core::Format("{:%Y-%m-%d-%H-%M-%S}", now);
 }
 
 /// A screenshot path named for now and not yet taken, or empty when the folder
@@ -150,7 +151,7 @@ std::string NextScreenshotPath(std::string &stamp, uint32_t &taken)
     for (uint32_t shot = taken + 1; shot <= kMaxScreenshotsPerSecond; ++shot)
     {
         const std::string name =
-            shot == 1 ? std::format("screenshot-{}.png", stamp) : std::format("screenshot-{}-{}.png", stamp, shot);
+            shot == 1 ? Core::Format("screenshot-{}.png", stamp) : Core::Format("screenshot-{}-{}.png", stamp, shot);
         const std::filesystem::path candidate = folder / name;
         if (!std::filesystem::exists(candidate, error))
         {
@@ -1676,9 +1677,9 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
                                                    ? (*definition)->members[tag->memberIndex].name
-                                                   : std::format("#{}", tag->memberIndex);
+                                                   : Core::Format("#{}", tag->memberIndex);
 
-                return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
+                return Core::Format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
         }
     }
@@ -1686,7 +1687,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
     if (const auto *name = _scene->Get<Assisi::Runtime::Name>(entity); name != nullptr && !name->value.Empty())
         return std::string{name->value.View()};
 
-    return std::format("Entity [{}:{}]", entity.index, entity.generation);
+    return Core::Format("Entity [{}:{}]", entity.index, entity.generation);
 }
 
 bool EditorApp::IsEditable() const

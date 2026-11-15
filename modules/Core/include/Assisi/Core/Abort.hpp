@@ -15,6 +15,7 @@
 /// deliberate end leaves the same log line, crash report and dump, and opens the
 /// same window, that a crash does.
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <cstdint>
@@ -39,7 +40,7 @@ namespace Assisi::Core
 template <typename... Args>
 [[noreturn]] void Abort(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&... args)
 {
-    AbortAt(std::format(fmtLoc.fmt, std::forward<Args>(args)...), fmtLoc.loc.file_name(), fmtLoc.loc.line());
+    AbortAt(VFormat(fmtLoc.fmt.get(), std::make_format_args(args...)), fmtLoc.loc.file_name(), fmtLoc.loc.line());
 }
 
 /// @brief Why the process is ending, as the first Abort gave it, or empty when

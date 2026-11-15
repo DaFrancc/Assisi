@@ -19,6 +19,7 @@
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Window/Key.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -236,7 +237,7 @@ void GameApp::AdvanceBenchmark()
 
     if (const std::int32_t shot = _benchmark->ShotThisFrame(); shot >= 0)
     {
-        CaptureNextFrame(std::format("{}/shot-{:02}.png", shotsDirectory, shot));
+        CaptureNextFrame(Core::Format("{}/shot-{:02}.png", shotsDirectory, shot));
     }
     if (phase == before)
     {

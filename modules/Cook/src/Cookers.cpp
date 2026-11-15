@@ -34,6 +34,7 @@
 #include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -125,12 +126,12 @@ class ReflectedCooker final : public Cooker
         if (meta == nullptr)
         {
             return std::unexpected(
-                Failure(vpath, std::format("names type '{}', which this build does not have", typeName)));
+                Failure(vpath, Core::Format("names type '{}', which this build does not have", typeName)));
         }
         if (!meta->construct || !meta->destroy || !meta->deserialize)
         {
             return std::unexpected(
-                Failure(vpath, std::format("type '{}' has no construct/deserialize hooks", typeName)));
+                Failure(vpath, Core::Format("type '{}' has no construct/deserialize hooks", typeName)));
         }
 
         // The caller knows the type only by that name, so the instance has to come
@@ -337,9 +338,9 @@ class TextureCooker final : public Cooker
             if (!first.empty())
             {
                 return std::unexpected(
-                    Failure(vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
-                                               "blob, so copy the file if both are wanted",
-                                               first, second)));
+                    Failure(vpath, Core::Format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
+                                                "blob, so copy the file if both are wanted",
+                                                first, second)));
             }
         }
 
@@ -407,9 +408,9 @@ class ShaderCooker final : public Cooker
         const std::string compiled = std::string{vpath} + ".spv";
         if (!Core::AssetSystem::Exists(compiled))
         {
-            return std::unexpected(Failure(vpath, std::format("has no compiled '{}' beside it, so this stage "
-                                                              "would be missing from the cooked tree",
-                                                              compiled)));
+            return std::unexpected(Failure(vpath, Core::Format("has no compiled '{}' beside it, so this stage "
+                                                               "would be missing from the cooked tree",
+                                                               compiled)));
         }
         return {};
     }
@@ -498,7 +499,7 @@ class FontCooker final : public Cooker
         const std::expected<std::vector<std::byte>, CookError> fontFile = ReadSource(source);
         if (!fontFile)
         {
-            return std::unexpected(Failure(vpath, std::format("names '{}', which could not be read", source)));
+            return std::unexpected(Failure(vpath, Core::Format("names '{}', which could not be read", source)));
         }
 
         const std::expected<Mondrian::Font, Mondrian::Import::FontImportError> font =
@@ -533,7 +534,7 @@ std::expected<std::string, std::string> ReadMarkup(std::string_view vpath)
 /// jump to it, after the file when it is not the one being cooked.
 std::string Where(const Mondrian::Import::MarkupError &error)
 {
-    const std::string place = std::format("{}:{}: {}", error.line, error.column, error.message);
+    const std::string place = Core::Format("{}:{}: {}", error.line, error.column, error.message);
     return error.file.empty() ? place : error.file + ":" + place;
 }
 
@@ -794,7 +795,7 @@ class TreeCookContext final : public Core::AssetCookContext
         std::expected<std::vector<std::byte>, Core::AssetError> bytes = Core::AssetSystem::ReadBinary(vpath);
         if (!bytes)
         {
-            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Core::ToString(bytes.error())));
+            return std::unexpected(Core::Format("\"{}\" can't be read: {}", vpath, Core::ToString(bytes.error())));
         }
         return std::move(*bytes);
     }

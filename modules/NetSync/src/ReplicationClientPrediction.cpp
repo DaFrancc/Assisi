@@ -6,6 +6,7 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -39,8 +40,8 @@ float AngleBetween(const glm::quat &a, const glm::quat &b)
 /// "@p name: mine vs host's", for a quantity the tolerances say differs.
 template <typename T> std::string Difference(std::string_view name, const T &mine, const T &host)
 {
-    return std::format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
-                       Core::Reflect::PredictedFieldText(host));
+    return Core::Format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
+                        Core::Reflect::PredictedFieldText(host));
 }
 
 /// Counts a correction the host's word for @p tick made to @p section, apart
@@ -694,7 +695,7 @@ std::vector<std::string> ReplicationClient::SyncDifferences(const PredictedRecor
         const void *b = replayed.components.data() + _predictedOffsets[i];
         if (!meta.predictedEquals(a, b))
         {
-            differences.push_back(std::format("{} {}", meta.name, meta.predictedDifference(a, b)));
+            differences.push_back(Core::Format("{} {}", meta.name, meta.predictedDifference(a, b)));
         }
     }
     return differences;

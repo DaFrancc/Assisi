@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Assisi/Core/AssetSystem.hpp"
 
+#include "Assisi/Core/Format.hpp"
 #include "Assisi/Core/Logger.hpp"
 
 #include <algorithm>
@@ -75,7 +76,7 @@ std::string ToString(const AssetError &error)
     {
         return std::string{ToString(error.code)};
     }
-    return std::format("{} ({})", ToString(error.code), error.detail);
+    return Format("{} ({})", ToString(error.code), error.detail);
 }
 
 /// Every `std::filesystem` call in this file goes through the `std::error_code`

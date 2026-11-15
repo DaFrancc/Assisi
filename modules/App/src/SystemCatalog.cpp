@@ -3,6 +3,7 @@
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Abort.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -216,7 +217,7 @@ std::string QuotedNames(std::span<const std::string> names)
     std::string quoted;
     for (const std::string &name : names)
     {
-        quoted += std::format("{}'{}'", quoted.empty() ? "" : ", ", name);
+        quoted += Core::Format("{}'{}'", quoted.empty() ? "" : ", ", name);
     }
     return quoted;
 }

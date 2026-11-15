@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <array>
@@ -55,7 +56,7 @@ std::string DescribeKind(AssetKindId kind)
     {
         return registered->name;
     }
-    return std::format("unknown kind {:016x}", kind.hash);
+    return Format("unknown kind {:016x}", kind.hash);
 }
 
 std::string_view ToString(CookedBlobError error) noexcept

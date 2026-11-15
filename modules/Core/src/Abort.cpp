@@ -3,6 +3,8 @@
 
 #include <Assisi/Core/Abort.hpp>
 
+#include <Assisi/Core/Format.hpp>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -56,7 +58,7 @@ void AbortAt(std::string_view reason, std::string_view file, std::uint32_t line)
         gPublished.store(true, std::memory_order_release);
     }
 
-    GetLogger().Log(LogLevel::Fatal, std::format("Abort: {}  [{}:{}]", reason, file, line));
+    GetLogger().Log(LogLevel::Fatal, Format("Abort: {}  [{}:{}]", reason, file, line));
     std::abort();
 }
 

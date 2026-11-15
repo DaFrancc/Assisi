@@ -11,6 +11,7 @@
 #include "PhysicsTestScene.hpp"
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/CollisionData.hpp>
 
 #include <cstdint>
@@ -186,8 +187,8 @@ TEST_CASE("Collision models: a Mesh on a dynamic body is refused by name and bui
                                           Physics::MotionType::Dynamic);
     Step(test.world, kSettleSteps);
 
-    CHECK(log.Mentions(std::format("entity {} (gen {}) has a Mesh collider on a dynamic body", cube.index,
-                                   cube.generation)));
+    CHECK(log.Mentions(Core::Format("entity {} (gen {}) has a Mesh collider on a dynamic body", cube.index,
+                                    cube.generation)));
     CHECK(test.world.Mass(cube) == doctest::Approx(Physics::kWaterDensity));
     CheckAtRest(test.scene, cube, 0.5f);
 }

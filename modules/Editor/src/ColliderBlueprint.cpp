@@ -2,6 +2,8 @@
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 
+#include <Assisi/Core/Format.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -88,7 +90,7 @@ std::string CollisionSummary(const Geometry::CollisionData &collision)
         {
             continue;
         }
-        summary += std::format("{}{} {}", separator, counts[kind], counts[kind] == 1 ? kSingular[kind] : kPlural[kind]);
+        summary += Core::Format("{}{} {}", separator, counts[kind], counts[kind] == 1 ? kSingular[kind] : kPlural[kind]);
         separator = ", ";
     }
     return summary;
