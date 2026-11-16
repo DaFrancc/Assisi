@@ -294,4 +294,9 @@ The engine has unit tests. This builds, then runs them:
 ./assisi test -- -R ECS         # just the suites whose name matches "ECS"
 ```
 
+The GPU tests, which draw every level and check the pictures, need the Vulkan
+validation layers: `vulkan-validation-layers` on Fedora and Arch,
+`vulkan-validationlayers` on Debian and Ubuntu, or the Vulkan SDK on Windows.
+See [Checking the renderer automatically](rendering-debugging.md#checking-the-renderer-automatically).
+
 </details>

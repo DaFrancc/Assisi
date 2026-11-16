@@ -1885,6 +1885,22 @@ class SystemTest(unittest.TestCase):
                                   "void TickSystem(SystemContext &ctx);\n" % key)
                 self.assertIn('%s = "Bounce"' % key, str(caught.exception))
 
+    def test_a_system_in_a_shape_the_pattern_misses_is_refused_not_skipped(self):
+        # A declaration the pattern does not take used to yield no system and no
+        # error: a system that silently never ran.
+        for declaration in ("inline void TickSystem(SystemContext &ctx) {}\n",
+                            "[[maybe_unused]] void TickSystem(SystemContext &ctx);\n",
+                            "void TickSystem(SystemContext &ctx, float dt);\n"):
+            with self.subTest(declaration=declaration):
+                with self.assertRaises(ValueError) as caught:
+                    self._systems("namespace Game {\n"
+                                  "ASYSTEM(Update, name = \"Tick\") " + declaration + "}\n")
+                self.assertIn("T.hpp:2", str(caught.exception))
+                self.assertIn("never be registered", str(caught.exception))
+
+    def test_the_macro_definition_is_not_a_system(self):
+        self.assertEqual(self._systems("#define ASYSTEM(...)\n"), [])
+
     def test_a_system_without_a_name_is_refused(self):
         # The name is what a level file says, so deriving it from the function
         # would make a C++ rename silently rename content — every level asking

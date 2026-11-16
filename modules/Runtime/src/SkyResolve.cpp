@@ -8,6 +8,7 @@
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 #include <cmath>
 #include <utility>
@@ -38,6 +39,7 @@ TimeOfDay ClockOf(ECS::Scene &scene, std::uint32_t &count)
     }
     return found;
 }
+
 } // namespace
 
 std::string_view SkyWarningMessage(SkyWarning warning)
@@ -50,6 +52,8 @@ std::string_view SkyWarningMessage(SkyWarning warning)
         return "a Moon without a Sun has no ecliptic to orbit; it is ignored.";
     case SkyWarning::SunWithoutClock:
         return "a Sun with no TimeOfDay in the scene stands at noon on an equinox.";
+    case SkyWarning::CloudsWithoutSkybox:
+        return "Clouds on a light with no Skybox beside them are not drawn: clouds are part of a sky.";
     case SkyWarning::Count_:
         break;
     }
@@ -102,6 +106,14 @@ SkyResolution ResolveSky(ECS::Scene &scene)
     resolution.warnings.set(std::to_underlying(SkyWarning::MoonWithoutSun),
                             sunPlace == nullptr && scene.Get<Moon>(sunEntity) != nullptr);
     resolution.warnings.set(std::to_underlying(SkyWarning::SunWithoutClock), sunPlace != nullptr && clockCount == 0);
+    const Clouds *clouds = scene.Get<Clouds>(sunEntity);
+    resolution.warnings.set(std::to_underlying(SkyWarning::CloudsWithoutSkybox),
+                            clouds != nullptr && skybox == nullptr);
+    if (clouds != nullptr && skybox != nullptr)
+    {
+        resolution.clouds.settings = ToCloudSettings(*clouds, ResolveWind(scene).wind);
+        resolution.clouds.present = true;
+    }
     resolution.settings = skybox != nullptr ? ToSkySettings(*skybox) : Render::SkySettings{};
     if (skybox != nullptr)
     {

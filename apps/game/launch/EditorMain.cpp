@@ -80,6 +80,9 @@ constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
                                "                          build)\n"
                                "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
                                "                          default; the CPU path is the reference)\n"
+                               "  --vulkan-validation     check the device with the Vulkan validation layer,\n"
+                               "                          synchronisation checks included, in any build;\n"
+                               "                          exit with a failure on any error it reports\n"
                                "  -h, --help              show this help and exit\n"
                                "\n"
                                " performance capture - run a scene, print medians, exit:\n"
@@ -106,6 +109,12 @@ constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
                                "                          run with them on measures a frame that differs\n"
                                "                          from the one that ships. Publish the default;\n"
                                "                          use this to find which pass moved\n"
+                               "  --capture-golden <dir>  compare --capture-image's picture with the one\n"
+                               "                          accepted for this level on this GPU, in\n"
+                               "                          <dir>/<GPU>/<level>.png, and fail if they differ;\n"
+                               "                          a diff picture is written beside the image. With\n"
+                               "                          none there yet, or ASSISI_ACCEPT_GOLDEN=1 set,\n"
+                               "                          the picture is accepted instead\n"
                                "\n"
                                "  e.g. Assisi-GameEditor -l levels/PerfBlank.alvl --capture 600 \\\n"
                                "                         --capture-size 2560x1440 --capture-out blank-1440p.json\n";
@@ -129,6 +138,7 @@ struct EditorArgs
     bool server = false;
     bool pieClient = false;
     bool gpuCulling = false;
+    bool vulkanValidation = false;
     bool shouldExit = false;
 };
 
@@ -237,6 +247,15 @@ bool ParseCaptureArg(std::string_view arg, int32_t argc, char **argv, int32_t &i
         if (ok)
         {
             capture.optionsPath = std::string(value);
+        }
+        return true;
+    }
+    if (arg == "--capture-golden")
+    {
+        ok = TakeValue(argc, argv, i, "--capture-golden", value);
+        if (ok)
+        {
+            capture.goldenDirectory = std::string(value);
         }
         return true;
     }
@@ -362,6 +381,10 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
         else if (arg == "--gpu-cull")
         {
             out.gpuCulling = true;
+        }
+        else if (arg == "--vulkan-validation")
+        {
+            out.vulkanValidation = true;
         }
         else if (arg == "--verbosity")
         {
@@ -594,6 +617,17 @@ int main(int argc, char **argv)
     {
         args.capture.frames = 1;
     }
+    if (!args.capture.goldenDirectory.empty() && args.capture.imagePath.empty())
+    {
+        std::fprintf(stderr, "--capture-golden compares the picture --capture-image takes; give both\n\n%s", kUsage);
+        return EXIT_FAILURE;
+    }
+    // From the environment rather than a flag, so a test runner accepts new
+    // pictures without the tests' command lines changing.
+    if (const char *accept = std::getenv("ASSISI_ACCEPT_GOLDEN"); accept != nullptr && std::string_view(accept) == "1")
+    {
+        args.capture.acceptGolden = true;
+    }
 
     // --connect on its own means the headless test client; --connect with
     // --pie-client means a windowed editor that joins. The flag rather than a
@@ -636,7 +670,8 @@ int main(int argc, char **argv)
                                    .restrictedViewer = args.pieClient,
                                    .enableEditorVisuals = args.editorVisuals,
                                    .perfCapture = args.capture,
-                                   .gpuCulling = args.gpuCulling});
+                                   .gpuCulling = args.gpuCulling,
+                                   .vulkanValidation = args.vulkanValidation});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

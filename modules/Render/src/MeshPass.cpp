@@ -55,6 +55,7 @@ enum class ResourceSlot : std::uint8_t
     Environment = 10,
     BrdfTable = 11,
     ScreenOcclusion = 12,
+    CloudShadow = 16,
     FogVolumes = std::to_underlying(FogVolumeBuffers::Slot::Volumes),
     FogEdges = std::to_underlying(FogVolumeBuffers::Slot::Edges),
     FogTiles = std::to_underlying(FogVolumeBuffers::Slot::Tiles),
@@ -72,6 +73,13 @@ enum class ConstantBufferSlot : std::uint8_t
     Frame = 0,
 };
 
+// The specialization constants the cutout test reads; each must match its
+// constant_id in mesh/cutout.glsl.
+enum class SpecializationConstant : std::uint32_t
+{
+    SceneSamples = 0,
+};
+
 // Starting instance-buffer capacity (records). Grows geometrically past this when
 // a frame draws more items; the first level typically fits without a growth. Also
 // the starting capacity for the indirect-args buffer (batches <= instances).
@@ -82,6 +90,26 @@ constexpr uint32_t kInitialInstanceCapacity = 1024u;
 // the indirect-args buffer with no repack.
 static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
               "DrawIndexedIndirectArguments must match VkDrawIndexedIndirectCommand's packed layout.");
+
+/// A one-texel depth array, bound in a shadow map's place while there is none.
+nvrhi::TextureHandle CreateEmptyShadowMap(nvrhi::IDevice *device, const char *debugName)
+{
+    nvrhi::TextureDesc desc;
+    desc.width = 1;
+    desc.height = 1;
+    desc.arraySize = 1;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+    desc.format = nvrhi::Format::D32;
+    desc.isShaderResource = true;
+    // Never drawn into, but a depth-format image is sampled from the depth
+    // read-only layout, and Vulkan admits an image to that layout only if it
+    // was created usable as a depth attachment.
+    desc.isRenderTarget = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    desc.debugName = debugName;
+    return device->createTexture(desc);
+}
 
 } // namespace
 
@@ -97,18 +125,21 @@ bool MeshPass::Initialize(const InitParams &params)
     _bindlessLayout = params.bindlessLayout;
     _bindlessTable = params.bindlessTable;
     _materialTable = params.materialTable;
-    _depthVertexShaderPath = params.depthVertexShaderSpvPath;
-    _maskedDepthVertexShaderPath = params.maskedDepthVertexShaderSpvPath;
-    _maskedDepthPixelShaderPath = params.maskedDepthPixelShaderSpvPath;
-    _invariantVertexShaderPath = params.invariantVertexShaderSpvPath;
 
+    // None is optional: without the masked depth build a cutout material would
+    // draw solid, and without the blended one a see-through material would not
+    // draw — wrong images rather than missing features.
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShaders[kPixelShaderOpaque] = LoadSpirvShader(device, params.pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    // The masked build is not optional: without it a cutout material would draw
-    // solid, which is a wrong image rather than a missing feature.
-    _pixelShaders[kPixelShaderMasked] =
-        LoadSpirvShader(device, params.maskedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderMasked])
+    _pixelShaders[kPixelShaderBlended] =
+        LoadSpirvShader(device, params.blendedPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    _depthVertexShader = LoadSpirvShader(device, params.depthVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _maskedDepthVertexShader =
+        LoadSpirvShader(device, params.maskedDepthVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _maskedDepthPixelShader = LoadSpirvShader(device, params.maskedDepthPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    _invariantVertexShader = LoadSpirvShader(device, params.invariantVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    if (!_vertexShader || !_pixelShaders[kPixelShaderOpaque] || !_pixelShaders[kPixelShaderBlended] ||
+        !_depthVertexShader || !_maskedDepthVertexShader || !_maskedDepthPixelShader || !_invariantVertexShader)
     {
         return false;
     }
@@ -167,6 +198,7 @@ bool MeshPass::Initialize(const InitParams &params)
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Sampler(std::to_underlying(SamplerSlot::Clamp)));
     bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion)));
+    bindingLayoutDesc.addItem(BindingLayoutItem::Texture_SRV(std::to_underlying(ResourceSlot::CloudShadow)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges)));
     bindingLayoutDesc.addItem(BindingLayoutItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles)));
@@ -271,6 +303,14 @@ bool MeshPass::Initialize(const InitParams &params)
         return false;
     }
 
+    _noShadowCascades = CreateEmptyShadowMap(device, "MeshPass::NoShadowCascades");
+    _noShadowAtlas = CreateEmptyShadowMap(device, "MeshPass::NoShadowAtlas");
+    if (_noShadowCascades == nullptr || _noShadowAtlas == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the empty shadow maps.");
+        return false;
+    }
+
     // One row, never read. It is bound in the view table's place while there is
     // no table, which for a scene that shadows nothing is every frame: a binding
     // set may not have a hole in it, and a scene with no shadows must still draw.
@@ -287,23 +327,12 @@ bool MeshPass::Initialize(const InitParams &params)
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    // The prepass's sets were built against the old framebuffer, and the next
-    // PreparePrepass rebuilds them against this one.
-    _framebufferInfo = framebufferInfo;
-    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
-    {
-        _prepassPipelines[i] = nullptr;
-        _afterPrepassPipelines[i] = nullptr;
-    }
-
-    // The pipelines differ only in their pixel shader and their cull mode. Building
-    // them from one desc is what keeps everything else identical: a cutout surface,
-    // or the inside of one, must shade and depth-test exactly as the opaque front
-    // face does, or they would diverge in more than the property that separates them.
+    // Every pipeline is built from one desc, so they differ in nothing but what
+    // is set per stage and per MeshPipeline below: a surface that rasterized
+    // differently in the prepass would hold depth the lit pass cannot match.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.inputLayout = _inputLayout;
-    pipelineDesc.VS = _vertexShader;
     pipelineDesc.addBindingLayout(_bindingLayout);  // set 0: CBs, sampler, light buffers
     pipelineDesc.addBindingLayout(_bindlessLayout);  // set 1: bindless material textures
     // Meshes are authored CCW-front (standard convention). NVRHI's Vulkan backend
@@ -312,114 +341,94 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     // without this, back-face culling culls the actual front faces instead.
     pipelineDesc.renderState.rasterState.frontCounterClockwise = true;
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
 
-    for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
-    {
-        const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
-        pipelineDesc.PS = _pixelShaders[MeshPipelineIsMasked(pipeline) ? kPixelShaderMasked : kPixelShaderOpaque];
-        pipelineDesc.renderState.rasterState.cullMode =
-            MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
-        _pipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-        if (_pipelines[i] == nullptr)
-        {
-            Core::Log::Error("MeshPass: failed to create the graphics pipeline ({}, {}).",
-                             MeshPipelineIsMasked(pipeline) ? "masked" : "opaque",
-                             MeshPipelineIsDoubleSided(pipeline) ? "double-sided" : "back-face culled");
-            return false;
-        }
-    }
-    return true;
-}
-
-bool MeshPass::PreparePrepass()
-{
-    if (_prepassPipelines[0] != nullptr && _afterPrepassPipelines[0] != nullptr)
-    {
-        return true;
-    }
-
-    const auto load = [this](nvrhi::ShaderHandle &shader, const std::string &path, nvrhi::ShaderType type)
-    {
-        if (shader == nullptr)
-        {
-            shader = LoadSpirvShader(_device, path, type);
-        }
-        return shader != nullptr;
-    };
-    if (!load(_depthVertexShader, _depthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
-        !load(_maskedDepthVertexShader, _maskedDepthVertexShaderPath, nvrhi::ShaderType::Vertex) ||
-        !load(_maskedDepthPixelShader, _maskedDepthPixelShaderPath, nvrhi::ShaderType::Pixel) ||
-        !load(_invariantVertexShader, _invariantVertexShaderPath, nvrhi::ShaderType::Vertex))
-    {
-        return false;
-    }
-
-    // The same desc the lit set is built from, so the three differ in nothing
-    // but what is set below: a surface that rasterized differently in the
-    // prepass would hold depth the lit pass cannot match.
-    nvrhi::GraphicsPipelineDesc desc;
-    desc.primType = nvrhi::PrimitiveType::TriangleList;
-    desc.inputLayout = _inputLayout;
-    desc.addBindingLayout(_bindingLayout);
-    desc.addBindingLayout(_bindlessLayout);
-    desc.renderState.rasterState.frontCounterClockwise = true;
-    desc.renderState.depthStencilState.depthTestEnable = true;
-
+    StagePipelines &prepass = _pipelines[std::to_underlying(MeshPassStage::DepthPrepass)];
+    StagePipelines &lit = _pipelines[std::to_underlying(MeshPassStage::Lit)];
+    const nvrhi::ShaderHandle maskedDepthPixelShader =
+        SpecializeForSamples(_maskedDepthPixelShader, framebufferInfo.sampleCount);
     for (uint32_t i = 0; i < kMeshPipelineCount; ++i)
     {
         const MeshPipeline pipeline = static_cast<MeshPipeline>(i);
         const bool masked = MeshPipelineIsMasked(pipeline);
-        desc.renderState.rasterState.cullMode =
+        pipelineDesc.renderState.rasterState.cullMode =
             MeshPipelineIsDoubleSided(pipeline) ? nvrhi::RasterCullMode::None : nvrhi::RasterCullMode::Back;
 
         // Depth and nothing else. The scene framebuffer has a colour target,
         // and a pipeline with no fragment stage leaves what it would write
         // there undefined, so the mask is what keeps the clear intact for the
         // sky. An opaque surface gets no fragment stage at all, which is what
-        // keeps early depth rejection whole.
-        desc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
-        desc.PS = masked ? _maskedDepthPixelShader : nullptr;
-        desc.renderState.depthStencilState.depthWriteEnable = true;
-        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
-        desc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
-        _prepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
+        // keeps early depth rejection whole. Multisampled, a cutout writes its
+        // depth only to the samples its coverage keeps.
+        pipelineDesc.VS = masked ? _maskedDepthVertexShader : _depthVertexShader;
+        pipelineDesc.PS = masked ? maskedDepthPixelShader : nullptr;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearer;
+        pipelineDesc.renderState.blendState.targets[0].colorWriteMask = static_cast<nvrhi::ColorMask>(0);
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = masked && framebufferInfo.sampleCount > 1;
+        prepass[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
 
         // Shades each pixel once, for the surface the prepass kept there: equal
         // passes it and everything behind fails. The depth is already written,
-        // and writing it again would only cost bandwidth.
-        desc.VS = _invariantVertexShader;
-        desc.PS = _pixelShaders[masked ? kPixelShaderMasked : kPixelShaderOpaque];
-        desc.renderState.depthStencilState.depthWriteEnable = false;
-        desc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
-        desc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
-        _afterPrepassPipelines[i] = _device->createGraphicsPipeline(desc, _framebufferInfo);
+        // and writing it again would only cost bandwidth. A cutout needs no
+        // alpha test here, so it gets the shader that keeps early depth
+        // rejection; multisampled, the per-sample depth test already confines
+        // it to the samples the prepass covered.
+        pipelineDesc.VS = _invariantVertexShader;
+        pipelineDesc.PS = _pixelShaders[kPixelShaderOpaque];
+        pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+        pipelineDesc.renderState.depthStencilState.depthFunc = AfterPrepassDepthTest(pipeline);
+        pipelineDesc.renderState.blendState.targets[0].colorWriteMask = nvrhi::ColorMask::All;
+        lit[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
 
-        if (_prepassPipelines[i] == nullptr || _afterPrepassPipelines[i] == nullptr)
+        if (prepass[i] == nullptr || lit[i] == nullptr)
         {
-            Core::Log::Error("MeshPass: failed to create the depth prepass pipelines.");
-            for (uint32_t j = 0; j < kMeshPipelineCount; ++j)
-            {
-                _prepassPipelines[j] = nullptr;
-                _afterPrepassPipelines[j] = nullptr;
-            }
+            Core::Log::Error("MeshPass: failed to create the graphics pipelines ({}, {}).", masked ? "masked" : "opaque",
+                             MeshPipelineIsDoubleSided(pipeline) ? "double-sided" : "back-face culled");
+            return false;
+        }
+    }
+
+    // See-through surfaces are tested against the solid depth but write none:
+    // each blends over everything behind it, which may be another of them.
+    // Premultiplied, because the shader adds reflections alpha does not fade.
+    pipelineDesc.VS = _vertexShader;
+    pipelineDesc.PS = _pixelShaders[kPixelShaderBlended];
+    pipelineDesc.renderState.blendState.alphaToCoverageEnable = false;
+    pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+    pipelineDesc.renderState.depthStencilState.depthFunc = kSceneDepthNearerOrSame;
+    nvrhi::BlendState::RenderTarget &blend = pipelineDesc.renderState.blendState.targets[0];
+    blend.blendEnable = true;
+    blend.srcBlend = nvrhi::BlendFactor::One;
+    blend.destBlend = nvrhi::BlendFactor::InvSrcAlpha;
+    blend.srcBlendAlpha = nvrhi::BlendFactor::One;
+    blend.destBlendAlpha = nvrhi::BlendFactor::InvSrcAlpha;
+    for (uint32_t i = 0; i < std::to_underlying(BlendedFaces::Count_); ++i)
+    {
+        const BlendedFaces faces = static_cast<BlendedFaces>(i);
+        pipelineDesc.renderState.rasterState.cullMode =
+            faces == BlendedFaces::Back ? nvrhi::RasterCullMode::Front : nvrhi::RasterCullMode::Back;
+        _blendedPipelines[i] = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+        if (_blendedPipelines[i] == nullptr)
+        {
+            Core::Log::Error("MeshPass: failed to create the blended pipeline ({} faces).",
+                             faces == BlendedFaces::Back ? "back" : "front");
             return false;
         }
     }
     return true;
 }
 
+nvrhi::ShaderHandle MeshPass::SpecializeForSamples(nvrhi::IShader *shader, uint32_t samples) const
+{
+    const nvrhi::ShaderSpecialization constant =
+        nvrhi::ShaderSpecialization::UInt32(std::to_underlying(SpecializationConstant::SceneSamples), samples);
+    return _device->createShaderSpecialization(shader, &constant, 1);
+}
+
 const nvrhi::GraphicsPipelineHandle *MeshPass::PipelinesFor(MeshPassStage stage) const
 {
-    switch (stage)
-    {
-    case MeshPassStage::DepthPrepass:    return _prepassPipelines;
-    case MeshPassStage::LitAfterPrepass: return _afterPrepassPipelines;
-    case MeshPassStage::Lit:
-    case MeshPassStage::Count_:           break;
-    }
-    return _pipelines;
+    return _pipelines[std::to_underlying(stage)];
 }
 
 void MeshPass::SetShadowMap(nvrhi::ITexture *cascades)
@@ -445,6 +454,11 @@ void MeshPass::SetEnvironment(nvrhi::ITexture *specularCube)
 void MeshPass::SetAmbientOcclusion(nvrhi::ITexture *occlusion)
 {
     _ambientOcclusion = occlusion;
+}
+
+void MeshPass::SetCloudShadow(nvrhi::ITexture *shadow)
+{
+    _cloudShadow = shadow;
 }
 
 bool MeshPass::CreateBrdfTable()
@@ -484,14 +498,15 @@ bool MeshPass::CreateBrdfTable()
     return true;
 }
 
-nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const
+nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(CachedBindingSet &cache,
+                                                          nvrhi::IBuffer *instanceBuffer) const
 {
-    if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer &&
-        _globalSetShadowMap == _shadowMap && _globalSetShadowAtlas == _shadowAtlas &&
-        _globalSetShadowViewTable == _shadowViewTable && _globalSetEnvironmentCube == _environmentCube &&
-        _globalSetAmbientOcclusion == _ambientOcclusion)
+    if (cache.set != nullptr && cache.instanceBuffer == instanceBuffer && cache.shadowMap == _shadowMap &&
+        cache.shadowAtlas == _shadowAtlas && cache.shadowViewTable == _shadowViewTable &&
+        cache.environmentCube == _environmentCube && cache.ambientOcclusion == _ambientOcclusion &&
+        cache.cloudShadow == _cloudShadow)
     {
-        return _globalBindingSet;
+        return cache.set;
     }
 
     // Every referenced handle but the instance buffer and the cascade array is
@@ -507,6 +522,11 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
     nvrhi::ITexture *const environment = _environmentCube != nullptr ? _environmentCube : _noEnvironmentCube.Get();
     nvrhi::ITexture *const occlusion =
         _ambientOcclusion != nullptr ? _ambientOcclusion : _noAmbientOcclusion.Get();
+    // The empty occlusion texture stands in for the clouds' shadow too: on a
+    // frame with no clouds the shader reads neither.
+    nvrhi::ITexture *const cloudShadow = _cloudShadow != nullptr ? _cloudShadow : _noAmbientOcclusion.Get();
+    nvrhi::ITexture *const cascades = _shadowMap != nullptr ? _shadowMap : _noShadowCascades.Get();
+    nvrhi::ITexture *const atlas = _shadowAtlas != nullptr ? _shadowAtlas : _noShadowAtlas.Get();
     bindingSetDesc.addItem(
         BindingSetItem::ConstantBuffer(std::to_underlying(ConstantBufferSlot::Frame), _frameConstantsBuffer));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Material), _sampler));
@@ -524,48 +544,61 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instan
                                                                 _clusterGrid->LightGridBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
         BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::Instances), instanceBuffer));
-    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades), _shadowMap));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowCascades), cascades));
     bindingSetDesc.addItem(
         BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::ShadowViews), shadowViews));
-    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas), _shadowAtlas));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ShadowAtlas), atlas));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Shadow), _shadowSampler));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::Environment), environment));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::BrdfTable), _brdfTable));
     bindingSetDesc.addItem(BindingSetItem::Sampler(std::to_underlying(SamplerSlot::Clamp), _clampSampler));
     bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::ScreenOcclusion), occlusion));
+    bindingSetDesc.addItem(BindingSetItem::Texture_SRV(std::to_underlying(ResourceSlot::CloudShadow), cloudShadow));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogVolumes),
                                                                 _fogVolumes->Volumes().NativeBuffer()));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogEdges),
                                                                 _fogVolumes->Edges().NativeBuffer()));
     bindingSetDesc.addItem(BindingSetItem::StructuredBuffer_SRV(std::to_underlying(ResourceSlot::FogTiles),
                                                                 _fogVolumes->Tiles().NativeBuffer()));
-    _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
-    _globalSetInstanceBuffer = instanceBuffer;
-    _globalSetShadowMap = _shadowMap;
-    _globalSetShadowAtlas = _shadowAtlas;
-    _globalSetShadowViewTable = _shadowViewTable;
-    _globalSetEnvironmentCube = _environmentCube;
-    _globalSetAmbientOcclusion = _ambientOcclusion;
-    return _globalBindingSet;
+    cache = CachedBindingSet{.set = _device->createBindingSet(bindingSetDesc, _bindingLayout),
+                             .instanceBuffer = instanceBuffer,
+                             .shadowMap = _shadowMap,
+                             .shadowAtlas = _shadowAtlas,
+                             .shadowViewTable = _shadowViewTable,
+                             .environmentCube = _environmentCube,
+                             .ambientOcclusion = _ambientOcclusion,
+                             .cloudShadow = _cloudShadow};
+    return cache.set;
 }
 
-void MeshPass::EnsureIndirectCapacity(uint32_t commandCount) const
+void MeshPass::EnsureIndirectCapacity(nvrhi::BufferHandle &buffer, uint32_t &capacity, uint32_t commandCount,
+                                      const char *debugName) const
 {
-    if (_indirectBuffer != nullptr && commandCount <= _indirectCapacity)
+    if (buffer != nullptr && commandCount <= capacity)
     {
         return;
     }
-    const uint32_t grown = std::max(_indirectCapacity * 2u, kInitialInstanceCapacity);
-    const uint32_t capacity = std::max(grown, commandCount);
+    const uint32_t grown = std::max(capacity * 2u, kInitialInstanceCapacity);
+    const uint32_t newCapacity = std::max(grown, commandCount);
 
     nvrhi::BufferDesc desc;
-    desc.byteSize = static_cast<uint64_t>(sizeof(nvrhi::DrawIndexedIndirectArguments)) * capacity;
+    desc.byteSize = static_cast<uint64_t>(sizeof(nvrhi::DrawIndexedIndirectArguments)) * newCapacity;
     desc.isDrawIndirectArgs = true;
     desc.initialState = nvrhi::ResourceStates::IndirectArgument;
     desc.keepInitialState = true;
-    desc.debugName = "MeshPass::IndirectArgs";
-    _indirectBuffer = _device->createBuffer(desc);
-    _indirectCapacity = capacity;
+    desc.debugName = debugName;
+    buffer = _device->createBuffer(desc);
+    capacity = newCapacity;
+}
+
+void MeshPass::EnsureInstanceCapacity(Buffer &buffer, uint32_t count, const char *debugName) const
+{
+    if (buffer.IsValid() && count <= buffer.CapacityElements())
+    {
+        return;
+    }
+    const uint32_t grown = std::max(buffer.CapacityElements() * 2u, kInitialInstanceCapacity);
+    buffer.Create(_device, sizeof(InstanceData), std::max(grown, count), /*allowUnorderedAccess=*/ false, debugName);
 }
 
 MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items,
@@ -659,15 +692,10 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
 
     // Grow the instance buffer to hold this frame's records if needed. A growth
     // swaps the buffer handle, so the cached global set (which references it) must
-    // be rebuilt — GetOrCreateGlobalBindingSet notices via _globalSetInstanceBuffer.
-    if (!_instanceBuffer.IsValid() || instances.size() > _instanceBuffer.CapacityElements())
-    {
-        const uint32_t needed = static_cast<uint32_t>(instances.size());
-        const uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialInstanceCapacity);
-        _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/ false,
-                               "MeshPass::Instances");
-    }
-    EnsureIndirectCapacity(static_cast<uint32_t>(commands.size()));
+    // be rebuilt — GetOrCreateGlobalBindingSet notices the handle changed.
+    EnsureInstanceCapacity(_instanceBuffer, static_cast<uint32_t>(instances.size()), "MeshPass::Instances");
+    EnsureIndirectCapacity(_indirectBuffer, _indirectCapacity, static_cast<uint32_t>(commands.size()),
+                           "MeshPass::IndirectArgs");
 
     // Upload both buffers before recording draws: the copies land in this command
     // list ahead of the draws that read them, so the ordering is correct in-frame.
@@ -689,7 +717,8 @@ MeshPass::SubmitStats MeshPass::RecordCpuDraws(const RenderFrame &frame, MeshPas
     const std::vector<MeshPipeline> &batchPipelines = _scratchBatchPipelines;
     const nvrhi::GraphicsPipelineHandle *const pipelines = PipelinesFor(stage);
 
-    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_instanceBuffer.NativeBuffer());
+    nvrhi::IBindingSet *const globalBindingSet =
+        GetOrCreateGlobalBindingSet(_globalBindingSet, _instanceBuffer.NativeBuffer());
 
     // Multi-draw each maximal run of batches that share the same arena vertex/index
     // buffers *and* pipeline with one drawIndexedIndirect. Stage C keeps every mesh
@@ -769,7 +798,7 @@ MeshPass::SubmitStats MeshPass::RecordIndirectDraws(const RenderFrame &frame, co
 
     // Bind the global set against the cull pass's instance buffer (t6) — the
     // records it wrote are read by gl_InstanceIndex just like the CPU path's.
-    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(in.instanceBuffer);
+    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(_globalBindingSet, in.instanceBuffer);
 
     // One multi-draw per live pipeline block. Single arena → all batches share the
     // arena's vertex/index buffers (stage C/E), so each block is one
@@ -802,6 +831,125 @@ MeshPass::SubmitStats MeshPass::RecordIndirectDraws(const RenderFrame &frame, co
     }
 
     // Survivor/batch tallies come from the culler's readback; report the calls.
+    return stats;
+}
+
+void PlanBlendedDraws(std::span<const DrawItem> items, std::vector<BlendedDraw> &out)
+{
+    out.clear();
+    for (uint32_t record = 0; record < static_cast<uint32_t>(items.size()); ++record)
+    {
+        const DrawItem &item = items[record];
+        if (item.material->IsDoubleSided())
+        {
+            out.push_back(BlendedDraw{.mesh = item.mesh,
+                                      .submeshIndex = item.submeshIndex,
+                                      .firstInstance = record,
+                                      .instanceCount = 1,
+                                      .faces = BlendedFaces::Back});
+            out.push_back(BlendedDraw{.mesh = item.mesh,
+                                      .submeshIndex = item.submeshIndex,
+                                      .firstInstance = record,
+                                      .instanceCount = 1,
+                                      .faces = BlendedFaces::Front});
+            continue;
+        }
+        // Only onto a single-sided draw of the same submesh that ends at this
+        // record: the previous item's.
+        if (!out.empty())
+        {
+            BlendedDraw &previous = out.back();
+            if (previous.faces == BlendedFaces::Front && previous.mesh == item.mesh &&
+                previous.submeshIndex == item.submeshIndex && !items[record - 1].material->IsDoubleSided())
+            {
+                ++previous.instanceCount;
+                continue;
+            }
+        }
+        out.push_back(BlendedDraw{.mesh = item.mesh,
+                                  .submeshIndex = item.submeshIndex,
+                                  .firstInstance = record,
+                                  .instanceCount = 1,
+                                  .faces = BlendedFaces::Front});
+    }
+}
+
+MeshPass::SubmitStats MeshPass::SubmitBlended(const RenderFrame &frame, std::span<const DrawItem> items) const
+{
+    SubmitStats stats;
+    if (items.empty())
+    {
+        return stats;
+    }
+
+    _blendedInstances.clear();
+    for (const DrawItem &item : items)
+    {
+        ASSISI_ASSERT(item.mesh != nullptr && item.material != nullptr && item.material->IsBlended(),
+                      "a blended draw needs a mesh and a see-through material");
+        ASSISI_ASSERT(item.material->Id() < AssetCache::kMaxMaterials,
+                      "material id indexes past the material table - the shader read would be out of bounds");
+        _blendedInstances.push_back(InstanceData{item.model, item.material->Id()});
+    }
+    PlanBlendedDraws(items, _blendedDraws);
+
+    _blendedCommands.clear();
+    for (const BlendedDraw &draw : _blendedDraws)
+    {
+        const Geometry::SubMesh &subMesh = draw.mesh->SubMeshes()[draw.submeshIndex];
+        nvrhi::DrawIndexedIndirectArguments cmd;
+        cmd.indexCount = subMesh.IndexCount;
+        cmd.instanceCount = draw.instanceCount;
+        cmd.startIndexLocation = draw.mesh->IndexBase() + subMesh.IndexOffset;
+        cmd.baseVertexLocation = static_cast<int32_t>(draw.mesh->VertexBase());
+        cmd.startInstanceLocation = draw.firstInstance;
+        _blendedCommands.push_back(cmd);
+    }
+
+    const uint32_t instanceCount = static_cast<uint32_t>(_blendedInstances.size());
+    const uint32_t commandCount = static_cast<uint32_t>(_blendedCommands.size());
+    EnsureInstanceCapacity(_blendedInstanceBuffer, instanceCount, "MeshPass::BlendedInstances");
+    EnsureIndirectCapacity(_blendedIndirectBuffer, _blendedIndirectCapacity, commandCount,
+                           "MeshPass::BlendedIndirectArgs");
+    nvrhi::ICommandList *const commandList = frame.commandList;
+    _blendedInstanceBuffer.Upload(commandList, _blendedInstances.data(), instanceCount);
+    commandList->writeBuffer(_blendedIndirectBuffer, _blendedCommands.data(),
+                             _blendedCommands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
+
+    nvrhi::IBindingSet *const bindingSet =
+        GetOrCreateGlobalBindingSet(_blendedBindingSet, _blendedInstanceBuffer.NativeBuffer());
+
+    // One call per run of draws sharing a pipeline and the arena buffers, in
+    // plan order, which is the order they composite in.
+    uint32_t runStart = 0;
+    while (runStart < commandCount)
+    {
+        const BlendedDraw &first = _blendedDraws[runStart];
+        uint32_t runEnd = runStart + 1;
+        while (runEnd < commandCount && _blendedDraws[runEnd].faces == first.faces &&
+               _blendedDraws[runEnd].mesh->VertexBuffer() == first.mesh->VertexBuffer() &&
+               _blendedDraws[runEnd].mesh->IndexBuffer() == first.mesh->IndexBuffer())
+        {
+            ++runEnd;
+        }
+        nvrhi::GraphicsState state;
+        state.pipeline = _blendedPipelines[std::to_underlying(first.faces)];
+        state.framebuffer = frame.framebuffer;
+        state.addBindingSet(bindingSet);
+        state.addBindingSet(_bindlessTable);
+        state.viewport.addViewportAndScissorRect(
+            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+        state.addVertexBuffer(nvrhi::VertexBufferBinding{first.mesh->VertexBuffer(), 0, 0});
+        state.indexBuffer = nvrhi::IndexBufferBinding{first.mesh->IndexBuffer(), nvrhi::Format::R32_UINT, 0};
+        state.indirectParams = _blendedIndirectBuffer;
+        commandList->setGraphicsState(state);
+        commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments), runEnd - runStart);
+        ++stats.drawCalls;
+        runStart = runEnd;
+    }
+
+    stats.instances = instanceCount;
+    stats.batches = commandCount;
     return stats;
 }
 

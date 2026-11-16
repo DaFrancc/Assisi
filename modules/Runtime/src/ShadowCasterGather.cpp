@@ -102,6 +102,12 @@ void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask,
         const Assisi::Render::Material *material = subMesh.MaterialSlot < source.meshRenderer.materials.size()
                                                        ? source.meshRenderer.materials[subMesh.MaterialSlot]
                                                        : nullptr;
+        // A see-through surface casts nothing: a shadow map holds only whether
+        // something blocks the light, and clear glass would shade like a wall.
+        if (material != nullptr && material->IsBlended())
+        {
+            continue;
+        }
         const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
         // The same flag the mesh pass reads. A double-sided caster is a surface
         // with no interior, so the depth pass must record both of its faces; a

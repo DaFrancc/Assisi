@@ -18,12 +18,15 @@
 /// is authored in the editor rather than in engine code.
 ///
 /// The Fog component is here too: it takes its colour from this sky, but it is
-/// not placed by it and works in a level with none.
+/// not placed by it and works in a level with none. So is Clouds, which is part
+/// of the sky and goes on its entity.
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/Fog.hpp>
 #include <Assisi/Render/Sky.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 #include <array>
 #include <cstddef>
@@ -246,6 +249,63 @@ struct Fog
     /// @}
 };
 
+/// @brief A named kind of cloudy sky.
+AENUM()
+enum class CloudPreset : std::uint8_t
+{
+    /// Fair weather: small cumulus, well apart, with plenty of blue between.
+    Fair,
+    /// Cumulus over about half the sky.
+    Scattered,
+    /// More cloud than sky, with gaps the sun breaks through.
+    Broken,
+    /// A low grey layer closing the sky. No sun shadows under it.
+    Overcast,
+    /// The fields below, as authored.
+    Custom,
+};
+
+/// @brief Clouds in the sky, lit by the same sun and moon, casting shadows on
+/// the ground and greying the sky's light as they close it.
+///
+/// Goes on the sun's entity, beside its Skybox: the clouds are part of that
+/// sky. Without a Skybox there they are not drawn, and the log says so. Without
+/// this component a level has no clouds and pays nothing for them.
+///
+/// The level's Wind carries them as time passes, in the editor as in the game,
+/// whether or not the scene's clock runs. Each machine moves its own: clouds
+/// are scenery, and nothing in play depends on where they are.
+ACOMP()
+struct Clouds
+{
+    /// Which kind of sky this is. Every value but Custom answers the five
+    /// fields below, which grey out. The change rate and the seed are never
+    /// greyed: they work with every preset.
+    AFIELD(radioBroadcast) CloudPreset preset = CloudPreset::Scattered;
+
+    /// How much of the sky is cloud, from 0 (clear) to 1 (overcast).
+    AFIELD(min = 0, max = 1, radioListen = {source = preset, value = Custom, behavior = grey}) float coverage = Assisi::Render::kDefaultCloudCoverage;
+    /// The height of the clouds' flat bases, in metres above the world's zero.
+    AFIELD(radioListen = {source = preset, value = Custom, behavior = grey}) float height = Assisi::Render::kDefaultCloudBaseHeight;
+    /// How tall the clouds can grow above their bases, in metres.
+    AFIELD(min = 100, radioListen = {source = preset, value = Custom, behavior = grey}) float thickness = Assisi::Render::kDefaultCloudThickness;
+    /// How thick a cloud is inside. Higher hides the sun behind smaller clouds
+    /// and darkens their undersides.
+    AFIELD(min = 0, max = 1, radioListen = {source = preset, value = Custom, behavior = grey}) float density = Assisi::Render::kDefaultCloudDensity;
+    /// How heaped the clouds are, from 0 (flat grey sheets) to 1 (towering
+    /// cumulus). The sky mixes kinds around it, so towers rise among lower
+    /// clouds and sheets lie among heaps.
+    AFIELD(min = 0, max = 1, radioListen = {source = preset, value = Custom, behavior = grey}) float puffiness = Assisi::Render::kDefaultCloudPuffiness;
+
+    /// How fast the clouds change shape as they drift: 0 never, 1 about as fast
+    /// as real cumulus, which form and fade over a quarter of an hour.
+    AFIELD(min = 0, max = 10) float changeRate = Assisi::Render::kDefaultCloudChangeRate;
+
+    /// Which sky of this kind: the same settings with another seed give other
+    /// clouds.
+    AFIELD() uint32_t seed = 0;
+};
+
 /// @brief The component as the render side wants it.
 [[nodiscard]] inline Assisi::Render::FogSettings ToFogSettings(const Fog &fog)
 {
@@ -344,8 +404,7 @@ kSkyPresets{{
                                 .sunEdgeSoftness = Assisi::Render::kMinSunEdgeSoftness,
                                 .sunDiskColor = glm::vec3(1.0f)},
 
-    // Custom: the defaults again, which is what makes departing from a preset
-    // start where the knobs already are rather than somewhere else.
+    // Custom: never read, since a Custom sky is its knobs.
     Assisi::Render::SkySettings{},
 }};
 
@@ -384,6 +443,99 @@ static_assert(kSkyPresets.size() == static_cast<std::size_t>(SkyPreset::Custom) 
                                        .sunLimbDarkening = skybox.sunLimbDarkening,
                                        .sunDiskIntensity = skybox.sunDiskIntensity,
                                        .sunDiskColor = skybox.sunDiskColor};
+}
+
+/// @brief After an edit moved @p skybox's preset off @p previous, fills its
+/// knobs with the preset's numbers: the greyed knobs then show the sky in use,
+/// and a switch to Custom starts from the preset that was showing. Nothing if
+/// the preset did not change.
+inline void SettleSkyPreset(Skybox &skybox, SkyPreset previous)
+{
+    if (skybox.preset == previous)
+    {
+        return;
+    }
+    const Assisi::Render::SkySettings &settings =
+        PresetSettings(skybox.preset == SkyPreset::Custom ? previous : skybox.preset);
+    skybox.airScattering = settings.airScattering;
+    skybox.airThickness = settings.airThickness;
+    skybox.hazeScattering = settings.hazeScattering;
+    skybox.hazeForwardness = settings.hazeForwardness;
+    skybox.skyBounce = settings.skyBounce;
+    skybox.groundColor = settings.groundColor;
+    skybox.nightColor = settings.nightColor;
+    skybox.exposure = settings.exposure;
+    skybox.sunSizeDegrees = settings.sunSizeDegrees;
+    skybox.sunEdgeSoftness = settings.sunEdgeSoftness;
+    skybox.sunLimbDarkening = settings.sunLimbDarkening;
+    skybox.sunDiskIntensity = settings.sunDiskIntensity;
+    skybox.sunDiskColor = settings.sunDiskColor;
+}
+
+/// @brief Every cloud preset, in the order @ref CloudPreset declares them. The
+/// change rate, the wind and the seed are left at their defaults: the
+/// component's own and the level's wind always replace them.
+inline constexpr std::array<Assisi::Render::CloudSettings, static_cast<std::size_t>(CloudPreset::Custom) + 1>
+kCloudPresets{{
+    // Fair: a third of the sky, in heaped clouds shorter than they are wide.
+    Assisi::Render::CloudSettings{.coverage = 0.3f, .baseHeight = 1500.0f, .thickness = 1500.0f, .puffiness = 1.0f},
+
+    // Scattered: the defaults.
+    Assisi::Render::CloudSettings{},
+
+    // Broken: lower, taller and denser, with flatter cloud among the heaps, so
+    // the gaps are what stand out.
+    Assisi::Render::CloudSettings{
+        .coverage = 0.7f, .baseHeight = 1200.0f, .thickness = 2500.0f, .density = 0.11f, .puffiness = 0.6f},
+
+    // Overcast: a low, closed sheet of stratus, dense enough that the sun
+    // shows through nowhere.
+    Assisi::Render::CloudSettings{
+        .coverage = 0.97f, .baseHeight = 800.0f, .thickness = 1500.0f, .density = 0.08f, .puffiness = 0.15f},
+
+    // Custom: the defaults, which the component's own fields replace.
+    Assisi::Render::CloudSettings{},
+}};
+
+static_assert(kCloudPresets.size() == static_cast<std::size_t>(CloudPreset::Custom) + 1,
+              "Every CloudPreset needs a row in kCloudPresets, and Custom has to stay last.");
+
+/// @brief The component's clouds, carried by @p wind, as the render side wants
+/// them.
+[[nodiscard]] inline Assisi::Render::CloudSettings ToCloudSettings(const Clouds &clouds, const Wind &wind)
+{
+    Assisi::Render::CloudSettings settings = kCloudPresets[static_cast<std::size_t>(clouds.preset)];
+    if (clouds.preset == CloudPreset::Custom)
+    {
+        settings.coverage = clouds.coverage;
+        settings.baseHeight = clouds.height;
+        settings.thickness = clouds.thickness;
+        settings.density = clouds.density;
+        settings.puffiness = clouds.puffiness;
+    }
+    settings.changeRate = clouds.changeRate;
+    settings.windSpeed = wind.speed;
+    settings.windBearingDegrees = wind.bearingDegrees;
+    settings.seed = clouds.seed;
+    return Assisi::Render::Sanitized(settings);
+}
+
+/// @brief After an edit moved @p clouds' preset off @p previous, fills its five
+/// greyed fields with the preset's numbers, as SettleSkyPreset does for a sky.
+/// Nothing if the preset did not change.
+inline void SettleCloudPreset(Clouds &clouds, CloudPreset previous)
+{
+    if (clouds.preset == previous)
+    {
+        return;
+    }
+    const CloudPreset source = clouds.preset == CloudPreset::Custom ? previous : clouds.preset;
+    const Assisi::Render::CloudSettings &settings = kCloudPresets[static_cast<std::size_t>(source)];
+    clouds.coverage = settings.coverage;
+    clouds.height = settings.baseHeight;
+    clouds.thickness = settings.thickness;
+    clouds.density = settings.density;
+    clouds.puffiness = settings.puffiness;
 }
 
 } // namespace Assisi::Runtime

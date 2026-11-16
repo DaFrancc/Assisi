@@ -12,12 +12,15 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Math/Matrix.hpp>
+#include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
 #include <Assisi/Runtime/PostProcessResolve.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
-#include <Assisi/Runtime/SkinnedMeshPose.hpp>
+#include <Assisi/Runtime/ScenePasses.generated.hpp>
+#include <Assisi/Runtime/WaterGather.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 namespace Assisi::Runtime
 {
@@ -27,13 +30,12 @@ namespace
 // under the asset root by the build; resolved through Core::AssetSystem.
 constexpr const char *kSceneVertexShader = "shaders/mesh.vert.spv";
 constexpr const char *kScenePixelShader = "shaders/mesh.frag.spv";
-// The same pixel shader built with its alpha-test discard enabled, for the mesh
-// pass's masked pipeline (see MeshPass::InitParams).
-constexpr const char *kSceneMaskedPixelShader = "shaders/mesh.frag.masked.spv";
+// The same pixel shader built for see-through surfaces, for the mesh pass's
+// blended pipelines.
+constexpr const char *kSceneBlendedPixelShader = "shaders/mesh.frag.blended.spv";
 
-// The depth prepass every screen-space feature reads, and the lit pass's vertex
-// stage for drawing over it (see MeshPass::PreparePrepass). Loaded only once a
-// frame asks for scene depth.
+// The depth prepass, and the lit pass's vertex stage for drawing over it (see
+// MeshPass::RebuildPipeline).
 constexpr const char *kSceneDepthVertexShader = "shaders/mesh.vert.depth.spv";
 constexpr const char *kSceneMaskedDepthVertexShader = "shaders/mesh.vert.depth.masked.spv";
 constexpr const char *kSceneMaskedDepthPixelShader = "shaders/mesh_depth.frag.spv";
@@ -56,22 +58,12 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 // material casts a shadow with its hole in it.
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
-// Sets one tile of the local-light atlas back to far depth (see
-// Render::LocalShadowPass::ResetTile).
-constexpr const char *kShadowTileResetShader = "shaders/shadow_tile_reset.vert.spv";
-// Writes a cascade's still depth back where movers stood (see
-// Render::ShadowPass::RestoreStillDepth), through the tile reset's triangle.
-constexpr const char *kShadowDepthRestoreShader = "shaders/shadow_depth_restore.frag.spv";
 
 // The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
 // plane, so its vertex stage is its own rather than the shared one: that one
 // emits depth 0, and the sky has to land on the 1.0 the depth clear left.
 constexpr const char *kSkyVertexShader = "shaders/sky.vert.spv";
 constexpr const char *kSkyPixelShader = "shaders/sky.frag.spv";
-
-// The sky probe's GGX prefilter (see Render::SkyProbe). The capture itself goes
-// through the sky shaders above.
-constexpr const char *kSkyPrefilterShader = "shaders/sky_prefilter.comp.spv";
 
 // The moon's albedo, stamped on its disk. An engine constant rather than a field
 // on the Moon component: authoring a second moon's texture is a feature nobody
@@ -113,6 +105,10 @@ ECS::InstanceId ViewerInstance(const ECS::Scene &scene, ECS::Entity camera)
 }
 } // namespace
 
+SceneRenderer::SceneRenderer() : _graph(std::make_unique<Passes::ScenePassGraph>()) {}
+
+SceneRenderer::~SceneRenderer() = default;
+
 bool SceneRenderer::Initialize(const InitParams &params)
 {
     _device = params.device;
@@ -133,38 +129,19 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Error("SceneRenderer: failed to initialise the clustered lighting pipeline.");
         return false;
     }
-    _clusterProjection = projection;
 
-    // Before the mesh pass: it binds both shadow maps into every binding set it
-    // builds, and each pass keeps a one-texel empty texture there until
-    // something wants shadows. A failure is non-fatal — the scene renders
-    // unshadowed rather than not at all. Each pass initialises even when the
-    // depth renderer failed, since that is what creates its empty texture.
-    const bool depthRendererOk = _shadowDepthRenderer.Initialize(
-        Render::ShadowDepthRenderer::InitParams{.device = _device,
-                                                .vertexShaderSpvPath = kShadowVertexShader,
-                                                .maskedVertexShaderSpvPath = kShadowMaskedVertexShader,
-                                                .maskedPixelShaderSpvPath = kShadowMaskedPixelShader,
-                                                .materialTable = params.materialTable,
-                                                .bindlessLayout = params.bindlessLayout,
-                                                .bindlessTable = params.bindlessTable});
-    const bool sunShadowsOk = _shadowPass.Initialize(
-        Render::ShadowPass::InitParams{.device = _device,
-                                       .depthRenderer = &_shadowDepthRenderer,
-                                       .restoreVertexShaderSpvPath = kShadowTileResetShader,
-                                       .restorePixelShaderSpvPath = kShadowDepthRestoreShader});
-    if (!depthRendererOk || !sunShadowsOk)
+    // A failure is non-fatal — the scene renders unshadowed rather than not at
+    // all: both shadow passes then fail to start, and say so.
+    if (!_shadowDepthRenderer.Initialize(
+            Render::ShadowDepthRenderer::InitParams{.device = _device,
+                                                    .vertexShaderSpvPath = kShadowVertexShader,
+                                                    .maskedVertexShaderSpvPath = kShadowMaskedVertexShader,
+                                                    .maskedPixelShaderSpvPath = kShadowMaskedPixelShader,
+                                                    .materialTable = params.materialTable,
+                                                    .bindlessLayout = params.bindlessLayout,
+                                                    .bindlessTable = params.bindlessTable}))
     {
-        Core::Log::Warn("SceneRenderer: sun shadows unavailable (the depth pass failed to initialise).");
-    }
-    // The same renderer, so every shadow view of the frame lands in one table
-    // whichever kind of map produced it.
-    if (!_localShadowPass.Initialize(
-            Render::LocalShadowPass::InitParams{.device = _device,
-                                                .depthRenderer = &_shadowDepthRenderer,
-                                                .tileResetVertexShaderSpvPath = kShadowTileResetShader}))
-    {
-        Core::Log::Warn("SceneRenderer: local-light shadows unavailable (the depth pass failed to initialise).");
+        Core::Log::Warn("SceneRenderer: shadows unavailable (the shadow depth renderer failed to initialise).");
     }
 
     // Before both passes that read them, which name the buffers in their binding
@@ -180,7 +157,7 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                          .framebufferInfo = params.framebufferInfo,
                                          .vertexShaderSpvPath = kSceneVertexShader,
                                          .pixelShaderSpvPath = kScenePixelShader,
-                                         .maskedPixelShaderSpvPath = kSceneMaskedPixelShader,
+                                         .blendedPixelShaderSpvPath = kSceneBlendedPixelShader,
                                          .depthVertexShaderSpvPath = kSceneDepthVertexShader,
                                          .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
                                          .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
@@ -194,8 +171,6 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
     }
-    _meshPass.SetShadowMap(_shadowPass.CascadeTexture());
-    _meshPass.SetShadowAtlas(_localShadowPass.AtlasTexture());
 
     // The sky. Non-fatal: without it the scene target keeps its clear colour,
     // which is what every scene looked like before there was a sky at all.
@@ -207,13 +182,6 @@ bool SceneRenderer::Initialize(const InitParams &params)
                                                          .fogVolumes = &_fogVolumeBuffers}))
     {
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
-    }
-
-    // Non-fatal as well: without it a sky lights the scene with the hemisphere
-    // alone, which is what it did before there was a probe.
-    if (!_skyProbe.Initialize(_device, kSkyPrefilterShader))
-    {
-        Core::Log::Warn("SceneRenderer: sky reflections unavailable (the prefilter failed to initialise).");
     }
 
     // Non-fatal: without it no screen-space feature runs, and the frame is the
@@ -245,40 +213,12 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
-    // Non-fatal too: skinned meshes then draw whatever their ranges last held.
-    if (!_meshSkinner.Initialize(_device))
-    {
-        Core::Log::Warn("SceneRenderer: skinning unavailable (skin compute pipeline failed to build).");
-    }
-
+    // The passes' own pieces; each that fails to start says so and stays off.
+    _graph->Initialize(Passes::ScenePassInit{.device = _device,
+                                             .shadowDepthRenderer = &_shadowDepthRenderer,
+                                             .meshFrameLayout = _meshPass.FrameBindingLayout()},
+                       params.framebufferInfo);
     return true;
-}
-
-void SceneRenderer::SkinPosedInstances(const Render::RenderFrame &frame, const ECS::Scene &scene)
-{
-    const Render::MeshBuffer *anyMesh = GatherPosedInstances(scene, _skinBatch);
-    if (anyMesh == nullptr)
-    {
-        return;
-    }
-    ASSISI_PROFILE_GPU_PASS(frame.commandList, "skin");
-    _meshSkinner.Dispatch(frame.commandList, _skinBatch, anyMesh->VertexBuffer(), anyMesh->SkinBuffer());
-}
-
-void SceneRenderer::RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection)
-{
-    if (_device == nullptr || !_meshPass.IsValid())
-    {
-        return;
-    }
-
-    nvrhi::CommandListHandle commandList = _device->createCommandList();
-    commandList->open();
-    _lighting.Resize(commandList, width, height, camera.nearZ, camera.farZ, projection);
-    commandList->close();
-    _device->executeCommandList(commandList);
-
-    _clusterProjection = projection;
 }
 
 void SceneRenderer::WarnNewSkyWarnings(const SkyWarnings &warnings)
@@ -294,11 +234,6 @@ void SceneRenderer::WarnNewSkyWarnings(const SkyWarnings &warnings)
     }
 }
 
-void SceneRenderer::Resize(int32_t width, int32_t height, const Camera &camera)
-{
-    RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
-}
-
 bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
     if (!_meshPass.IsValid())
@@ -311,6 +246,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     {
         Core::Log::Warn("SceneRenderer: sky pipeline rebuild failed; sky disabled.");
     }
+    _graph->OnTargetsChanged(framebufferInfo);
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
@@ -334,6 +270,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         Core::Log::Warn("SceneRenderer: more than one Fog in the scene; the first found is used.");
     }
     _severalFogsWarned = fog.several;
+    const bool severalWinds = ResolveWind(scene).count > 1;
+    if (severalWinds && !_severalWindsWarned)
+    {
+        Core::Log::Warn("SceneRenderer: more than one Wind in the scene; the first found is used.");
+    }
+    _severalWindsWarned = severalWinds;
 
     // Refresh world matrices before anything reads them (view matrix, draw). Only
     // entities whose transform changed since last frame are recomputed; the tick
@@ -343,10 +285,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         ASSISI_PROFILE_SCOPE("propagate-transforms");
         propagationTick = ECS::PropagateTransforms(scene, propagationTick);
     }
-
-    // Before every pass that draws geometry: the shadows and the main pass both
-    // read the posed vertices.
-    SkinPosedInstances(frame, scene);
 
     PlaceOrigins(cameraWorld);
 
@@ -370,21 +308,6 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height)));
     const glm::mat4 view = ViewMatrix(cameraInView);
 
-    // Keep the froxel grid aligned with the render projection; a drift (window
-    // resize, runtime FOV/near/far edit) makes peripheral froxels stop matching
-    // it and shows rectangular lighting artifacts.
-    if (projection != _clusterProjection && _meshPass.IsValid())
-    {
-        // Scoped even though it is rare: it is a full grid rebuild, so the one
-        // frame that pays it should say so rather than look like a random spike.
-        // Recorded into the frame's own list, which is what the scope times, and
-        // so an animated FOV or far plane submits nothing extra.
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "cluster-rebuild");
-        _lighting.Resize(frame.commandList, static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height),
-                         camera.nearZ, camera.farZ, projection);
-        _clusterProjection = projection;
-    }
-
     // The scene's sky, which lights the geometry, is drawn behind it, and says
     // where the sun and the moon are this frame.
     //
@@ -396,17 +319,14 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lastSky = ResolveSky(scene);
     const SkyResolution &sky = _lastSky;
 
-    // Before the mesh pass reads it, and off the same sky the frame is lit by.
-    const SpecularProbe probe = UpdateSkyProbe(frame, sky);
-
-    const bool fogged = _fogEnabled && fog.present;
+    const bool fogged = _settings.fogEnabled && fog.present;
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
 
     // The placed fog volumes, which the player's fog setting turns off with
     // the level's own fog.
     _fogVolumeFrame.Clear();
-    if (_fogEnabled)
+    if (_settings.fogEnabled)
     {
         ASSISI_PROFILE_SCOPE("fog-volumes");
         const FogVolumeGatherResult gathered = GatherFogVolumes(scene,
@@ -422,13 +342,14 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         _droppedFogVolumesWarned = gathered.dropped > 0u;
     }
     const glm::uvec4 fogVolumeLanes = _fogVolumeFrame.Lanes();
+    // Uploaded now, ahead of every pass: only the lit pass and the sky read it.
+    _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
 
-    // Gathered but not yet uploaded: the local-light atlas decides which lights
-    // hold tiles and stamps each winner's view index into the light record, and
-    // that stamp has to happen before the lights reach the GPU.
+    // The frame's lights. The shadow passes choose from them, and the light
+    // upload stamps each one with where its shadow views landed.
     _lighting.Gather(scene, &sky.light, LightFrame{.view = _viewOrigin, .shadow = _shadowOrigin});
 
-    // Before either half draws, because both are invalidated against it and the
+    // Before either shadow half, because both are invalidated against it and the
     // change ticks may only be consumed once a frame.
     UpdateShadowMovers(scene);
 
@@ -439,102 +360,80 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
-    // Each half under a scope of its own, so the main thread's time in their
-    // planning and gathers is never left unaccounted between its child scopes.
-    Render::MeshPass::ShadowFrameData shadows;
-    {
-        ASSISI_PROFILE_SCOPE("sun-shadows");
-        shadows = RenderSunShadows(frame, scene, camera, cameraInShadow);
-    }
-    {
-        ASSISI_PROFILE_SCOPE("local-shadows");
-        RenderLocalShadows(frame, scene, camera, cameraInShadow, shadows);
-    }
-    // After both, because it reports on both — and outside them, because every
-    // early return either of them takes is still a frame with an answer.
-    BuildShadowDiagnostics();
+    // Opens the frame's shadow view table, which every kind of shadow map
+    // appends to, so it belongs to none of them.
+    _shadowDepthRenderer.BeginFrame(Math::TranslationOf(cameraInShadow));
 
-    _lighting.Upload(frame.commandList, view);
-    _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
+    // The water in view, before the scene's distance is prepared, which it reads.
+    _waterFrame.Clear();
+    if (_settings.waterEnabled)
+    {
+        ASSISI_PROFILE_SCOPE("water-gather");
+        const Render::Frustum frustum = Render::Frustum::FromViewProjection(projection * view);
+        GatherWater(scene, WaterGatherView{.camera = _viewOrigin, .frustum = &frustum, .drawDistance = camera.farZ},
+                    _waterFrame);
+    }
+    const bool waterReadsDistance = _settings.waterEnabled && !_waterFrame.bodies.empty();
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const bool prepass = PrepareDepthPrepass(frame);
-    const bool occlusion = PrepareScreenOcclusion(frame, prepass);
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(frame, waterReadsDistance);
 
-    {
-        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
-        const Render::MeshPass::FrameConstantsParams frameConstants{.viewProjection = projection * view,
-                                                                    .view = view,
-                                                                    .screenWidth = frame.width,
-                                                                    .screenHeight = frame.height,
-                                                                    .nearZ = camera.nearZ,
-                                                                    .farZ = camera.farZ,
-                                                                    .dirLightCount = _lighting.DirLightCount(),
-                                                                    .debugView = _debugView,
-                                                                    .indirect = ResolveIndirect(sky, _ambient, probe),
-                                                                    .shadows = shadows,
-                                                                    .fog = fogConstants,
-                                                                    .fogVolumes = fogVolumeLanes,
-                                                                    .screenOcclusion = occlusion};
-        _meshPass.UpdateFrameConstants(frame.commandList, frameConstants);
-    }
-    // With a prepass, this draws depth alone: the same extract, cull and sort as
-    // ever, kept for the lit pass below to shade. Without, it is the lit pass.
-    _lastDrawStats =
-        DrawScene(DrawSceneParams{.scene = scene,
-                                  .meshPass = _meshPass,
-                                  .frame = frame,
-                                  .view = view,
-                                  .projection = projection,
-                                  .origin = _viewOrigin,
-                                  .nearZ = camera.nearZ,
-                                  .farZ = camera.farZ,
-                                  .frustumCulling = _frustumCulling,
-                                  .sortDraws = _sortDraws,
-                                  .gpuCulling = _gpuCulling,
-                                  .culler = &_meshCuller,
-                                  .cullBuilder = &_cullBuilder,
-                                  .lodSelector = &_lodSelector,
-                                  .stage = prepass ? Render::MeshPassStage::DepthPrepass : Render::MeshPassStage::Lit,
-                                  .viewerInstance = ViewerInstance(scene, _viewingCamera)});
+    // The passes, in the order their declarations fix: each hands what it makes
+    // to the ones after it.
+    const Render::RenderTarget target{.framebuffer = frame.framebuffer,
+                                      .colorTexture = frame.colorTexture,
+                                      .depthTexture = frame.depthTexture,
+                                      .width = frame.width,
+                                      .height = frame.height};
+    _sceneColor.target = target;
+    _sceneDepth.target = target;
+    Passes::SceneImports imports{.meshPass = _meshPass,
+                                 .skyPass = _skyPass,
+                                 .lightingSystem = _lighting,
+                                 .lodSelector = _lodSelector,
+                                 .shadowDepthRenderer = _shadowDepthRenderer,
+                                 .shadowCasterMobility = _casterMobility,
+                                 .meshCuller = _meshCuller,
+                                 .sceneDistancePass = _sceneDistancePass,
+                                 .ssaoPass = _ssaoPass,
+                                 .sceneColor = _sceneColor,
+                                 .sceneDepth = _sceneDepth,
+                                 .drawStats = _lastDrawStats};
+    const Passes::SceneFrame sceneFrame{.scene = scene,
+                                        .sky = sky,
+                                        .settings = _settings,
+                                        .viewOrigin = _viewOrigin,
+                                        .shadowOrigin = _shadowOrigin,
+                                        .shadowSpots = _lighting.ShadowCastingSpotLights(),
+                                        .shadowPoints = _lighting.ShadowCastingPointLights(),
+                                        .dynamicCasters = _dynamicCasters,
+                                        .casterInvalidations = _casterInvalidations,
+                                        .water = &_waterFrame,
+                                        .waterSeconds = _waterSeconds,
+                                        .occlusion = occlusion,
+                                        .fog = fogConstants,
+                                        .cameraInShadow = cameraInShadow,
+                                        .shadowSun = _lighting.ShadowCastingSun(),
+                                        .camera = camera,
+                                        .fogVolumeLanes = fogVolumeLanes,
+                                        .fogColor = fog.settings.color,
+                                        .width = frame.width,
+                                        .height = frame.height,
+                                        .shadowFrameIndex = _shadowFrameIndex,
+                                        .fogged = fogged,
+                                        .skyAvailable = _skyPass.IsValid(),
+                                        .waterReadsDistance = waterReadsDistance && _sceneDistancePass.DistanceTexture() != nullptr};
+    const Passes::ViewFrame viewFrame{.projection = projection,
+                                      .view = view,
+                                      .cameraInView = cameraInView,
+                                      .viewerInstance = ViewerInstance(scene, _viewingCamera)};
+    _graph->Run(imports, frame.commandList, sceneFrame, viewFrame);
 
-    if (prepass)
-    {
-        if (occlusion)
-        {
-            _sceneDistancePass.Render(frame.commandList, projection);
-            _ssaoPass.Render(
-                frame.commandList,
-                Render::SsaoPass::Frame{.projection = projection, .farZ = camera.farZ, .settings = _ssaoSettings});
-        }
+    // After both shadow halves, because it reports on both — and outside them,
+    // because every early return either of them takes is still a frame with an
+    // answer.
+    BuildShadowDiagnostics();
 
-        // Under the name the lit pass has always been measured by, so a capture
-        // with a prepass reads `draw-scene` against its own history and the
-        // prepass, the distance and occlusion as the new rows beside it.
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "draw-scene");
-        _lastDrawStats.drawCalls += _meshPass.Redraw(frame, Render::MeshPassStage::LitAfterPrepass).drawCalls;
-    }
-
-    // The sky goes last, into whatever the geometry left at the depth clear. Both
-    // halves of it come from the scene — the sun from a directional light, the
-    // look from the Skybox component on that same entity — so a level authors its
-    // own world and a light that moves takes the sky with it.
-    //
-    // A foggy level with no sky still draws the pass, in the fog's own colour,
-    // so that what the fog fades into is what is behind it.
-    _skyPass.SetFogVolumes(fogConstants, fogVolumeLanes);
-    if (sky.status == SkyStatus::Ready)
-    {
-        _skyPass.SetFog(fogged ? Render::SkyFogMode::BelowHorizon : Render::SkyFogMode::Off, fog.settings.color);
-        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), sky.sun, sky.moon,
-                      sky.settings);
-    }
-    else if (fogged)
-    {
-        _skyPass.SetFog(Render::SkyFogMode::Flat, fog.settings.color);
-        _skyPass.Draw(frame, projection * view, Math::TranslationOf(cameraInView), Render::SkySun{},
-                      Render::SkyMoon{}, Render::SkySettings{});
-    }
     // Said once, because silently dropping the sky sends someone reading shader
     // code, and saying it every frame is its own kind of unreadable.
     if (sky.status == SkyStatus::MultipleDirectionalLights)
@@ -551,6 +450,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         _multipleSunsWarned = false;
     }
     WarnNewSkyWarnings(sky.warnings);
+    CountFrame();
+}
+
+void SceneRenderer::CountFrame() const
+{
+    const Passes::SunShadowPass &sun = _graph->passes.sunShadow;
+    const Passes::ShadowAtlasPass &atlas = _graph->passes.shadowAtlas;
 
     // What the frame actually drew, on their own tracks. These are the numbers you
     // reach for the moment `draw-scene` moves: a jump in batches or draw calls says
@@ -565,139 +471,89 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // The shadow pass on its own tracks, for the same reason: a jump in
     // `shadow-cascades` is explained by one of these or by none of them, and
     // "none of them" is the interesting answer.
-    ASSISI_PROFILE_COUNTER("shadows/cascades", static_cast<double>(_lastShadowStats.cascades));
+    ASSISI_PROFILE_COUNTER("shadows/cascades", static_cast<double>(sun.stats.cascades));
     // What the cadence did. On a fixed sun with a still camera and a still scene
     // `cascades` settles at zero and this at every fitted cascade, which is the
     // whole claim in two numbers — and a capture where `cascades` never settles
     // is a cadence invalidating something that did not change.
-    ASSISI_PROFILE_COUNTER("shadows/cascades-kept", static_cast<double>(_lastShadowStats.cascadesKept));
+    ASSISI_PROFILE_COUNTER("shadows/cascades-kept", static_cast<double>(sun.stats.cascadesKept));
     // Cascades a caster's motion dirtied, as against ones the camera or the sun
     // moved out from under. Those are different problems with different answers.
-    ASSISI_PROFILE_COUNTER("shadows/cascades-by-motion", static_cast<double>(_sunCadence.Stats().dirtiedByMotion));
-    ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(_lastShadowStats.instances));
-    ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(_lastShadowStats.batches));
+    ASSISI_PROFILE_COUNTER("shadows/cascades-by-motion", static_cast<double>(sun.cadence.Stats().dirtiedByMotion));
+    ASSISI_PROFILE_COUNTER("shadows/instances", static_cast<double>(sun.stats.instances));
+    ASSISI_PROFILE_COUNTER("shadows/batches", static_cast<double>(sun.stats.batches));
     // Reads zero for a scene with no cutout caster in it, which is what turns
     // "the alpha-tested variant costs nothing here" into something visible.
-    ASSISI_PROFILE_COUNTER("shadows/masked-batches", static_cast<double>(_lastShadowStats.maskedBatches));
-    ASSISI_PROFILE_COUNTER("shadows/culled", static_cast<double>(_lastShadowStats.culled));
+    ASSISI_PROFILE_COUNTER("shadows/masked-batches", static_cast<double>(sun.stats.maskedBatches));
+    ASSISI_PROFILE_COUNTER("shadows/culled", static_cast<double>(sun.stats.culled));
     // Casters the gather never handed to a view at all, because nothing they
     // cast can reach the shadow distance. Walking content out past it moves this
     // and leaves every other shadow counter where it was.
-    ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(_shadowCasters.Result().culledEntities));
+    ASSISI_PROFILE_COUNTER("shadows/gather-culled", static_cast<double>(sun.casters.Result().culledEntities));
     // Caster-cascade pairs drawn a level coarser than on screen: where shadow
     // LOD saves vertices. Zero with it off, and in a scene with no LOD chains.
-    ASSISI_PROFILE_COUNTER("shadows/lod-coarser", static_cast<double>(_shadowCasters.Result().coarserViews));
+    ASSISI_PROFILE_COUNTER("shadows/lod-coarser", static_cast<double>(sun.casters.Result().coarserViews));
 
     // The local-light atlas on its own tracks. `dropped-by-cap` and `unserved`
     // answer different questions about a lamp with no shadow — the first is the
     // importance cap, the second is the atlas running out — and `occupancy` says
     // which of the two the scene is actually near.
-    ASSISI_PROFILE_COUNTER("shadows/atlas-lights", static_cast<double>(_lastLocalShadowStats.lights));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-views", static_cast<double>(_lastLocalShadowStats.views));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-batches", static_cast<double>(_lastLocalShadowStats.batches));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-occupancy", static_cast<double>(_lastLocalShadowStats.occupancy));
-    ASSISI_PROFILE_COUNTER("shadows/dropped-by-cap", static_cast<double>(_lastSelection.droppedByCap));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-unserved", static_cast<double>(_lastLocalShadowStats.unserved));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-lights", static_cast<double>(atlas.stats.lights));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-views", static_cast<double>(atlas.stats.views));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-batches", static_cast<double>(atlas.stats.batches));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-occupancy", static_cast<double>(atlas.stats.occupancy));
+    ASSISI_PROFILE_COUNTER("shadows/dropped-by-cap", static_cast<double>(atlas.selection.droppedByCap));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-unserved", static_cast<double>(atlas.stats.unserved));
 
     // What the cache did, and the shape a missed invalidation takes in a trace:
     // `atlas-resting` should be every served light on a still scene and
     // `atlas-baked` zero, while a caster walking under a lamp shows two bakes at
     // the ends of the motion and none in between. A capture where `atlas-baked`
     // never settles is a cache invalidating something that did not move.
-    ASSISI_PROFILE_COUNTER("shadows/atlas-resting", static_cast<double>(_lastLocalShadowStats.restingLights));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-baked", static_cast<double>(_lastLocalShadowStats.bakedFaces));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-mover-faces", static_cast<double>(_lastLocalShadowStats.moverFaces));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-waiting", static_cast<double>(_lastLocalShadowStats.deferredLights));
-    ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(_lastLocalShadowStats.dynamicCasters));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-resting", static_cast<double>(atlas.stats.restingLights));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-baked", static_cast<double>(atlas.stats.bakedFaces));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-mover-faces", static_cast<double>(atlas.stats.moverFaces));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-waiting", static_cast<double>(atlas.stats.deferredLights));
+    ASSISI_PROFILE_COUNTER("shadows/atlas-movers", static_cast<double>(atlas.stats.dynamicCasters));
 
     // A still sky bakes once and then reads zero here; a running clock shows a
     // bake each time the sun crosses the rebake tolerance. One that never
     // settles on a still sky is an input the comparison should not be seeing.
-    const Render::SkyProbe::Stats &probeStats = _skyProbe.LastStats();
+    const Render::SkyProbe::Stats &probeStats = _graph->passes.skyProbe.probe.LastStats();
     ASSISI_PROFILE_COUNTER("sky-probe/baked", probeStats.bakedThisFrame ? 1.0 : 0.0);
     ASSISI_PROFILE_COUNTER("sky-probe/age", static_cast<double>(probeStats.ageFrames));
 }
 
-SpecularProbe SceneRenderer::UpdateSkyProbe(const Render::RenderFrame &frame, const SkyResolution &sky)
+ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool waterReadsDistance)
 {
-    // The probe is the sky's, so it exists exactly while a sky lights the
-    // scene: a pinned ambient answers instead of the sky, and a scene with no
-    // sky has nothing to capture. Released rather than kept in either case —
-    // pay for what you place.
-    const bool wanted = _environmentSettings.enabled && !_ambient.active && sky.status == SkyStatus::Ready &&
-                        _skyProbe.IsValid() && _skyPass.IsValid();
-    if (wanted && !_skyProbe.Configure(_environmentSettings))
+    // Released rather than kept while off — pay for what you place.
+    const bool occlusionWanted = _settings.ssao.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
+    const bool distanceWanted = (occlusionWanted || waterReadsDistance) && _sceneDistancePass.IsValid();
+    const bool distanceHeld =
+        distanceWanted && _sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture);
+    if (distanceWanted && !distanceHeld)
     {
-        Core::Log::Warn("SceneRenderer: sky reflections disabled (the probe targets failed to allocate).");
-        _environmentSettings.enabled = false;
+        Core::Log::Warn("SceneRenderer: the scene's distance failed to allocate; ambient occlusion is off and water "
+                        "is not drawn this frame.");
     }
-    if (!wanted || !_environmentSettings.enabled)
+    if (!distanceHeld)
     {
-        _skyProbe.Release();
-        _meshPass.SetEnvironment(nullptr);
-        return SpecularProbe{};
+        _sceneDistancePass.Release();
     }
-
-    const Render::SkyProbeInputs inputs = Render::MakeSkyProbeInputs(sky.sun, sky.moon, sky.settings);
-    if (_skyProbe.NeedsBake(inputs, sky.jumpSerial))
+    if (occlusionWanted &&
+        (!distanceHeld || !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture())))
     {
-        ASSISI_PROFILE_GPU_PASS(frame.commandList, "sky-probe");
-        _skyProbe.Bake(frame.commandList, _skyPass, inputs, sky.jumpSerial);
+        Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
+        _settings.ssao.enabled = false;
     }
-    else
-    {
-        _skyProbe.Keep();
-    }
-
-    if (!_skyProbe.IsReady())
-    {
-        _meshPass.SetEnvironment(nullptr);
-        return SpecularProbe{};
-    }
-    _meshPass.SetEnvironment(_skyProbe.SpecularTexture());
-    return SpecularProbe{.ready = true, .maxLod = _skyProbe.MaxLod()};
-}
-
-bool SceneRenderer::PrepareDepthPrepass(const Render::RenderFrame &frame)
-{
-    if (_prepassFailed || frame.depthTexture == nullptr)
-    {
-        return false;
-    }
-    if (!_meshPass.PreparePrepass())
-    {
-        Core::Log::Warn("SceneRenderer: the depth prepass failed to build; the scene is lit without one.");
-        _prepassFailed = true;
-        return false;
-    }
-    return true;
-}
-
-bool SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool prepass)
-{
-    // Released rather than kept while off — pay for what you place. Occlusion
-    // reads the prepass's depth, so a frame without one has nothing to read.
-    const bool wanted = _ssaoSettings.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid() && prepass;
-    if (wanted)
-    {
-        if (!_sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture) ||
-            !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture()))
-        {
-            Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
-            _ssaoSettings.enabled = false;
-        }
-    }
-    if (!wanted || !_ssaoSettings.enabled)
+    if (!occlusionWanted || !_settings.ssao.enabled)
     {
         _ssaoPass.Release();
-        _sceneDistancePass.Release();
-        _meshPass.SetAmbientOcclusion(nullptr);
-        return false;
+        return ScreenOcclusion{};
     }
     // After Configure: a reallocation swaps the texture handle, and the mesh
     // pass rebuilds its binding set when it notices.
-    _meshPass.SetAmbientOcclusion(_ssaoPass.OcclusionTexture());
-    return true;
+    return ScreenOcclusion{.texture = _ssaoPass.OcclusionTexture()};
 }
 
 void SceneRenderer::OnSceneReplaced()
@@ -712,21 +568,92 @@ void SceneRenderer::OnSceneReplaced()
     // scene would be read as the new occupant's.
     _lodSelector.Clear();
 
+    // The water's wave textures are kept by entity too.
+    _graph->passes.waterWaves.renderer.Release();
+
     // Reset rather than carried, because the incoming scene's clock starts its own
     // count and a serial that happened to match would skip the very Forget the
     // load needs.
-    _jumpSerial = 0;
+    _graph->passes.sunShadow.jumpSerial = 0;
     _lastSky = SkyResolution{};
 
     // The incoming scene's clock counts its cuts from zero too, so a serial that
     // happened to match would keep a bake of the last level's sky.
-    _skyProbe.Release();
+    _graph->passes.skyProbe.probe.Release();
 
     // The mobility table holds the old scene's handles, which the new scene's
     // entities reuse; and the mover bookmark is re-taken from the new scene on
     // its first frame rather than read from zero.
     _casterMobility.Clear();
     _moverTickPrimed = false;
+}
+
+void SceneRenderer::SetEnvironmentSettings(const Render::EnvironmentSettings &settings)
+{
+    _settings.environment = Render::Sanitized(settings);
+    _graph->passes.skyProbe.failed = false;
+}
+
+void SceneRenderer::SetCloudsEnabled(bool enabled)
+{
+    _settings.cloudsEnabled = enabled;
+    _graph->passes.cloudMap.failed = false;
+}
+
+void SceneRenderer::SetCloudQuality(const Render::CloudQuality &quality)
+{
+    _settings.cloudQuality = Render::Sanitized(quality);
+    _graph->passes.cloudMap.failed = false;
+}
+
+void SceneRenderer::SetShadowSettings(const Render::ShadowSettings &settings)
+{
+    _settings.shadows = settings;
+    _graph->passes.sunShadow.failed = false;
+    _graph->passes.shadowAtlas.failed = false;
+}
+
+void SceneRenderer::SetShadowDiagnosticsEnabled(bool enabled)
+{
+    _shadowDiagnosticsEnabled = enabled;
+    // The sun's half is gathered inside its pass, where the draw list it reads
+    // lives and dies within the call — so the pass is told directly rather than
+    // asked afterwards.
+    _graph->passes.sunShadow.shadowPass.SetCascadeCountsEnabled(enabled);
+    if (!enabled)
+    {
+        _shadowDiagnostics.Clear();
+    }
+}
+
+const Render::SkyProbe &SceneRenderer::SkyProbe() const
+{
+    return _graph->passes.skyProbe.probe;
+}
+
+Render::ShadowPass::Stats SceneRenderer::LastShadowStats() const
+{
+    return _graph->passes.sunShadow.stats;
+}
+
+std::uint32_t SceneRenderer::LastShadowLodCoarser() const
+{
+    return _graph->passes.sunShadow.casters.Result().coarserViews;
+}
+
+Render::LocalShadowPass::Stats SceneRenderer::LastLocalShadowStats() const
+{
+    return _graph->passes.shadowAtlas.stats;
+}
+
+std::span<const Render::LocalShadowCache::Residency> SceneRenderer::CachedShadowTiles() const
+{
+    return _graph->passes.shadowAtlas.atlas.CachedTiles();
+}
+
+uint32_t SceneRenderer::LastShadowDroppedByCap() const
+{
+    return _graph->passes.shadowAtlas.selection.droppedByCap;
 }
 
 void SceneRenderer::SetLodSettings(const Runtime::LodSettings &settings)

@@ -1,0 +1,55 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+// Finishes the FFT along z and turns the eight fields into what the surface
+// is drawn from: where each point moved, and the slope of the displaced
+// surface there with its square, whose averages over a mip are the moments
+// the shading's roughness comes from. One workgroup a column of one cascade.
+
+#include "water/waves.glsl"
+#include "water/fft.glsl"
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform texture2DArray uFields01;
+layout(binding = 1) uniform texture2DArray uFields23;
+// x displacement, height, z displacement, slope x · slope z.
+layout(binding = 384, rgba16f) uniform writeonly image2DArray uDisplacement;
+// slope x, slope z, and their squares.
+layout(binding = 385, rgba16f) uniform writeonly image2DArray uSlopes;
+
+void main()
+{
+    uint column  = gl_WorkGroupID.x;
+    uint cascade = gl_WorkGroupID.y;
+    uint run     = gl_LocalInvocationID.x;
+
+    for (uint row = run; row < kWaterFftSize; row += kFftRuns)
+    {
+        ivec3 texel = ivec3(int(column), int(row), int(cascade));
+        sFields01[BitReversed(row)] = texelFetch(uFields01, texel, 0);
+        sFields23[BitReversed(row)] = texelFetch(uFields23, texel, 0);
+    }
+
+    InverseFftShared(run);
+
+    for (uint row = run; row < kWaterFftSize; row += kFftRuns)
+    {
+        // The middle texel is the zero wavenumber, so each point picks up
+        // (-1)^n along each axis.
+        float sign     = ((column + row) & 1u) == 0u ? 1.0 : -1.0;
+        vec4  fields01 = sFields01[row] * sign;
+        vec4  fields23 = sFields23[row] * sign;
+
+        // The displaced surface's tangents along x and z, as Render::WaterNormal.
+        vec3 alongX = vec3(1.0 + fields23.z, fields23.x, fields01.w);
+        vec3 alongZ = vec3(fields01.w, fields23.y, 1.0 + fields23.w);
+        vec3 normal = normalize(cross(alongZ, alongX));
+        vec2 slope  = -normal.xz / normal.y;
+
+        ivec3 texel = ivec3(int(column), int(row), int(cascade));
+        imageStore(uDisplacement, texel, vec4(fields01.x, fields01.y, fields01.z, slope.x * slope.y));
+        imageStore(uSlopes, texel, vec4(slope, slope * slope));
+    }
+}

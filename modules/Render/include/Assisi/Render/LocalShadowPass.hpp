@@ -12,10 +12,8 @@
 /// than there is texture.
 ///
 /// Nothing is allocated until a shadow-casting local light exists. Configure(...,
-/// active = false) drops the atlas, the framebuffer and the pipelines, leaving a
-/// one-texel empty atlas so the mesh pass's binding set still has something to
-/// point at — the same discipline the cascade array keeps, for the same
-/// blank-scene reason.
+/// active = false) drops the atlas, the framebuffer and the pipelines — the same
+/// discipline the cascade array keeps, for the same blank-scene reason.
 ///
 /// **Why the views are drawn in chunks.** A caster's ShadowCaster::viewMask is
 /// kShadowViewMaskBits wide, so one draw-list build can serve at most that many
@@ -78,8 +76,8 @@ public:
         std::string tileResetVertexShaderSpvPath = {};
     };
 
-    /// @brief Bind to the device and the shared renderer, and create the empty
-    /// atlas. The pipelines and the real texture wait for Configure().
+    /// @brief Bind to the device and the shared renderer. The pipelines and the
+    /// atlas wait for Configure().
     [[nodiscard]] bool Initialize(const InitParams &params);
 
     /// @brief Bring the pass in line with @p settings.
@@ -216,8 +214,8 @@ public:
         return _active && _pipelines[static_cast<std::uint32_t>(MeshPipeline::Opaque)] != nullptr;
     }
 
-    /// @brief The atlas the mesh shader samples. Never null after a successful
-    /// Initialize() — the one-texel empty atlas while the pass is inactive.
+    /// @brief The atlas the mesh shader samples, or null while the pass is
+    /// inactive.
     [[nodiscard]] nvrhi::ITexture *AtlasTexture() const { return _atlasTexture; }
 
     /// @brief Where each served light's views landed, valid until the next
@@ -270,8 +268,6 @@ private:
     [[nodiscard]] bool RebuildPipelines();
     [[nodiscard]] ShadowPipelines PipelineSet() const;
     void ReleaseTargets();
-    /// @brief Create the one-texel atlas bound while the pass is inactive.
-    [[nodiscard]] bool CreateNoAtlasTexture();
 
     /// @brief Cut tiles for every request the atlas can serve, filling @ref
     /// _tiles, @ref _targets and @ref _servedTiles. Returns how many requests
@@ -352,18 +348,13 @@ private:
     // framebuffer to say. The moving one is null while caching is off.
     nvrhi::FramebufferHandle _atlasFramebuffer;
     nvrhi::FramebufferHandle _moverFramebuffer;
-    // Bound while the pass is inactive, so the mesh pass always has a texture
-    // to sample. Permanent, not scaffolding: a scene with no shadowed lamp in
-    // it never leaves it.
-    nvrhi::TextureHandle _noAtlasTexture;
     bool _builtCacheEnabled = false;
 
     ShadowAtlasAllocator _allocator;
     LocalShadowCache _cache;
 
     LocalShadowSettings _settings;
-    // Whether Initialize succeeded; without it the pass only ever binds the
-    // empty texture.
+    // Whether Initialize succeeded; without it the pass never draws.
     bool _canDraw = false;
     bool _active = false;
     std::uint32_t _builtResolution = 0;

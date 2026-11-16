@@ -34,6 +34,10 @@ inline constexpr nvrhi::ComparisonFunc kSceneDepthNearer = nvrhi::ComparisonFunc
 /// drawing over a depth prepass, or lines over the surfaces they outline, uses.
 inline constexpr nvrhi::ComparisonFunc kSceneDepthNearerOrSame = nvrhi::ComparisonFunc::GreaterOrEqual;
 
+/// Only a surface at exactly the stored depth: what a cutout drawn over a depth
+/// prepass uses (see AfterPrepassDepthTest).
+inline constexpr nvrhi::ComparisonFunc kSceneDepthSame = nvrhi::ComparisonFunc::Equal;
+
 /// @brief The camera's projection, with the scene's depth layout.
 [[nodiscard]] inline glm::mat4 ScenePerspective(float fovYRadians, float aspectRatio, float nearZ, float farZ)
 {

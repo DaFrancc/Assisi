@@ -13,6 +13,7 @@
 using Assisi::Geometry::CreateIcosphereMesh;
 using Assisi::Geometry::CreateUnitCubeMesh;
 using Assisi::Geometry::CreateUnitCylinderMesh;
+using Assisi::Geometry::CreateUnitQuadMesh;
 using Assisi::Geometry::CreateUnitSphereMesh;
 using Assisi::Geometry::MeshData;
 using Assisi::Geometry::Vertex;
@@ -146,6 +147,46 @@ TEST_CASE("Primitives wind counter-clockwise when seen from outside")
     // The icosphere has no poles, so none of its triangles collapse.
     CheckOutwardWinding(CreateIcosphereMesh(0));
     CheckOutwardWinding(CreateIcosphereMesh(2));
+}
+
+TEST_CASE("CreateUnitQuadMesh: one face toward +Z, its texture upright and unmirrored")
+{
+    const MeshData mesh = CreateUnitQuadMesh();
+    REQUIRE(mesh.Vertices.size() == 4);
+    REQUIRE(mesh.Indices.size() == 6);
+
+    for (const Vertex &vertex : mesh.Vertices)
+    {
+        CHECK(vertex.Position.z == 0.0f);
+        CHECK(std::abs(vertex.Position.x) == doctest::Approx(0.5f));
+        CHECK(std::abs(vertex.Position.y) == doctest::Approx(0.5f));
+        CHECK(vertex.Normal == glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    for (std::size_t i = 0; i < mesh.Indices.size(); i += 3)
+    {
+        CAPTURE(i);
+        const Vertex &v0 = mesh.Vertices[mesh.Indices[i]];
+        const Vertex &v1 = mesh.Vertices[mesh.Indices[i + 1]];
+        const Vertex &v2 = mesh.Vertices[mesh.Indices[i + 2]];
+        // Counter-clockwise seen from +Z, which MeshPass draws as the front.
+        CHECK(glm::cross(v1.Position - v0.Position, v2.Position - v0.Position).z > 0.0f);
+
+        // The cube's test for an unmirrored face, on each triangle.
+        const glm::vec3 e1   = v1.Position - v0.Position;
+        const glm::vec3 e2   = v2.Position - v0.Position;
+        const glm::vec2 duv1 = v1.TextureCoordinates - v0.TextureCoordinates;
+        const glm::vec2 duv2 = v2.TextureCoordinates - v0.TextureCoordinates;
+        const float det = duv1.x * duv2.y - duv2.x * duv1.y;
+        REQUIRE(det != 0.0f);
+        const glm::vec3 tangent   = (duv2.y * e1 - duv1.y * e2) / det;
+        const glm::vec3 bitangent = (duv1.x * e2 - duv2.x * e1) / det;
+        CHECK(glm::dot(glm::cross(tangent, bitangent), v0.Normal) < 0.0f);
+        // Texture-up along +Y: v runs from the top edge down.
+        CHECK(bitangent.y < 0.0f);
+    }
+
+    CheckTangentFrame(mesh);
 }
 
 TEST_CASE("CreateUnitSphereMesh: every vertex carries a usable tangent frame")

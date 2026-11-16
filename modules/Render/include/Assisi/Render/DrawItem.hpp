@@ -13,6 +13,7 @@
 /// the producer knows nothing about how it does it.
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 
@@ -60,7 +61,8 @@ inline constexpr uint32_t kMeshPipelineCount = 4;
                                      (doubleSided ? kMeshPipelineDoubleSidedBit : 0u));
 }
 
-/// @brief Whether @p pipeline's shader carries the alpha-test discard.
+/// @brief Whether @p pipeline draws cutouts, whose shader carries the
+/// alpha-test discard in the prepass and in a lit pass with no prepass before it.
 [[nodiscard]] inline constexpr bool MeshPipelineIsMasked(MeshPipeline pipeline)
 {
     return (static_cast<uint32_t>(pipeline) & kMeshPipelineMaskedBit) != 0u;
@@ -95,8 +97,8 @@ struct DrawItem
 // draw follows every opaque one. Material-major then mesh-major within that keeps
 // binding-set and vertex/index-buffer changes to the run boundaries, and puts
 // same-geometry draws adjacent so Submit coalesces them into instanced commands;
-// the low 16 depth bits break ties front-to-back within a run for early-Z. A
-// blended pass would need a separate depth-major key — hence "opaque".
+// the low 16 depth bits break ties front-to-back within a run for early-Z.
+// See-through surfaces sort by distance alone: MakeBlendedSortKey.
 inline constexpr uint32_t kSortPipelineBits = 8;
 inline constexpr uint32_t kSortMaterialBits = 20;
 inline constexpr uint32_t kSortMeshBits     = 20;
@@ -143,6 +145,24 @@ inline constexpr uint32_t kSortMeshMax     = (1u << kSortMeshBits) - 1;     ///<
     }
     const float normalized = std::clamp((viewDistance - nearZ) / span, 0.f, 1.f);
     return static_cast<uint16_t>(std::lround(normalized * kDepthMax));
+}
+
+// --- Blended sort key: [distance:32 | zero:32] -------------------------------
+//
+// A see-through surface blends over whatever was drawn before it, so the
+// farthest must draw first: the key is the distance alone. Its full float, not
+// a quantized one, because two panes a few centimetres apart must not tie.
+// Sorted stably, so the submeshes of one object, which share its distance, keep
+// their order.
+
+/// @brief Pack a blended draw's sort key from its distance to the camera, so
+/// ascending order is farthest first.
+[[nodiscard]] inline uint64_t MakeBlendedSortKey(float distance)
+{
+    // A non-negative float's bits order as its value does; inverted, the
+    // farthest has the smallest key.
+    const uint32_t bits = std::bit_cast<uint32_t>(std::max(distance, 0.f));
+    return static_cast<uint64_t>(~bits) << 32u;
 }
 
 } /* namespace Assisi::Render */

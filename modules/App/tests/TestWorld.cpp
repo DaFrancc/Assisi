@@ -689,6 +689,27 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Worlds are streaming while any is loading or still has assets arriving")
+{
+    // What a capture's warm-up waits on, so its picture is of the loaded level.
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    CHECK_FALSE(worlds.AnyStreaming());
+
+    World &first = worlds.Create();
+    CHECK(worlds.AnyStreaming()); // still Loading
+
+    first.state = WorldState::Active;
+    CHECK_FALSE(worlds.AnyStreaming());
+
+    World &second = worlds.Create();
+    second.state = WorldState::Active;
+    second.streamingPending = true;
+    CHECK(worlds.AnyStreaming());
+
+    second.streamingPending = false;
+    CHECK_FALSE(worlds.AnyStreaming());
+}
+
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};

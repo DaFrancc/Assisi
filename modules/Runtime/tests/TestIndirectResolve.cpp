@@ -216,3 +216,19 @@ TEST_CASE("A probe is the sky's, so nothing but a sky turns it on")
         CHECK(ResolveIndirect(sky, AmbientOverride{}, ready).specularEnvironment == 0.0f);
     }
 }
+
+TEST_CASE("Clouds grey the sky's light as they close it")
+{
+    const SkyResolution clear = SunnyDay();
+    const Color3<ColorSpace::Linear> clearUp = FacingUp(ResolveIndirect(clear, AmbientOverride{}));
+
+    SkyResolution overcast = SunnyDay();
+    overcast.clouds.present = true;
+    overcast.clouds.settings = Assisi::Render::CloudSettings{.coverage = 1.0f, .density = 0.08f};
+    const Color3<ColorSpace::Linear> overcastUp = FacingUp(ResolveIndirect(overcast, AmbientOverride{}));
+
+    // A clear sky is blue; under an overcast the light from above has no hue.
+    CHECK(clearUp.b > clearUp.r * 1.2f);
+    CHECK(overcastUp.r == doctest::Approx(overcastUp.b).epsilon(0.01));
+    CHECK(Luminance(overcastUp) != doctest::Approx(Luminance(clearUp)));
+}

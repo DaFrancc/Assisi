@@ -158,7 +158,7 @@ std::uint64_t MixHash(std::uint64_t seed, std::uint64_t value)
 /// version, the payload kind, the cooker's own settings, and the codec layout the
 /// reflected and scene cookers write through.
 std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::uint64_t> dependencyHashes,
-                      const Cooker &cooker, const CookContext &context)
+                      const Cooker &cooker, Core::AssetId id, const CookContext &context)
 {
     std::uint64_t key = HashOf(source);
     for (const std::uint64_t dependency : dependencyHashes)
@@ -169,6 +169,7 @@ std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::ui
     const std::string_view cookerName = cooker.Name();
     key = MixHash(key, Core::ContentHash64(std::as_bytes(std::span{cookerName})));
     key = MixHash(key, cooker.KeyVariant(context));
+    key = MixHash(key, cooker.AssetKeyVariant(id, context));
     // The component table, which both the scene blocks and every asset block are
     // written against. A field added to a component changes what a cooked level
     // means without changing one byte of the level file.
@@ -203,7 +204,8 @@ std::expected<TextureRoles, CookError> GatherTextureRoles(const std::vector<std:
         {
             // A false here is a conflict, which is reported when that texture is
             // cooked — that is where the path is known.
-            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath);
+            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath,
+                             Geometry::AlphaUseOf(*material, channel));
         }
     }
     return roles;
@@ -522,7 +524,7 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
         planned.vpath  = vpath;
         planned.id     = id;
         planned.cooker = owner;
-        planned.key    = CookKey(*source, dependencyHashes, *owner, context);
+        planned.key    = CookKey(*source, dependencyHashes, *owner, id, context);
         planned.output = cookedRoot / (id.ToString() + std::string{kCookedExtension});
 
         // The manifest says what was produced; the tree says what is there.

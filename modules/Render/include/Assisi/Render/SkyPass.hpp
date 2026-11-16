@@ -125,6 +125,11 @@ public:
         _fogVolumes = SkyFogConstants{.fog = fog, .volumes = lanes};
     }
 
+    /// @brief The clouds' sky map every later Draw and DrawInto composites over
+    /// the sky (CloudPass owns it), or null for a sky with none. A capture
+    /// takes the clouds too, so reflections show them.
+    void SetClouds(nvrhi::ITexture *cloudMap);
+
     /// @brief Fill every texel of @p target with the sky @p constants describe.
     ///
     /// How a reflection probe captures the sky: the same shader the screen is
@@ -178,6 +183,14 @@ private:
 
     /// SkyConstants::fog for the next Draw.
     glm::vec4 _fog{0.0f};
+
+    /// The clouds' sky map, or null. The binding set names it, so a change of
+    /// map rebuilds the set.
+    nvrhi::ITexture *_cloudMap = nullptr;
+    /// Bound in the map's place while there are no clouds. Never sampled: the
+    /// shader reads the map only while SkyConstants says there are clouds.
+    Texture _noClouds;
+    nvrhi::SamplerHandle _cloudMapSampler;
     /// The placed fog volumes for the next Draw.
     SkyFogConstants _fogVolumes;
 

@@ -594,6 +594,33 @@ TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
     CHECK(fast->skipped == best->cooked - kFixtureTextures);
 }
 
+TEST_CASE("A texture a material rebinds to a channel stored differently is re-cooked")
+{
+    // The channel decides the texture's format, and the image file does not
+    // change when a material rebinds it. Left out of the cache key, the colour
+    // map's blob would be kept and read as a normal map.
+    const ScratchDir source("rebind-source");
+    const ScratchDir out("rebind-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    const std::expected<CookReport, Assisi::Cook::CookError> asColour = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asColour.has_value(), Explain(asColour));
+
+    {
+        std::ofstream material(source.Path() / "materials/checker.amat", std::ios::trunc);
+        material << R"({"version": 1, "type": "MaterialData", "NormalTexture": )"
+                 << R"({"guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d", "path": "textures/checker.png"}})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> asNormal = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asNormal.has_value(), Explain(asNormal));
+
+    // The material, whose file changed, and the texture, whose did not.
+    constexpr std::size_t kRebound = 2;
+    CHECK(asNormal->cooked == kRebound);
+}
+
 namespace
 {
 
@@ -964,13 +991,81 @@ TEST_CASE("A texture two channels store alike is cooked once, and one stored dif
     REQUIRE(packed.has_value());
 
     Assisi::Cook::TextureRoles roles;
-    CHECK(roles.Bind(*packed, MaterialChannel::MetallicRoughness, "materials/Rock.amat"));
-    CHECK(roles.Bind(*packed, MaterialChannel::Occlusion, "materials/Rock.amat"));
+    CHECK(roles.Bind(*packed, MaterialChannel::MetallicRoughness, "materials/Rock.amat", std::nullopt));
+    CHECK(roles.Bind(*packed, MaterialChannel::Occlusion, "materials/Rock.amat", std::nullopt));
     CHECK(roles.ChannelOf(*packed).has_value());
     CHECK(roles.Conflict(*packed).first.empty());
 
     // A normal map is a different format, so the same file cannot also be one.
-    CHECK_FALSE(roles.Bind(*packed, MaterialChannel::Normal, "materials/Moss.amat"));
+    CHECK_FALSE(roles.Bind(*packed, MaterialChannel::Normal, "materials/Moss.amat", std::nullopt));
     CHECK_FALSE(roles.ChannelOf(*packed).has_value());
     CHECK(roles.Conflict(*packed).second == "materials/Moss.amat");
+    CHECK_FALSE(roles.ConflictIsOverAlpha(*packed));
+}
+
+TEST_CASE("A colour map keeps its coverage at the cutoff of the materials that cut out with it")
+{
+    using Assisi::Geometry::MaterialChannel;
+    constexpr float kCutoff = 0.5f;
+    const std::optional<Assisi::Core::AssetId> leaves =
+        Assisi::Core::AssetId::Parse("7a2d3b5f-1c4e-4f60-9bac-2d3e4f5a6b7c");
+    REQUIRE(leaves.has_value());
+
+    // A material that reads no alpha, here an opaque one, is served by any
+    // mips, before or after the one that cuts.
+    Assisi::Cook::TextureRoles roles;
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Bark.amat", std::nullopt));
+    CHECK(roles.AlphaCutoffOf(*leaves) == 0.f);
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", kCutoff));
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Hedge.amat", kCutoff));
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Trunk.amat", std::nullopt));
+    CHECK(roles.AlphaCutoffOf(*leaves) == kCutoff);
+    CHECK(roles.Conflict(*leaves).first.empty());
+}
+
+TEST_CASE("A colour map cut at two cutoffs, or cut by one material and blended by another, is refused")
+{
+    using Assisi::Geometry::MaterialChannel;
+    const std::optional<Assisi::Core::AssetId> leaves =
+        Assisi::Core::AssetId::Parse("8b3e4c6a-2d5f-4071-8cbd-3e4f5a6b7c8d");
+    REQUIRE(leaves.has_value());
+
+    Assisi::Cook::TextureRoles twoCutoffs;
+    CHECK(twoCutoffs.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", 0.5f));
+    CHECK_FALSE(twoCutoffs.Bind(*leaves, MaterialChannel::BaseColor, "materials/Fern.amat", 0.3f));
+    CHECK_FALSE(twoCutoffs.ChannelOf(*leaves).has_value());
+    CHECK(twoCutoffs.ConflictIsOverAlpha(*leaves));
+    CHECK(twoCutoffs.Conflict(*leaves).second == "materials/Fern.amat");
+
+    // Blending wants alpha's plain average, which coverage-kept mips are not.
+    Assisi::Cook::TextureRoles cutAndBlended;
+    CHECK(cutAndBlended.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", 0.5f));
+    CHECK_FALSE(cutAndBlended.Bind(*leaves, MaterialChannel::BaseColor, "materials/Ghost.amat", 0.f));
+    CHECK(cutAndBlended.ConflictIsOverAlpha(*leaves));
+}
+
+TEST_CASE("A colour map whose material starts cutting with it is re-cooked")
+{
+    // The cutoff decides the mips, and the image file does not change when a
+    // material starts cutting with it.
+    const ScratchDir source("cutout-source");
+    const ScratchDir out("cutout-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    const std::expected<CookReport, Assisi::Cook::CookError> opaque = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(opaque.has_value(), Explain(opaque));
+
+    {
+        std::ofstream material(source.Path() / "materials/checker.amat", std::ios::trunc);
+        material << R"({"version": 1, "type": "MaterialData", "Alpha": 1, "AlphaCutoff": 0.5, "BaseColorTexture": )"
+                 << R"({"guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d", "path": "textures/checker.png"}})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> cutout = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(cutout.has_value(), Explain(cutout));
+
+    // The material, whose file changed, and the texture, whose did not.
+    constexpr std::size_t kRecooked = 2;
+    CHECK(cutout->cooked == kRecooked);
 }

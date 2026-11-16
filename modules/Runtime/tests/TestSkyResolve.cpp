@@ -11,6 +11,7 @@
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -1015,4 +1016,153 @@ TEST_CASE("A hand-typed Fog is sanitized before it reaches a shader")
     CHECK(fog.settings.mistFalloff == 0.f);
     // No haze, so nothing shortens the camera.
     CHECK(Runtime::SceneDrawDistance(scene, 5000.f) == 5000.f);
+}
+
+TEST_CASE("Clouds beside the sky's Skybox are part of that sky")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = AddSun(scene);
+    (void)scene.Add<Skybox>(sun);
+    CHECK_FALSE(ResolveSky(scene).clouds.present);
+
+    (void)scene.Add<Runtime::Clouds>(
+        sun, Runtime::Clouds{.preset = Runtime::CloudPreset::Overcast, .changeRate = 3.f, .seed = 99u});
+    // No Wind, so still air: the clouds hang where they are.
+    CHECK(ResolveSky(scene).clouds.settings.windSpeed == 0.f);
+
+    // The level's wind, on an entity of its own.
+    (void)scene.Add<Runtime::Wind>(scene.Create(), Runtime::Wind{.speed = 12.f, .bearingDegrees = 45.f});
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    REQUIRE(resolved.clouds.present);
+    CHECK(resolved.clouds.settings.coverage ==
+          doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Overcast)].coverage));
+    // The change rate and the seed are the component's whatever the preset, and
+    // the wind is the level's.
+    CHECK(resolved.clouds.settings.changeRate == doctest::Approx(3.f));
+    CHECK(resolved.clouds.settings.windSpeed == doctest::Approx(12.f));
+    CHECK(resolved.clouds.settings.windBearingDegrees == doctest::Approx(45.f));
+    CHECK(resolved.clouds.settings.seed == 99u);
+    CHECK_FALSE(resolved.warnings.test(std::to_underlying(Runtime::SkyWarning::CloudsWithoutSkybox)));
+}
+
+TEST_CASE("Clouds on a light with no Skybox are not drawn, and the log says so")
+{
+    ECS::Scene scene;
+    const ECS::Entity sun = AddSun(scene);
+    (void)scene.Add<Runtime::Clouds>(sun);
+    const Runtime::SkyResolution resolved = ResolveSky(scene);
+    CHECK_FALSE(resolved.clouds.present);
+    CHECK(resolved.warnings.test(std::to_underlying(Runtime::SkyWarning::CloudsWithoutSkybox)));
+}
+
+TEST_CASE("A cloud preset answers the cloud fields; Custom reads them")
+{
+    Runtime::Clouds clouds{.preset = Runtime::CloudPreset::Fair,
+                           .coverage = 0.9f,
+                           .height = 3000.f,
+                           .thickness = 700.f,
+                           .density = 0.3f,
+                           .puffiness = 0.2f};
+    const Assisi::Render::CloudSettings fair = Runtime::ToCloudSettings(clouds, Runtime::kStillAir);
+    CHECK(fair.coverage == doctest::Approx(Runtime::kCloudPresets[std::to_underlying(Runtime::CloudPreset::Fair)].coverage));
+    CHECK(fair.baseHeight != doctest::Approx(3000.f));
+
+    clouds.preset = Runtime::CloudPreset::Custom;
+    const Assisi::Render::CloudSettings custom = Runtime::ToCloudSettings(clouds, Runtime::kStillAir);
+    CHECK(custom.coverage == doctest::Approx(0.9f));
+    CHECK(custom.baseHeight == doctest::Approx(3000.f));
+    CHECK(custom.thickness == doctest::Approx(700.f));
+    CHECK(custom.density == doctest::Approx(0.3f));
+    CHECK(custom.puffiness == doctest::Approx(0.2f));
+}
+
+TEST_CASE("Every cloud preset is already in range, and they grow cloudier in order")
+{
+    float previous = -1.f;
+    for (const Runtime::CloudPreset preset : {Runtime::CloudPreset::Fair, Runtime::CloudPreset::Scattered,
+                                              Runtime::CloudPreset::Broken, Runtime::CloudPreset::Overcast})
+    {
+        const Assisi::Render::CloudSettings settings = Runtime::kCloudPresets[std::to_underlying(preset)];
+        const Assisi::Render::CloudSettings safe = Assisi::Render::Sanitized(settings);
+        CHECK(safe == settings);
+        CHECK(settings.coverage > previous);
+        previous = settings.coverage;
+    }
+}
+
+namespace
+{
+
+/// Every knob of @p actual is @p expected's.
+void CheckSameSky(const Assisi::Render::SkySettings &actual, const Assisi::Render::SkySettings &expected)
+{
+    CHECK(actual.airScattering == expected.airScattering);
+    CHECK(actual.airThickness == expected.airThickness);
+    CHECK(actual.hazeScattering == expected.hazeScattering);
+    CHECK(actual.hazeForwardness == expected.hazeForwardness);
+    CHECK(actual.skyBounce == expected.skyBounce);
+    CHECK(actual.groundColor == expected.groundColor);
+    CHECK(actual.nightColor == expected.nightColor);
+    CHECK(actual.exposure == expected.exposure);
+    CHECK(actual.sunSizeDegrees == expected.sunSizeDegrees);
+    CHECK(actual.sunEdgeSoftness == expected.sunEdgeSoftness);
+    CHECK(actual.sunLimbDarkening == expected.sunLimbDarkening);
+    CHECK(actual.sunDiskIntensity == expected.sunDiskIntensity);
+    CHECK(actual.sunDiskColor == expected.sunDiskColor);
+}
+
+} // namespace
+
+TEST_CASE("Leaving a sky preset for Custom starts from the preset, and picking one shows its numbers")
+{
+    using Assisi::Runtime::PresetSettings;
+    using Assisi::Runtime::SkyPreset;
+
+    for (const SkyPreset preset : {SkyPreset::Clear, SkyPreset::Arctic, SkyPreset::Savanna, SkyPreset::Tropical,
+                                   SkyPreset::Alpine, SkyPreset::Hazy, SkyPreset::Airless})
+    {
+        CAPTURE(std::to_underlying(preset));
+        // Its knobs as a level saved before they followed the preset left them.
+        Skybox skybox{.preset = preset};
+        skybox.preset = SkyPreset::Custom;
+        Runtime::SettleSkyPreset(skybox, preset);
+        CheckSameSky(Runtime::ToSkySettings(skybox), PresetSettings(preset));
+    }
+
+    // Picking a preset fills the greyed knobs with what it draws.
+    Skybox picked{.preset = SkyPreset::Custom, .exposure = 99.f};
+    picked.preset = SkyPreset::Airless;
+    Runtime::SettleSkyPreset(picked, SkyPreset::Custom);
+    CHECK(picked.exposure == PresetSettings(SkyPreset::Airless).exposure);
+    CHECK(picked.airThickness == PresetSettings(SkyPreset::Airless).airThickness);
+
+    // An edit that leaves the preset alone leaves the knobs alone.
+    Skybox custom{.preset = SkyPreset::Custom, .exposure = 99.f};
+    Runtime::SettleSkyPreset(custom, SkyPreset::Custom);
+    CHECK(custom.exposure == 99.f);
+}
+
+TEST_CASE("Leaving a cloud preset for Custom starts from the preset, and picking one shows its numbers")
+{
+    using Runtime::CloudPreset;
+
+    for (const CloudPreset preset :
+         {CloudPreset::Fair, CloudPreset::Scattered, CloudPreset::Broken, CloudPreset::Overcast})
+    {
+        CAPTURE(std::to_underlying(preset));
+        Runtime::Clouds clouds{.preset = preset, .seed = 7u};
+        const Assisi::Render::CloudSettings expected = Runtime::ToCloudSettings(clouds, Runtime::kStillAir);
+        clouds.preset = CloudPreset::Custom;
+        Runtime::SettleCloudPreset(clouds, preset);
+        CHECK(Runtime::ToCloudSettings(clouds, Runtime::kStillAir) == expected);
+    }
+
+    Runtime::Clouds picked{.preset = CloudPreset::Custom, .coverage = 0.05f};
+    picked.preset = CloudPreset::Overcast;
+    Runtime::SettleCloudPreset(picked, CloudPreset::Custom);
+    CHECK(picked.coverage == Runtime::kCloudPresets[std::to_underlying(CloudPreset::Overcast)].coverage);
+
+    Runtime::Clouds custom{.preset = CloudPreset::Custom, .coverage = 0.05f};
+    Runtime::SettleCloudPreset(custom, CloudPreset::Custom);
+    CHECK(custom.coverage == 0.05f);
 }

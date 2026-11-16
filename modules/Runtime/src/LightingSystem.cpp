@@ -295,8 +295,6 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
 
 void LightingSystem::Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view)
 {
-    ASSISI_PROFILE_GPU_PASS(commandList, "lighting");
-
     // CPU-side this is three buffer uploads plus a dispatch record, so it is
     // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
     ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");

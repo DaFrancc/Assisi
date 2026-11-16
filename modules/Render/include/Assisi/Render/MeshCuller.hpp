@@ -133,6 +133,13 @@ static_assert(kMeshPipelineCount <= 4, "the packed pipeline field is two bits wi
     return (materialId & kCullMaterialIdMask) | (static_cast<uint32_t>(pipeline) << kCullMaterialPipelineShift);
 }
 
+/// @brief What a slot holding @p material packs as. kNoMaterial when the culled
+/// draws skip it: unresolved, or see-through, which the blended pass draws
+/// sorted on the CPU. Otherwise its id with Material::Pipeline, the one place a
+/// material's properties decide where it draws, so this path and the CPU draw
+/// list cannot disagree about the same material.
+[[nodiscard]] uint32_t CullMaterialFor(const Material *material);
+
 /// @brief The pipeline packed into @p encoded. Undefined for kNoMaterial, which
 /// callers reject first.
 [[nodiscard]] inline constexpr MeshPipeline CullMaterialPipeline(uint32_t encoded)

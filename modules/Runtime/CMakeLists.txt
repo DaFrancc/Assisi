@@ -30,6 +30,10 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/SkyComponents.hpp"
     "include/Assisi/Runtime/SkyResolve.hpp"
     "include/Assisi/Runtime/TimeOfDay.hpp"
+    "include/Assisi/Runtime/WaterComponents.hpp"
+    "include/Assisi/Runtime/WaterGather.hpp"
+    "include/Assisi/Runtime/WindComponents.hpp"
+    "include/Assisi/Runtime/WindResolve.hpp"
   PRIVATE
     "src/AssetResolve.cpp"
     "src/AnimationPlayback.cpp"
@@ -45,6 +49,7 @@ target_sources(Assisi-Runtime
     "src/Naming.cpp"
     "src/PostProcessResolve.cpp"
     "src/Renderer.cpp"
+    "src/ScenePasses.cpp"
     "src/SceneRenderer.cpp"
     "src/SceneRendererShadows.cpp"
     "src/ShadowCasterGather.cpp"
@@ -60,6 +65,8 @@ target_sources(Assisi-Runtime
     "src/SceneSerializerRefs.cpp"
     "src/SkyResolve.cpp"
     "src/TimeOfDay.cpp"
+    "src/WaterGather.cpp"
+    "src/WindResolve.cpp"
 )
 
 target_include_directories(Assisi-Runtime
@@ -94,6 +101,18 @@ assisi_reflect(
     include/Assisi/Runtime/PostProcessVolume.hpp
     include/Assisi/Runtime/SkyComponents.hpp
     include/Assisi/Runtime/TimeOfDay.hpp
+    include/Assisi/Runtime/WaterComponents.hpp
+    include/Assisi/Runtime/WindComponents.hpp
+)
+
+# The scene's render passes: ordered from their declarations and recorded by
+# the walk generated here.
+assisi_generate_passes(
+  TARGET       Assisi-Runtime
+  HEADER       include/Assisi/Runtime/ScenePasses.hpp
+  INCLUDE_ROOT include
+  GRAPH        Scene
+  BASE_LIST    "${CMAKE_BINARY_DIR}/generated/passes/scene-base-passes.txt"
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)

@@ -85,7 +85,8 @@ SourceAssetSource::LoadMaterial(const Core::AssetId &id) const
 }
 
 std::expected<Image::DecodedImage, Render::AssetLoadError>
-SourceAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format) const
+SourceAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format,
+                               float alphaCutoff) const
 {
     const std::optional<std::string> path = _database->PathFor(id);
     if (!path)
@@ -98,7 +99,7 @@ SourceAssetSource::LoadTexture(const Core::AssetId &id, Image::ColorSpace space,
     {
         return std::unexpected(Render::AssetLoadError::Undecodable);
     }
-    std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(*path, space);
+    std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeTexture(*path, space, alphaCutoff);
     if (!decoded)
     {
         return std::unexpected(Render::AssetLoadError::Undecodable);

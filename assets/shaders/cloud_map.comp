@@ -1,0 +1,94 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+/// cloud_map.comp
+/// The clouds' sky map: for every direction above the horizon, what the clouds
+/// in that direction look like from the camera this frame. sky.frag reads it
+/// instead of marching the clouds itself, so their cost is this map's size, not
+/// the screen's, and the reflection probe reads the same map.
+///
+/// Each texel holds the light to add to the sky behind it in rgb, and how much
+/// of that sky shows through in alpha: the sky pass draws sky * a + rgb. The rgb
+/// already includes the air and the level's haze in front of the clouds, which
+/// fade distant clouds into the sky.
+///
+/// Dispatch: ceil(width / 8) x ceil(height / 8) workgroups.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#include "sky/fog.glsl"
+#include "sky/clouds.glsl"
+#include "sky/cloud_map.glsl"
+
+layout(binding = 256) uniform CloudMapConstants
+{
+    CloudConstants clouds;
+    FogConstants   fog; // the level's haze, and in .scatter the sky the clouds are seen against
+} uMap;
+
+// NVRHI's Vulkan backend offsets UAV bindings by +384.
+layout(binding = 384, rgba16f) uniform writeonly image2D uCloudMap; // the march, before the resolve
+
+// The air's height scale, in metres: how high a column of it would stand at
+// sea-level density. A cloud this far away along a level ray sits behind about
+// as much air as the whole sky overhead.
+const float kAirScaleHeight = 8000.0;
+// Floor on the share of the sky's light the air scatters along a ray, below
+// which the share in front of the clouds is not divided out.
+const float kMinAirLoss = 1e-6;
+
+// How far into its first step a texel's ray starts: one of nine offsets, laid
+// out so every 3x3 block of texels holds each once. cloud_map_resolve.comp
+// averages each 3x3 block, which makes the nine staggered rays one ray with
+// nine times the steps.
+const uint kStaggerSide = 3u;
+float StepJitter(uvec2 texel)
+{
+    uint slot = texel.x % kStaggerSide + kStaggerSide * (texel.y % kStaggerSide);
+    return (float(slot) + 0.5) / float(kStaggerSide * kStaggerSide);
+}
+
+void main()
+{
+    ivec2 size  = imageSize(uCloudMap);
+    uvec2 texel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(texel, uvec2(size))))
+    {
+        return;
+    }
+    vec2 uv  = (vec2(texel) + 0.5) / vec2(size);
+    vec3 ray = CloudMapDirection(uv);
+
+    CloudRay clouds = MarchClouds(uMap.clouds, ray, StepJitter(texel));
+    if (clouds.transmittance >= 1.0)
+    {
+        imageStore(uCloudMap, ivec2(texel), vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    // The air in front of the clouds: it dims their light, and adds its own
+    // share of the sky's light where the clouds hide the sky behind them.
+    SkyScatter scatter = uMap.fog.scatter;
+    vec3  extinction   = scatter.airScattering.rgb * scatter.airScattering.w + scatter.haze.rgb;
+    float viewAirMass  = ViewAirMass(ray.y);
+    float frontAirMass = min(clouds.distance / kAirScaleHeight, viewAirMass);
+    vec3  front        = exp(-extinction * frontAirMass);
+    vec3  airLoss      = vec3(1.0) - exp(-extinction * viewAirMass);
+    vec3  frontShare   = (vec3(1.0) - front) / max(airLoss, vec3(kMinAirLoss));
+    vec3  sky          = max(SkyAirRadiance(scatter, ray).sky * scatter.groundColor.w, vec3(0.0));
+    float hidden       = 1.0 - clouds.transmittance;
+    vec3  seen         = clouds.light * front + sky * min(frontShare, vec3(1.0)) * hidden;
+
+    // The level's haze in front of them, by the same rule the fog uses on a
+    // surface, without its draw-distance edge: the clouds are past the edge, and
+    // would vanish at it.
+    float hazeDepth = FogLayerOpticalDepth(uMap.fog.layers[0], clouds.distance, uMap.fog.view.y, clouds.height) +
+                      FogLayerOpticalDepth(uMap.fog.layers[1], clouds.distance, uMap.fog.view.y, clouds.height);
+    if (uMap.fog.view.x > 0.0 && hazeDepth > 0.0)
+    {
+        float haze = 1.0 - exp(-hazeDepth);
+        seen = mix(seen, FogRadiance(uMap.fog, ray) * hidden, haze);
+    }
+
+    imageStore(uCloudMap, ivec2(texel), vec4(seen, clouds.transmittance));
+}

@@ -52,7 +52,6 @@
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
 #include <Assisi/Editor/DoubleClick.hpp>
@@ -83,6 +82,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+} // namespace Assisi::Runtime
 
 namespace Assisi::Editor
 {
@@ -163,6 +167,10 @@ struct EditorConfig
     /// here so the two can be A/B'd by a capture run rather than only by
     /// clicking the F11 checkbox, which is not something a measurement can do.
     bool gpuCulling = false;
+
+    /// Check the device with the Vulkan validation layer in any build and fail
+    /// on any error it reports: see Application::RequireVulkanValidation.
+    bool vulkanValidation = false;
 };
 
 class EditorOptionsPanel;
@@ -266,11 +274,14 @@ class EditorApp : public Assisi::App::Application
     /// every panel into it, and submits it. Application drives no UI toolkit of
     /// its own, which is what keeps one out of a game's link.
     void OnRenderUi(Assisi::Render::RenderFrame &frame) override;
-    void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
     void OnShutdown() override;
+    [[nodiscard]] bool AssetsStreaming() const override { return _worlds.AnyStreaming(); }
+    /// Compares the capture's picture with the one accepted for the level on
+    /// this GPU, when the capture names a directory for them.
+    [[nodiscard]] bool CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName) override;
 
     /// @brief Every panel of the editor's chrome, drawn inside the ImGui frame
     /// OnRenderUi opened. Split out so the frame's lifetime and its contents are
@@ -1691,8 +1702,9 @@ class EditorApp : public Assisi::App::Application
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
-    // OnRender is a single Render() call.
-    Assisi::Runtime::SceneRenderer _sceneRenderer;
+    // OnRender is a single Render() call. Held by pointer so only the files
+    // that render include the renderer, and through it every pass.
+    std::unique_ptr<Assisi::Runtime::SceneRenderer> _sceneRenderer;
 
     // Resolves each entity's mesh/materialOverrides ids to shared GPU resources;
     // owns every mesh, texture, and material the scene draws (deduped by path).
@@ -1949,6 +1961,10 @@ class EditorApp : public Assisi::App::Application
     // drag/type, or the gizmo) is still being manipulated. The end-of-DrawPanels sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
     bool _captureEditingActive = false;
+    // Frames drawn while a perf capture runs. A capture draws its waves at this
+    // count of fixed frames rather than at the clock, so two runs of a GPU test
+    // picture the same sea.
+    std::uint64_t _capturedFrames = 0;
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;

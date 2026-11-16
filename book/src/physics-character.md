@@ -126,7 +126,9 @@ how.
 
 `preset` picks the walk speed, crouch speed, jump speed and gravity scale
 together. While it is anything but `Custom`, those four fields are greyed out in
-the editor and the preset's numbers are used instead.
+the editor and the preset's numbers are used instead. Picking a preset fills
+the fields with its numbers, and switching to `Custom` keeps them, so you can
+start from a preset and adjust it.
 
 | `preset` | `walkSpeed` | `crouchSpeedScale` | `jumpSpeed` | `gravityScale` | Feels like |
 |---|---|---|---|---|---|

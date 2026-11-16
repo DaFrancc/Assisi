@@ -21,6 +21,7 @@ add_executable(Assisi-Runtime-Tests
   TestBlueprintOverrides.cpp
   TestBlueprintPreparedForm.cpp
   TestBlueprintReexpand.cpp
+  TestBlendedDraws.cpp
   TestCameraPath.cpp
   TestCameraProjection.cpp
   TestComponentRules.cpp
@@ -44,6 +45,8 @@ add_executable(Assisi-Runtime-Tests
   TestLodSelection.cpp
   TestSkyResolve.cpp
   TestTimeOfDay.cpp
+  TestWaterGather.cpp
+  TestWindResolve.cpp
   TestWireGating.cpp
 )
 

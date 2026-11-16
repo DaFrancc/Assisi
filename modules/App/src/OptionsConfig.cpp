@@ -304,6 +304,25 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             cfg.fogEnabled = json.at("fog").at("enabled").get<bool>();
         }
 
+        if (json.contains("clouds"))
+        {
+            const auto &clouds = json.at("clouds");
+            ReadField(clouds, "resolution", cfg.clouds.resolution);
+            ReadField(clouds, "steps", cfg.clouds.steps);
+            cfg.clouds = Render::Sanitized(cfg.clouds);
+            // Present means chosen, as with the fog.
+            if (clouds.contains("enabled"))
+            {
+                cfg.cloudsEnabled = clouds.at("enabled").get<bool>();
+            }
+        }
+
+        // Present means chosen, as with the fog.
+        if (json.contains("water") && json.at("water").contains("enabled"))
+        {
+            cfg.waterEnabled = json.at("water").at("enabled").get<bool>();
+        }
+
         if (json.contains("window"))
         {
             const auto &window = json.at("window");
@@ -511,6 +530,14 @@ nlohmann::json FullJson(const OptionsConfig &options)
     occlusion["radius"] = ambientOcclusion.radius;
     occlusion["strength"] = ambientOcclusion.strength;
 
+    nlohmann::json &clouds = json["clouds"];
+    clouds["resolution"] = options.clouds.resolution;
+    clouds["steps"] = options.clouds.steps;
+    if (options.cloudsEnabled)
+    {
+        clouds["enabled"] = *options.cloudsEnabled;
+    }
+
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;
 
@@ -538,6 +565,11 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.fogEnabled)
     {
         json["fog"]["enabled"] = *options.fogEnabled;
+    }
+
+    if (options.waterEnabled)
+    {
+        json["water"]["enabled"] = *options.waterEnabled;
     }
 
     // Only a volume the player set: every other bus follows the game's own

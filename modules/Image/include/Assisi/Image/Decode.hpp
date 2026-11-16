@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -32,6 +33,23 @@ namespace Assisi::Image
 ///         decoded.
 [[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeImage(std::string_view vpath,
                                                                         ColorSpace colorSpace) noexcept;
+
+/// @brief Decode the image file at @p file, a path on disk rather than an
+/// asset, into a single RGBA8 level in sRGB: for files that live outside the
+/// asset tree, such as a test's reference pictures.
+///
+/// @return the image, or FileReadFailed if the file cannot be read or decoded.
+[[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeImageFile(const std::filesystem::path &file) noexcept;
+
+/// @brief Decode @p vpath as a material's texture: DecodeImage, then each mip
+///        kept at the base level's coverage at @p alphaCutoff when that is not
+///        zero (PreserveAlphaCoverage).
+///
+/// The cook and the editor both decode through this, so a texture cooked for
+/// the game and one the editor loads from its source agree.
+[[nodiscard]] std::expected<DecodedImage, Core::AssetError> DecodeTexture(std::string_view vpath,
+                                                                          ColorSpace colorSpace,
+                                                                          float alphaCutoff) noexcept;
 
 /// @brief An image's size in pixels.
 struct ImageExtent
@@ -62,5 +80,17 @@ DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace = ColorSpace::S
 /// A level that fails to downsample truncates the chain rather than leaving a
 /// hole: an unwritten level still reaches the GPU, from memory nobody zeroed.
 void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generateMips);
+
+/// @brief Rescale the alpha of every mip below the base of RGBA8 @p image so the
+///        share of texels at or above @p cutoff is the base level's.
+///
+/// What a cutout material needs from its colour map's mips. Averaging alpha
+/// pulls thin solid strokes, a blade of grass or a leaf's edge, below the cutoff
+/// one level at a time, so a cutout surface thins and vanishes with distance;
+/// scaling each level's alpha back up keeps its apparent density (Castaño,
+/// "Computing Alpha Mipmaps", 2010). Colour is untouched. Nothing changes for a
+/// cutoff of zero or less, an image entirely cut or entirely kept at its base,
+/// or an image that is not RGBA8.
+void PreserveAlphaCoverage(DecodedImage &image, float cutoff);
 
 } // namespace Assisi::Image

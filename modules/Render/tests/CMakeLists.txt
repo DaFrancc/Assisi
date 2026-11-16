@@ -2,9 +2,11 @@ add_executable(Assisi-Render-Tests
   main.cpp
   TestBloom.cpp
   TestCelestial.cpp
+  TestClouds.cpp
   TestExposure.cpp
   TestFog.cpp
   TestFogVolume.cpp
+  TestGusts.cpp
   TestIndirectLighting.cpp
   TestLocalShadowCache.cpp
   TestLocalShadowViews.cpp
@@ -25,6 +27,9 @@ add_executable(Assisi-Render-Tests
   TestSceneDepth.cpp
   TestSsao.cpp
   TestTonemap.cpp
+  TestWater.cpp
+  TestWaterGrid.cpp
+  TestWaterRenderer.cpp
   TestWhiteBalance.cpp
 )
 

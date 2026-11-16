@@ -193,7 +193,7 @@ void EditorApp::SubmitLightGizmos()
                             style.detailed);
     }
 
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
     for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
     {
         const auto style = styleFor(entity, glm::vec3(Rt::AuthoredSunColor(light)));
@@ -276,7 +276,7 @@ Assisi::ECS::Entity EditorApp::PickLightOutline(glm::vec2 mousePos, float &tOut)
 
     for (auto [entity, light] : _scene->Query<Rt::DirectionalLight>())
     {
-        const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+        const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
         const glm::vec3 travels = sky.light.entity == entity ? sky.light.direction : light.direction;
         AddDirectionalLightOutline(_lightPickOutline, kUnread, EntityPosition(*_scene, entity, ray.measuredFrom),
                                    travels);

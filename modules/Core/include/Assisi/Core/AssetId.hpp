@@ -101,6 +101,7 @@ inline constexpr AssetId Icosphere      = detail::ReservedAssetId(9);  ///< prim
 inline constexpr AssetId IcosphereHigh  = detail::ReservedAssetId(10); ///< prim://icosphere-high.
 inline constexpr AssetId Cylinder       = detail::ReservedAssetId(11); ///< prim://cylinder.
 inline constexpr AssetId CylinderHigh   = detail::ReservedAssetId(12); ///< prim://cylinder-high.
+inline constexpr AssetId Quad           = detail::ReservedAssetId(13); ///< prim://quad.
 } // namespace BuiltinAssetId
 
 /// @brief One reserved built-in id and the virtual path it stands in for.

@@ -4,7 +4,6 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Ssao.hpp>
 
@@ -155,7 +154,6 @@ void SceneDistancePass::Render(nvrhi::ICommandList *commandList, const glm::mat4
         .projection = glm::vec4(lens.xScale, lens.yScale, lens.depthScale, lens.depthBias)};
     commandList->writeBuffer(_constants, &constants, sizeof(constants));
 
-    ASSISI_PROFILE_GPU_PASS(commandList, "scene-distance");
     nvrhi::GraphicsState state;
     state.pipeline = _depth->getDesc().sampleCount > 1 ? _multisamplePipeline : _pipeline;
     state.framebuffer = _framebuffer;

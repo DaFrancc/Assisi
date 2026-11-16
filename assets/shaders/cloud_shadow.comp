@@ -1,0 +1,46 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+/// cloud_shadow.comp
+/// The clouds' shadow: how much of the directional light gets through the
+/// clouds, over a square of the clouds' base around the camera. The lit pass
+/// follows the light from a surface up to the base, reads this there, and dims
+/// the light by it, so cloud shadows cross the land with the wind.
+///
+/// Each texel is a point on the clouds' base; it marches from there toward the
+/// light through the layer. Without the detail noise: a shadow on the ground is
+/// soft, and the detail would only sharpen edges nobody can see.
+///
+/// Dispatch: ceil(size / 8)^2 workgroups.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#include "sky/clouds.glsl"
+
+layout(binding = 256) uniform CloudShadowConstants
+{
+    CloudConstants clouds;
+    vec4 area;  // xy = the square's centre across, camera-relative; z = its width in metres; w = steps
+    vec4 light; // xyz = unit direction to the light, its height held above the floor below
+} uShadow;
+
+// NVRHI's Vulkan backend offsets UAV bindings by +384.
+layout(binding = 384, r16f) uniform writeonly image2D uCloudShadow;
+
+void main()
+{
+    ivec2 size  = imageSize(uCloudShadow);
+    uvec2 texel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(texel, uvec2(size))))
+    {
+        return;
+    }
+    CloudConstants c = uShadow.clouds;
+    float texelWidth = uShadow.area.z / float(size.x);
+    vec2  across     = uShadow.area.xy + (vec2(texel) + 0.5 - 0.5 * vec2(size)) * texelWidth;
+    // On the clouds' base, where the curve of the planet puts it below a flat
+    // plane.
+    vec3 base = vec3(across.x, c.low.layer.x - c.scales.w - dot(across, across) * (0.5 / kPlanetRadius), across.y);
+    float depth = CloudShadowDepth(c, base, uShadow.light.xyz, max(int(uShadow.area.w), 1), texelWidth);
+    imageStore(uCloudShadow, ivec2(texel), vec4(exp(-depth)));
+}

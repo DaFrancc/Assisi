@@ -503,11 +503,11 @@ nvrhi::IBindingSet *ShadowDepthRenderer::GetOrCreateBindingSet(nvrhi::IBuffer *i
     return _bindingSet;
 }
 
-void ShadowDepthRenderer::EnsureIndirectCapacity(std::uint32_t commandCount) const
+bool ShadowDepthRenderer::EnsureIndirectCapacity(std::uint32_t commandCount) const
 {
     if (_indirectBuffer != nullptr && commandCount <= _indirectCapacity)
     {
-        return;
+        return false;
     }
     const std::uint32_t grown = std::max(_indirectCapacity * 2u, kInitialCasterCapacity);
     const std::uint32_t capacity = std::max(grown, commandCount);
@@ -520,11 +520,14 @@ void ShadowDepthRenderer::EnsureIndirectCapacity(std::uint32_t commandCount) con
     desc.debugName = "ShadowDepthRenderer::IndirectArgs";
     _indirectBuffer = _device->createBuffer(desc);
     _indirectCapacity = capacity;
+    return true;
 }
 
 void ShadowDepthRenderer::BeginFrame(const glm::vec3 &sampledFrom)
 {
     _views.clear();
+    _frameInstances = 0;
+    _frameCommands = 0;
     _sampledFrom = sampledFrom;
 }
 
@@ -543,8 +546,8 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
     stats.views = static_cast<std::uint32_t>(targets.size());
 
     {
-        // The table describes the frame, not this call: appended to and re-uploaded
-        // whole, so it is complete after whichever kind of shadow map draws last.
+        // The table describes the frame, not this call: appended to, so it is
+        // complete after whichever kind of shadow map draws last.
         ASSISI_PROFILE_SCOPE("view-table");
         const glm::mat4 fromSampler = glm::translate(glm::mat4(1.f), _sampledFrom);
         for (const ShadowDepthTarget &target : targets)
@@ -553,12 +556,17 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
             row.viewProjection = row.viewProjection * fromSampler;
             _views.push_back(row);
         }
-        if (!_viewTable.IsValid() || _views.size() > _viewTable.CapacityElements())
+        const bool grown = !_viewTable.IsValid() || _views.size() > _viewTable.CapacityElements();
+        if (grown)
         {
             _viewTable.Create(_device, sizeof(ShadowViewGpu), static_cast<std::uint32_t>(_views.size()),
                               /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::ViewTable");
         }
-        _viewTable.Upload(commandList, _views.data(), static_cast<std::uint32_t>(_views.size()));
+        // A new table takes every row; otherwise only this call's, so no two of
+        // the frame's writes touch the same row.
+        const std::uint32_t firstRow = grown ? 0u : stats.firstView;
+        _viewTable.Upload(commandList, _views.data() + firstRow, static_cast<std::uint32_t>(_views.size()) - firstRow,
+                          firstRow);
     }
 
     ShadowDrawList &drawList = _drawList;
@@ -581,23 +589,42 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
 
     nvrhi::IBindingSet *bindingSet = nullptr;
     nvrhi::IBindingSet *maskedBindingSet = nullptr;
+    std::uint32_t instanceBase = 0;
+    std::uint32_t commandBase = 0;
     {
         // A grow reallocates the buffer and invalidates the binding sets built
         // against it, so a spike here comes with a second one in the sets.
         ASSISI_PROFILE_SCOPE("instance-upload");
-        if (!_instanceBuffer.IsValid() || drawList.instances.size() > _instanceBuffer.CapacityElements())
+        const auto instanceCount = static_cast<std::uint32_t>(drawList.instances.size());
+        if (!_instanceBuffer.IsValid() || _frameInstances + instanceCount > _instanceBuffer.CapacityElements())
         {
-            const auto needed = static_cast<std::uint32_t>(drawList.instances.size());
+            // Sized for the whole frame so far, so the next frame fits without
+            // another grow. The draws already recorded keep the old buffer alive.
             const std::uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialCasterCapacity);
-            _instanceBuffer.Create(_device, sizeof(ShadowInstanceData), std::max(grown, needed),
+            _instanceBuffer.Create(_device, sizeof(ShadowInstanceData), std::max(grown, _frameInstances + instanceCount),
                                    /*allowUnorderedAccess=*/ false, "ShadowDepthRenderer::Instances");
+            _frameInstances = 0;
         }
-        EnsureIndirectCapacity(static_cast<std::uint32_t>(drawList.commands.size()));
+        const auto commandCount = static_cast<std::uint32_t>(drawList.commands.size());
+        if (EnsureIndirectCapacity(_frameCommands + commandCount))
+        {
+            _frameCommands = 0;
+        }
+        instanceBase = _frameInstances;
+        commandBase = _frameCommands;
+        _frameInstances += instanceCount;
+        _frameCommands += commandCount;
 
-        _instanceBuffer.Upload(commandList, drawList.instances.data(),
-                               static_cast<std::uint32_t>(drawList.instances.size()));
+        // The draw list numbers its instances from 0; they sit after the frame's
+        // earlier calls' in the buffer.
+        for (nvrhi::DrawIndexedIndirectArguments &command : drawList.commands)
+        {
+            command.startInstanceLocation += instanceBase;
+        }
+        _instanceBuffer.Upload(commandList, drawList.instances.data(), instanceCount, instanceBase);
         commandList->writeBuffer(_indirectBuffer, drawList.commands.data(),
-                                 drawList.commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
+                                 commandCount * sizeof(nvrhi::DrawIndexedIndirectArguments),
+                                 static_cast<std::uint64_t>(commandBase) * sizeof(nvrhi::DrawIndexedIndirectArguments));
 
         bindingSet = GetOrCreateBindingSet(_instanceBuffer.NativeBuffer());
         maskedBindingSet = GetOrCreateMaskedBindingSet(_instanceBuffer.NativeBuffer());
@@ -679,7 +706,7 @@ ShadowDepthRenderer::Stats ShadowDepthRenderer::Render(nvrhi::ICommandList *comm
                 const ShadowDepthPushConstants pushConstants{.lightViewProjection = targets[index].view.viewProjection};
                 commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
-                commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments),
+                commandList->drawIndexedIndirect((commandBase + runStart) * sizeof(nvrhi::DrawIndexedIndirectArguments),
                                                  runEnd - runStart);
                 ++stats.drawCalls;
 

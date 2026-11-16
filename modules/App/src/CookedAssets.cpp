@@ -99,7 +99,8 @@ std::expected<Geometry::MaterialData, Render::AssetLoadError> CookedAssetSource:
 
 std::expected<Image::DecodedImage, Render::AssetLoadError> CookedAssetSource::LoadTexture(const Core::AssetId &id,
                                                                                           Image::ColorSpace,
-                                                                                          Image::PixelFormat) const
+                                                                                          Image::PixelFormat,
+                                                                                          float /*alphaCutoff*/) const
 {
     const std::expected<std::vector<std::byte>, Core::AssetError> bytes = _provider->Open(id);
     if (!bytes)

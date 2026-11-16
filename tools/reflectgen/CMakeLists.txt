@@ -18,6 +18,14 @@ add_test(
     COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_events.py"
 )
 
+# Its own test: the APASS graph reads only annotations and Record signatures,
+# and what it defends is the frame's order — a pass recorded before what it
+# reads is written draws from last frame's data, or from nothing.
+add_test(
+    NAME reflectgen-passes
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_passes.py"
+)
+
 # Its own test rather than more cases in the one above: this covers a different
 # input language (.abp files, not C++ headers) and a different failure — a field
 # name that is not a real member resolves to NullEntity at runtime instead of

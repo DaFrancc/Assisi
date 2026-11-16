@@ -1,0 +1,304 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+/// @file TestWaterGather.cpp
+/// @brief The scene's Oceans and Lakes become the frame's bodies of water:
+/// placed, turned and scaled with their entities, raised by the level's wind
+/// and rippled by its gusts, each lake's fetch the longest stretch the wind
+/// crosses, and a body left out when none of it is in view.
+
+#include <doctest/doctest.h>
+
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Frustum.hpp>
+#include <Assisi/Render/Water.hpp>
+#include <Assisi/Runtime/WaterComponents.hpp>
+#include <Assisi/Runtime/WaterGather.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
+
+#include <cmath>
+
+using namespace Assisi;
+using Assisi::ECS::Transform;
+using Assisi::Runtime::Lake;
+using Assisi::Runtime::Ocean;
+using Assisi::Runtime::Wind;
+
+namespace
+{
+
+ECS::Entity Place(ECS::Scene &scene, const Transform &transform)
+{
+    const ECS::Entity entity = scene.Create();
+    REQUIRE(scene.Add(entity, transform) != nullptr);
+    return entity;
+}
+
+Render::WaterFrame Gather(ECS::Scene &scene, const Runtime::WaterGatherView &view)
+{
+    (void)ECS::PropagateTransforms(scene, 0u);
+    Render::WaterFrame frame;
+    Runtime::GatherWater(scene, view, frame);
+    return frame;
+}
+
+Runtime::WaterGatherView From(glm::dvec3 camera)
+{
+    return Runtime::WaterGatherView{.camera = camera, .drawDistance = 5000.0f};
+}
+
+float WindHeight(const Render::WaterWaves &waves)
+{
+    return Render::SignificantWaveHeight(Render::SpectrumOf(waves.wind));
+}
+
+} // namespace
+
+TEST_CASE("An Ocean is endless water at its entity's height, with the level's wind and its own swell")
+{
+    ECS::Scene scene;
+    const ECS::Entity sea = Place(scene, Transform{.position = glm::dvec3(120.0, -2.5, 40.0)});
+    REQUIRE(scene.Add(sea, Ocean{.swellHeight = 1.5f, .swellPeriod = 12.0f}) != nullptr);
+    REQUIRE(scene.Add(scene.Create(), Wind{.speed = 11.0f, .bearingDegrees = 200.0f}) != nullptr);
+
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 3.0, 0.0)));
+    REQUIRE(frame.bodies.size() == 1u);
+    const Render::WaterBody &body = frame.bodies.front();
+    CHECK(body.region.origin.y == doctest::Approx(-2.5));
+    // The world's origin, whatever the entity's: the patches keep the world's grid.
+    CHECK(body.region.origin.x == 0.0);
+    CHECK(body.region.origin.z == 0.0);
+    CHECK(body.region.halfExtent.x == 0.0f);
+    CHECK(body.nodeCount > 0u);
+    CHECK(body.firstNode + body.nodeCount == frame.nodes.size());
+    CHECK(body.waves.wind.windSpeed == 11.0f);
+    CHECK(body.waves.wind.bearingDegrees == doctest::Approx(200.0f));
+    CHECK(body.waves.wind.fetch == Render::kOceanFetch);
+    CHECK(body.waves.swell.height == 1.5f);
+    CHECK(body.waves.swell.period == 12.0f);
+    CHECK(body.significantHeight > 1.5f);
+    CHECK(body.waveReach > body.significantHeight);
+    // The frame carries the level's gusts, and the sea knows which way the wind
+    // blows across it.
+    CHECK(frame.gusts == Runtime::GustsOf(Wind{.speed = 11.0f, .bearingDegrees = 200.0f}));
+    CHECK(body.windInBody.x == doctest::Approx(frame.gusts.toward.x));
+    CHECK(body.windInBody.y == doctest::Approx(frame.gusts.toward.y));
+
+    // The same body from frame to frame.
+    const Render::WaterFrame again = Gather(scene, From(glm::dvec3(10.0, 3.0, 0.0)));
+    REQUIRE(again.bodies.size() == 1u);
+    CHECK(again.bodies.front().key == body.key);
+}
+
+TEST_CASE("Without a Wind the air is still, so only swell moves the water")
+{
+    ECS::Scene scene;
+    const ECS::Entity sea = Place(scene, Transform{});
+    REQUIRE(scene.Add(sea, Ocean{.swellHeight = 0.0f}) != nullptr);
+    const ECS::Entity still = Place(scene, Transform{.position = glm::dvec3(0.0, 5.0, 0.0)});
+    REQUIRE(scene.Add(still, Lake{.preset = Runtime::LakePreset::Custom, .swellHeight = 0.0f, .size = glm::vec2(30.0f, 30.0f)}) !=
+            nullptr);
+
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 8.0, 0.0)));
+    REQUIRE(frame.bodies.size() == 2u);
+    for (const Render::WaterBody &body : frame.bodies)
+    {
+        CHECK(body.waves.wind.windSpeed == 0.0f);
+        CHECK(body.significantHeight == 0.0f);
+        CHECK(body.windInBody == glm::vec2(0.0f));
+    }
+    CHECK(frame.gusts.speed == 0.0f);
+
+    // A lake with a swell keeps rocking in still air.
+    ECS::Scene rockingScene;
+    const ECS::Entity rocking = Place(rockingScene, Transform{});
+    REQUIRE(rockingScene.Add(rocking, Lake{.size = glm::vec2(30.0f, 30.0f)}) != nullptr);
+    const Render::WaterFrame rockingFrame = Gather(rockingScene, From(glm::dvec3(0.0, 3.0, 0.0)));
+    REQUIRE(rockingFrame.bodies.size() == 1u);
+    CHECK(rockingFrame.bodies.front().significantHeight > 0.0f);
+}
+
+TEST_CASE("A Lake turns and scales with its entity")
+{
+    ECS::Scene scene;
+    const float turn = glm::radians(90.0f);
+    const ECS::Entity entity = Place(scene, Transform{.position = glm::dvec3(50.0, 140.0, -20.0),
+                                                      .rotation = glm::angleAxis(turn, glm::vec3(0.0f, 1.0f, 0.0f)),
+                                                      .scale = glm::vec3(2.0f, 1.0f, 3.0f)});
+    REQUIRE(scene.Add(entity, Lake{.size = glm::vec2(30.0f, 10.0f)}) != nullptr);
+
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(50.0, 145.0, -20.0)));
+    REQUIRE(frame.bodies.size() == 1u);
+    const Render::WaterBody &body = frame.bodies.front();
+    CHECK(body.region.origin.x == doctest::Approx(50.0));
+    CHECK(body.region.origin.y == doctest::Approx(140.0));
+    CHECK(body.region.halfExtent.x == doctest::Approx(30.0f));
+    CHECK(body.region.halfExtent.y == doctest::Approx(15.0f));
+    // A quarter turn about up takes x to -z.
+    CHECK(body.region.axisX.x == doctest::Approx(0.0f));
+    CHECK(body.region.axisX.y == doctest::Approx(-1.0f));
+}
+
+TEST_CASE("A Lake's fetch is the longest stretch the wind crosses, so a pond's waves stay small")
+{
+    // Custom and unsheltered, so its waves are raised by the whole wind.
+    const Lake long_{.preset = Runtime::LakePreset::Custom, .shelter = 0.0f};
+    const Wind east{.speed = 8.0f, .bearingDegrees = 90.0f};
+    // Its x axis runs east, the way the wind blows.
+    const Render::WaterWaves along =
+        Runtime::LakeWaves(long_, east, glm::vec2(300.0f, 20.0f), glm::vec2(1.0f, 0.0f));
+    CHECK(along.wind.fetch == doctest::Approx(300.0f));
+    // Turned so its x axis runs north, the wind crosses its narrow width.
+    const Render::WaterWaves across =
+        Runtime::LakeWaves(long_, east, glm::vec2(300.0f, 20.0f), glm::vec2(0.0f, -1.0f));
+    CHECK(across.wind.fetch == doctest::Approx(20.0f));
+    CHECK(WindHeight(across) < WindHeight(along));
+
+    // A pond under the same wind as a big lake.
+    const Render::WaterWaves pond = Runtime::LakeWaves(long_, east, glm::vec2(8.0f, 8.0f), glm::vec2(1.0f, 0.0f));
+    const Render::WaterWaves big =
+        Runtime::LakeWaves(long_, east, glm::vec2(3000.0f, 3000.0f), glm::vec2(1.0f, 0.0f));
+    CHECK(WindHeight(pond) < WindHeight(big) / 10.0f);
+
+    // Blowing corner to corner across a square, the wind crosses its diagonal.
+    const Wind southEast{.speed = 8.0f, .bearingDegrees = 135.0f};
+    const Render::WaterWaves diagonal =
+        Runtime::LakeWaves(long_, southEast, glm::vec2(30.0f, 30.0f), glm::vec2(1.0f, 0.0f));
+    CHECK(diagonal.wind.fetch == doctest::Approx(30.0f * std::sqrt(2.0f)));
+    // At a shallower angle across a long lake, it crosses from side to side.
+    const Wind eastByNorth{.speed = 8.0f, .bearingDegrees = 60.0f};
+    const Render::WaterWaves slant =
+        Runtime::LakeWaves(long_, eastByNorth, glm::vec2(300.0f, 20.0f), glm::vec2(1.0f, 0.0f));
+    CHECK(slant.wind.fetch == doctest::Approx(20.0f / std::cos(glm::radians(60.0f))));
+}
+
+TEST_CASE("A small lake's fetch is its own crossing, whatever its preset, and its waves grow from its own shore")
+{
+    const Wind east{.speed = 8.0f, .bearingDegrees = 90.0f};
+    for (const Runtime::LakePreset preset : {Runtime::LakePreset::Pond, Runtime::LakePreset::Lake,
+                                             Runtime::LakePreset::MountainLake, Runtime::LakePreset::Swamp})
+    {
+        CAPTURE(static_cast<int>(preset));
+        const Render::WaterWaves pond =
+            Runtime::LakeWaves(Lake{.preset = preset}, east, glm::vec2(30.0f, 20.0f), glm::vec2(1.0f, 0.0f));
+        CHECK(pond.wind.fetch == doctest::Approx(30.0f));
+    }
+
+    ECS::Scene scene;
+    const ECS::Entity entity = Place(scene, Transform{});
+    REQUIRE(scene.Add(entity, Lake{.size = glm::vec2(30.0f, 20.0f)}) != nullptr);
+    REQUIRE(scene.Add(scene.Create(), east) != nullptr);
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 4.0, 0.0)));
+    REQUIRE(frame.bodies.size() == 1u);
+    CHECK(frame.bodies.front().crossing == doctest::Approx(30.0f));
+    CHECK(frame.bodies.front().waves.wind.fetch == doctest::Approx(30.0f));
+}
+
+TEST_CASE("A lake's preset decides its look and how much wind reaches it, unless it is Custom")
+{
+    // Every preset but Custom is its row, whatever the fields say.
+    Lake pond{.preset = Runtime::LakePreset::Pond, .shelter = 0.0f, .ripples = 2.0f, .seed = 9u};
+    const Render::LakeSettings fromPreset = Runtime::ToLakeSettings(pond);
+    const Render::LakeSettings &row = Runtime::kLakePresets[static_cast<std::size_t>(Runtime::LakePreset::Pond)];
+    CHECK(fromPreset.shelter == doctest::Approx(row.shelter));
+    CHECK(fromPreset.ripples == doctest::Approx(row.ripples));
+    CHECK(fromPreset.clarity == doctest::Approx(row.clarity));
+    // The seed works with every preset.
+    CHECK(fromPreset.seed == 9u);
+
+    // Custom takes the fields as authored.
+    pond.preset = Runtime::LakePreset::Custom;
+    const Render::LakeSettings custom = Runtime::ToLakeSettings(pond);
+    CHECK(custom.shelter == 0.0f);
+    CHECK(custom.ripples == doctest::Approx(2.0f));
+
+    // A sheltered pond's waves are raised by less of the wind, and the body says
+    // how much of the gusts reach it and how strongly its ripples show.
+    const Wind east{.speed = 8.0f, .bearingDegrees = 90.0f};
+    const Lake sheltered{.preset = Runtime::LakePreset::Pond};
+    const Render::WaterWaves waves = Runtime::LakeWaves(sheltered, east, glm::vec2(30.0f, 20.0f), glm::vec2(1.0f, 0.0f));
+    CHECK(waves.wind.windSpeed == doctest::Approx(8.0f * (1.0f - row.shelter)));
+    ECS::Scene scene;
+    const ECS::Entity entity = Place(scene, Transform{});
+    REQUIRE(scene.Add(entity, Lake{.preset = Runtime::LakePreset::Swamp, .size = glm::vec2(30.0f, 20.0f)}) != nullptr);
+    REQUIRE(scene.Add(scene.Create(), east) != nullptr);
+    const Render::WaterFrame frame = Gather(scene, From(glm::dvec3(0.0, 4.0, 0.0)));
+    REQUIRE(frame.bodies.size() == 1u);
+    const Render::LakeSettings &swamp = Runtime::kLakePresets[static_cast<std::size_t>(Runtime::LakePreset::Swamp)];
+    CHECK(frame.bodies.front().windShare == doctest::Approx(1.0f - swamp.shelter));
+    CHECK(frame.bodies.front().look.ripples == doctest::Approx(swamp.ripples));
+    CHECK(frame.bodies.front().look.clarity == doctest::Approx(swamp.clarity));
+}
+
+TEST_CASE("Every lake preset is in range")
+{
+    for (std::size_t i = 0; i < Runtime::kLakePresets.size(); ++i)
+    {
+        CAPTURE(i);
+        const Render::LakeSettings &preset = Runtime::kLakePresets[i];
+        CHECK(Render::Sanitized(preset) == preset);
+    }
+}
+
+TEST_CASE("A body none of whose patches is in view is left out")
+{
+    ECS::Scene scene;
+    const ECS::Entity lake = Place(scene, Transform{.position = glm::dvec3(0.0, 0.0, 400.0)});
+    REQUIRE(scene.Add(lake, Lake{.size = glm::vec2(20.0f, 20.0f)}) != nullptr);
+
+    // Looking down -z, away from the lake behind the camera.
+    const glm::mat4 projection = glm::perspective(glm::radians(60.0f), 16.0f / 9.0f, 0.1f, 5000.0f);
+    const glm::mat4 view = glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const Render::Frustum frustum = Render::Frustum::FromViewProjection(projection * view);
+    Runtime::WaterGatherView away = From(glm::dvec3(0.0, 2.0, 0.0));
+    away.frustum = &frustum;
+    CHECK(Gather(scene, away).bodies.empty());
+
+    // Beyond the draw distance.
+    Runtime::WaterGatherView near = From(glm::dvec3(0.0, 2.0, 0.0));
+    near.drawDistance = 100.0f;
+    CHECK(Gather(scene, near).bodies.empty());
+
+    // In view, and its patches stay over it.
+    const Render::WaterFrame seen = Gather(scene, From(glm::dvec3(0.0, 2.0, 0.0)));
+    REQUIRE(seen.bodies.size() == 1u);
+    CHECK(seen.bodies.front().nodeCount > 0u);
+
+    // No size, no water.
+    ECS::Scene empty;
+    const ECS::Entity flat = Place(empty, Transform{});
+    REQUIRE(empty.Add(flat, Lake{.size = glm::vec2(0.0f, 20.0f)}) != nullptr);
+    CHECK(Gather(empty, From(glm::dvec3(0.0, 2.0, 0.0))).bodies.empty());
+}
+
+TEST_CASE("Leaving a lake preset for Custom starts from the preset, and picking one shows its numbers")
+{
+    using Runtime::LakePreset;
+
+    for (const LakePreset preset : {LakePreset::Pond, LakePreset::Lake, LakePreset::MountainLake, LakePreset::Swamp})
+    {
+        CAPTURE(static_cast<int>(preset));
+        // Its fields as a level saved before they followed the preset left them.
+        Lake lake{.preset = preset, .seed = 4u};
+        const Render::LakeSettings expected = Runtime::ToLakeSettings(lake);
+        lake.preset = LakePreset::Custom;
+        Runtime::SettleLakePreset(lake, preset);
+        CHECK(Runtime::ToLakeSettings(lake) == expected);
+    }
+
+    // Picking a preset fills the greyed fields with what it draws.
+    const Render::LakeSettings &swamp = Runtime::kLakePresets[static_cast<std::size_t>(LakePreset::Swamp)];
+    Lake picked{.preset = LakePreset::Custom, .ripples = 2.0f};
+    picked.preset = LakePreset::Swamp;
+    Runtime::SettleLakePreset(picked, LakePreset::Custom);
+    CHECK(picked.ripples == swamp.ripples);
+    CHECK(picked.shelter == swamp.shelter);
+
+    // An edit that leaves the preset alone leaves the fields alone.
+    Lake custom{.preset = LakePreset::Custom, .ripples = 2.0f};
+    Runtime::SettleLakePreset(custom, LakePreset::Custom);
+    CHECK(custom.ripples == 2.0f);
+}

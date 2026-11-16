@@ -9,6 +9,8 @@
 // Each piece may use anything the pieces before it declare.
 #include "sky/fog.glsl"
 #include "sky/fog_volumes.glsl"
+#include "mesh/cloud_shadow.glsl"
+#include "mesh/varyings.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"
@@ -72,15 +74,6 @@ void main()
     CaptureSurfacePlane();
     Surface surf = SampleMaterial();
 
-#ifdef ASSISI_ALPHA_MASK
-    // Only this build can discard, because a shader that can loses early depth
-    // rejection for every draw through its pipeline.
-    if (surf.alpha < surf.alphaCutoff)
-    {
-        discard;
-    }
-#endif
-
     // Material debug views write one channel straight out; the tone map passes
     // them through untouched. Colour channels are gamma-encoded for display.
     uint debugMode = uFrame.lightCounts.y;
@@ -135,6 +128,15 @@ void main()
     vec3 Lo = vec3(0.0);
 
     BrdfContext brdf = MakeBrdfContext(N, V, surf, F0);
+#ifdef ASSISI_ALPHA_BLEND
+    // A see-through surface's alpha fades its body, the diffuse light and the
+    // glow, and not its reflections: those at full strength are what make a
+    // clear pane read as glass.
+    brdf.diffuseBase *= surf.alpha;
+    brdf.eonSingle   *= surf.alpha;
+    brdf.eonMulti    *= surf.alpha;
+    surf.emissive    *= surf.alpha;
+#endif
 
     // Shadows are looked up with the geometric normal: the depth map holds
     // rasterized geometry, not the normal-mapped surface, and has nothing to
@@ -149,11 +151,15 @@ void main()
     uint shadowLightIndex   = uFrame.shadowCounts.y;
     uint shadowCascade      = 0u;
 
+    // Clouds come only with a sky, and a sky only with exactly one directional
+    // light, so whatever the clouds let through is that light's.
+    float cloudLight = CloudShadow(uFrame.cloudShadow, vWorldPos - uFrame.cameraPosition.xyz, uClampSampler);
+
     uint dirLightCount = uFrame.lightCounts.x;
     for (uint i = 0u; i < dirLightCount; i++)
     {
         vec3 L        = -dirLights[i].directionIntensity.xyz;
-        vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
+        vec3 radiance = dirLights[i].colorPad.xyz * (dirLights[i].directionIntensity.w * cloudLight);
         if (shadowCascadeCount > 0u && i == shadowLightIndex)
         {
             shadowCascade = SelectCascade(abs(vViewZ));
@@ -260,8 +266,13 @@ void main()
     vec3 indirect = IndirectRadiance(N, vWorldPos);
 
     // Screen-space occlusion takes the darker of itself and the material's map:
-    // both see the asset's own creases.
+    // both see the asset's own creases. Not on a see-through surface, which it
+    // never saw: it holds the solid surface behind.
+#ifdef ASSISI_ALPHA_BLEND
+    bool  screenOccluded  = false;
+#else
     bool  screenOccluded  = uFrame.indirectSpecular.z != 0.0;
+#endif
     float screenOcclusion = 1.0;
     float occlusion       = surf.occlusion;
     if (screenOccluded)
@@ -283,6 +294,9 @@ void main()
                                                            : IndirectRadiance(R, vWorldPos);
     vec3 specular       = environment * specularAlbedo * compensation;
     vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+#ifdef ASSISI_ALPHA_BLEND
+    diffuse *= surf.alpha;
+#endif
     vec3 color;
     if (screenOccluded)
     {
@@ -301,6 +315,10 @@ void main()
     // The level's fog, over everything the surface sends toward the eye. Its
     // colour is a sky evaluation, so it is only worked out where enough fog
     // lies in front of the surface to show.
+    //
+    // Over a see-through surface the fog's own colour is added only as far as
+    // alpha covers what is behind: what shows through already carries the fog
+    // in front of it, and adding it twice would grey a clear pane in the haze.
     vec3  toSurface = vWorldPos - uFrame.cameraPosition.xyz;
     float distance  = length(toSurface);
     vec3  viewRay   = toSurface / max(distance, kEps);
@@ -309,14 +327,24 @@ void main()
         float opacity = FogOpacity(uFrame.fog, distance, uFrame.fog.view.y + toSurface.y);
         if (opacity > kMinVisibleFog)
         {
+#ifdef ASSISI_ALPHA_BLEND
+            color = color * (1.0 - opacity) + FogRadiance(uFrame.fog, viewRay) * (opacity * surf.alpha);
+#else
             color = mix(color, FogRadiance(uFrame.fog, viewRay), opacity);
+#endif
         }
     }
 
     // Placed fog volumes over that, each taking the haze in front of it into
     // its own colour.
+#ifdef ASSISI_ALPHA_BLEND
+    FogVolumesEffect volumes =
+        FogVolumesAlong(uFrame.fogVolumes, uFrame.fog, uFrame.cameraPosition.xyz, viewRay, distance, gl_FragCoord.xy);
+    color = color * volumes.through + volumes.added * surf.alpha;
+#else
     color = ApplyFogVolumes(color, uFrame.fogVolumes, uFrame.fog, uFrame.cameraPosition.xyz, viewRay, distance,
                             gl_FragCoord.xy);
+#endif
 
     // ---- Shadow debug views ----
 
@@ -373,5 +401,10 @@ void main()
     }
 
     // Linear, unbounded radiance; tonemap.frag decides how it looks.
+#ifdef ASSISI_ALPHA_BLEND
+    // Premultiplied: alpha is how much of what is behind this surface hides.
+    outColor = vec4(color, surf.alpha);
+#else
     outColor = vec4(color, 1.0);
+#endif
 }

@@ -5,6 +5,9 @@
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Render/Material.hpp>
 
+#include <bit>
+#include <cstdint>
+
 using Assisi::Geometry::MaterialData;
 using Assisi::Render::Material;
 using Assisi::Render::MaterialTextures;
@@ -148,6 +151,27 @@ TEST_CASE("Material: the alpha cutoff reaches the shader only for a masked mater
     CHECK(material.Pipeline() == Assisi::Render::MeshPipeline::Mask);
 }
 
+TEST_CASE("Material: a see-through material is blended, never cut out")
+{
+    MaterialData src;
+    src.Alpha = Assisi::Geometry::AlphaMode::Blend;
+    src.AlphaCutoff = 0.75f;
+
+    Material material;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK(material.IsBlended());
+    CHECK_FALSE(material.IsAlphaMasked());
+    // Its alpha fades it; none of it is thrown away.
+    CHECK(material.Constants().openPbrParams.w == 0.f);
+
+    src.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK_FALSE(material.IsBlended());
+    src.Alpha = Assisi::Geometry::AlphaMode::Opaque;
+    material.Create(nullptr, 0, src, MaterialTextures{});
+    CHECK_FALSE(material.IsBlended());
+}
+
 TEST_CASE("Material: alpha mode and double-sidedness each pick their own pipeline")
 {
     // The two properties are independent, and the pipeline has to carry both: a
@@ -241,4 +265,55 @@ TEST_CASE("Material: the three material flags occupy distinct bits")
     CHECK((withoutAa &Assisi::Render::kMaterialFlagHasNormalTexture) != 0u);
     CHECK((withoutAa &Assisi::Render::kMaterialFlagEnergyPreservingDiffuse) != 0u);
     CHECK((withoutAa &Assisi::Render::kMaterialFlagSpecularAntiAliasing) == 0u);
+}
+
+TEST_CASE("Material: the emissive texture is read only when the emissive factor is not zero")
+{
+    // The default glows with nothing, so the shader can skip the texture.
+    Material material;
+    material.Create(nullptr, 0, MaterialData{}, MaterialTextures{});
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagHasEmissive) == 0u);
+
+    // One channel is enough: a blue glow must still be read.
+    MaterialData glowing;
+    glowing.EmissiveFactor = glm::vec3(0.f, 0.f, 0.25f);
+    material.Create(nullptr, 0, glowing, MaterialTextures{});
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagHasEmissive) != 0u);
+}
+
+TEST_CASE("Material: the occlusion texture is read only when one is bound and has strength")
+{
+    MaterialTextures bound;
+    bound.hasOcclusionTexture = true;
+    Material material;
+
+    material.Create(nullptr, 0, MaterialData{}, bound);
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagHasOcclusion) != 0u);
+
+    // The white default occludes nothing at any strength.
+    material.Create(nullptr, 0, MaterialData{}, MaterialTextures{});
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagHasOcclusion) == 0u);
+
+    // Nor does a real texture at zero strength.
+    MaterialData off;
+    off.OcclusionStrength = 0.f;
+    material.Create(nullptr, 0, off, bound);
+    CHECK((material.Constants().flags.x & Assisi::Render::kMaterialFlagHasOcclusion) == 0u);
+}
+
+TEST_CASE("Material: every material flag has a bit of its own")
+{
+    const uint32_t flags[] = {Assisi::Render::kMaterialFlagHasNormalTexture,
+                              Assisi::Render::kMaterialFlagEnergyPreservingDiffuse,
+                              Assisi::Render::kMaterialFlagSpecularAntiAliasing,
+                              Assisi::Render::kMaterialFlagShadowsFollowSmoothing,
+                              Assisi::Render::kMaterialFlagHasEmissive,
+                              Assisi::Render::kMaterialFlagHasOcclusion};
+    uint32_t seen = 0u;
+    for (const uint32_t flag : flags)
+    {
+        CHECK(std::popcount(flag) == 1);
+        CHECK((seen & flag) == 0u);
+        seen |= flag;
+    }
 }

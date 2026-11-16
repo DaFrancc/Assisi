@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [1.0, 1.0, 1.0, 1.0],
+  "BaseColorTexture": {
+    "guid": "d4f8c1ba-28c6-429d-bb42-e2a4286bf9bc",
+    "path": "textures/grass_blades.png"
+  },
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.8,
+  "Alpha": 1,
+  "AlphaCutoff": 0.5,
+  "DoubleSided": true,
+  "ShadowsFollowSmoothing": false
+}

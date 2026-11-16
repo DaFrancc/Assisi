@@ -28,6 +28,8 @@ const uint kMatFlagHasNormalTexture        = 1u;
 const uint kMatFlagEnergyPreservingDiffuse = 2u;
 const uint kMatFlagSpecularAntiAliasing    = 4u;
 const uint kMatFlagShadowsFollowSmoothing  = 8u;
+const uint kMatFlagHasEmissive             = 16u;
+const uint kMatFlagHasOcclusion            = 32u;
 
 layout(std430, binding = 0) readonly buffer Materials
 {
@@ -61,8 +63,7 @@ struct Surface
     bool  eonDiffuse;       // material uses the EON diffuse lobe
     bool  followSmoothing;  // shadow lookups lift onto the smooth-shaded curve
     bool  normalMapped;     // normal comes from a normal map, not the mesh alone
-    float alpha;           // base colour alpha; read only by the ASSISI_ALPHA_MASK build
-    float alphaCutoff;      // alpha below this kills the fragment; 0 unless masked
+    float alpha;           // base colour alpha; read by the ASSISI_ALPHA_BLEND build
 };
 
 Surface SampleMaterial()
@@ -74,18 +75,27 @@ Surface SampleMaterial()
     vec4 base = sampleMaterialTex(mat.texIndices.x, vTexCoord) * mat.baseColorFactor;
     s.albedo = base.rgb * mat.openPbrParams.x;
     s.alpha = base.a;
-    s.alphaCutoff = mat.openPbrParams.w;
 
-    // glTF packing: G = roughness, B = metallic.
-    vec2 mr = sampleMaterialTex(mat.texIndices.z, vTexCoord).gb;
-    s.roughness = clamp(mat.metalRoughOcclusion.y * mr.x, 0.04, 1.0);
-    s.metallic  = clamp(mat.metalRoughOcclusion.x * mr.y, 0.0, 1.0);
+    // glTF packing: R = occlusion when packed here, G = roughness, B = metallic.
+    vec4 orm = sampleMaterialTex(mat.texIndices.z, vTexCoord);
+    s.roughness = clamp(mat.metalRoughOcclusion.y * orm.g, 0.04, 1.0);
+    s.metallic  = clamp(mat.metalRoughOcclusion.x * orm.b, 0.0, 1.0);
 
-    float ao = sampleMaterialTex(mat.texIndices.w, vTexCoord).r;
-    s.occlusion = 1.0 + mat.metalRoughOcclusion.z * (ao - 1.0);
+    // Each read below is skipped where it cannot change the answer: a texture
+    // that is the default white, or a factor of zero.
+    s.occlusion = 1.0;
+    if ((mat.flags.x & kMatFlagHasOcclusion) != 0u)
+    {
+        // Occlusion packed into the metal-roughness texture is already read.
+        float ao = mat.texIndices.w == mat.texIndices.z ? orm.r : sampleMaterialTex(mat.texIndices.w, vTexCoord).r;
+        s.occlusion = 1.0 + mat.metalRoughOcclusion.z * (ao - 1.0);
+    }
 
-    s.emissive = sampleMaterialTex(mat.texIndicesEmissive.x, vTexCoord).rgb *
-                 mat.emissiveFactorNormalScale.xyz;
+    s.emissive = vec3(0.0);
+    if ((mat.flags.x & kMatFlagHasEmissive) != 0u)
+    {
+        s.emissive = sampleMaterialTex(mat.texIndicesEmissive.x, vTexCoord).rgb * mat.emissiveFactorNormalScale.xyz;
+    }
 
     s.specColor = mat.specularColorIor.rgb;
     s.specWeight = mat.openPbrParams.y;

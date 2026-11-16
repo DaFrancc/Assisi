@@ -4,7 +4,6 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
-#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Ssao.hpp>
 
@@ -231,7 +230,7 @@ void SsaoPass::Release()
     _height = 0;
 }
 
-void SsaoPass::Render(nvrhi::ICommandList *commandList, const Frame &frame) const
+void SsaoPass::RenderOcclusion(nvrhi::ICommandList *commandList, const Frame &frame) const
 {
     const SsaoSettings settings = Sanitized(frame.settings);
     const SsaoProjection projection = MakeSsaoProjection(frame.projection);
@@ -254,16 +253,13 @@ void SsaoPass::Render(nvrhi::ICommandList *commandList, const Frame &frame) cons
         constants.kernel[i] = glm::vec4(_kernel[i], 0.f);
     }
     commandList->writeBuffer(_constants, &constants, sizeof(constants));
+    RunStep(commandList, Step::Occlusion);
+}
 
-    {
-        ASSISI_PROFILE_GPU_PASS(commandList, "ssao-occlusion");
-        RunStep(commandList, Step::Occlusion);
-    }
-    {
-        ASSISI_PROFILE_GPU_PASS(commandList, "ssao-blur");
-        RunStep(commandList, Step::BlurHorizontal);
-        RunStep(commandList, Step::BlurVertical);
-    }
+void SsaoPass::RenderBlur(nvrhi::ICommandList *commandList) const
+{
+    RunStep(commandList, Step::BlurHorizontal);
+    RunStep(commandList, Step::BlurVertical);
 }
 
 void SsaoPass::RunStep(nvrhi::ICommandList *commandList, Step step) const

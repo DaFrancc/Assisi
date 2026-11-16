@@ -10,6 +10,7 @@
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
@@ -331,6 +332,12 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
         }
     }
     return &incoming;
+}
+
+bool WorldManager::AnyStreaming() const
+{
+    return std::ranges::any_of(_worlds, [](const std::unique_ptr<World> &world)
+                               { return world->state == WorldState::Loading || world->streamingPending; });
 }
 
 bool WorldManager::Destroy(std::string_view name)

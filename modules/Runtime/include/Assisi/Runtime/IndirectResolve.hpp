@@ -6,6 +6,7 @@
 
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Clouds.hpp>
 #include <Assisi/Render/IndirectLighting.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
@@ -55,7 +56,16 @@ struct SpecularProbe
         // Both bodies, so a moonlit night has a moonlit ambient without anything
         // asking for one. Neither disk is integrated — each is already counted
         // once as the direct light.
-        const Render::SkyAmbient fromSky = Render::AmbientFromSky(sky.sun, sky.moon, sky.settings);
+        Render::SkyAmbient fromSky = Render::AmbientFromSky(sky.sun, sky.moon, sky.settings);
+
+        // Clouds spread the sun's light over the sky as they close it. Applied
+        // whether or not the player draws them, so turning clouds off never
+        // changes how a level is lit.
+        if (sky.clouds.present)
+        {
+            fromSky = Render::CloudyAmbient(fromSky, Render::CloudCover(sky.clouds.settings),
+                                            Render::DirectLightFromAbove(sky.sun, sky.moon, sky.settings));
+        }
 
         // A floor, not an addition: it only ever raises, so a level that sets one
         // is unchanged by day — the daytime term is orders above any sensible

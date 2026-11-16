@@ -19,9 +19,11 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Window
@@ -32,6 +34,19 @@ class WindowContext;
 namespace Assisi::Render::Vulkan
 {
 
+/// @brief Whether the Khronos validation layer checks what the renderer asks of
+/// the device.
+enum class Validation
+{
+    /// On in debug builds, with a warning when the layer is not installed, and
+    /// off in optimised ones.
+    BuildDefault,
+    /// On in every build, with synchronisation checks as well, and creation
+    /// fails when the layer is not installed: for a test that must not pass
+    /// unchecked.
+    Required,
+};
+
 /// @brief Owns the Vulkan instance/device/swapchain and the NVRHI device wrapping them.
 ///
 /// Move-only; there is only ever meant to be one of these per window. Construct via
@@ -41,7 +56,18 @@ class VulkanContext
 public:
     /// @brief Creates the Vulkan instance, device, and swapchain for the given window.
     /// @return nullptr on failure.
-    static std::unique_ptr<VulkanContext> Create(const Assisi::Window::WindowContext &window);
+    static std::unique_ptr<VulkanContext> Create(const Assisi::Window::WindowContext &window,
+                                                 Validation validation = Validation::BuildDefault);
+
+    /// @brief How many errors the validation layer and NVRHI have reported since
+    /// the process started. Always 0 while nothing validates.
+    [[nodiscard]] static uint32_t ValidationErrorCount();
+
+    /// @brief Whether the validation layer is checking this device.
+    [[nodiscard]] bool IsValidating() const { return _validating; }
+
+    /// @brief The GPU's name as its driver reports it, e.g. "NVIDIA GeForce RTX 3070".
+    [[nodiscard]] const std::string &GetDeviceName() const { return _deviceName; }
 
     ~VulkanContext();
 
@@ -207,8 +233,7 @@ private:
     /// back to true so IsVSyncEnabled() reports the mode actually in use.
     [[nodiscard]] VkPresentModeKHR ChoosePresentMode();
 
-    /// Installs the validation debug messenger in debug builds; no-op in
-    /// release and when the debug-utils extension wasn't enabled.
+    /// Installs the validation debug messenger; no-op while nothing validates.
     void CreateDebugMessenger();
 
     VkInstance _instance = VK_NULL_HANDLE;
@@ -233,6 +258,13 @@ private:
     bool _textureCompressionBc = false; // see SupportsTextureCompressionBc()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
+    /// The validation layer is on. Set with _debugUtils before the instance
+    /// exists, and fixed for its life.
+    bool _validating = false;
+    /// VK_EXT_debug_utils is enabled: for the layer's messages, or for GPU
+    /// markers. NVRHI is told the same, since it gates markers on it.
+    bool _debugUtils = false;
+    std::string _deviceName;
     VkExtent2D _swapchainExtent{};
     std::vector<VkImage> _swapchainImages;
 
@@ -275,11 +307,8 @@ private:
     float _lastGpuFrameMs = 0.0f;
     double _lastGpuWaitMs = 0.0;
 
-    // Per-pass timing. Capacity is fixed and generous against the ~8 passes the
-    // frame records today; a pass past it is dropped with one warning rather
-    // than growing the pool mid-frame, since allocating a query between
-    // BeginFrame and EndFrame would be a hitch inside the thing being measured.
-    static constexpr uint32_t kMaxTimedPasses = 24;
+    // Per-pass timing, one slot per timer a frame can open (see GpuMarker.hpp).
+    static constexpr uint32_t kMaxTimedPasses = Render::kMaxTimedPasses;
 
     struct PassTimerSlot
     {
