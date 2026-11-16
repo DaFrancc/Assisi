@@ -39,22 +39,25 @@ into it on the left, and a stone basin on the right with a lake on top.
 
 1. Set the wind's `speed` back to `10` and fly up over the basin. The lake's
    waves are far smaller than the sea's, because wind blowing over only 30
-   metres of water can't build big waves. Its banks keep half the wind off, so
-   its ripples come and go in patches as gusts cross it.
+   metres of water can't build big waves. Its banks keep a third of the wind
+   off, and ripples cover it, stronger where each gust crosses.
 2. Select the `Lake` entity and set its `preset` to `Swamp`. The water turns
-   brown and murky, the floor of the basin disappears, and the ripples almost
-   stop, because a swamp keeps most of the wind off.
+   brown and murky, the floor of the basin disappears, and the ripples turn
+   faint and patchy, because a swamp keeps most of the wind off.
 
 ### Step 4: Stand at a pond
 
 Open `levels/PondCheck.alvl`. You stand on the shore of a pond 30 by 20
 metres, with trees around it, in a 6 m/s wind.
 
-1. Watch the water at your feet. It rocks on a gentle swell, but no ripples
-   form: the pond keeps 70% of the wind off, and what reaches the water is too
-   weak to raise them.
-2. Select the `Wind` entity and set `speed` to `12`. Patches of ripples now
-   drift across the pond with the gusts, with smooth water between them.
+1. Watch the water at your feet. It rocks on a gentle swell, and patches of
+   ripples drift across it with the gusts, with smooth water between them: the
+   pond keeps half the wind off, and only the gusts leave enough at the water
+   to raise ripples.
+2. Select the `Wind` entity and set `speed` to `3`. The ripples stop, and the
+   pond only rocks.
+3. Set `speed` to `12`. Ripples now cover most of the pond, rougher in each
+   gust, with calm water only in the deepest lulls.
 
 ## How the waves are made
 
@@ -125,10 +128,10 @@ The presets:
 
 | Preset | What it is |
 |---|---|
-| `Pond` | Small water among trees and banks, which keep 70% of the wind off. Soft ripples, murky green, 1.5 metres clear. |
-| `Lake` | Open water whose banks keep half the wind off. Silty green-brown, 4 metres clear. The default. |
-| `MountainLake` | Clear, cold, deep blue water, 10 metres clear. The slopes around it keep 60% of the wind off. |
-| `Swamp` | Still brown water, half a metre clear. Almost no wind reaches it, and few ripples form. |
+| `Pond` | Small water among trees and banks, which keep half the wind off. Soft ripples, murky green, 1.5 metres clear. |
+| `Lake` | Open water whose banks keep a third of the wind off. Silty green-brown, 4 metres clear. The default. |
+| `MountainLake` | Clear, cold, deep blue water, 10 metres clear. The slopes around it keep 40% of the wind off. |
+| `Swamp` | Still brown water, half a metre clear. Its surroundings keep 55% of the wind off, and its film keeps the ripples faint. |
 
 Picking a preset in the editor fills the greyed fields with its numbers.
 Switching to `Custom` keeps them, so to make your own kind of water, pick the

@@ -207,9 +207,8 @@ inline constexpr float kDefaultLakeChoppiness = 0.4f;
 /// gone.
 inline constexpr float kDefaultLakeClarity = 4.0f;
 inline constexpr float kMinLakeClarity = 0.1f;
-/// Half the wind kept off by its banks and the trees round it, as most small
-/// water has.
-inline constexpr float kDefaultLakeShelter = 0.5f;
+/// A third of the wind kept off by its banks and the trees round it.
+inline constexpr float kDefaultLakeShelter = 0.3f;
 /// Ripples as the wind raises them; twice that is choppy.
 inline constexpr float kDefaultLakeRipples = 1.0f;
 inline constexpr float kMaxLakeRipples = 2.0f;

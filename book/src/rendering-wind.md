@@ -25,10 +25,12 @@ Open `levels/WaterCheck.alvl`. Select the `Wind` entity: `speed` is 10.
 
 1. Set `speed` to `20`, a gale. The sea's waves grow taller and longer, and
    their crests sharpen. Ripples run across the lake with the wind.
-2. Set `speed` to `4`. The lake goes calm and only rocks on its swell: its
-   banks keep half the wind off, and even the strongest gusts leave too little
-   at the water to raise ripples.
-3. Set `speed` to `0`. Only the long swell still rolls through the sea, and the
+2. Set `speed` to `4`. The lake calms: its banks keep a third of the wind off,
+   so the steady wind leaves too little at the water to raise ripples, and
+   they show only in patches where gusts cross it.
+3. Set `speed` to `2`. Even the strongest gusts are too weak now, and the lake
+   only rocks on its swell.
+4. Set `speed` to `0`. Only the long swell still rolls through the sea, and the
    lake only rocks.
 
 ## `Wind` fields

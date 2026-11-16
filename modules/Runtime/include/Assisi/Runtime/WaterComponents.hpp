@@ -80,8 +80,8 @@ enum class LakePreset : std::uint8_t
     /// Clear and cold, partly sheltered by the slopes around it: the stones
     /// show metres down.
     MountainLake,
-    /// Still brown water under a film: hardly any wind reaches it and hardly
-    /// any ripples form.
+    /// Still brown water under a film: most of the wind is kept off, and the
+    /// gusts raise only faint ripples.
     Swamp,
     /// The fields below, as authored.
     Custom,
@@ -140,16 +140,21 @@ struct Lake
 /// are LakeSettings' own defaults, so a preset stays a complete answer:
 /// switching from Swamp to Pond brings the pond's colour as well as its
 /// ripples.
+///
+/// Each shelter is set against Render::kRippleOnsetSpeed, which the wind left
+/// at the water must pass: in a gentle 5 m/s breeze with the default gusts, a
+/// lake ripples where the steady wind reaches it, a pond and a swamp only where
+/// a gust does. Much more shelter and no ordinary wind ever ripples them.
 inline constexpr std::array<Assisi::Render::LakeSettings, static_cast<std::size_t>(LakePreset::Custom) + 1>
 kLakePresets{{
-    // Pond: most of the wind kept off, soft ripples, a faint slow swell, and
+    // Pond: half the wind kept off, soft ripples, a faint slow swell, and
     // murky green water a metre and a half clear.
     Assisi::Render::LakeSettings{.color = glm::vec3(0.008f, 0.018f, 0.01f),
                                  .crestColor = glm::vec3(0.03f, 0.08f, 0.04f),
                                  .spread = 0.3f,
                                  .choppiness = 0.4f,
                                  .clarity = 1.5f,
-                                 .shelter = 0.7f,
+                                 .shelter = 0.5f,
                                  .ripples = 0.7f,
                                  .swellHeight = 0.015f,
                                  .swellPeriod = 1.4f},
@@ -162,18 +167,18 @@ kLakePresets{{
     Assisi::Render::LakeSettings{.color = glm::vec3(0.002f, 0.012f, 0.03f),
                                  .crestColor = glm::vec3(0.02f, 0.12f, 0.16f),
                                  .clarity = 10.0f,
-                                 .shelter = 0.6f,
+                                 .shelter = 0.4f,
                                  .swellHeight = 0.02f,
                                  .swellPeriod = 1.8f},
 
-    // Swamp: brown and half a metre clear, with almost no wind, few ripples
-    // and hardly any swell.
+    // Swamp: brown and half a metre clear, with most of the wind kept off,
+    // faint ripples under its film and hardly any swell.
     Assisi::Render::LakeSettings{.color = glm::vec3(0.012f, 0.01f, 0.004f),
                                  .crestColor = glm::vec3(0.06f, 0.05f, 0.02f),
                                  .spread = 0.4f,
                                  .choppiness = 0.2f,
                                  .clarity = 0.5f,
-                                 .shelter = 0.85f,
+                                 .shelter = 0.55f,
                                  .ripples = 0.25f,
                                  .swellHeight = 0.005f,
                                  .swellPeriod = 1.6f},
