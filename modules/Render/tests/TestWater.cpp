@@ -48,8 +48,7 @@ double SpectrumVariance(const WaveSpectrum &spectrum)
     for (int32_t i = 0; i < kSteps; ++i)
     {
         const double omega = (static_cast<double>(i) + 0.5) * step;
-        sum += static_cast<double>(JonswapSpectrum(static_cast<float>(omega), spectrum.peakFrequency, spectrum.alpha)) *
-               step;
+        sum += static_cast<double>(JonswapSpectrum(static_cast<float>(omega), spectrum)) * step;
     }
     return sum;
 }
@@ -150,7 +149,7 @@ TEST_CASE("The JONSWAP spectrum peaks at its peak frequency, and no wind raises 
     for (int32_t i = 1; i < 4000; ++i)
     {
         const float omega = sea.peakFrequency * 0.001f * static_cast<float>(i);
-        const float value = JonswapSpectrum(omega, sea.peakFrequency, sea.alpha);
+        const float value = JonswapSpectrum(omega, sea);
         if (value > best)
         {
             best = value;
@@ -162,21 +161,33 @@ TEST_CASE("The JONSWAP spectrum peaks at its peak frequency, and no wind raises 
     const WaveSpectrum calm = SpectrumOf(WindSea{.windSpeed = 0.0f});
     CHECK(calm.peakFrequency == 0.0f);
     CHECK(SignificantWaveHeight(calm) == 0.0f);
-    CHECK(JonswapSpectrum(0.0f, sea.peakFrequency, sea.alpha) == 0.0f);
+    CHECK(JonswapSpectrum(0.0f, sea) == 0.0f);
 }
 
 TEST_CASE("Swell has the height and period it was given")
 {
     for (const Swell &swell : {Swell{.height = 1.5f, .period = 11.0f}, Swell{.height = 4.0f, .period = 18.0f},
-                               Swell{.height = 0.3f, .period = 6.0f}})
+                               Swell{.height = 0.3f, .period = 6.0f}, Swell{.height = 0.015f, .period = 1.4f}})
     {
         CAPTURE(swell.height);
         const WaveSpectrum spectrum = SpectrumOf(swell);
         CHECK(spectrum.peakFrequency == doctest::Approx(2.0 * std::numbers::pi / static_cast<double>(swell.period)));
-        CHECK(4.0 * std::sqrt(SpectrumVariance(spectrum)) == doctest::Approx(swell.height).epsilon(0.01));
-        CHECK(SignificantWaveHeight(spectrum) == doctest::Approx(swell.height).epsilon(0.01));
+        const double height = static_cast<double>(swell.height);
+        CHECK(4.0 * std::sqrt(SpectrumVariance(spectrum)) / height == doctest::Approx(1.0).epsilon(0.01));
+        CHECK(static_cast<double>(SignificantWaveHeight(spectrum)) / height == doctest::Approx(1.0).epsilon(0.01));
     }
     CHECK(SpectrumOf(Swell{.height = 0.0f}).peakFrequency == 0.0f);
+}
+
+TEST_CASE("Swell arrives smooth: far above its peak it holds almost nothing")
+{
+    // The short waves a storm raised died out on the way, so swell on calm
+    // water is glassy and does not glitter.
+    const WaveSpectrum swell = SpectrumOf(Swell{.height = 0.015f, .period = 1.4f});
+    WaveSpectrum untouched = swell;
+    untouched.tailAlpha = untouched.alpha;
+    const float far = 10.0f * swell.peakFrequency;
+    CHECK(JonswapSpectrum(far, swell) < 0.05f * JonswapSpectrum(far, untouched));
 }
 
 TEST_CASE("A longer fetch grows longer, taller waves")
@@ -209,6 +220,49 @@ TEST_CASE("A pond's waves are smaller and shorter than the open sea's")
     const double pondHeight = SignificantHeight(4.0f, 100.0f);
     CHECK(pondHeight < seaHeight / 50.0);
     CHECK(JonswapPeakFrequency(4.0f, 100.0f) > JonswapPeakFrequency(12.0f, kOceanFetch) * 5.0f);
+}
+
+TEST_CASE("Ripples are set by the wind, not the fetch: a pond's are the open sea's in the same wind")
+{
+    const WaveSpectrum sea = SpectrumOf(WindSea{.windSpeed = 6.0f, .fetch = kOceanFetch});
+    const WaveSpectrum pond = SpectrumOf(WindSea{.windSpeed = 6.0f, .fetch = 20.0f});
+    // The open sea's tail is JONSWAP's own, so the sea is drawn as before.
+    CHECK(sea.tailAlpha == sea.alpha);
+    // A ripple a centimetre long, far above the pond's peak.
+    const float ripple = DeepWaterFrequency(static_cast<float>(kTwoPi / 0.01));
+    CHECK(JonswapSpectrum(ripple, pond) / JonswapSpectrum(ripple, sea) == doctest::Approx(1.0f).epsilon(0.02));
+}
+
+TEST_CASE("A lake keeps the height measured seas give its fetch")
+{
+    // Hasselmann et al. (1973): a fetch-limited sea's variance is 1.6e-7·(g·F/U²)
+    // in units of U⁴/g².
+    constexpr double kFetchLawScale = 1.6e-7;
+    constexpr double kGravity = 9.81;
+    constexpr float kWind = 6.0f;
+    for (const float fetch : {300.0f, 1000.0f})
+    {
+        CAPTURE(fetch);
+        const double wind2 = static_cast<double>(kWind * kWind);
+        const double variance = kFetchLawScale * (kGravity * static_cast<double>(fetch) / wind2) * wind2 * wind2 /
+                                (kGravity * kGravity);
+        CHECK(SignificantHeight(kWind, fetch) / (4.0 * std::sqrt(variance)) == doctest::Approx(1.0).epsilon(0.1));
+    }
+}
+
+TEST_CASE("The significant height is the spectrum's own, however young the sea")
+{
+    for (const WindSea &wind :
+         {WindSea{.windSpeed = 1.8f, .fetch = 10.0f}, WindSea{.windSpeed = 6.0f, .fetch = 20.0f},
+          WindSea{.windSpeed = 6.0f, .fetch = 300.0f}, WindSea{.windSpeed = 20.0f, .fetch = 1000.0f},
+          WindSea{.windSpeed = 40.0f, .fetch = 10.0f}, WindSea{.windSpeed = 12.0f, .fetch = kOceanFetch}})
+    {
+        CAPTURE(wind.windSpeed);
+        CAPTURE(wind.fetch);
+        const WaveSpectrum spectrum = SpectrumOf(wind);
+        CHECK(static_cast<double>(SignificantWaveHeight(spectrum)) / (4.0 * std::sqrt(SpectrumVariance(spectrum))) ==
+              doctest::Approx(1.0).epsilon(0.01));
+    }
 }
 
 TEST_CASE("The spread normalization matches the gamma functions it stands for")
@@ -266,6 +320,135 @@ TEST_CASE("Long waves travel faster than short ones")
     // twelve metres a second, a one-metre wave about one and a quarter.
     CHECK(DeepWaterFrequency(longWave) / longWave == doctest::Approx(12.49).epsilon(0.01));
     CHECK(DeepWaterFrequency(shortWave) / shortWave == doctest::Approx(1.249).epsilon(0.01));
+}
+
+TEST_CASE("Surface tension speeds ripples up, and leaves waves as gravity moves them")
+{
+    const float twoPi = 2.0f * std::numbers::pi_v<float>;
+    // A metre-long wave is gravity's alone.
+    CHECK(WaveFrequency(twoPi) == doctest::Approx(DeepWaterFrequency(twoPi)).epsilon(0.001));
+    // A centimetre ripple travels twice as fast as gravity alone would carry it.
+    const float centimetre = twoPi / 0.01f;
+    CHECK(WaveFrequency(centimetre) / DeepWaterFrequency(centimetre) == doctest::Approx(1.98).epsilon(0.02));
+    // The slowest ripple of all is 1.7 cm long and travels at 23 cm/s.
+    float slowest = std::numeric_limits<float>::max();
+    float slowestLength = 0.0f;
+    for (float wavelength = 0.005f; wavelength < 0.05f; wavelength += 0.0001f)
+    {
+        const float k = twoPi / wavelength;
+        const float speed = WaveFrequency(k) / k;
+        if (speed < slowest)
+        {
+            slowest = speed;
+            slowestLength = wavelength;
+        }
+    }
+    CHECK(slowest == doctest::Approx(0.231).epsilon(0.02));
+    CHECK(slowestLength == doctest::Approx(0.0172).epsilon(0.03));
+}
+
+TEST_CASE("No ripple shorter than the shortest wave is raised")
+{
+    const WaterWaves pond = Pond();
+    const WaterCascades cascades = LayoutCascades(pond);
+    const uint32_t finest = kWaterCascadeCount - 1u;
+    const float tooShort = 2.0f * std::numbers::pi_v<float> / (kShortestWaterWave * 0.9f);
+    REQUIRE(tooShort < cascades.maxWavenumber[finest]);
+    CHECK(WaveAmplitude(pond, cascades, finest, glm::vec2(tooShort, 0.0f)) == 0.0f);
+    const float longEnough = 2.0f * std::numbers::pi_v<float> / (kShortestWaterWave * 1.1f);
+    if (longEnough >= cascades.minWavenumber[finest])
+    {
+        CHECK(WaveAmplitude(pond, cascades, finest, glm::vec2(longEnough, 0.0f)) > 0.0f);
+    }
+}
+
+TEST_CASE("Each cascade's slopes are shared out by energy between swell, ripples and longer wind waves")
+{
+    // A pond in a light breeze: every wave the wind raises is a ripple, however
+    // wide a band the cascade holding it spans.
+    const WaterWaves breeze{.wind = WindSea{.windSpeed = 1.8f, .fetch = 20.0f, .spread = 0.3f}, .swell = Swell{}};
+    const WaterCascades breezeCascades = LayoutCascades(breeze);
+    const CascadeShares breezeShares = ShareCascades(breeze, breezeCascades);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(breezeShares.swell[c] == 0.0f);
+    }
+    CHECK(breezeShares.ripples[0] > 0.95f);
+
+    // The same pond rocked by a gentle swell: the largest cascade holds the
+    // swell, which no gust may switch off, and the finest the ripples.
+    WaterWaves rocking = breeze;
+    rocking.swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread};
+    const WaterCascades rockingCascades = LayoutCascades(rocking);
+    const CascadeShares rockingShares = ShareCascades(rocking, rockingCascades);
+    CHECK(rockingShares.swell[0] > 0.95f);
+    CHECK(rockingShares.ripples[kWaterCascadeCount - 1u] > 0.95f);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(rockingShares.swell[c] + rockingShares.ripples[c] <= 1.0f + 1.0e-5f);
+    }
+
+    // The open sea's largest cascade holds no ripples.
+    const WaterWaves sea = OpenSea();
+    CHECK(ShareCascades(sea, LayoutCascades(sea)).ripples[0] == 0.0f);
+}
+
+TEST_CASE("Ripples need a breath of wind, and grow steeper as it rises")
+{
+    // No ripples in air too still to raise them, whatever the steady wind.
+    CHECK(RippleStrength(0.5f, 4.0f) == 0.0f);
+    CHECK(RippleStrength(kRippleOnsetSpeed, 4.0f) == 0.0f);
+    CHECK(RippleStrength(2.0f, 0.0f) == 0.0f);
+    // Natural water's surface film keeps a light breeze from raising any.
+    CHECK(RippleStrength(2.5f, 2.5f) == 0.0f);
+    // In the steady wind itself, once grown, ripples are as the spectrum made
+    // them.
+    CHECK(RippleStrength(6.0f, 6.0f) == doctest::Approx(1.0f));
+    // A gust steepens them, a lull flattens them, as Cox and Munk's slopes do.
+    CHECK(RippleStrength(9.0f, 6.0f) > 1.0f);
+    CHECK(RippleStrength(4.0f, 6.0f) < 1.0f);
+    float previous = 0.0f;
+    for (float speed = 0.0f; speed < 12.0f; speed += 0.25f)
+    {
+        const float strength = RippleStrength(speed, 6.0f);
+        CHECK(strength >= previous);
+        previous = strength;
+    }
+}
+
+TEST_CASE("A lake's longer waves grow from nothing at its upwind shore")
+{
+    CHECK(FetchGrowth(0.0f, 30.0f) == 0.0f);
+    CHECK(FetchGrowth(30.0f, 30.0f) == doctest::Approx(1.0f));
+    CHECK(FetchGrowth(45.0f, 30.0f) == doctest::Approx(1.0f));
+    // Halfway across, the waves are about two thirds as tall, as JONSWAP's
+    // height grows with fetch.
+    CHECK(FetchGrowth(15.0f, 30.0f) == doctest::Approx(std::pow(0.5f, kFetchGrowthExponent)));
+    CHECK(FetchGrowth(15.0f, 30.0f) == doctest::Approx(0.68f).epsilon(0.01));
+    // Endless water has no shore to grow from.
+    CHECK(FetchGrowth(5.0f, 0.0f) == 1.0f);
+
+    // The exponent is what JONSWAP gives the waves near the peak, √α/ωp²: those
+    // are the ones that grow from the shore, while the ripples above them are
+    // the wind's.
+    const auto peakHeight = [](float fetch)
+                            {
+                                const WaveSpectrum sea = SpectrumOf(WindSea{.windSpeed = 6.0f, .fetch = fetch});
+                                return std::sqrt(sea.alpha) / (sea.peakFrequency * sea.peakFrequency);
+                            };
+    CHECK(peakHeight(100.0f) / peakHeight(400.0f) == doctest::Approx(std::pow(0.25f, kFetchGrowthExponent)).epsilon(0.01));
+}
+
+TEST_CASE("The longest wave is the longer of the wind sea's and the swell's peaks")
+{
+    const WaterWaves sea = OpenSea();
+    const float swellLength = 9.81f * 11.0f * 11.0f / (2.0f * std::numbers::pi_v<float>);
+    CHECK(LongestWavelength(sea) >= swellLength * 0.999f);
+    CHECK(LayoutCascades(sea).tileLength[0] == doctest::Approx(std::min(kWaterTileWavelengths * LongestWavelength(sea),
+                                                                        kWaterMaxTileLength)));
+    CHECK(LongestWavelength(WaterWaves{}) == 0.0f);
 }
 
 TEST_CASE("Rounded frequencies make the waves repeat exactly after the loop")
@@ -373,11 +556,13 @@ TEST_CASE("Every wavenumber the spectrum holds belongs to exactly one cascade")
             CAPTURE(magnitude);
             CHECK(holders <= 1u);
             // Far below the peak the spectrum is a denormal the build flushes
-            // to zero; only energy that shows has to land somewhere.
+            // to zero; only energy that shows has to land somewhere. Nothing
+            // shorter than the shortest wave is raised at all.
             constexpr float kVisibleShare = 1e-9f;
             const WaveSpectrum wind = SpectrumOf(waves.wind);
-            const float atPeak = JonswapSpectrum(wind.peakFrequency, wind.peakFrequency, wind.alpha);
-            if (JonswapSpectrum(DeepWaterFrequency(magnitude), wind.peakFrequency, wind.alpha) > atPeak * kVisibleShare)
+            const float atPeak = JonswapSpectrum(wind.peakFrequency, wind);
+            const bool raised = magnitude <= 2.0f * std::numbers::pi_v<float> / kShortestWaterWave;
+            if (raised && JonswapSpectrum(DeepWaterFrequency(magnitude), wind) > atPeak * kVisibleShare)
             {
                 CHECK(holders == 1u);
             }

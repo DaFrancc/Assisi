@@ -902,6 +902,28 @@ struct CharacterLocomotion
                               .gravityScale = locomotion.gravityScale};
 }
 
+/// @brief After an edit moved @p locomotion's preset off @p previous, fills the
+/// four fields it greys out with the preset's numbers: they then show what the
+/// character uses, and a switch to Custom starts from the preset that was
+/// showing. Nothing if the preset did not change.
+inline void SettleLocomotionPreset(CharacterLocomotion &locomotion, LocomotionPreset previous)
+{
+    if (locomotion.preset == previous)
+    {
+        return;
+    }
+    const LocomotionPreset source = locomotion.preset == LocomotionPreset::Custom ? previous : locomotion.preset;
+    if (!(source < LocomotionPreset::Custom))
+    {
+        return;
+    }
+    const LocomotionSettings &settings = kLocomotionPresets[static_cast<std::size_t>(source)];
+    locomotion.walkSpeed = settings.walkSpeed;
+    locomotion.crouchSpeedScale = settings.crouchSpeedScale;
+    locomotion.jumpSpeed = settings.jumpSpeed;
+    locomotion.gravityScale = settings.gravityScale;
+}
+
 /// @brief Half-Life 2's movement: friction, then speed gained only along the
 /// direction asked for.
 ///

@@ -16,10 +16,11 @@ layout(push_constant) uniform SpectrumConstants
     vec4  tileLength;
     vec4  minWavenumber;
     vec4  maxWavenumber;
-    vec4  wind;    // peak, alpha, youth, bearing in radians
-    vec4  swell;   // the same
-    vec4  spreads; // x, y = the wind's spread and swell; z, w = the swell's
-    uvec4 seed;    // x
+    vec4  wind;      // peak, alpha, youth, bearing in radians
+    vec4  swell;     // the same
+    vec4  spreads;   // x, y = the wind's spread and swell; z, w = the swell's
+    vec4  tailAlpha; // x = the wind's, y = the swell's
+    uvec4 seed;      // x
 } pc;
 
 layout(binding = 384, rgba32f) uniform writeonly image2DArray uSpectrum;
@@ -27,13 +28,14 @@ layout(binding = 384, rgba32f) uniform writeonly image2DArray uSpectrum;
 float Amplitude(uint cascade, vec2 k)
 {
     float kLength = length(k);
-    if (kLength <= 0.0 || kLength < pc.minWavenumber[cascade] || kLength >= pc.maxWavenumber[cascade])
+    if (kLength <= 0.0 || kLength < pc.minWavenumber[cascade] || kLength >= pc.maxWavenumber[cascade] ||
+        kLength > kTwoPi / kShortestWaterWave)
     {
         return 0.0;
     }
     float step   = kTwoPi / pc.tileLength[cascade];
-    float energy = WavenumberSpectrum(WaveShape(pc.wind, pc.spreads.x, pc.spreads.y), k, kLength) +
-                   WavenumberSpectrum(WaveShape(pc.swell, pc.spreads.z, pc.spreads.w), k, kLength);
+    float energy = WavenumberSpectrum(WaveShape(pc.wind, pc.tailAlpha.x, pc.spreads.x, pc.spreads.y), k, kLength) +
+                   WavenumberSpectrum(WaveShape(pc.swell, pc.tailAlpha.y, pc.spreads.z, pc.spreads.w), k, kLength);
     return sqrt(0.5 * energy * step * step);
 }
 

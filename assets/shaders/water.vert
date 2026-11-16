@@ -3,7 +3,7 @@
 
 // Places one vertex of a water patch: on the body's grid, blended toward the
 // coarser level near the patch's outer range, clamped inside a lake, and moved
-// by every cascade's waves.
+// by every cascade's waves, each as tall as the gusts and the shore leave it.
 
 #include "water/surface.glsl"
 
@@ -23,6 +23,13 @@ layout(location = 3) out float vViewZ;
 layout(location = 4) out float vPlaneDistance;
 // How far above the still water the waves lifted it, in significant heights.
 layout(location = 5) out float vCrest;
+// Each cascade's share of the spectrum's height here, and the ripples' share,
+// which the slopes finer than any cascade follow. Both change over metres, so
+// the pixels take them from the vertices rather than working them out again.
+layout(location = 6) out vec4  vWaveScale;
+layout(location = 7) out float vRippleScale;
+// Each cascade's first copy's amplitude; the second's is √(1 − a²).
+layout(location = 8) out vec4  vFirstCopy;
 
 const uint kPatchVertices = kWaterPatchQuads + 1u;
 
@@ -57,16 +64,26 @@ void main()
 
     // Each cascade at the mip whose texels match the vertex spacing, so a
     // coarse vertex takes the waves averaged over its patch, not one point.
-    float vertexSpacing = spacing * (1.0 + morph);
-    vec3  displacement  = vec3(0.0);
+    float     vertexSpacing = spacing * (1.0 + morph);
+    vec3      displacement  = vec3(0.0);
+    WaveScale scale         = WaveScaleAt(grid, local);
+    vec4      firstCopy     = vec4(1.0);
     for (uint cascade = 0u; cascade < kSurfaceCascadeCount; ++cascade)
     {
+        vec2 copies       = BreakupWeights(grid, cascade);
+        firstCopy[cascade] = copies.x;
         float lod    = max(log2(vertexSpacing * float(kSurfaceFftSize) / uWater.tileLength[cascade]), 0.0);
-        float weight = 1.0 - smoothstep(kDisplacementFadeStartLod, kDisplacementFadeEndLod, lod);
-        if (weight > 0.0)
+        float weight = scale.cascades[cascade] * (1.0 - smoothstep(kDisplacementFadeStartLod, kDisplacementFadeEndLod, lod));
+        if (weight > 0.0 && uWater.shown[cascade] != 0.0)
         {
-            vec3 uv = vec3(WaterUv(grid, cascade), float(cascade));
-            displacement += weight * textureLod(sampler2DArray(uDisplacement, uWaterSampler), uv, lod).xyz;
+            vec3 uv      = vec3(WaterUv(grid, cascade), float(cascade));
+            vec3 sampled = copies.x * textureLod(sampler2DArray(uDisplacement, uWaterSampler), uv, lod).xyz;
+            if (copies.y > 0.0)
+            {
+                vec3 shifted = uv + vec3(kBreakupShift, 0.0);
+                sampled += copies.y * textureLod(sampler2DArray(uDisplacement, uWaterSampler), shifted, lod).xyz;
+            }
+            displacement += weight * sampled;
         }
     }
 
@@ -77,5 +94,8 @@ void main()
     vViewZ         = (uFrame.view * vec4(position, 1.0)).z;
     vPlaneDistance = position.y;
     vCrest         = displacement.y / max(uWater.surface.y, kMinSignificantHeight);
+    vWaveScale     = scale.cascades;
+    vRippleScale   = scale.ripples;
+    vFirstCopy     = firstCopy;
     gl_Position    = uFrame.viewProjection * vec4(position, 1.0);
 }

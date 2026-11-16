@@ -41,7 +41,7 @@ void main()
         {
             vec2  k       = vec2(frequency) * perTurn;
             vec4  initial = texelFetch(uSpectrum, ivec3(int(column), int(row), int(cascade)), 0);
-            float phase   = LoopedFrequency(DeepWaterFrequency(length(k))) * pc.loopSeconds;
+            float phase   = LoopedFrequency(WaveFrequency(length(k))) * pc.loopSeconds;
             vec2  turn    = vec2(cos(phase), sin(phase));
             vec2  height  = ComplexMultiply(initial.xy, turn) + ComplexMultiply(initial.zw, vec2(turn.x, -turn.y));
             WaveFields(height, k, pc.choppiness, fields01, fields23);

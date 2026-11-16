@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <initializer_list>
+#include <limits>
 
 namespace Assisi::Render
 {
@@ -32,6 +34,14 @@ constexpr float kJonswapWidthAbove = 0.09f;
 /// would underflow first.
 constexpr float kJonswapLowestShare = 0.1f;
 /// @}
+
+/// Above the peak, the energy a young sea holds over the open sea's fades as
+/// exp(-kPeakFalloffPerAge·Ω·(ω/ωp - 1)), where Ω = U·ωp/g is its inverse wave
+/// age: Elfouhaily et al.'s cutoff of the long waves, "A Unified Directional
+/// Spectrum for Long and Short Wind-Driven Waves" (1997). Short waves are set
+/// by the wind where they are, not by the fetch, so the younger the sea the
+/// sooner its tail is the open sea's. 1/√10.
+constexpr float kPeakFalloffPerAge = 0.31622777f;
 
 /// @name The spread around the bearing, Hasselmann's as Horvath fits it
 /// @{
@@ -75,6 +85,22 @@ constexpr uint32_t kSpectrumSteps = 4000u;
 constexpr float kSignificantHeightDeviations = 4.0f;
 /// @}
 
+/// @name The variance a young sea's tail gives up, tabulated by inverse wave age
+/// @{
+/// Linear between entries this far apart, which is within a thousandth of a
+/// sea's variance.
+constexpr float kTailAgeStep = 0.5f;
+/// Past the 56 a hurricane makes over the shortest fetch; younger seas take its
+/// entry.
+constexpr float kMaxTabledAge = 64.0f;
+constexpr uint32_t kTailAgeEntries = static_cast<uint32_t>(kMaxTabledAge / kTailAgeStep) + 1u;
+/// Steps from the peak to kSpectrumHighestShare times it.
+constexpr uint32_t kTailSteps = 2000u;
+/// @}
+
+/// Steps of ln k across a cascade's band when sharing out its slopes.
+constexpr uint32_t kShareSteps = 64u;
+
 /// Mixed into a draw's key for the second of its two uniform numbers: the
 /// golden ratio's bits, so the two never share a hash.
 constexpr uint32_t kSecondDrawKey = 0x9E3779B9u;
@@ -110,29 +136,82 @@ Swell Sanitized(Swell swell)
     swell.height = ClampFinite(swell.height, 0.0f, kMaxSwellHeight, defaults.height);
     swell.period = ClampFinite(swell.period, kMinSwellPeriod, kMaxSwellPeriod, defaults.period);
     swell.bearingDegrees = WrapBearing(swell.bearingDegrees, defaults.bearingDegrees);
+    swell.spread = ClampFinite(swell.spread, 0.0f, 1.0f, defaults.spread);
     return swell;
 }
 
-/// ∫ S(ω) dω for @p spectrum, by the midpoint rule.
+/// ∫ S(ω) dω for a sea of α @p alpha throughout, peaking at @p peakFrequency,
+/// by the midpoint rule.
 double SpectrumVariance(float peakFrequency, float alpha)
 {
+    const WaveSpectrum spectrum{.peakFrequency = peakFrequency, .alpha = alpha, .tailAlpha = alpha};
     const double step = static_cast<double>(peakFrequency) * kSpectrumHighestShare / kSpectrumSteps;
     double variance = 0.0;
     for (uint32_t i = 0; i < kSpectrumSteps; ++i)
     {
         const double omega = (static_cast<double>(i) + 0.5) * step;
-        variance += static_cast<double>(JonswapSpectrum(static_cast<float>(omega), peakFrequency, alpha)) * step;
+        variance += static_cast<double>(JonswapSpectrum(static_cast<float>(omega), spectrum)) * step;
     }
     return variance;
 }
 
 /// ∫ x^-5·exp(-1.25·x^-4)·γ^r(x) dx: the variance of a JONSWAP sea of α = 1
-/// peaking at 1, in units where g = 1. A sea's variance is α·g²/ωp⁴ times it.
+/// throughout, peaking at 1, in units where g = 1. Such a sea's variance is
+/// α·g²/ωp⁴ times it.
 float JonswapShapeVariance()
 {
     static const float variance =
         static_cast<float>(SpectrumVariance(1.0f, 1.0f) / static_cast<double>(kWaterGravity * kWaterGravity));
     return variance;
+}
+
+/// How much of a young sea's energy over its tail's is left at @p omega: all of
+/// it up to the peak, fading above.
+float PeakShare(float omega, float peakFrequency, float inverseAge)
+{
+    if (omega <= peakFrequency)
+    {
+        return 1.0f;
+    }
+    return std::exp(-kPeakFalloffPerAge * inverseAge * (omega / peakFrequency - 1.0f));
+}
+
+/// The variance of a JONSWAP shape of α = 1 peaking at 1, weighted by how much
+/// of its energy above the peak fades away at @p inverseAge, in units where
+/// g = 1. A sea's variance is g²/ωp⁴·(α·JonswapShapeVariance() - (α - tail α)
+/// times it).
+double TailDeficit(float inverseAge)
+{
+    const WaveSpectrum unit{.peakFrequency = 1.0f, .alpha = 1.0f, .tailAlpha = 1.0f};
+    const double step = (kSpectrumHighestShare - 1.0) / kTailSteps;
+    double deficit = 0.0;
+    for (uint32_t i = 0; i < kTailSteps; ++i)
+    {
+        const float omega = static_cast<float>(1.0 + (static_cast<double>(i) + 0.5) * step);
+        const double faded = 1.0 - static_cast<double>(PeakShare(omega, 1.0f, inverseAge));
+        deficit += static_cast<double>(JonswapSpectrum(omega, unit)) * faded * step;
+    }
+    return deficit / static_cast<double>(kWaterGravity * kWaterGravity);
+}
+
+std::array<float, kTailAgeEntries> MakeTailDeficitTable()
+{
+    std::array<float, kTailAgeEntries> table{};
+    for (uint32_t i = 0; i < kTailAgeEntries; ++i)
+    {
+        table[i] = static_cast<float>(TailDeficit(static_cast<float>(i) * kTailAgeStep));
+    }
+    return table;
+}
+
+/// TailDeficit at @p inverseAge, from a table built on first use.
+float TabledTailDeficit(float inverseAge)
+{
+    static const std::array<float, kTailAgeEntries> table = MakeTailDeficitTable();
+    const float position = std::clamp(inverseAge, 0.0f, kMaxTabledAge) / kTailAgeStep;
+    const uint32_t below = std::min(static_cast<uint32_t>(position), kTailAgeEntries - 2u);
+    const float along = position - static_cast<float>(below);
+    return table[below] + (table[below + 1u] - table[below]) * along;
 }
 
 /// Γ(s + 1)/Γ(s + ½) for s ≥ 0.
@@ -173,7 +252,7 @@ float WavenumberSpectrum(const WaveSpectrum &spectrum, glm::vec2 k, float kLengt
     const glm::vec2 toward(std::sin(bearing), -std::cos(bearing));
     const float theta = std::atan2(toward.x * k.y - toward.y * k.x, glm::dot(toward, k));
     const float omegaPerK = kWaterGravity / (2.0f * omega);
-    return JonswapSpectrum(omega, spectrum.peakFrequency, spectrum.alpha) *
+    return JonswapSpectrum(omega, spectrum) *
            DirectionalSpread(theta, SpreadExponent(omega, spectrum), spectrum.spread) * omegaPerK / kLength;
 }
 
@@ -197,6 +276,24 @@ WaterWaves Sanitized(WaterWaves waves)
     waves.swell = Sanitized(waves.swell);
     waves.choppiness = ClampFinite(waves.choppiness, 0.0f, kMaxWaterChoppiness, defaults.choppiness);
     return waves;
+}
+
+LakeSettings Sanitized(LakeSettings settings)
+{
+    const LakeSettings defaults;
+    for (glm::vec3 *color : {&settings.color, &settings.crestColor})
+    {
+        const bool finite = std::isfinite(color->x) && std::isfinite(color->y) && std::isfinite(color->z);
+        *color = finite ? glm::max(*color, glm::vec3(0.0f)) : glm::vec3(0.0f);
+    }
+    settings.spread = ClampFinite(settings.spread, 0.0f, 1.0f, defaults.spread);
+    settings.choppiness = ClampFinite(settings.choppiness, 0.0f, kMaxWaterChoppiness, defaults.choppiness);
+    settings.clarity = ClampFinite(settings.clarity, kMinLakeClarity, std::numeric_limits<float>::max(), defaults.clarity);
+    settings.shelter = ClampFinite(settings.shelter, 0.0f, 1.0f, defaults.shelter);
+    settings.ripples = ClampFinite(settings.ripples, 0.0f, kMaxLakeRipples, defaults.ripples);
+    settings.swellHeight = ClampFinite(settings.swellHeight, 0.0f, kMaxLakeSwellHeight, defaults.swellHeight);
+    settings.swellPeriod = ClampFinite(settings.swellPeriod, kMinSwellPeriod, kMaxLakeSwellPeriod, defaults.swellPeriod);
+    return settings;
 }
 
 float JonswapPeakFrequency(float windSpeed, float fetch)
@@ -224,8 +321,10 @@ WaveSpectrum SpectrumOf(const WindSea &wind)
     {
         return WaveSpectrum{};
     }
+    const float alpha = JonswapAlpha(wind.windSpeed, wind.fetch);
     return WaveSpectrum{.peakFrequency = peak,
-                        .alpha = JonswapAlpha(wind.windSpeed, wind.fetch),
+                        .alpha = alpha,
+                        .tailAlpha = std::min(alpha, JonswapAlpha(wind.windSpeed, kOceanFetch)),
                         .youth = wind.windSpeed * peak / kWaterGravity - kGrownWindRatio,
                         .bearingDegrees = wind.bearingDegrees,
                         .spread = wind.spread,
@@ -238,22 +337,27 @@ WaveSpectrum SpectrumOf(const Swell &swell)
     {
         return WaveSpectrum{};
     }
-    // Hs = 4·√(α·g²/ωp⁴·shape), solved for α.
+    // Swell arrives smooth: its tail fades to nothing above the peak, as a fully
+    // grown sea's extra energy does. Hs = 4·√(α·g²/ωp⁴·(shape - faded tail)),
+    // solved for α.
     const float peak = kTwoPi / swell.period;
     const float peak2 = peak * peak;
     const float deviation = swell.height / kSignificantHeightDeviations;
+    const float shape = JonswapShapeVariance() - TabledTailDeficit(kGrownWindRatio);
+    const float alpha = deviation * deviation * peak2 * peak2 / (kWaterGravity * kWaterGravity * shape);
     return WaveSpectrum{.peakFrequency = peak,
-                        .alpha = deviation * deviation * peak2 * peak2 /
-                                 (kWaterGravity * kWaterGravity * JonswapShapeVariance()),
+                        .alpha = alpha,
+                        .tailAlpha = 0.0f,
                         .youth = 0.0f,
                         .bearingDegrees = swell.bearingDegrees,
-                        .spread = 0.0f,
+                        .spread = swell.spread,
                         .swell = 1.0f};
 }
 
-float JonswapSpectrum(float omega, float peakFrequency, float alpha)
+float JonswapSpectrum(float omega, const WaveSpectrum &spectrum)
 {
-    if (peakFrequency <= 0.0f || alpha <= 0.0f || omega < peakFrequency * kJonswapLowestShare)
+    const float peakFrequency = spectrum.peakFrequency;
+    if (peakFrequency <= 0.0f || spectrum.alpha <= 0.0f || omega < peakFrequency * kJonswapLowestShare)
     {
         return 0.0f;
     }
@@ -263,6 +367,8 @@ float JonswapSpectrum(float omega, float peakFrequency, float alpha)
     const float ratio = peakFrequency / omega;
     const float ratio2 = ratio * ratio;
     const float omega2 = omega * omega;
+    const float peakShare = PeakShare(omega, peakFrequency, spectrum.youth + kGrownWindRatio);
+    const float alpha = spectrum.tailAlpha + (spectrum.alpha - spectrum.tailAlpha) * peakShare;
     return alpha * kWaterGravity * kWaterGravity / (omega2 * omega2 * omega) * std::exp(-kJonswapRise * ratio2 * ratio2) *
            enhancement;
 }
@@ -273,11 +379,15 @@ float SignificantWaveHeight(const WaveSpectrum &spectrum)
     {
         return 0.0f;
     }
-    // The spectrum's shape only scales with its peak, so its variance is
-    // α·g²/ωp⁴ times one integral, taken once; the gather asks this of every
-    // body every frame.
+    // The shape only scales with the peak, apart from how soon a young sea's
+    // extra energy fades above it, so the variance is g²/ωp⁴ times α by one
+    // integral less α - tail α by another that depends on the wave age alone,
+    // both taken once; the gather asks this of every body every frame.
     const float peak2 = spectrum.peakFrequency * spectrum.peakFrequency;
-    return kSignificantHeightDeviations * kWaterGravity * std::sqrt(spectrum.alpha * JonswapShapeVariance()) / peak2;
+    const float deficit =
+        (spectrum.alpha - spectrum.tailAlpha) * TabledTailDeficit(spectrum.youth + kGrownWindRatio);
+    const float variance = std::max(spectrum.alpha * JonswapShapeVariance() - deficit, 0.0f);
+    return kSignificantHeightDeviations * kWaterGravity * std::sqrt(variance) / peak2;
 }
 
 float SpreadExponent(float omega, const WaveSpectrum &spectrum)
@@ -319,13 +429,19 @@ float DeepWaterFrequency(float k)
     return std::sqrt(kWaterGravity * std::max(k, 0.0f));
 }
 
+float WaveFrequency(float k)
+{
+    const float kPositive = std::max(k, 0.0f);
+    return std::sqrt(kWaterGravity * kPositive + kWaterTensionPerDensity * kPositive * kPositive * kPositive);
+}
+
 float LoopedFrequency(float omega)
 {
     const float turn = static_cast<float>(2.0 * std::numbers::pi / kWaterLoopSeconds);
     return std::floor(omega / turn) * turn;
 }
 
-WaterCascades LayoutCascades(const WaterWaves &waves)
+float LongestWavelength(const WaterWaves &waves)
 {
     float longest = 0.0f;
     for (const float peak : {SpectrumOf(waves.wind).peakFrequency, SpectrumOf(waves.swell).peakFrequency})
@@ -335,9 +451,13 @@ WaterCascades LayoutCascades(const WaterWaves &waves)
             longest = std::max(longest, kTwoPi * kWaterGravity / (peak * peak));
         }
     }
+    return longest;
+}
 
+WaterCascades LayoutCascades(const WaterWaves &waves)
+{
     WaterCascades cascades;
-    float tile = std::clamp(kWaterTileWavelengths * longest, kWaterMinTileLength, kWaterMaxTileLength);
+    float tile = std::clamp(kWaterTileWavelengths * LongestWavelength(waves), kWaterMinTileLength, kWaterMaxTileLength);
     for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
     {
         cascades.tileLength[c] = tile;
@@ -352,6 +472,77 @@ WaterCascades LayoutCascades(const WaterWaves &waves)
     constexpr uint32_t kLast = kWaterCascadeCount - 1u;
     cascades.maxWavenumber[kLast] = static_cast<float>(kWaterFftSize / 2u) * kTwoPi / cascades.tileLength[kLast];
     return cascades;
+}
+
+CascadeShares ShareCascades(const WaterWaves &waves, const WaterCascades &cascades)
+{
+    const WaveSpectrum wind = SpectrumOf(waves.wind);
+    const WaveSpectrum swell = SpectrumOf(waves.swell);
+    const float shortest = kTwoPi / kShortestWaterWave;
+    const float ripple = kTwoPi / kRippleWavelength;
+    CascadeShares shares;
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        // The largest cascade's band starts at zero; its first wave is one
+        // across the tile.
+        const float low = std::max(cascades.minWavenumber[c], kTwoPi / cascades.tileLength[c]);
+        const float high = std::min(cascades.maxWavenumber[c], shortest);
+        if (!(high > low))
+        {
+            continue;
+        }
+        const float step = std::log(high / low) / static_cast<float>(kShareSteps);
+        double swellSlopes = 0.0;
+        double rippleSlopes = 0.0;
+        double total = 0.0;
+        double steadyHeights = 0.0;
+        for (uint32_t i = 0; i < kShareSteps; ++i)
+        {
+            const float k = low * std::exp((static_cast<float>(i) + 0.5f) * step);
+            const float omega = DeepWaterFrequency(k);
+            // The height variance in one step of ln k: F(k)·k·step, where
+            // F(k) = S(ω)·dω/dk = S(ω)·g/(2ω); the slopes' is k² times it.
+            const double heightWeight = static_cast<double>(k * kWaterGravity / (2.0f * omega) * step);
+            const double slopeWeight = heightWeight * static_cast<double>(k * k);
+            const double windHere = static_cast<double>(JonswapSpectrum(omega, wind));
+            const double swellHere = static_cast<double>(JonswapSpectrum(omega, swell));
+            const bool isRipple = k >= ripple;
+            swellSlopes += swellHere * slopeWeight;
+            rippleSlopes += isRipple ? windHere * slopeWeight : 0.0;
+            total += (windHere + swellHere) * slopeWeight;
+            steadyHeights += (swellHere + (isRipple ? 0.0 : windHere)) * heightWeight;
+        }
+        shares.steadyHeightVariance[c] = static_cast<float>(steadyHeights);
+        if (total > 0.0)
+        {
+            shares.swell[c] = static_cast<float>(swellSlopes / total);
+            shares.ripples[c] = static_cast<float>(rippleSlopes / total);
+            shares.slopeVariance[c] = static_cast<float>(total);
+        }
+    }
+    return shares;
+}
+
+float RippleStrength(float localSpeed, float steadySpeed)
+{
+    if (!(steadySpeed > 0.0f) || !(localSpeed > 0.0f))
+    {
+        return 0.0f;
+    }
+    const float t = std::clamp((localSpeed - kRippleOnsetSpeed) / (kRippleGrownSpeed - kRippleOnsetSpeed), 0.0f, 1.0f);
+    // Hermite's smoothstep, as GLSL's.
+    const float onset = t * t * (3.0f - 2.0f * t);
+    return onset * std::sqrt((kRippleSlopeBase + kRippleSlopePerSpeed * localSpeed) /
+                             (kRippleSlopeBase + kRippleSlopePerSpeed * steadySpeed));
+}
+
+float FetchGrowth(float localFetch, float fetch)
+{
+    if (!(fetch > 0.0f))
+    {
+        return 1.0f;
+    }
+    return std::pow(std::clamp(localFetch / fetch, 0.0f, 1.0f), kFetchGrowthExponent);
 }
 
 glm::ivec2 FrequencyOfTexel(glm::uvec2 texel, uint32_t size)
@@ -388,7 +579,8 @@ glm::vec2 GaussianPair(uint32_t seed, uint32_t cascade, glm::ivec2 frequency)
 float WaveAmplitude(const WaterWaves &waves, const WaterCascades &cascades, uint32_t cascade, glm::vec2 k)
 {
     const float kLength = glm::length(k);
-    if (kLength <= 0.0f || kLength < cascades.minWavenumber[cascade] || kLength >= cascades.maxWavenumber[cascade])
+    if (kLength <= 0.0f || kLength < cascades.minWavenumber[cascade] || kLength >= cascades.maxWavenumber[cascade] ||
+        kLength > kTwoPi / kShortestWaterWave)
     {
         return 0.0f;
     }
@@ -413,7 +605,7 @@ glm::vec4 InitialWave(const WaterWaves &waves, const WaterCascades &cascades, ui
 
 glm::vec2 WaveAt(glm::vec4 initial, glm::vec2 k, float loopSeconds)
 {
-    const float phase = LoopedFrequency(DeepWaterFrequency(glm::length(k))) * loopSeconds;
+    const float phase = LoopedFrequency(WaveFrequency(glm::length(k))) * loopSeconds;
     const glm::vec2 turn(std::cos(phase), std::sin(phase));
     return Multiply(glm::vec2(initial.x, initial.y), turn) + Multiply(glm::vec2(initial.z, initial.w), glm::vec2(turn.x, -turn.y));
 }

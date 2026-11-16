@@ -90,8 +90,10 @@ The easiest way to choose a sky is `preset`:
 | `Custom` | Uses the fields below as you set them. |
 
 While `preset` is anything but `Custom`, the fields below are greyed out and
-not used. To start a sky of your own from a preset, note the preset's look,
-switch to `Custom`, and change one field at a time.
+not used. Picking a preset in the editor fills them with its numbers, so you
+can read what it does. To start a sky of your own from a preset, pick the
+preset, then switch to `Custom`: the fields keep the preset's numbers, and you
+change one at a time from there.
 
 <details>
 <summary>The <code>Custom</code> fields</summary>
@@ -273,9 +275,10 @@ scattered clouds at three in the afternoon.
 | `changeRate` | How fast the clouds change shape: `0` never, `1` about as fast as real cumulus, which form and fade over a quarter of an hour. |
 | `seed` | Which sky of its kind: the same settings with another seed give other clouds. |
 
-While `preset` is anything but `Custom`, the first five fields are greyed out.
-The change rate and the seed are never greyed out: they work with every
-preset.
+While `preset` is anything but `Custom`, the first five fields are greyed out,
+and picking a preset fills them with its numbers. Switching to `Custom` keeps
+those numbers, so you start from the preset you had. The change rate and the
+seed are never greyed out: they work with every preset.
 
 The wind carries the clouds as time passes, in the editor as well as in the
 game, whether or not the `TimeOfDay` system runs. They move half as fast again

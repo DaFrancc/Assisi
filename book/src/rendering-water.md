@@ -37,11 +37,27 @@ into it on the left, and a stone basin on the right with a lake on top.
 
 ### Step 3: Look at the lake
 
-1. Fly up over the basin. The lake has small waves of its own, under the same
-   wind as the sea. They stay far smaller than the sea's, because wind blowing
-   over only 30 metres of water can't build big waves.
-2. Select the `Lake` entity and set `clarity` to `0.5`. The water turns murky,
-   and the floor of the basin disappears.
+1. Set the wind's `speed` back to `10` and fly up over the basin. The lake's
+   waves are far smaller than the sea's, because wind blowing over only 30
+   metres of water can't build big waves. Its banks keep a third of the wind
+   off, and ripples cover it, stronger where each gust crosses.
+2. Select the `Lake` entity and set its `preset` to `Swamp`. The water turns
+   brown and murky, the floor of the basin disappears, and the ripples turn
+   faint and patchy, because a swamp keeps most of the wind off.
+
+### Step 4: Stand at a pond
+
+Open `levels/PondCheck.alvl`. You stand on the shore of a pond 30 by 20
+metres, with trees around it, in a 6 m/s wind.
+
+1. Watch the water at your feet. It rocks on a gentle swell, and patches of
+   ripples drift across it with the gusts, with smooth water between them: the
+   pond keeps half the wind off, and only the gusts leave enough at the water
+   to raise ripples.
+2. Select the `Wind` entity and set `speed` to `3`. The ripples stop, and the
+   pond only rocks.
+3. Set `speed` to `12`. Ripples now cover most of the pond, rougher in each
+   gust, with calm water only in the deepest lulls.
 
 ## How the waves are made
 
@@ -56,11 +72,20 @@ Three things decide the waves:
   toward. Most waves travel the way the wind blows; `spread` lets some travel
   off to the sides.
 - **Fetch:** how far the wind has blown over open water. A long fetch grows
-  long, tall waves. An `Ocean`'s fetch is the open sea's. A `Lake`'s is its own
-  width along the wind, which is why a pond only ripples.
+  long, tall waves. An `Ocean`'s fetch is the open sea's. A `Lake`'s is the
+  longest stretch of it the wind crosses, so a pond gets no long waves. A
+  lake's waves also grow across it: they are smallest at the shore the wind
+  comes from and tallest at the far side.
 - **Swell:** long, even waves from a storm far away, which an `Ocean` adds to
   the local wind's waves. You set it as a forecast gives it: a height and the
-  seconds between crests.
+  seconds between crests. A `Lake` has a gentle swell of its own, a centimetre
+  or two high, which keeps it rocking when the air is still.
+- **Gusts:** ripples, the waves shorter than about 10 centimetres, grow and die
+  within seconds, so they follow the [gusts](rendering-wind.md#gusts) where
+  they are. They need about 3 m/s of wind at the water to appear, and are fully
+  grown at 6 m/s. In a light wind only the gusts raise them, so patches of
+  ripples drift across smooth water. Ripples are the same size on a pond as at
+  sea, because the wind raises them where it blows, however far it has come.
 
 `choppiness` pulls the surface sideways toward each crest, which makes crests
 sharp and troughs broad, the way real waves look. At `0` the surface only moves
@@ -68,7 +93,9 @@ up and down, and the waves look rounded, like jelly.
 
 Long waves travel faster than short ones, as at sea: a swell 200 metres long
 moves at about 18 metres a second, a ripple 10 centimetres long at under half a
-metre a second.
+metre a second. Ripples a couple of centimetres long are held together by
+surface tension, which makes them faster than gravity alone would: none moves
+slower than about 23 centimetres a second.
 
 ## `Ocean` fields
 
@@ -86,12 +113,29 @@ metre a second.
 
 ## `Lake` fields
 
-A `Lake` has the same `spread`, `choppiness`, `color`, `crestColor`, `clarity`
-and `seed` as an `Ocean`, and no swell. It adds:
-
 | Field | Meaning |
 |---|---|
+| `preset` | What kind of water it is: `Pond`, `Lake`, `MountainLake`, `Swamp` or `Custom`. Every preset but `Custom` sets the fields from `color` to `swellPeriod`, and the editor greys those fields out. |
+| `color`, `crestColor`, `spread`, `choppiness`, `clarity` | The same as an `Ocean`'s. |
+| `shelter` | How much of the level's wind the banks and trees around it keep off the water, from `0`, none, to `1`, all of it. Water stays calm for about fifty tree heights downwind of a tree line. |
+| `ripples` | How strongly its ripples show, from `0` to `2`. `0` is glassy, as under a film of oil or pollen; `1` is as the wind raises them; `2` is choppy. |
+| `swellHeight` | The height of its gentle swell in metres, up to `0.5`. `0` leaves it still when the air is still. |
+| `swellPeriod` | Seconds between the swell's crests, from 1 to 4. Longer swell is longer and slower. |
 | `size` | Its width along the entity's x and z, in metres. Scaling the entity scales it. |
+| `seed` | Which lake of its kind. The same settings with another seed give other waves. |
+
+The presets:
+
+| Preset | What it is |
+|---|---|
+| `Pond` | Small water among trees and banks, which keep half the wind off. Soft ripples, murky green, 1.5 metres clear. |
+| `Lake` | Open water whose banks keep a third of the wind off. Silty green-brown, 4 metres clear. The default. |
+| `MountainLake` | Clear, cold, deep blue water, 10 metres clear. The slopes around it keep 40% of the wind off. |
+| `Swamp` | Still brown water, half a metre clear. Its surroundings keep 55% of the wind off, and its film keeps the ripples faint. |
+
+Picking a preset in the editor fills the greyed fields with its numbers.
+Switching to `Custom` keeps them, so to make your own kind of water, pick the
+preset closest to it, switch to `Custom`, and change the fields from there.
 
 Put a `Lake` where ground surrounds it at or above its height, so that the
 ground hides its edges.

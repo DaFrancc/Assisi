@@ -55,6 +55,22 @@ TEST_CASE("A Wind out of range is brought into it")
     CHECK(Resolved(Wind{.speed = nan}).speed == 0.0f);
     CHECK(Resolved(Wind{.bearingDegrees = 450.0f}).bearingDegrees == doctest::Approx(90.0f));
     CHECK(Resolved(Wind{.bearingDegrees = nan}).bearingDegrees == 0.0f);
+    CHECK(Resolved(Wind{.gustFactor = 0.5f}).gustFactor == Runtime::kSteadyGustFactor);
+    CHECK(Resolved(Wind{.gustFactor = 7.0f}).gustFactor == Runtime::kMaxGustFactor);
+    CHECK(Resolved(Wind{.gustFactor = nan}).gustFactor == Runtime::kDefaultGustFactor);
+}
+
+TEST_CASE("The gusts ride the wind: its direction across the world, its speed and its gust factor")
+{
+    const Render::Gusts east = Runtime::GustsOf(Wind{.speed = 6.0f, .bearingDegrees = 90.0f, .gustFactor = 1.7f});
+    CHECK(east.toward.x == doctest::Approx(1.0f));
+    CHECK(east.toward.y == doctest::Approx(0.0f));
+    CHECK(east.speed == 6.0f);
+    CHECK(east.gustFactor == 1.7f);
+    // North is -z.
+    const Render::Gusts north = Runtime::GustsOf(Wind{.bearingDegrees = 0.0f});
+    CHECK(north.toward.y == doctest::Approx(-1.0f));
+    CHECK(Runtime::GustsOf(Runtime::kStillAir).speed == 0.0f);
 }
 
 TEST_CASE("A second Wind is counted, and the first is the wind")

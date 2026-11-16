@@ -20,6 +20,9 @@ layout(location = 2) in vec2  vGridPos;
 layout(location = 3) in float vViewZ;
 layout(location = 4) in float vPlaneDistance;
 layout(location = 5) in float vCrest;
+layout(location = 6) in vec4  vWaveScale;
+layout(location = 7) in float vRippleScale;
+layout(location = 8) in vec4  vFirstCopy;
 
 // What the water sends toward the eye, added to the scene; and how much of
 // what is behind it still shows, per colour, which the blend multiplies it by.
@@ -96,19 +99,43 @@ struct Slopes
 
 Slopes SlopesHere()
 {
+    float finer = uWater.surface.z * vRippleScale * vRippleScale;
+
     Slopes slopes;
     slopes.mean       = vec2(0.0);
-    slopes.covariance = vec3(uWater.surface.z, uWater.surface.z, 0.0);
+    slopes.covariance = vec3(finer, finer, 0.0);
     for (uint cascade = 0u; cascade < kSurfaceCascadeCount; ++cascade)
     {
-        vec3  uv     = vec3(WaterUv(vGridPos, cascade), float(cascade));
-        vec4  moment = texture(sampler2DArray(uSlopes, uWaterSampler), uv);
-        float crossMoment = texture(sampler2DArray(uDisplacement, uWaterSampler), uv).w;
-        float trust = clamp(textureQueryLod(sampler2DArray(uSlopes, uWaterSampler), uv.xy).y / kTrustedVarianceLod, 0.0, 1.0);
+        // Hidden for the whole body, so the implicit mips below stay defined.
+        if (uWater.shown[cascade] == 0.0)
+        {
+            continue;
+        }
+        vec3  uv        = vec3(WaterUv(vGridPos, cascade), float(cascade));
+        float trust     = clamp(textureQueryLod(sampler2DArray(uSlopes, uWaterSampler), uv.xy).y / kTrustedVarianceLod, 0.0, 1.0);
+        float first     = vFirstCopy[cascade];
+        vec2  copies    = vec2(first, sqrt(max(1.0 - first * first, 0.0)));
+        vec2  mean      = vec2(0.0);
+        vec3  spread    = vec3(0.0);
+        uint copyCount = uWater.breakup[cascade] != 0.0 ? 2u : 1u;
+        for (uint copy = 0u; copy < copyCount; ++copy)
+        {
+            float amount      = copies[copy];
+            vec3  at          = copy == 0u ? uv : uv + vec3(kBreakupShift, 0.0);
+            vec4  moment      = texture(sampler2DArray(uSlopes, uWaterSampler), at);
+            float crossMoment = texture(sampler2DArray(uDisplacement, uWaterSampler), at).w;
+            // Copies scaled by a and b add their means by a and b and, being
+            // unrelated, their variances by a² and b².
+            mean += amount * moment.xy;
+            spread += amount * amount *
+                      vec3(max(moment.zw - moment.xy * moment.xy, vec2(0.0)), crossMoment - moment.x * moment.y);
+        }
+        // A cascade scaled by s has its slopes' means scaled by s and their
+        // squares by s².
+        float s = vWaveScale[cascade];
         // Bands are independent: their means add, and so do their variances.
-        slopes.mean += moment.xy;
-        slopes.covariance +=
-            trust * vec3(max(moment.zw - moment.xy * moment.xy, vec2(0.0)), crossMoment - moment.x * moment.y);
+        slopes.mean += s * mean;
+        slopes.covariance += trust * s * s * spread;
     }
     slopes.covariance.xy = max(slopes.covariance.xy, vec2(kMinSlopeVariance));
     return slopes;

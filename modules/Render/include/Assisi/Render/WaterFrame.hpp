@@ -6,6 +6,7 @@
 /// and the patches that draw it.
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Gusts.hpp>
 #include <Assisi/Render/Water.hpp>
 #include <Assisi/Render/WaterGrid.hpp>
 
@@ -26,6 +27,8 @@ struct WaterLook
     /// How far light goes into the water before all but a third of it is
     /// gone, in metres. Shallower than this the ground shows through.
     float clarity = 1.0f;
+    /// How strongly its ripples show: 0 glassy, 1 as the wind raises them.
+    float ripples = 1.0f;
 };
 
 /// @brief One body of water in view.
@@ -37,6 +40,15 @@ struct WaterBody
     WaterCascades cascades;
     WaterWaves waves;
     WaterLook look;
+    /// Which way the wind blows across the body, in its own frame along its x
+    /// and z: a unit vector, or zero in still air.
+    glm::vec2 windInBody{0.0f};
+    /// The longest stretch of it the wind crosses, in metres, which its waves
+    /// grow across from the shore upwind; zero for endless water.
+    float crossing = 0.0f;
+    /// How much of the level's wind reaches it, 0 to 1: what its shelter
+    /// leaves. Its gusts are this share of the level's.
+    float windShare = 1.0f;
     /// The significant height of all its waves together, in metres.
     float significantHeight = 0.0f;
     /// How far its waves move the surface from its plane, at most, in metres.
@@ -53,6 +65,8 @@ struct WaterFrame
     std::vector<WaterNode> nodes;
     /// One body's patches while they are picked; kept for its capacity.
     std::vector<WaterNode> scratch;
+    /// The level's wind and its gusts, which every body's ripples follow.
+    Gusts gusts;
     /// How many bodies the scene holds, in view or not: while any does, their
     /// wave textures are kept for when they come back into view.
     uint32_t placed = 0u;
@@ -62,6 +76,7 @@ struct WaterFrame
         bodies.clear();
         nodes.clear();
         scratch.clear();
+        gusts = Gusts{};
         placed = 0u;
     }
 };

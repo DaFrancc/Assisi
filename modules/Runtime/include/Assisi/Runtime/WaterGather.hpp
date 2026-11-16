@@ -27,9 +27,13 @@ struct WaterGatherView
 /// @brief An Ocean's waves under @p wind.
 [[nodiscard]] Render::WaterWaves OceanWaves(const Ocean &ocean, const Wind &wind);
 
+/// @brief The longest stretch of a rectangle @p extent metres wide, whose x
+/// axis points along @p axisX in the world, that @p wind crosses, in metres.
+[[nodiscard]] float LakeCrossing(const Wind &wind, glm::vec2 extent, glm::vec2 axisX);
+
 /// @brief A Lake's waves, @p wind blowing over a rectangle @p extent metres
 /// wide whose x axis points along @p axisX in the world: the fetch is the
-/// rectangle's width along the wind.
+/// longest stretch the wind crosses.
 [[nodiscard]] Render::WaterWaves LakeWaves(const Lake &lake, const Wind &wind, glm::vec2 extent, glm::vec2 axisX);
 
 /// @brief Fills @p frame with every Ocean and Lake @p view sees, and the

@@ -685,3 +685,35 @@ TEST_CASE("A locomotion preset answers for the fields it covers, and Custom read
           doctest::Approx(Physics::kSourceLocomotion.walkSpeed).epsilon(kSpeedTolerance));
     CHECK(WalkSpeedReached(Physics::LocomotionPreset::Custom) == doctest::Approx(1.f).epsilon(kSpeedTolerance));
 }
+
+TEST_CASE("Leaving a locomotion preset for Custom starts from the preset, and picking one shows its numbers")
+{
+    using Physics::LocomotionPreset;
+
+    for (const LocomotionPreset preset : {LocomotionPreset::Source, LocomotionPreset::Arcade})
+    {
+        CAPTURE(static_cast<int>(preset));
+        // Its fields as a level saved before they followed the preset left them.
+        Physics::CharacterLocomotion locomotion{.walkSpeed = 1.f, .crouchSpeedScale = 1.f, .jumpSpeed = 1.f,
+                                                .gravityScale = 2.f, .preset = preset};
+        const Physics::LocomotionSettings expected = Physics::ToLocomotionSettings(locomotion);
+        locomotion.preset = LocomotionPreset::Custom;
+        Physics::SettleLocomotionPreset(locomotion, preset);
+        const Physics::LocomotionSettings custom = Physics::ToLocomotionSettings(locomotion);
+        CHECK(custom.walkSpeed == expected.walkSpeed);
+        CHECK(custom.crouchSpeedScale == expected.crouchSpeedScale);
+        CHECK(custom.jumpSpeed == expected.jumpSpeed);
+        CHECK(custom.gravityScale == expected.gravityScale);
+    }
+
+    // Picking a preset fills the greyed fields with what it uses.
+    Physics::CharacterLocomotion picked{.walkSpeed = 1.f, .preset = LocomotionPreset::Custom};
+    picked.preset = LocomotionPreset::Arcade;
+    Physics::SettleLocomotionPreset(picked, LocomotionPreset::Custom);
+    CHECK(picked.walkSpeed == Physics::kArcadeLocomotion.walkSpeed);
+
+    // An edit that leaves the preset alone leaves the fields alone.
+    Physics::CharacterLocomotion custom{.walkSpeed = 1.f, .preset = LocomotionPreset::Custom};
+    Physics::SettleLocomotionPreset(custom, LocomotionPreset::Custom);
+    CHECK(custom.walkSpeed == 1.f);
+}

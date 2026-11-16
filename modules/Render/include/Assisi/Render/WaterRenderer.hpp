@@ -46,6 +46,30 @@ inline constexpr float kUnresolvedWaterSlopeVariance = 0.0015f;
 /// what hides the line where water meets ground.
 inline constexpr float kWaterShoreFade = 0.4f;
 
+/// @name When a cascade is not drawn
+/// @{
+/// A cascade is not drawn if its slope variance stays under this even in the
+/// strongest gust, and its swell and longer wind waves stay under the height
+/// below. Slopes this faint, about a quarter of a degree, blur the sun's
+/// reflection by no more than the sun's own width.
+inline constexpr float kMinShownWaterSlopeVariance = 2.0e-5f;
+/// A millimetre's spread of height, squared: waves lower than this do not
+/// visibly move the surface.
+inline constexpr float kMinShownWaterHeightVariance = 1.0e-6f;
+/// @}
+
+/// @name Breaking up a tile that would repeat across a lake
+/// @{
+/// A cascade whose tile fits more than this many times across a lake's shorter
+/// side is drawn twice, shifted, and blended by noise, so no two neighbouring
+/// tiles match.
+inline constexpr float kWaterRepeatsHidden = 2.0f;
+/// The blending noise changes every this many of the cascade's tiles.
+inline constexpr float kWaterBreakupCellTiles = 1.5f;
+/// The noise repeats after this many of its cells each way.
+inline constexpr uint32_t kWaterBreakupPeriod = 64u;
+/// @}
+
 /// @brief water_spectrum.comp's push constants, field for field.
 struct WaterSpectrumConstants
 {
@@ -57,6 +81,8 @@ struct WaterSpectrumConstants
     glm::vec4 swell{0.0f};
     /// The wind's spread and swell, then the swell's.
     glm::vec4 spreads{0.0f};
+    /// x = the wind's alpha far above its peak, y = the swell's.
+    glm::vec4 tailAlpha{0.0f};
     glm::uvec4 seed{0u};
 };
 
@@ -84,6 +110,27 @@ struct WaterDrawConstants
     glm::vec4 surface{0.0f};
     glm::vec4 color{0.0f};
     glm::vec4 crestColor{0.0f};
+    /// Per cascade, how much of its slopes are the wind sea's ripples, which
+    /// follow the gusts.
+    glm::vec4 rippleShare{0.0f};
+    /// Per cascade, how much of its slopes are swell, which neither gusts nor
+    /// the shore change.
+    glm::vec4 swellShare{0.0f};
+    /// xy = which way the wind blows in the body's frame; z = the longest
+    /// stretch of it the wind crosses, zero for endless water, whose waves do
+    /// not grow from a shore; w = the share of the level's wind that reaches it.
+    glm::vec4 wind{0.0f};
+    /// x = how strongly its ripples show, 1 as the wind raises them.
+    glm::vec4 ripples{0.0f};
+    /// Cascade c's place in its blending noise, in metres: [c / 2].xy or .zw.
+    std::array<glm::vec4, 2> breakupOffsets{};
+    /// Per cascade, 1 where its tile would repeat across the body, so it is
+    /// drawn twice and blended; 0 where it is drawn once.
+    glm::vec4 breakup{0.0f};
+    /// Per cascade, 0 where it is too faint to see in any gust (see
+    /// kMinShownWaterSlopeVariance), so it is not read at all; 1 where it is drawn.
+    glm::vec4 shown{0.0f};
+    GustConstants gusts;
 };
 
 /// @brief What one view's water is drawn with.
@@ -91,15 +138,20 @@ struct WaterDrawView
 {
     /// What the lit pass measures from.
     glm::dvec3 camera{0.0};
+    /// The shared clock the gusts move with, in seconds.
+    double seconds = 0.0;
     /// The mesh pass's frame bindings, set 0 of the surface pipeline.
     nvrhi::IBindingSet *frameBindings = nullptr;
     /// The scene's depth per pixel, as SceneDistancePass makes it.
     nvrhi::ITexture *sceneDistance = nullptr;
 };
 
-/// @brief The constants water.vert and water.frag draw @p body with, seen from
-/// @p camera.
-[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, glm::dvec3 camera);
+/// @brief The constants water.vert and water.frag draw @p body with in
+/// @p gusts, seen from @p camera at @p seconds. @p shares is
+/// ShareCascades of its waves and cascades, which change far less often than
+/// once a frame.
+[[nodiscard]] WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const CascadeShares &shares,
+                                                        const Gusts &gusts, glm::dvec3 camera, double seconds);
 
 /// @brief water_spectrum.comp's constants for @p body.
 [[nodiscard]] WaterSpectrumConstants MakeWaterSpectrumConstants(const WaterBody &body);
@@ -162,6 +214,8 @@ private:
         const nvrhi::IBuffer *drawSetNodes = nullptr;
         WaterCascades cascades;
         WaterWaves waves;
+        /// How each cascade's slopes divide, for the waves the spectrum holds.
+        CascadeShares shares;
         uint32_t idleFrames = 0u;
         bool spectrumWritten = false;
     };

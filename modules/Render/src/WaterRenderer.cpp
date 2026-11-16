@@ -32,9 +32,10 @@ constexpr float kEndlessBounds = 1.0e9f;
 constexpr size_t kNodeGrowth = 2u;
 constexpr size_t kMinNodeCapacity = 256u;
 
-static_assert(sizeof(WaterSpectrumConstants) == 112u, "Must match water_spectrum.comp's push constants.");
+static_assert(sizeof(WaterSpectrumConstants) == 128u,
+              "Must match water_spectrum.comp's push constants, and stay within the 128 bytes Vulkan guarantees.");
 static_assert(sizeof(WaterRowConstants) == 24u, "Must match water_fft_rows.comp's push constants.");
-static_assert(sizeof(WaterDrawConstants) == 128u, "Must match water/surface.glsl's WaterConstants.");
+static_assert(sizeof(WaterDrawConstants) == 288u, "Must match water/surface.glsl's WaterConstants.");
 static_assert(sizeof(WaterNode) == 16u, "Must match water/surface.glsl's WaterNode.");
 
 nvrhi::TextureHandle MakeWaveTexture(nvrhi::IDevice *device, nvrhi::Format format, uint32_t mips, const char *name)
@@ -70,7 +71,8 @@ glm::vec4 ShapeOf(const WaveSpectrum &spectrum)
 
 } // namespace
 
-WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, glm::dvec3 camera)
+WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, const CascadeShares &shares, const Gusts &gusts,
+                                          glm::dvec3 camera, double seconds)
 {
     WaterDrawConstants constants;
     const glm::dvec2 cameraAcross(camera.x, camera.z);
@@ -99,6 +101,45 @@ WaterDrawConstants MakeWaterDrawConstants(const WaterBody &body, glm::dvec3 came
                                   kUnresolvedWaterSlopeVariance, kWaterShoreFade);
     constants.color = glm::vec4(body.look.color, body.look.clarity);
     constants.crestColor = glm::vec4(body.look.crestColor, 0.0f);
+    constants.rippleShare = PerCascade(shares.ripples);
+    constants.swellShare = PerCascade(shares.swell);
+    constants.wind = glm::vec4(body.windInBody, endless ? 0.0f : body.crossing, body.windShare);
+    constants.ripples = glm::vec4(body.look.ripples, 0.0f, 0.0f, 0.0f);
+
+    // Endless water's tiles are hidden under its long waves; a lake's that would
+    // repeat across it are broken up.
+    const float shorterSide = endless ? 0.0f : 2.0f * std::min(body.region.halfExtent.x, body.region.halfExtent.y);
+    std::array<glm::vec2, kWaterCascadeCount> breakupOffsets{};
+    std::array<float, kWaterCascadeCount> breakup{};
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        const double noisePeriod = static_cast<double>(body.cascades.tileLength[c] * kWaterBreakupCellTiles) *
+                                   static_cast<double>(kWaterBreakupPeriod);
+        breakupOffsets[c] = CascadeOffset(cameraAcross, noisePeriod);
+        breakup[c] = body.cascades.tileLength[c] * kWaterRepeatsHidden < shorterSide ? 1.0f : 0.0f;
+    }
+    constants.breakupOffsets = {glm::vec4(breakupOffsets[0], breakupOffsets[1]),
+                                glm::vec4(breakupOffsets[2], breakupOffsets[3])};
+    constants.breakup = PerCascade(breakup);
+
+    // The most of each cascade any point can show: the swell whole, the longer
+    // wind waves grown to their full fetch, and the ripples in the strongest
+    // gust that reaches the water. Waves that still move the surface are drawn
+    // however gentle their slopes.
+    const float steady = gusts.speed * body.windShare;
+    const float strongestRipples = body.look.ripples * RippleStrength(steady * gusts.gustFactor, steady);
+    std::array<float, kWaterCascadeCount> shown{};
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        const float longShare = std::max(1.0f - shares.swell[c] - shares.ripples[c], 0.0f);
+        const float strongest2 =
+            shares.swell[c] + longShare + shares.ripples[c] * strongestRipples * strongestRipples;
+        const bool visibleSlopes = strongest2 * shares.slopeVariance[c] >= kMinShownWaterSlopeVariance;
+        const bool visibleHeight = shares.steadyHeightVariance[c] >= kMinShownWaterHeightVariance;
+        shown[c] = visibleSlopes || visibleHeight ? 1.0f : 0.0f;
+    }
+    constants.shown = PerCascade(shown);
+    constants.gusts = MakeGustConstants(gusts, camera, seconds);
     return constants;
 }
 
@@ -112,6 +153,7 @@ WaterSpectrumConstants MakeWaterSpectrumConstants(const WaterBody &body)
                                   .wind = ShapeOf(wind),
                                   .swell = ShapeOf(swell),
                                   .spreads = glm::vec4(wind.spread, wind.swell, swell.spread, swell.swell),
+                                  .tailAlpha = glm::vec4(wind.tailAlpha, swell.tailAlpha, 0.0f, 0.0f),
                                   .seed = glm::uvec4(body.waves.seed, 0u, 0u, 0u)};
 }
 
@@ -383,6 +425,7 @@ bool WaterRenderer::Simulate(nvrhi::ICommandList *commandList, const WaterFrame 
                                      sizeof(constants));
             field->waves = body.waves;
             field->cascades = body.cascades;
+            field->shares = ShareCascades(body.waves, body.cascades);
             field->spectrumWritten = true;
         }
         SimulateField(commandList, *field, body, loopSeconds);
@@ -476,7 +519,8 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
             continue;
         }
 
-        const WaterDrawConstants constants = MakeWaterDrawConstants(body, view.camera);
+        const WaterDrawConstants constants =
+            MakeWaterDrawConstants(body, field.shares, frame.gusts, view.camera, view.seconds);
         commandList->writeBuffer(_constants, &constants, sizeof(constants));
 
         nvrhi::GraphicsState state;
