@@ -7,7 +7,6 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -68,37 +67,6 @@ void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
         {
             Assisi::Core::Log::Warn("InputDemo: could not spawn blueprints/Bouncer.abp.");
         }
-    }
-}
-
-void CaptureCursorSystem(Assisi::App::SystemContext &ctx)
-{
-    if (ctx.input == nullptr) // headless host: no window to capture into
-    {
-        return;
-    }
-
-    ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
-    Assisi::Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
-}
-
-void CursorToggleSystem(Assisi::App::SystemContext &ctx)
-{
-    if (ctx.input == nullptr) // headless host: no window, no cursor to move
-    {
-        return;
-    }
-
-    // Only while the cursor is free, and never while a screen has it: a click
-    // meant for a menu button must not also recapture the pointer.
-    if (ctx.input->IsMouseCaptured() || (ctx.ui != nullptr && ctx.ui->TakesInput()))
-    {
-        return;
-    }
-
-    if (ctx.input->IsMouseButtonPressed(Assisi::Window::MouseButton::Left))
-    {
-        ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
     }
 }
 

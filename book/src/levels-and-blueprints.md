@@ -50,7 +50,7 @@ edit them by hand, but it helps to know the shape:
   "instances": [
     { "name": "Player", "source": "blueprints/Player.abp", "transform": { ... } }
   ],
-  "systems": ["CaptureCursor", "CursorToggle"],
+  "systems": ["Oscillate"],
   "version": 2
 }
 ```

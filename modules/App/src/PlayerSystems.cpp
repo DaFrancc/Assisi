@@ -5,8 +5,10 @@
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/EnumLabels.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -344,6 +346,34 @@ void PlayerCameraSystem(SystemContext &ctx)
         {
             scene.GetMut<Runtime::Camera>(child)->isActive = active;
         }
+    }
+}
+
+void CaptureCursorSystem(SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no window to capture into
+    {
+        return;
+    }
+    ctx.input->SetInputMode(Window::InputMode::Game);
+    Core::Log::Info("CaptureCursor: '{}' takes the mouse.", ctx.world.levelPath);
+}
+
+void CursorToggleSystem(SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no window, no cursor to move
+    {
+        return;
+    }
+    // Only while the cursor is free, and never while a screen has it: a click
+    // meant for a menu button must not also recapture the pointer.
+    if (ctx.input->IsMouseCaptured() || (ctx.ui != nullptr && ctx.ui->TakesInput()))
+    {
+        return;
+    }
+    if (ctx.input->IsMouseButtonPressed(Window::MouseButton::Left))
+    {
+        ctx.input->SetInputMode(Window::InputMode::Game);
     }
 }
 

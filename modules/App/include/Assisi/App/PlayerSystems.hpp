@@ -105,4 +105,34 @@ void CharacterCommandSystem(SystemContext &ctx);
 ASYSTEM(Update, name = "PlayerCamera", activeWorldOnly)
 void PlayerCameraSystem(SystemContext &ctx);
 
+/// @brief Takes the cursor when the level is up, so a first-person level is
+/// playable the moment it finishes loading.
+///
+/// A level names this, or the blueprint of a player it places, to say "I am
+/// played with the mouse". Capturing it unconditionally would be wrong for a
+/// level that is a menu, and nothing in the engine can tell those apart.
+///
+/// `Loaded` rather than `Begin`: taking the cursor is the last thing before a
+/// player has control, and holding it while the level is still streaming means
+/// grabbing the pointer during the pause.
+///
+/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
+/// no window, so this is inert there even when a level names it.
+ASYSTEM(Loaded, name = "CaptureCursor", activeWorldOnly)
+void CaptureCursorSystem(SystemContext &ctx);
+
+/// @brief A click in the window takes the cursor back after a menu has handed
+/// it out.
+///
+/// The running half of CaptureCursor, and a level that names one wants both.
+/// Escape is not read here: it opens the pause menu, which is what hands the
+/// cursor over, and the menu gives it back on Resume. Two things listening for
+/// the same key would fight over it. A click while a screen takes input is the
+/// screen's, so it never recaptures the pointer.
+///
+/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
+/// no window, so this is inert there even when a level names it.
+ASYSTEM(Update, name = "CursorToggle", activeWorldOnly)
+void CursorToggleSystem(SystemContext &ctx);
+
 } // namespace Assisi::App
