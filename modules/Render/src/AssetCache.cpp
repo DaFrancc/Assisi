@@ -22,8 +22,12 @@ namespace Assisi::Render
 
 namespace
 {
-/// @brief The fallback mesh for nil and unloadable mesh references.
+/// @brief The mesh a nil reference draws: a fresh component's default.
 constexpr Core::AssetId kCubePrimitive = Core::BuiltinAssetId::Cube;
+
+/// @brief The mesh drawn in place of one that can't be loaded, so a missing file
+///        can't pass for something placed on purpose.
+constexpr Core::AssetId kMissingMeshPrimitive = Core::BuiltinAssetId::Error;
 
 // The primitive-shape ladder, by the reserved ids Core/AssetId.hpp assigns them;
 // tessellations come from Geometry::PrimitiveTessellation rather than the
@@ -182,6 +186,7 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
     _primitiveFactories.emplace(Core::BuiltinAssetId::Quad, &Geometry::CreateUnitQuadMesh);
+    _primitiveFactories.emplace(kMissingMeshPrimitive, &Geometry::CreateErrorSignMesh);
     for (const PrimitiveDesc &primitive : kShapePrimitives)
     {
         _primitiveFactories.emplace(primitive.id, primitive.factory);
@@ -246,11 +251,21 @@ const MeshBuffer *AssetCache::ResolveMesh(const Core::AssetId &id)
     if (const MeshBuffer *mesh = ResolvePrimitive(id))
         return mesh;
 
-    // A nil id is the "unset" default; a reserved id that is not a primitive names
-    // nothing; a mesh that already failed to load falls back to the cube and isn't
-    // retried.
-    if (id.IsReserved() || _missingMeshWarned.contains(id))
+    // A nil id is the "unset" default, drawn as the cube. A reserved id that is
+    // not a primitive names nothing, and a mesh that already failed to load isn't
+    // retried: both draw as the error sign.
+    if (id.IsNil())
         return ResolvePrimitive(kCubePrimitive);
+    if (_missingMeshWarned.contains(id))
+        return ResolvePrimitive(kMissingMeshPrimitive);
+    if (id.IsReserved())
+    {
+        _missingMeshWarned.insert(id);
+        Core::Log::Warn("AssetCache: '{}' is a built-in that is not a mesh, so it is drawn as the ERROR sign "
+                        "(prim://error).",
+                        Describe(id));
+        return ResolvePrimitive(kMissingMeshPrimitive);
+    }
 
     // If a load is already in flight, report "still loading" (null) so the caller
     // shows a placeholder; the re-resolve loop will pick up the buffer once it's
@@ -719,9 +734,9 @@ void AssetCache::OnMeshLoaded(Core::AssetId id, std::uint64_t epoch,
         // queuing a publish. Drop the loading marker so a later resolve falls back.
         _meshLoading.erase(id);
         _missingMeshWarned.insert(id);
-        Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.", Describe(id),
-                        ToString(imported.error()));
-        return; // a later resolve returns the cube
+        Core::Log::Warn("AssetCache: no mesh for '{}' ({}), so it is drawn as the ERROR sign (prim://error).",
+                        Describe(id), ToString(imported.error()));
+        return; // a later resolve returns the error sign
     }
     // Enqueue the publish (O(1)); the id stays in _meshLoading until PublishMesh
     // makes it resident, so HasPendingLoads / re-resolve keep treating it as pending.

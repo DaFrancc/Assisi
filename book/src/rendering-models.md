@@ -25,9 +25,9 @@ attached to another entity with a `Parent`, and it then moves with that entity.
 
 ## Built-in shapes
 
-The engine has these shapes built in, for blocking out a level or testing. Pick
-them with the **...** button on the `mesh` field; they are listed as `prim://`
-entries.
+The engine has these shapes built in, for blocking out a level or testing. Type
+one's name, such as `prim://sphere`, into the `mesh` field. The **...** button's
+asset browser lists only files, so they aren't in it.
 
 | `mesh` | Shape | Triangles |
 |---|---|---|
@@ -41,6 +41,31 @@ A built-in shape has one material slot. It draws with the engine's default
 material, plain white and moderately rough, until you give it another in
 `materialOverrides` (see [Material slots](#material-slots)). The test levels
 give their cubes `materials/checker.amat` this way.
+
+### The ERROR sign
+
+When a model can't be loaded, the engine draws the word **ERROR** in big block
+letters in its place, 2.85 m wide, standing where the model stands. It's
+`prim://error`, and nothing else uses it, so if you see it, a model file is
+missing or couldn't be read. It happens on a `MeshRenderer` or a skinned
+character alike, and the game keeps running.
+
+To fix it, find the line in the log that says why:
+
+```
+AssetCache: no mesh for 'ca562793-5aa4-4475-a784-1c1c6e5957ee' (no such asset), so it is drawn as the ERROR sign (prim://error).
+```
+
+- **`no such asset`** means the file isn't there. The quoted text is the
+  model's id, because the engine no longer knows its path. Search the level or
+  blueprint file for that id: the `"path"` next to it names the file that is
+  missing. Put the file back there, or pick another model in the `mesh` field.
+- **Any other reason** means the file is there but couldn't be read, and the
+  log names it by its path. Export it again, or check the reason given.
+
+Some test models aren't kept in the repository, so a fresh checkout shows the
+sign until you download them. A `mesh` field that was never set draws a plain
+cube, not the sign.
 
 ## Importing a model
 

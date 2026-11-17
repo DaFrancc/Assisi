@@ -138,7 +138,8 @@ alone, for example to compare a setting on and off. See
 |---|---|
 | Everything is black. | No light reaches it: a level with no lights and no sky, or a night with no moon. Add a light, or raise the `Skybox`'s `minimumAmbient`. |
 | A model is missing. | It is past the camera's `farZ`, still loading, or hidden by `hiddenFromOwnCamera`. The editor's own camera only draws to 200 m. |
-| A model is a cube. | Its file failed to load. The log says why. |
+| A model is the word ERROR in block letters. | Its file is missing or couldn't be read. See [The ERROR sign](rendering-models.md#the-error-sign). |
+| A model is a cube. | Its `mesh` field was never set. |
 | A model is plain white. | Its textures haven't loaded yet, or they are inside a `.glb` file, which isn't read. See [Importing a model](rendering-models.md#importing-a-model). |
 | A model looks dark grey and dull. | Its material has a `MetallicFactor` of 1, the default for a new material. Set it to 0 for anything that isn't metal. |
 | Two surfaces flicker through each other. | They are in exactly the same place, such as a decal modelled flush with a wall. Move one slightly in front. |
