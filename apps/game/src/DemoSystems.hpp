@@ -49,34 +49,6 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Update, name = "BouncerSpawn", after = "SpinDemo", activeWorldOnly)
 void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
 
-/// Takes the cursor when the level is up, so a first-person level is playable
-/// the moment it finishes loading.
-///
-/// A level names this to say "I am played with the mouse". The alternative was
-/// the game capturing the cursor unconditionally, which is wrong for a level
-/// that is a menu — and nothing in the engine can tell those apart.
-///
-/// `Loaded` rather than `Begin`: taking the cursor is the last thing before a
-/// player has control, and holding it while the level is still streaming means
-/// grabbing the pointer during the pause.
-///
-/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
-/// no window, so this is inert there even when a level names it.
-ASYSTEM(Loaded, name = "CaptureCursor", activeWorldOnly)
-void CaptureCursorSystem(Assisi::App::SystemContext &ctx);
-
-/// A click in the window takes the cursor back after a menu has handed it out.
-///
-/// The running half of CaptureCursor, and a level that names one wants both.
-/// Escape is not read here: it opens the pause menu, which is what hands the
-/// cursor over, and the menu gives it back on Resume. Two things listening for
-/// the same key would fight over it.
-///
-/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
-/// no window, so this is inert there even when a level names it.
-ASYSTEM(Update, name = "CursorToggle", activeWorldOnly)
-void CursorToggleSystem(Assisi::App::SystemContext &ctx);
-
 /// M travels to the Pretty level: a level change a player can trigger, which
 /// in a shipped game means a second level read from the package.
 ///

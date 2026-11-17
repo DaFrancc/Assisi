@@ -239,7 +239,7 @@
   "instances": [
     {
       "name": "Player",
-      "source": "blueprints/Player.abp",
+      "source": "blueprints/TestPlayer.abp",
       "transform": {
         "position": [
           1.3829116821289063,

@@ -8,8 +8,13 @@ over a network.
 ## The player blueprint
 
 `blueprints/Player.abp` is a complete player. Place it in a level and press Play:
-W, A, S and D walk, the mouse looks around, Space jumps, Left Control crouches
-and Left Shift sprints.
+the mouse is captured as soon as the level has loaded, W, A, S and D walk, the
+mouse looks around, Space jumps, Left Control crouches and Left Shift sprints.
+
+`blueprints/TestPlayer.abp` is the same player without the two systems that
+capture the mouse, so the cursor stays free. The engine's test levels use it,
+for example to run several players in one editor without every window grabbing
+the pointer. Use `Player.abp` in your own levels.
 
 It holds three entities:
 
@@ -53,6 +58,8 @@ them:
 | `CharacterEye` | Keeps the camera at the character's eye height. |
 | `PlayerAnimation` | Sets each player's body's animator params from what its character does. A system of the sample game's, in `apps/game/src/PlayerAnimation.cpp`. |
 | `Animators`, `AnimationPlayers` | Run each body's animator and play what it chooses (see [Animators](animator.md)). |
+| `CaptureCursor` | Captures the mouse once the level has loaded (see [Capturing the cursor](input.md#capturing-the-cursor)). Not in `TestPlayer.abp`. |
+| `CursorToggle` | Captures the mouse again on a left click after a menu let it go. Not in `TestPlayer.abp`. |
 
 ## A player's controls
 
