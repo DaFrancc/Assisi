@@ -73,6 +73,9 @@ void StartFade(AnimationTrack &track, const TrackSettings &settings, std::span<c
     {
         // Swapped rather than copied, so the next animation reuses the buffers.
         std::swap(track.outgoing, track.current);
+        // It goes on as it was playing, not as the state it fades into asks.
+        track.outgoingSpeed = track.speed;
+        track.outgoingLoop = track.loop;
     }
     track.toPose.assign(settings.underneath.begin(), settings.underneath.end());
     track.crossFade = Geometry::CrossFade{.Elapsed = 0.f, .Duration = settings.fade};
@@ -134,12 +137,11 @@ void Rebind(AnimationTrack &track, const TrackSettings &settings, const Resolved
     track.warned = false;
 }
 
-void Fade(AnimationTrack &track, const TrackSettings &settings, const Geometry::Skeleton &skeleton, float step,
-          Pose out)
+void Fade(AnimationTrack &track, const TrackSettings &settings, const Geometry::Skeleton &skeleton, Pose out)
 {
     if (!track.outgoing.Sources.empty())
     {
-        Geometry::AdvancePhase(track.outgoing, step, settings.loop);
+        Geometry::AdvancePhase(track.outgoing, settings.dt * track.outgoingSpeed, track.outgoingLoop);
         Geometry::SampleBlend(track.outgoing, skeleton, track.fromPose);
     }
     std::ranges::copy(settings.underneath, track.toPose.begin());
@@ -177,11 +179,12 @@ TrackStep Step(AnimationTrack &track, const TrackSettings &settings, const Resol
         Geometry::BlendWeights(track.positions, settings.parameter, track.current.Weights);
     }
     // The timeline follows `speed`; a fade's seconds do not.
-    const float step = settings.dt * settings.speed;
-    Geometry::AdvancePhase(track.current, step, settings.loop);
+    Geometry::AdvancePhase(track.current, settings.dt * settings.speed, settings.loop);
+    track.speed = settings.speed;
+    track.loop = settings.loop;
     if (track.fading)
     {
-        Fade(track, settings, skeleton, step, out);
+        Fade(track, settings, skeleton, out);
     }
     else
     {
