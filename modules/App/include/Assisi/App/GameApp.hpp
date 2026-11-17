@@ -29,6 +29,7 @@
 #include <Assisi/App/CameraBenchmark.hpp>
 #include <Assisi/App/CookedAssets.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -213,11 +214,9 @@ class GameApp : public Application
     /// The benchmark run clock the simulation has been advanced to.
     double _simulatedRunSeconds = 0.0;
 
-    /// Seconds a measured run spent working out poses and propagating
-    /// transforms, the two animation steps the game calls itself rather than
-    /// through a system.
-    double _benchmarkPoseSeconds = 0.0;
-    double _benchmarkTransformSeconds = 0.0;
+    /// Where a measured run's pose stage spent its time: steps the game calls
+    /// itself rather than through a system.
+    PoseTimes _benchmarkPoseTimes;
 
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.

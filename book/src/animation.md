@@ -278,13 +278,41 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
 - The pose lives in `SkinnedPose`, which the engine adds next to every
   `SkinnedMesh`. It is never saved and never sent over the network: each machine
   works out its own.
-- Write to `pose` only. `SkinnedPose` also holds `jointModel` (where each joint
-  ends up, relative to the entity) and `palette` (what the renderer uses to move
-  the vertices). The engine works both out from `pose` every frame, in the
-  editor too, so anything you write there is replaced.
+- Write to `pose` only. `SkinnedPose` also holds `finalPose`, `jointModel`
+  (where each joint ends up, relative to the entity) and `palette` (what the
+  renderer uses to move the vertices). The engine works all three out from
+  `pose` every frame, in the editor too, so anything you write there is
+  replaced.
 
 The mesh bends on screen in the same frame you write the pose, and so does its
 shadow.
+
+### When a pose is finished
+
+Each frame, once every `Update` system has run, the engine finishes every
+character's pose in one step, the **pose stage**:
+
+1. It places every entity in the world.
+2. It copies each `pose` into `finalPose`.
+3. It works out `jointModel` and `palette` from `finalPose`.
+4. It places again whatever moved since step 1.
+
+`finalPose` is kept apart from `pose` for steps that adjust a pose after the
+animation, such as turning a head to look at something. They change only
+`finalPose`, so each frame they start again from the animation, and a change
+never builds up from frame to frame. The engine has no such steps yet, so for
+now `finalPose` always matches `pose`.
+
+So what you read from `jointModel` depends on when your system runs:
+
+| Your system runs in | `jointModel` is from |
+|---|---|
+| `Ui` | This frame's pose. |
+| `Update`, `FixedUpdate` | Last frame's pose, the one on screen now. |
+
+The pose stage runs in every program: the game, the editor (also while you
+edit, or while the game is paused) and a dedicated server. A dedicated server
+loads no meshes, so nothing is posed there.
 
 ## Animation in a multiplayer game
 
@@ -344,8 +372,9 @@ When the run ends, the log shows milliseconds per frame for each step:
 |---|---|
 | `animators` | Running each Animator's state machine. |
 | `playback` | Moving clips on and blending them into each pose. |
+| `transforms` | Placing every entity in the world, animated or not, before the poses. |
 | `poses` | Turning each pose into the joint positions the renderer moves vertices by. |
-| `transforms` | Placing every entity in the world, animated or not. |
+| `transforms after poses` | Placing again what the poses moved. Only what changed is visited, so this should stay small. |
 
 Below that it says how many characters it measured, with how many joints and
 layers each, and the cost per character and per joint. **The numbers depend on

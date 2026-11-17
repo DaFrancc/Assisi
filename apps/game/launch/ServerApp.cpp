@@ -325,6 +325,9 @@ void ServerApp::OnUpdate(float dt)
     // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
     // sounds would have nowhere to go.
     Assisi::App::UpdateWorld(WorldContext(dt, _stepTick));
+    // As every program: no mesh loads here, so it poses nothing, but entities
+    // are placed as on a host somebody plays at.
+    Assisi::App::PoseWorld(_world);
     ReportStatus();
 }
 

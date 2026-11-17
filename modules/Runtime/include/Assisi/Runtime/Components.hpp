@@ -117,13 +117,18 @@ struct SkinnedMesh
 /// @brief The pose of a SkinnedMesh's mesh, worked out on every machine. Never
 ///        saved or sent.
 ///
-/// `pose` is each joint's transform relative to its parent, and is what code,
-/// clips and IK write. It starts at the skeleton's rest pose and is reset only
-/// when the mesh changes, so a value written stays until something writes it
-/// again. `jointModel` and `palette` are written from it every frame before
-/// transforms propagate; read them, never write them. Whenever `boundMeshId` is
-/// not kUnboundMesh all three hold one entry per joint; while it is, they are
-/// empty and the mesh draws unskinned.
+/// `pose` is each joint's transform relative to its parent: the animated pose,
+/// which code and clips write. It starts at the skeleton's rest pose and is
+/// reset only when the mesh changes, so a value written stays until something
+/// writes it again.
+///
+/// `finalPose` is what the frame's pose stage makes of it: a copy of `pose`
+/// each frame, which the steps that adjust a pose after the animation change,
+/// so every one of them starts from the animation again. `jointModel` and
+/// `palette` are worked out from it in the same stage, after every Update
+/// system; read all three, never write them. Whenever `boundMeshId` is not
+/// kUnboundMesh all four hold one entry per joint; while it is, they are empty
+/// and the mesh draws unskinned.
 ///
 /// `posed` is what the entity draws as once its mesh can be posed: a copy of the
 /// MeshRenderer's mesh with a vertex range of its own, which the skinning pass
@@ -138,6 +143,7 @@ struct SkinnedPose
 {
     Assisi::Render::MeshBuffer posed;
     std::vector<Geometry::JointTransform> pose;
+    std::vector<Geometry::JointTransform> finalPose;
     std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
     std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
     uint64_t paletteHash = 0; ///< Of `palette`'s bytes; 0 before the first evaluation.

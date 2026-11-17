@@ -330,6 +330,9 @@ struct World
     /// which drives the one-tick tail that picks up the final resolve.
     bool streamingPending = false;
 
+    /// Whether PoseWorld has run this frame; EndWorldFrame clears it.
+    bool posed = false;
+
     /// Change-detection bookmark for ECS::PropagateTransforms — the scene
     /// tick at the end of this world's last propagation. Per world, not per
     /// renderer: one renderer serving two worlds would skip propagation in

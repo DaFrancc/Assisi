@@ -35,8 +35,21 @@ const Geometry::Skeleton *BindPose(SkinnedPose &skinned, const Geometry::Skeleto
 ///        none.
 const Geometry::Skeleton *BindSkinnedMesh(SkinnedPose &skinned, const MeshRenderer &renderer);
 
-/// @brief Binds, then writes `jointModel` and `palette` from `pose`.
+/// @brief Binds, copies `pose` into `finalPose`, then writes `jointModel` and
+///        `palette` from it.
 void EvaluateSkinnedMesh(SkinnedPose &skinned, const MeshRenderer &renderer);
+
+/// @brief EvaluateSkinnedMesh for every SkinnedMesh in @p scene: the pose
+///        stage's part that turns each animated pose into joint matrices.
+///        Needs no renderer, only meshes that have loaded.
+///
+/// For a scene that is drawn this frame, pass the renderer's @p cache: each
+/// posed copy is kept holding a vertex range of its own in it, and fitted to
+/// the pose, in the same pass. Every frame the scene is drawn, because a range
+/// nothing keeps for a frame is given away; one cache serves one scene a
+/// frame. It starts with ReleaseOrphanedPoses, so a range given away is never
+/// drawn.
+void FinishPoses(ECS::Scene &scene, Render::AssetCache *cache = nullptr);
 
 /// @brief Hashes @p skinned's palette and sets `poseChanged` to whether it
 ///        differs from the last evaluation's. The first evaluation after a bind
@@ -49,14 +62,6 @@ void NotePoseChange(SkinnedPose &skinned);
 /// lets go of its posed copy, so the entity draws its MeshRenderer's mesh again
 /// rather than a vertex range that is no longer kept for it.
 void ReleaseOrphanedPoses(ECS::Scene &scene);
-
-/// @brief EvaluateSkinnedMesh for every entity in @p scene that has one, and
-///        keeps each one's posed copy holding a vertex range of its own in
-///        @p cache. Runs every frame before transforms propagate.
-///
-/// Every frame, because a range nothing keeps for a frame is given away. It
-/// starts with ReleaseOrphanedPoses, so a range given away is never drawn.
-void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache);
 
 /// @brief Empties @p skinned and marks it unbound, for a mesh about to be freed.
 void UnbindSkinnedMesh(SkinnedPose &skinned);

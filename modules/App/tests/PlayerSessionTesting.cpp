@@ -129,6 +129,7 @@ void Update(Machine &machine)
                       .worldManager = nullptr,
                       .assets = &machine.assets,
                       .animates = true});
+    App::PoseWorld(machine.world);
 }
 
 ECS::Entity LocalPlayerOf(ECS::Scene &scene)
