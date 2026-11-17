@@ -51,6 +51,16 @@ void EvaluateSkinnedMesh(SkinnedPose &skinned, const MeshRenderer &renderer);
 /// drawn.
 void FinishPoses(ECS::Scene &scene, Render::AssetCache *cache = nullptr);
 
+/// @brief The pose stage's last part: writes into each JointAttachment's
+///        ParentFrame where its joint is in this frame's pose, after FinishPoses.
+///
+/// Writes a frame only when it moved, so a held item that is still costs
+/// nothing to place. Looks a joint's name up again only when the name or the
+/// parent's mesh changed. Takes the ParentFrame and JointAttachmentRun off an
+/// entity whose JointAttachment was taken off, so it hangs from its parent's
+/// origin again.
+void FollowJoints(ECS::Scene &scene);
+
 /// @brief Hashes @p skinned's palette and sets `poseChanged` to whether it
 ///        differs from the last evaluation's. The first evaluation after a bind
 ///        is no change: nothing has been drawn at another pose yet.

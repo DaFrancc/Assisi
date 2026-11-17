@@ -28,6 +28,7 @@ add_executable(Assisi-ECS-Tests
   TestNestedFields.cpp
   TestEntityRef.cpp
   TestHierarchy.cpp
+  TestParentFrame.cpp
   TestTransformBlend.cpp
   TestWorldCells.cpp
 )

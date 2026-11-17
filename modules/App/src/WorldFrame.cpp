@@ -42,6 +42,7 @@ void PoseWorld(World &world, Render::AssetCache *cache, PoseTimes *times)
     world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
     const double placed = times != nullptr ? MonotonicSeconds() : 0.0;
     Runtime::FinishPoses(world.scene, cache);
+    Runtime::FollowJoints(world.scene);
     const double posed = times != nullptr ? MonotonicSeconds() : 0.0;
     world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
     world.posed = true;

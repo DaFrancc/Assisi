@@ -31,6 +31,7 @@
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Geometry/AnimationSampling.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -151,6 +152,38 @@ struct SkinnedPose
     /// Whether the last evaluation changed the palette, which moves the mesh's
     /// shadow though its transform stays where it was.
     bool poseChanged = false;
+};
+
+/// @brief Where a JointAttachment found its joint: by name, in the mesh with
+///        this id, so it looks again only when either changes. Never saved or
+///        sent.
+ACOMP(transient)
+struct JointAttachmentRun
+{
+    Core::InternedString joint; ///< The name it looked for.
+    uint32_t meshId = kUnboundMesh; ///< The MeshBuffer::Id it looked in.
+    int32_t index = Geometry::kNoJoint; ///< Where it found it.
+};
+
+/// @brief Holds its entity at one joint of its parent's skinned mesh: a sword
+///        in a hand, a hat on a head.
+///
+/// Give the entity a Parent that is the skinned entity. Its Transform is its
+/// offset from the joint, and stays as its author set it. Each frame, once the
+/// poses are final, the engine writes where the joint is into the entity's
+/// ParentFrame, so the entity and its children are placed from this frame's
+/// pose and never trail it. The joint is found by name, and found again when
+/// the mesh changes, so a model re-exported with its joints in another order
+/// still holds it. A name the mesh lacks is reported once, and the entity
+/// hangs from its parent's origin, as it does from a parent with no skeleton
+/// or one whose mesh has not loaded.
+///
+/// Replicable: a remote copy holds the same joint. Where the joint is, is
+/// worked out on every machine and never sent or saved.
+ACOMP(replicable, requires = {JointAttachmentRun, ParentFrame})
+struct JointAttachment
+{
+    AFIELD() Core::InternedString joint;
 };
 
 /// @brief What plays one animation, the base's or a layer's: the clips it

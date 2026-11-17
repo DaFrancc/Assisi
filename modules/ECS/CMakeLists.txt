@@ -7,6 +7,7 @@ target_sources(Assisi-ECS
     "include/Assisi/ECS/Entity.hpp"
     "include/Assisi/ECS/EntityRef.hpp"
     "include/Assisi/ECS/Hierarchy.hpp"
+    "include/Assisi/ECS/ParentFrame.hpp"
     "include/Assisi/ECS/Query.hpp"
     "include/Assisi/ECS/Registry.hpp"
     "include/Assisi/ECS/RenderOffset.hpp"
@@ -44,6 +45,7 @@ assisi_reflect(
   HEADERS
     include/Assisi/ECS/BlueprintMember.hpp
     include/Assisi/ECS/Hierarchy.hpp
+    include/Assisi/ECS/ParentFrame.hpp
     include/Assisi/ECS/RenderOffset.hpp
     include/Assisi/ECS/Transform.hpp
     include/Assisi/ECS/WorldMatrix.hpp
