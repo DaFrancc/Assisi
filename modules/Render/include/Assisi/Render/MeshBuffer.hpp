@@ -88,6 +88,26 @@ public:
         // Vertex/index data is deliberately not retained (see file comment).
     }
 
+    /// @brief Keeps `meshData`'s skeleton, tables and bounds with no GPU range,
+    ///        for a test or host with no renderer.
+    ///
+    /// Everything that reads a mesh's skeleton or bounds (binding a pose,
+    /// evaluating joints) works on the result. Its vertex, index and skin
+    /// counts stay 0, so anything that draws or skins treats it as the empty
+    /// mesh it is on the GPU. Without this a skeleton reaches a MeshBuffer only
+    /// through an upload, which needs a device.
+    void KeepWithoutGpu(Geometry::MeshData meshData)
+    {
+        Geometry::EnsureSubMeshTables(meshData);
+        Geometry::EnsureMeshBounds(meshData);
+        _localBounds = meshData.LocalBounds;
+        _localAabb = meshData.LocalAabb;
+        _subMeshes = std::move(meshData.SubMeshes);
+        _lods = std::move(meshData.Lods);
+        _materials = std::move(meshData.Materials);
+        KeepSkeleton(std::move(meshData.Skeleton));
+    }
+
     /// @brief Copy a mesh's geometry into @p staging — the worker-thread half of a
     /// staged upload. @p staging must be at least MeshStagingBytes(meshData) big and
     /// CPU-writable; the caller supplies it (pooled, so streaming does not churn GPU
