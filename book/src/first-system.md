@@ -109,6 +109,8 @@ and editing it by hand works too:
 ```
 
 The names are the ones you gave with `name = "..."`, not the C++ function names.
+`CaptureCursor` is one of the engine's own systems, named the same way: it
+captures the mouse once the level has loaded (see [Input](input.md)).
 
 </details>
 

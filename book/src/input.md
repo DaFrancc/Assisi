@@ -67,9 +67,19 @@ ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
 ```
 
 While captured, `MouseDelta()` keeps reporting movement even at the edge of the
-screen. The example game's `CaptureCursor` and `CursorToggle` systems in
-`apps/game/src/DemoSystems.cpp` capture the cursor when a level loads, release it
-on Escape, and take it back on a click. Add both to a level to get that behavior.
+screen.
+
+You rarely need to write that yourself. The engine has two systems for it:
+
+- **`CaptureCursor`** captures the cursor once the level has finished loading.
+- **`CursorToggle`** captures it again when you left-click in the window, after
+  a menu has let it go. A click while a menu is open is the menu's, so it
+  doesn't take the cursor back.
+
+Escape isn't one of them: it opens the pause menu, which frees the cursor, and
+**Resume** captures it again. `blueprints/Player.abp` lists both systems, so a
+level with the player captures the mouse with nothing more to do. A level
+without that player can name both in its own systems list.
 
 ## Named actions
 

@@ -27,7 +27,7 @@
     {
       "components": {
         "PlayerStart": {
-          "blueprint": "blueprints/Player.abp"
+          "blueprint": "blueprints/TestPlayer.abp"
         },
         "Transform": {
           "position": [
@@ -53,7 +53,7 @@
     {
       "components": {
         "PlayerStart": {
-          "blueprint": "blueprints/Player.abp"
+          "blueprint": "blueprints/TestPlayer.abp"
         },
         "Transform": {
           "position": [
@@ -79,7 +79,7 @@
     {
       "components": {
         "PlayerStart": {
-          "blueprint": "blueprints/Player.abp"
+          "blueprint": "blueprints/TestPlayer.abp"
         },
         "Transform": {
           "position": [
