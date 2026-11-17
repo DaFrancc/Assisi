@@ -284,6 +284,15 @@ enum class SystemPlacement : std::uint8_t
 // context (RenderContext) and are registered/run through RegisterRender/RunRender.
 // A phase argument that could only ever be Render would be an apology, not an API.
 
+/// @brief How long one system took while its registry was timing; see
+///        SystemRegistry::SetTiming.
+struct SystemTime
+{
+    std::string name;
+    double seconds = 0.0; ///< All of its runs together.
+    uint32_t runs = 0;
+};
+
 /// @brief Stores and dispatches system functions grouped by phase.
 ///
 /// Builds an execution order from After()/Before() constraints on first Run()
@@ -448,6 +457,17 @@ class SystemRegistry
     /// when the entries are the ones that should stay.
     void ClearOnceMarks();
 
+    /// @brief Starts or stops adding up how long each game-phase system takes.
+    ///
+    /// Turning it on starts every total from zero; turning it off keeps them
+    /// readable. For a benchmark that reports where a frame's time goes without
+    /// parsing a profiler capture. Off, it costs one branch per system run.
+    void SetTiming(bool on);
+
+    /// @brief Each game-phase system that ran while timing was on: its total
+    ///        time and how many times it ran, in registration order.
+    [[nodiscard]] std::vector<SystemTime> Timings() const;
+
     /// @brief Drops every registered system, in every phase.
     ///
     /// Registration is otherwise append-only, and re-registering a name corrupts
@@ -502,6 +522,9 @@ class SystemRegistry
             /// pointer moves the moment another system is added, and a capture
             /// would be naming scopes after freed memory.
             const char *chiaraName = nullptr;
+            /// Added up while timing is on; see SetTiming.
+            uint64_t timedNanoseconds = 0;
+            uint32_t timedRuns = 0;
         };
 
         std::vector<Entry> entries;
@@ -543,6 +566,7 @@ class SystemRegistry
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
     Phase<RenderContext> _renderPhase;
+    bool _timing = false; ///< See SetTiming.
 };
 
 } // namespace Assisi::App

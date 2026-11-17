@@ -259,6 +259,7 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StartChiaraSession();
+            _world->systems.SetTiming(true);
         }
         else
         {
@@ -271,8 +272,10 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StopChiaraSession();
+            _world->systems.SetTiming(false);
             Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
                             LastChiaraDump().path);
+            ReportAnimationCost();
         }
         else
         {
@@ -284,6 +287,66 @@ void GameApp::AdvanceBenchmark()
     case BenchmarkPhase::Count_:
         break;
     }
+}
+
+bool GameApp::MeasuringBenchmark() const
+{
+    return _benchmark && _benchmark->Phase() == BenchmarkPhase::Running && _launch.benchmark->shotsDirectory.empty();
+}
+
+void GameApp::ReportAnimationCost() const
+{
+    constexpr double kMillisecondsPerSecond = 1000.0;
+    if (_benchmarkFrames == 0)
+    {
+        return;
+    }
+    const double frames = static_cast<double>(_benchmarkFrames);
+    double animators = 0.0;
+    double players = 0.0;
+    for (const SystemTime &system : _world->systems.Timings())
+    {
+        if (system.name == "Animators")
+        {
+            animators = system.seconds;
+        }
+        else if (system.name == "AnimationPlayers")
+        {
+            players = system.seconds;
+        }
+    }
+    // What was measured, so the times can be scaled to other content: the cost
+    // grows with characters, their joints and the layers each one plays.
+    uint32_t characters = 0;
+    std::size_t joints = 0;
+    std::size_t layers = 0;
+    for (auto [entity, playback, skinned] : _world->scene.Query<Runtime::AnimationPlayback, Runtime::SkinnedPose>())
+    {
+        if (skinned.boundMeshId == Runtime::kUnboundMesh)
+        {
+            continue;
+        }
+        ++characters;
+        joints += skinned.pose.size();
+        layers += 1 + playback.request.layers.size();
+    }
+    const double total = animators + players + _benchmarkPoseSeconds + _benchmarkTransformSeconds;
+    Core::Log::Info("Benchmark: animation, milliseconds per frame over {} frames:", _benchmarkFrames);
+    Core::Log::Info("Benchmark:   animators   {:.3f}", animators * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   playback    {:.3f}", players * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   poses       {:.3f}", _benchmarkPoseSeconds * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms  {:.3f}", _benchmarkTransformSeconds * kMillisecondsPerSecond / frames);
+    if (characters == 0)
+    {
+        return;
+    }
+    constexpr double kMicrosecondsPerSecond = 1e6;
+    const double perCharacter = total * kMicrosecondsPerSecond / frames / static_cast<double>(characters);
+    Core::Log::Info("Benchmark:   {} animated characters, {:.1f} joints and {:.1f} layers each on average",
+                    characters, static_cast<double>(joints) / static_cast<double>(characters),
+                    static_cast<double>(layers) / static_cast<double>(characters));
+    Core::Log::Info("Benchmark:   {:.2f} us per character, {:.3f} us per joint", perCharacter,
+                    total * kMicrosecondsPerSecond / frames / static_cast<double>(joints));
 }
 
 bool GameApp::SetupRenderer()
@@ -532,8 +595,17 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     // would otherwise sit where the previous frame computed — permanently a frame
     // behind whatever it is attached to.
     // Poses first: what follows a joint is placed from where the joint is this frame.
+    const bool measuring = MeasuringBenchmark();
+    const double poseStart = measuring ? MonotonicSeconds() : 0.0;
     Runtime::EvaluateScenePoses(_world->scene, _assetCache);
+    const double transformStart = measuring ? MonotonicSeconds() : 0.0;
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
+    if (measuring)
+    {
+        _benchmarkPoseSeconds += transformStart - poseStart;
+        _benchmarkTransformSeconds += MonotonicSeconds() - transformStart;
+        ++_benchmarkFrames;
+    }
     ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
 
     // A benchmark flies its route from the scene camera's lens: the route says

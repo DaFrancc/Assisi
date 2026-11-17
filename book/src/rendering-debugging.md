@@ -254,8 +254,9 @@ What the benchmark does:
   is in the same place at the same point of every run.
 
 It records a profiler session of the run in the `captures` folder, and the log
-says where. Open it in Perfetto to read the frame times. The benchmark doesn't
-print a summary of its own.
+says where. Open it in Perfetto to read the frame times. At the end it also
+prints what animation cost per frame; see
+[Measuring animation](animation.md#measuring-animation).
 
 | Option | What it does |
 |---|---|

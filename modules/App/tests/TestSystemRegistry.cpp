@@ -67,6 +67,40 @@ TEST_CASE("SystemRegistry: After/Before constraints determine execution order")
     CHECK(IndexOf(order, "Cull") < IndexOf(order, "Draw"));
 }
 
+TEST_CASE("SystemRegistry: with timing on, each system's runs and time add up; off, nothing does")
+{
+    SystemRegistry systems;
+    World world{Assisi::Physics::NoCollisionAssets()};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    (void)systems.Register(SystemPhase::Update, "Busy", [](SystemContext &) {});
+    (void)systems.Register(SystemPhase::Update, "Idle", [](SystemContext &) {});
+    systems.SetEnabled("Idle", false);
+
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
+    CHECK(systems.Timings().empty());
+
+    systems.SetTiming(true);
+    constexpr uint32_t kFrames = 3;
+    for (uint32_t frame = 0; frame < kFrames; ++frame)
+    {
+        systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
+    }
+    const std::vector<SystemTime> timed = systems.Timings();
+    // A muted system did not run, so it has no time.
+    REQUIRE(timed.size() == 1);
+    CHECK(timed[0].name == "Busy");
+    CHECK(timed[0].runs == kFrames);
+    CHECK(timed[0].seconds >= 0.0);
+
+    // Turned off, the totals stay readable but stop growing; on again starts over.
+    systems.SetTiming(false);
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, universal, true));
+    REQUIRE(systems.Timings().size() == 1);
+    CHECK(systems.Timings()[0].runs == kFrames);
+    systems.SetTiming(true);
+    CHECK(systems.Timings().empty());
+}
+
 TEST_CASE("SystemRegistry: Before is honored symmetrically with After")
 {
     SystemRegistry systems;
