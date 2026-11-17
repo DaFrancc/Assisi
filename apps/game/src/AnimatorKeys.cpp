@@ -1,7 +1,9 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "AnimatorKeys.hpp"
 
+#include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/AnimatorParams.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -48,9 +50,16 @@ void AnimatorKeysSystem(Assisi::App::SystemContext &ctx)
     static Assisi::Runtime::AnimatorParam<bool> groundedParam{"grounded"};
     static Assisi::Runtime::AnimatorTrigger jump{"jump"};
 
-    // The params live in each Animator's run, which is never sent.
-    for (auto [entity, run] : ctx.world.scene.Query<Mut<Assisi::Runtime::AnimatorRun>>())
+    // The params live in each Animator's run, which is never sent. A player's
+    // body is PlayerAnimation's, which follows what the character does.
+    Assisi::ECS::Scene &scene = ctx.world.scene;
+    for (auto [entity, run] : scene.Query<Mut<Assisi::Runtime::AnimatorRun>>())
     {
+        if (const Assisi::ECS::Parent *parent = scene.Get<Assisi::ECS::Parent>(entity);
+            parent != nullptr && scene.Has<Assisi::App::Player>(parent->parent))
+        {
+            continue;
+        }
         (void)speed.SetDamped(entity, run, targetSpeed, kSpeedEase, ctx.dt);
         (void)aiming.SetDamped(entity, run, targetAim, kAimEase, ctx.dt);
         (void)groundedParam.Set(entity, run, grounded);

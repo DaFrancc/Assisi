@@ -55,7 +55,8 @@ class TestTree final : public Core::AssetCookContext
         Name(std::string{kSpace}, "blend space");
         Name(std::string{kMaterial}, "reflected");
         for (const std::string_view clip : {"Idle_Loop", "Walk_Loop", "Jump_Start", "Jump_Loop", "Jump_Land",
-                                            "Pistol_Aim_Neutral", "Hit_Chest"})
+                                            "Pistol_Aim_Neutral", "Hit_Chest", "Crouch_Idle_Loop", "Crouch_Fwd_Loop",
+                                            "Interact"})
         {
             Name(std::string{kClips} + std::string{clip} + ".glb", "animation");
         }

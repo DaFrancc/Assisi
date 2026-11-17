@@ -6,12 +6,13 @@
 ///        message and reading one.
 ///
 /// A player presses B, which asks the host to ring the bell; the host tells
-/// every machine it rang, and each plays its own bell's sound. Played alone the
-/// same three systems ring it, since a world played alone is a host nobody
-/// joined.
+/// every machine it rang and who rang it, and each plays its own bell's sound
+/// and that player's gesture. Played alone the same three systems ring it,
+/// since a world played alone is a host nobody joined.
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/ECS/Entity.hpp>
 
 #include <cstdint>
 
@@ -31,13 +32,19 @@ struct Bell
 AMSG(intent, reliable)
 struct RingBell
 {
+    /// The asking player's character, which the host checks is theirs;
+    /// NullEntity in a level with no player.
+    AFIELD(controlled) Assisi::ECS::Entity ringer{Assisi::ECS::NullEntity};
     AFIELD() int32_t bell = 0;
 };
 
-/// @brief The host telling every machine that bell @p bell rang.
+/// @brief The host telling every machine that bell @p bell rang, and who rang
+/// it.
 AMSG(event, reliable, independent)
 struct BellRang
 {
+    /// NullEntity on a machine that doesn't have the ringer.
+    AFIELD() Assisi::ECS::Entity ringer{Assisi::ECS::NullEntity};
     AFIELD() int32_t bell = 0;
 };
 
@@ -50,7 +57,7 @@ void AskForBellSystem(Assisi::App::SystemContext &ctx);
 ASYSTEM(Update, name = "RingBells")
 void RingBellsSystem(Assisi::App::SystemContext &ctx);
 
-/// Every machine plays the bell it is told rang.
+/// Every machine plays the bell it is told rang, and the ringer's gesture.
 ASYSTEM(Update, name = "PlayBells")
 void PlayBellsSystem(Assisi::App::SystemContext &ctx);
 
