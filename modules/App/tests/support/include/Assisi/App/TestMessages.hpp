@@ -26,6 +26,9 @@ struct TestAskBell
 AMSG(event, reliable, independent)
 struct TestBellRang
 {
+    /// Who rang it: NullEntity on a machine that doesn't have them, and when
+    /// nobody is named.
+    AFIELD() Assisi::ECS::Entity ringer{Assisi::ECS::NullEntity};
     AFIELD() int32_t bell = 0;
 };
 

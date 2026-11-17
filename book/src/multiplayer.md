@@ -185,6 +185,35 @@ and then a landing gets both at once. After a long gap in the host's updates, a
 count can also go up by more than one in a step. The counts on your machine
 aren't the host's numbers, only their changes are the same.
 
+### Players' bodies animate on every machine
+
+The sample game's player has an animated body: a child entity, `Body`, in
+`blueprints/Player.abp`, with a skinned model and an `Animator` running
+`animation/Player.sgl`. It walks, runs, sprints, crouches, jumps, falls and
+lands. The game's `PlayerAnimation` system, in `apps/game/src/PlayerAnimation.cpp`,
+sets the file's params from each player's `CharacterState`:
+- `speed`, its speed across the ground, eased so a correction doesn't jolt it;
+- `airborne`, whether it has been off the ground for longer than a step down a
+  stair;
+- `crouched`, whether it crouches;
+- `jump` and `land`, triggers fired when its `jumps` and `landings` counts
+  change.
+
+It is the example in
+[Setting params from code](animator.md#setting-params-from-code), run for every
+player. Landing comes from `landings`, not from the character touching the
+ground, which also happens for a moment as it takes off.
+
+Nothing about animation goes over the network. Each machine runs
+`PlayerAnimation` for every player, its own and the others, from the character
+state the host sends. To try it, open `levels/NetPile.alvl`, pick **Host + 2
+clients** and press **Run**: walk, sprint (Shift), crouch (Ctrl) and jump
+(Space) in one window, and watch that player in the other two. Your own body is
+hidden from your own camera, so you see the others'.
+
+The model is one of the test characters that aren't kept in the repository.
+Without it, each player is drawn as the [ERROR sign](rendering-models.md#the-error-sign).
+
 ### Components you predict
 
 Your machine predicts your character, everything in its blueprint (its camera,
@@ -458,7 +487,9 @@ the game twice.
 
 `levels/NetPile.alvl` has a bell: an entity with an `AudioEmitter` and the
 game's own `Bell` component. Open the level, pick **Host + 2 clients** and press
-**Run**. Press **B** in any of the three windows: the bell rings in all three.
+**Run**. Press **B** in any of the three windows: the bell rings in all three,
+and the player who rang it plays a gesture in all three, if it is standing or
+crouched on the ground.
 
 It takes three systems, in `apps/game/src/Bell.hpp` and `Bell.cpp`. First the
 two messages, an intent asking for the bell and an event saying it rang:
@@ -467,20 +498,25 @@ two messages, an intent asking for the bell and an event saying it rang:
 AMSG(intent, reliable)
 struct RingBell
 {
+    AFIELD(controlled) Assisi::ECS::Entity ringer; // the character asking
     AFIELD() int32_t bell = 0;
 };
 
 AMSG(event, reliable, independent)
 struct BellRang
 {
+    AFIELD() Assisi::ECS::Entity ringer;
     AFIELD() int32_t bell = 0;
 };
 ```
 
 They name the bell by number, not as an entity, because the bell isn't
-`Replicated`: every machine has its own copy from the level file.
+`Replicated`: every machine has its own copy from the level file. They name the
+ringer as an entity, because a player is `Replicated`. A machine that doesn't
+have the ringer, such as one too far away to be sent it, reads `NullEntity`, and
+a level with no player sends `NullEntity` too.
 
-A player asks:
+A player asks, naming its own character:
 
 ```cpp
 void AskForBellSystem(Assisi::App::SystemContext &ctx)
@@ -489,10 +525,17 @@ void AskForBellSystem(Assisi::App::SystemContext &ctx)
     {
         return;
     }
-    if (ctx.input->IsKeyPressed(Assisi::Window::Key::B))
+    if (!ctx.input->IsKeyPressed(Assisi::Window::Key::B))
     {
-        ctx.net.SendIntent(RingBell{.bell = kBellOnB}); // 1, the level's bell
+        return;
     }
+    // Rung by this machine's player, or by nobody in a level with no player.
+    Assisi::ECS::Entity ringer = Assisi::ECS::NullEntity;
+    for (auto [player, local] : ctx.world.scene.Query<Assisi::App::LocalPlayer>())
+    {
+        ringer = player;
+    }
+    ctx.net.SendIntent(RingBell{.ringer = ringer, .bell = kBellOnB}); // 1, the level's bell
 }
 ```
 
@@ -507,12 +550,12 @@ void RingBellsSystem(Assisi::App::SystemContext &ctx)
     }
     for (const auto &[sender, ring] : ctx.events.Read<Received<RingBell>>())
     {
-        ctx.net.Send(BellRang{.bell = ring.bell});
+        ctx.net.Send(BellRang{.ringer = ring.ringer, .bell = ring.bell});
     }
 }
 ```
 
-And every machine, the host included, plays its bell:
+And every machine, the host included, plays its bell and the ringer's gesture:
 
 ```cpp
 void PlayBellsSystem(Assisi::App::SystemContext &ctx)
@@ -526,9 +569,19 @@ void PlayBellsSystem(Assisi::App::SystemContext &ctx)
                 ctx.events.Push(Assisi::App::PlaySound{.target = entity});
             }
         }
+        if (rang.ringer != Assisi::ECS::NullEntity)
+        {
+            PlayGesture(ctx.world.scene, rang.ringer); // fires its animator's `interact`
+        }
     }
 }
 ```
+
+The gesture is an animation trigger, and it doesn't go over the network as one.
+The event that rang the bell goes to every machine anyway, so each machine fires
+the trigger itself when the event arrives. Do the same with anything the host
+decides that should play an animation, such as a hit: send the event, and play
+the animation where it's read.
 
 Run the level with **Standalone** and press **B**: the bell still rings,
 because playing alone is a host nobody joined.

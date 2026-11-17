@@ -17,7 +17,7 @@ It holds three entities:
 |---|---|
 | `Player` | `Character`, `CharacterLocomotion`, `ArcadeMovement`, `Player`, `Replicated` |
 | `Camera` | `Camera`, `Parent` (the `Player`), `Replicated` |
-| `Body` | `MeshRenderer`, `Parent` (the `Player`), `Replicated` |
+| `Body` | `MeshRenderer`, `SkinnedMesh`, `AnimationPlayer`, `Animator`, `Parent` (the `Player`), `Replicated` |
 
 - **`Character`**, **`CharacterLocomotion`** and **`ArcadeMovement`** are the
   [character controller](physics-character.md): the capsule, how fast it walks
@@ -26,11 +26,18 @@ It holds three entities:
 - **`Player`** marks the character as one a person controls. A character
   without it is never driven by the keyboard, so put it on your player and leave
   it off your NPCs.
-- **`Body`** is what other players see: a red cylinder the size of the capsule.
+- **`Body`** is what other players see: an animated character, standing in the
+  capsule and facing where the player faces. Its `Animator` runs
+  `animation/Player.sgl`, which walks, runs, crouches, jumps and lands as the
+  character does (see
+  [Players' bodies animate on every machine](multiplayer.md#players-bodies-animate-on-every-machine)).
   Its `MeshRenderer` has **`hiddenFromOwnCamera`** set, so it isn't drawn
   through a camera from the same blueprint. You don't see the inside of your
-  own body, but everyone else sees you, and your shadow is still cast. Swap the
-  mesh for your own model.
+  own body, but everyone else sees you, and your shadow is still cast. The
+  model is a test character that isn't kept in the repository; without it the
+  body is drawn as the [ERROR sign](rendering-models.md#the-error-sign). To use
+  your own, set the `MeshRenderer`'s `mesh` to your model and the `Animator`'s
+  `machine` to a `.sgl` file written for its skeleton.
 - **`Replicated`** sends the entities to the other machines in a
   [networked game](multiplayer.md). It does nothing in a game played alone.
 
@@ -44,6 +51,8 @@ them:
 | `CharacterCommand` | Turns each player's controls into where its character faces and what it is asked to do. |
 | `PlayerCamera` | Makes this machine's player's camera the active one. |
 | `CharacterEye` | Keeps the camera at the character's eye height. |
+| `PlayerAnimation` | Sets each player's body's animator params from what its character does. A system of the sample game's, in `apps/game/src/PlayerAnimation.cpp`. |
+| `Animators`, `AnimationPlayers` | Run each body's animator and play what it chooses (see [Animators](animator.md)). |
 
 ## A player's controls
 
