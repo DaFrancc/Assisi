@@ -52,6 +52,7 @@ struct NetworkConfig
     AFIELD() uint32_t linearVelocityBits = BodyQuantization{}.linearVelocityBits;
     AFIELD() float angularVelocityMax = BodyQuantization{}.angularVelocityMax;
     AFIELD() uint32_t angularVelocityBits = BodyQuantization{}.angularVelocityBits;
+    AFIELD() uint32_t moveBits = BodyQuantization{}.moveBits;
 
     // --- Smoothing. Purely view-side and not hashed: two machines that smooth
     // differently still agree about every byte.
