@@ -67,7 +67,7 @@ void WarnMissingJoints(Runtime::AnimationTrack &track)
     track.warned = true;
 }
 
-void WarnMissingMaskJoints(const Runtime::AnimationLayer &layer, Runtime::LayerState &state, std::size_t index)
+void WarnMissingMaskJoints(const Runtime::LayerRequest &layer, Runtime::LayerState &state, std::size_t index)
 {
     if (state.maskWarned || (!state.rootMissing && !state.exclusionMissing))
     {
@@ -132,12 +132,12 @@ void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayer &player, c
                    float dt, Runtime::SkinnedMesh &skinned)
 {
     Runtime::MatchLayerStates(player);
-    for (std::size_t index = 0; index < player.layers.size(); ++index)
+    for (std::size_t index = 0; index < player.request.layers.size(); ++index)
     {
-        const Runtime::AnimationLayer &layer = player.layers[index];
+        const Runtime::LayerRequest &layer = player.request.layers[index];
         Runtime::LayerState &state = player.layerStates[index];
         const std::optional<Runtime::ResolvedAnimation> animation =
-            ResolveAnimation(assets, layer.animation, state.track);
+            ResolveAnimation(assets, layer.play.animation, state.track);
         if (!animation.has_value())
         {
             continue;
@@ -163,9 +163,15 @@ void AnimationPlayerSystem(SystemContext &ctx)
         {
             continue;
         }
+        // An Animator that has its file writes the request itself.
+        const Runtime::Animator *animator = ctx.world.scene.Get<Runtime::Animator>(entity);
+        if (animator == nullptr || animator->run.graph == nullptr)
+        {
+            Runtime::RequestFromAuthored(player);
+        }
         const Geometry::Skeleton &skeleton = renderer.meshBuffer->Skeleton();
         const std::optional<Runtime::ResolvedAnimation> animation =
-            ResolveAnimation(*ctx.assets, player.animation, player.track);
+            ResolveAnimation(*ctx.assets, player.request.base.animation, player.track);
         if (animation.has_value() && Runtime::AdvanceAnimationPlayer(player, *animation, skeleton, ctx.dt, skinned))
         {
             WarnMissingJoints(player.track);

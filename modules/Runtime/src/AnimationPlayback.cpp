@@ -128,7 +128,7 @@ void Rebind(AnimationTrack &track, const TrackSettings &settings, const Resolved
     BindClips(track.current, animation.clips, skeleton);
     if (changed)
     {
-        track.current.Phase = 0.f;
+        track.current.Phase = settings.startPhase;
     }
     track.space = animation.space;
     TakePositions(track, animation.space.get());
@@ -172,6 +172,13 @@ TrackStep Step(AnimationTrack &track, const TrackSettings &settings, const Resol
     if (rebind)
     {
         Rebind(track, settings, animation, skeleton, out);
+    }
+    // Asked to start again: what is playing goes back to the start phase, and
+    // nothing fades, since the pose on screen is the same animation's.
+    if (settings.restarts != track.restarts)
+    {
+        track.current.Phase = settings.startPhase;
+        track.restarts = settings.restarts;
     }
 
     if (track.space != nullptr)
@@ -224,7 +231,7 @@ uint8_t Taken(const Geometry::Skeleton &skeleton, int32_t joint, int32_t root, c
 
 /// Moves the layer's weight on towards its own, starting a new slide when
 /// that changed. The first frame takes it as it is.
-void SlideWeight(const AnimationLayer &layer, LayerState &state, float dt)
+void SlideWeight(const LayerRequest &layer, LayerState &state, float dt)
 {
     if (!state.started)
     {
@@ -249,7 +256,7 @@ void SlideWeight(const AnimationLayer &layer, LayerState &state, float dt)
 }
 
 /// Builds the layer's mask again when it or the mesh changed.
-void RefreshMask(const AnimationLayer &layer, LayerState &state, const Geometry::Skeleton &skeleton, uint32_t meshId)
+void RefreshMask(const LayerRequest &layer, LayerState &state, const Geometry::Skeleton &skeleton, uint32_t meshId)
 {
     if (state.maskMeshId == meshId && state.maskRoot == layer.maskRoot && state.maskExclusions == layer.exclusions)
     {
@@ -312,20 +319,21 @@ void Add(const LayerState &state, Pose pose)
     }
 }
 
-bool Belongs(const LayerState &state, const AnimationLayer &layer)
+bool Belongs(const LayerState &state, const LayerRequest &layer)
 {
-    return state.layerAnimation == layer.animation && state.layerMode == layer.mode;
+    return state.layerAnimation == layer.play.animation && state.layerMode == layer.mode;
 }
 
 bool Aligned(const AnimationPlayer &player)
 {
-    if (player.layerStates.size() != player.layers.size())
+    const std::vector<LayerRequest> &layers = player.request.layers;
+    if (player.layerStates.size() != layers.size())
     {
         return false;
     }
-    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    for (std::size_t layer = 0; layer < layers.size(); ++layer)
     {
-        if (!Belongs(player.layerStates[layer], player.layers[layer]))
+        if (!Belongs(player.layerStates[layer], layers[layer]))
         {
             return false;
         }
@@ -339,13 +347,19 @@ template <typename Fits>
 void Place(AnimationPlayer &player, std::vector<LayerState> &old, std::vector<uint8_t> &taken,
            std::vector<uint8_t> &placed, Fits fits)
 {
-    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    for (std::size_t layer = 0; layer < player.request.layers.size(); ++layer)
     {
         for (std::size_t candidate = 0; candidate < old.size() && placed[layer] == 0; ++candidate)
         {
             if (taken[candidate] == 0 && fits(layer, candidate))
             {
                 player.layerStates[layer] = std::move(old[candidate]);
+                // A state that moved took its count from another layer's
+                // request; it starts level with this one's, so moving restarts nothing.
+                if (candidate != layer)
+                {
+                    player.layerStates[layer].track.restarts = player.request.layers[layer].play.restarts;
+                }
                 taken[candidate] = 1;
                 placed[layer] = 1;
             }
@@ -385,6 +399,38 @@ bool AdvanceTrack(AnimationTrack &track, const TrackSettings &settings, const Re
     return Step(track, settings, animation, skeleton, out) == TrackStep::Rebound;
 }
 
+void RequestFromAuthored(AnimationPlayer &player)
+{
+    PlaybackRequest &base = player.request.base;
+    base.animation = player.animation;
+    base.parameter = player.parameter;
+    base.speed = player.speed;
+    base.startPhase = 0.f;
+    base.fade = player.fade;
+    base.fadeKind = FadeKind::CrossFade;
+    base.loop = player.loop;
+
+    player.request.layers.resize(player.layers.size());
+    for (std::size_t index = 0; index < player.layers.size(); ++index)
+    {
+        const AnimationLayer &authored = player.layers[index];
+        LayerRequest &layer = player.request.layers[index];
+        layer.play.animation = authored.animation;
+        layer.play.parameter = authored.parameter;
+        layer.play.speed = authored.speed;
+        layer.play.startPhase = 0.f;
+        layer.play.fade = authored.fade;
+        layer.play.fadeKind = FadeKind::CrossFade;
+        layer.play.loop = authored.loop;
+        layer.exclusions = authored.exclusions;
+        layer.maskRoot = authored.maskRoot;
+        layer.weight = authored.weight;
+        layer.weightFade = authored.weightFade;
+        layer.mode = authored.mode;
+        layer.weightSlide = authored.weightSlide;
+    }
+}
+
 bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &animation,
                             const Geometry::Skeleton &skeleton, float dt, SkinnedMesh &skinned)
 {
@@ -393,17 +439,20 @@ bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &an
         return false;
     }
     RestoreUnderLayers(player, skinned.pose);
+    const PlaybackRequest &base = player.request.base;
     const TrackSettings settings{.underneath = skeleton.RestLocal,
-                                 .animation = player.animation,
-                                 .parameter = player.parameter,
-                                 .speed = player.speed,
-                                 .fade = player.fade,
+                                 .animation = base.animation,
+                                 .parameter = base.parameter,
+                                 .speed = base.speed,
+                                 .startPhase = base.startPhase,
+                                 .fade = base.fade,
                                  .dt = dt,
                                  .meshId = skinned.boundMeshId,
-                                 .loop = player.loop,
+                                 .restarts = base.restarts,
+                                 .loop = base.loop,
                                  .refill = false};
     const bool rebound = AdvanceTrack(player.track, settings, animation, skeleton, skinned.pose);
-    if (!player.layers.empty())
+    if (!player.request.layers.empty())
     {
         player.underLayers.assign(skinned.pose.begin(), skinned.pose.end());
     }
@@ -416,24 +465,25 @@ void MatchLayerStates(AnimationPlayer &player)
     {
         return;
     }
+    const std::vector<LayerRequest> &layers = player.request.layers;
     std::vector<LayerState> old = std::move(player.layerStates);
     player.layerStates.clear();
-    player.layerStates.resize(player.layers.size());
+    player.layerStates.resize(layers.size());
     std::vector<uint8_t> taken(old.size(), 0);
-    std::vector<uint8_t> placed(player.layers.size(), 0);
+    std::vector<uint8_t> placed(layers.size(), 0);
     // Where it was, then where its layer moved to, then, for a layer that
     // changed, the state at its own place.
     Place(player, old, taken, placed, [&](std::size_t layer, std::size_t candidate) {
-            return layer == candidate && Belongs(old[candidate], player.layers[layer]);
+            return layer == candidate && Belongs(old[candidate], layers[layer]);
         });
     Place(player, old, taken, placed, [&](std::size_t layer, std::size_t candidate) {
-            return Belongs(old[candidate], player.layers[layer]);
+            return Belongs(old[candidate], layers[layer]);
         });
     Place(player, old, taken, placed, [](std::size_t layer, std::size_t candidate) { return layer == candidate; });
-    for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+    for (std::size_t layer = 0; layer < layers.size(); ++layer)
     {
-        player.layerStates[layer].layerAnimation = player.layers[layer].animation;
-        player.layerStates[layer].layerMode = player.layers[layer].mode;
+        player.layerStates[layer].layerAnimation = layers[layer].play.animation;
+        player.layerStates[layer].layerMode = layers[layer].mode;
     }
 }
 
@@ -475,7 +525,7 @@ MaskResult BuildJointMask(const Geometry::Skeleton &skeleton, Core::InternedStri
     return result;
 }
 
-void AdvanceAnimationLayer(const AnimationLayer &layer, LayerState &state, const ResolvedAnimation &animation,
+void AdvanceAnimationLayer(const LayerRequest &layer, LayerState &state, const ResolvedAnimation &animation,
                            const Geometry::Skeleton &skeleton, float dt, SkinnedMesh &skinned)
 {
     if (skinned.boundMeshId == kUnboundMesh || skinned.pose.size() != skeleton.JointCount())
@@ -496,13 +546,15 @@ void AdvanceAnimationLayer(const AnimationLayer &layer, LayerState &state, const
         state.pose.assign(underneath.begin(), underneath.end());
     }
     const TrackSettings settings{.underneath = underneath,
-                                 .animation = layer.animation,
-                                 .parameter = layer.parameter,
-                                 .speed = layer.speed,
-                                 .fade = layer.fade,
+                                 .animation = layer.play.animation,
+                                 .parameter = layer.play.parameter,
+                                 .speed = layer.play.speed,
+                                 .startPhase = layer.play.startPhase,
+                                 .fade = layer.play.fade,
                                  .dt = dt,
                                  .meshId = skinned.boundMeshId,
-                                 .loop = layer.loop,
+                                 .restarts = layer.play.restarts,
+                                 .loop = layer.play.loop,
                                  .refill = true};
     const TrackStep step = Step(state.track, settings, animation, skeleton, state.pose);
     if (step == TrackStep::Waiting)

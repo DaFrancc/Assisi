@@ -87,7 +87,9 @@ Save it as `assets/quaternius/UAL1/Character.sgl`.
 
 In the editor, give an entity a `MeshRenderer` with the mesh
 `quaternius/UAL1/UAL1.glb`, and add a `SkinnedMesh`, an `AnimationPlayer` and
-an `Animator`. Set the Animator's `machine` to `Character.sgl`.
+an `Animator`. Set the Animator's `machine` to `Character.sgl`. Leave the
+AnimationPlayer's fields as they are: while the Animator runs, the player plays
+what the Animator picks, and its own fields in the inspector don't change.
 
 ### Step 2: add the systems
 

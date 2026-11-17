@@ -154,12 +154,14 @@ struct Rig
 
     void Advance(float dt)
     {
+        Runtime::RequestFromAuthored(player);
         (void)Runtime::AdvanceAnimationPlayer(player, Resolved(player.animation), skeleton, dt, skinned);
         Runtime::MatchLayerStates(player);
-        for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+        for (std::size_t layer = 0; layer < player.request.layers.size(); ++layer)
         {
-            Runtime::AdvanceAnimationLayer(player.layers[layer], player.layerStates[layer],
-                                           Resolved(player.layers[layer].animation), skeleton, dt, skinned);
+            const Runtime::LayerRequest &request = player.request.layers[layer];
+            Runtime::AdvanceAnimationLayer(request, player.layerStates[layer], Resolved(request.play.animation),
+                                           skeleton, dt, skinned);
         }
     }
 

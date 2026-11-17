@@ -154,6 +154,7 @@ struct AnimationTrack
     /// the state it fades into asks for.
     float outgoingSpeed = 1.f;
     uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
+    uint32_t restarts = 0; ///< The request's `restarts` this track last took.
     bool fading = false;
     bool warned = false; ///< Whether this binding's missing joints were reported.
     bool loop = true;         ///< Whether `current` last played looping.
@@ -224,6 +225,57 @@ struct LayerState
     bool maskWarned = false;       ///< Whether the missing names were reported.
 };
 
+/// @brief How a fade takes the animation going out to the one coming in.
+enum class FadeKind : uint8_t
+{
+    CrossFade, ///< Mixes the two poses, the new one's share growing over the fade.
+    Count_,
+};
+
+/// @brief What one animation of a player plays, the base's or a layer's:
+///        what playback reads, whoever decided it.
+///
+/// A new animation starts at `startPhase`. Raising `restarts` starts the one
+/// already playing again at `startPhase`, without a fade, which is how a state
+/// played once is entered anew on the clip it was already playing.
+struct PlaybackRequest
+{
+    Core::AssetId animation;       ///< A clip or a blend space; nil plays nothing.
+    glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
+    float speed = 1.f;             ///< 1 plays at the speed it was authored; negative plays backwards.
+    float startPhase = 0.f;        ///< Where a start begins, from 0 at the first frame to 1 at the end.
+    float fade = 0.15f;            ///< Seconds a change of `animation` fades over; 0 cuts.
+    uint32_t restarts = 0;         ///< How many times the animation was asked to start again.
+    FadeKind fadeKind = FadeKind::CrossFade;
+    bool loop = true;
+};
+
+/// @brief What one layer plays, and how it combines with the pose below it.
+///        The fields beside `play` mean what AnimationLayer's of the same
+///        names do.
+struct LayerRequest
+{
+    std::vector<Core::InternedString> exclusions;
+    PlaybackRequest play;
+    Core::InternedString maskRoot;
+    float weight = 1.f;
+    float weightFade = 0.f;
+    LayerMode mode = LayerMode::Override;
+    WeightSlide weightSlide = WeightSlide::Duration;
+};
+
+/// @brief Everything a player plays this frame: its base, and its layers in
+///        order.
+///
+/// Built from the player's own fields every frame, unless an Animator drives
+/// the player: then the Animator writes it, and the player's fields stay as
+/// the author set them. Never saved.
+struct PlayerRequest
+{
+    std::vector<LayerRequest> layers;
+    PlaybackRequest base;
+};
+
 /// @brief Plays an animation on its entity's SkinnedMesh: a clip, or a blend
 ///        space that mixes clips by `parameter`, with `layers` on top.
 ///
@@ -250,12 +302,17 @@ struct LayerState
 /// moves, or a layer's mask takes, is written every Update, so code that
 /// adjusts it on top runs after the AnimationPlayers system.
 ///
+/// What plays is read from `request`, which the AnimationPlayers system fills
+/// from these fields each frame. With an Animator on the entity, the Animator
+/// fills it instead and these fields are not used.
+///
 /// Replicable: a remote copy plays the same animations at the same speeds and
 /// parameters. Its timelines are its own, so two machines can be a moment apart.
 ACOMP(replicable, requires = {SkinnedMesh})
 struct AnimationPlayer
 {
-    AnimationTrack track; ///< What `animation` plays.
+    PlayerRequest request; ///< What plays this frame.
+    AnimationTrack track;  ///< What the base of `request` plays.
     std::vector<LayerState> layerStates; ///< One per layer, in order.
     /// The pose as the base left it last frame, before the layers wrote over
     /// it: what a joint a layer took goes back to before the base plays again,
@@ -294,10 +351,11 @@ struct AnimatorRun
 /// @brief Runs a `.sgl` state machine on its entity's AnimationPlayer.
 ///
 /// Each Update, before the player plays, it reads the params game code set,
-/// moves each layer to the state its transitions choose, and writes into the
-/// player what that state plays, at what rate and where in a blend space. The
-/// player's base is the file's first layer and its `layers` the rest, so with
-/// an Animator they are outputs: edit the file instead.
+/// moves each layer to the state its transitions choose, and hands the player
+/// a request: what that state plays, at what rate and where in a blend space.
+/// The request's base is the file's first layer and its layers the rest. The
+/// player's own fields are left as the author set them and not used while the
+/// Animator drives it: edit the file instead.
 ///
 /// `machine` is the `.sgl` file; `clips` fill its `clip` params. A file
 /// changed while the game runs is picked up where it stands: a character stays
