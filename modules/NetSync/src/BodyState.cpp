@@ -154,6 +154,10 @@ void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitW
         {
             writer.WriteFloat(state.speedScale);
         }
+
+        writer.WriteBits(state.jumps & kCharacterCountMask, kCharacterCountBits);
+        writer.WriteBits(state.landings & kCharacterCountMask, kCharacterCountBits);
+        writer.WriteBool(state.jumpedSinceGrounded);
     }
 }
 
@@ -215,6 +219,9 @@ bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState 
                 return false;
             }
         }
+        state.jumps = reader.ReadBits(kCharacterCountBits);
+        state.landings = reader.ReadBits(kCharacterCountBits);
+        state.jumpedSinceGrounded = reader.ReadBool();
     }
 
     if (!reader.Ok() || state.netId == InvalidNetId)

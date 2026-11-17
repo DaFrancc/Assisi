@@ -1701,6 +1701,10 @@ private:
         /// whatever its options say.
         bool pushable = true;
 
+        /// Cleared by PhysicsWorld::SetCharacterCountsItself: its jumps and
+        /// landings are given rather than counted.
+        bool countsItself = true;
+
         /// Riding, but standing on other ground that it moves with rather than
         /// the base (CarrierFooting::Ground): the base's change of speed is not
         /// passed on to it.

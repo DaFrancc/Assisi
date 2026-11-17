@@ -879,10 +879,15 @@ private:
         float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
 
         /// For a character this client does not control, what the host's
-        /// newest record says it is asked to do: its move, speed scale, stance
-        /// and sprint. Kept to be asked again once a rollback has put back
-        /// what it was asked at older steps.
+        /// newest record says it is asked to do (its move, speed scale, stance
+        /// and sprint) and its counts, carried on by however far the low bits
+        /// the records hold moved. Kept to be given again once a rollback has
+        /// put back what it had at older steps.
         Physics::CharacterIntent hostIntent;
+        Physics::CharacterCounts hostCounts;
+        /// The low bits of the host's counts in the newest record.
+        std::uint32_t hostJumpBits = 0;
+        std::uint32_t hostLandingBits = 0;
         bool askedByHost = false;
 
         bool asleep = false;
@@ -899,10 +904,16 @@ private:
     /// the corrected pose.
     static void AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered, const Physics::Pose &corrected);
 
-    /// Writes into character @p entity's CharacterIntent what its mirror
-    /// @p record holds of the host's: its move, speed scale, stance and sprint.
-    /// Its jump and base stay this machine's.
-    void AskAsHost(ECS::Entity entity, const MirrorBody &record);
+    /// Gives character @p entity what its mirror @p record holds of the
+    /// host's: into its CharacterIntent its move, speed scale, stance and
+    /// sprint, leaving its jump and base this machine's; and its counts.
+    void FollowHost(ECS::Entity entity, const MirrorBody &record);
+
+    /// Takes into @p record the host's character state @p host: what it is
+    /// asked to do, and its counts carried on by however far their low bits
+    /// moved. The first record carries on from character @p entity's own
+    /// counts, changing nothing.
+    void TakeHostCharacter(ECS::Entity entity, MirrorBody &record, const BodyState &host);
 
     /// Where one predicted character was drawn before a rollback moved it.
     struct RenderedBeforeReplay

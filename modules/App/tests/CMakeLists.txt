@@ -60,6 +60,7 @@ add_executable(Assisi-App-Tests
   TestPlayerSessionGapWalks.cpp
   TestPlayerSessionMessages.cpp
   TestPlayerSessionOthers.cpp
+  TestPlayerSessionOtherState.cpp
   TestPlayerSessionOwnCharacter.cpp
   TestPlayerSessionPlayers.cpp
   TestPlayerSessionReach.cpp

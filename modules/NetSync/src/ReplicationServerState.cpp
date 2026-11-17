@@ -291,6 +291,7 @@ void ReplicationServer::CaptureBodyStates()
             {
                 asked.speedScale = 0.f;
             }
+            const Physics::CharacterCounts counts = _physics->CharacterCountsOf(entity);
             record.state = BodyState{.position = transform.position,
                                      .netId = netId,
                                      .rotation = transform.rotation,
@@ -298,12 +299,15 @@ void ReplicationServer::CaptureBodyStates()
                                      .angularVelocity = glm::vec3{0.f},
                                      .move = asked.move,
                                      .speedScale = asked.speedScale,
+                                     .jumps = counts.jumps,
+                                     .landings = counts.landings,
                                      .asleep = false,
                                      .character = true,
                                      .stance = character->stance,
                                      .ground = character->ground,
                                      .wantedStance = asked.stance,
-                                     .sprint = asked.sprint};
+                                     .sprint = asked.sprint,
+                                     .jumpedSinceGrounded = counts.jumpedSinceGrounded};
             record.tick  = _bodyStateTick;
             continue;
         }

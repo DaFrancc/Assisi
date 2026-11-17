@@ -472,6 +472,27 @@ TEST_CASE("a character's body record carries what it is asked to do, and a body'
     CHECK_FALSE(crateDecoded.sprint);
 }
 
+TEST_CASE("a character's body record carries its jumps and landings as wrapping counts")
+{
+    BodyState jumper;
+    jumper.netId = NetId{9};
+    jumper.character = true;
+    jumper.jumps = 37u;
+    jumper.landings = 36u;
+    jumper.jumpedSinceGrounded = true;
+
+    Core::BitWriter writer;
+    WriteAlone(jumper, writer);
+    BodyState decoded;
+    Core::BitReader reader(writer.Data());
+    REQUIRE(ReadAlone(reader, decoded));
+
+    // Only the low bits cross, which is all a change needs.
+    CHECK(decoded.jumps == (37u & kCharacterCountMask));
+    CHECK(decoded.landings == (36u & kCharacterCountMask));
+    CHECK(decoded.jumpedSinceGrounded);
+}
+
 TEST_CASE("a character asked for a speed that is not a number still reaches the client")
 {
     // Its movement takes such a speed as zero. Sent as it was, it was refused

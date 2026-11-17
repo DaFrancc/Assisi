@@ -464,7 +464,7 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
 
     if (standing)
     {
-        if (record.jumpedSinceGrounded || record.timeSinceGrounded >= kLandingAirTime)
+        if (record.countsItself && (record.jumpedSinceGrounded || record.timeSinceGrounded >= kLandingAirTime))
         {
             ++record.landings;
         }
@@ -489,7 +489,7 @@ bool PhysicsWorld::Impl::MoveCharacter(CharacterRecord &record, const CharacterI
     {
         record.jumpedSinceGrounded = true;
         record.jumpBufferRemaining = 0.f;
-        ++record.jumps;
+        record.jumps += record.countsItself ? 1u : 0u;
     }
     else
     {
@@ -665,6 +665,45 @@ void PhysicsWorld::SetCharacterPushable(ECS::Entity entity, bool pushable)
     {
         record->pushable = pushable;
     }
+}
+
+void PhysicsWorld::SetCharacterCountsItself(ECS::Entity entity, bool countsItself)
+{
+    if (Impl::CharacterRecord *record = _impl->FindCharacter(entity); record != nullptr)
+    {
+        record->countsItself = countsItself;
+    }
+}
+
+void PhysicsWorld::SetCharacterCounts(ECS::Entity entity, const CharacterCounts &counts)
+{
+    ASSISI_ASSERT(!_impl->stepping, "PhysicsWorld::SetCharacterCounts while the world is stepping");
+    Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+    if (record == nullptr)
+    {
+        return;
+    }
+    record->jumps = counts.jumps;
+    record->landings = counts.landings;
+    record->jumpedSinceGrounded = counts.jumpedSinceGrounded;
+    if (CharacterState *state = _impl->scene.GetMut<CharacterState>(entity); state != nullptr)
+    {
+        state->jumps = record->jumps;
+        state->landings = record->landings;
+        state->canJump = record->MayJump();
+    }
+}
+
+CharacterCounts PhysicsWorld::CharacterCountsOf(ECS::Entity entity) const
+{
+    const Impl::CharacterRecord *record = _impl->FindCharacter(entity);
+    if (record == nullptr)
+    {
+        return CharacterCounts{};
+    }
+    return CharacterCounts{.jumps = record->jumps,
+                           .landings = record->landings,
+                           .jumpedSinceGrounded = record->jumpedSinceGrounded};
 }
 
 CharacterFrame PhysicsWorld::CaptureCharacter(ECS::Entity entity) const

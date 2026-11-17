@@ -131,16 +131,19 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     }
 
     // Asked to do what the host's is, so it moves on between records as it
-    // does there rather than slowing to a stop. The one this machine controls
-    // is asked by its own controls instead.
+    // does there rather than slowing to a stop, and counting the host's jumps
+    // and landings: here the host's word moves it into the air, so it would
+    // miss jumps and count landings at its own moments. The one this machine
+    // controls is asked by its own controls, and counts its own.
     if (character && state.character && !ControlsEntity(entity))
     {
-        record.hostIntent.move = state.move;
-        record.hostIntent.speedScale = state.speedScale;
-        record.hostIntent.stance = state.wantedStance;
-        record.hostIntent.sprint = state.sprint;
-        record.askedByHost = true;
-        AskAsHost(entity, record);
+        TakeHostCharacter(entity, record, state);
+        FollowHost(entity, record);
+    }
+    else if (character)
+    {
+        record.askedByHost = false;
+        _physics->SetCharacterCountsItself(entity, true);
     }
 
     ++_corrections.applied;
@@ -190,8 +193,37 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     record.restRotation = state.rotation;
 }
 
-void ReplicationClient::AskAsHost(ECS::Entity entity, const MirrorBody &record)
+void ReplicationClient::TakeHostCharacter(ECS::Entity entity, MirrorBody &record, const BodyState &host)
 {
+    record.hostIntent.move = host.move;
+    record.hostIntent.speedScale = host.speedScale;
+    record.hostIntent.stance = host.wantedStance;
+    record.hostIntent.sprint = host.sprint;
+
+    // The host's numbers are its own, and a change is all a reader looks for:
+    // the first record, whatever it holds, changes nothing, or a character
+    // would jump as it appeared or as control of it passed on.
+    if (!record.askedByHost)
+    {
+        record.hostCounts = _physics->CharacterCountsOf(entity);
+        record.hostJumpBits = host.jumps;
+        record.hostLandingBits = host.landings;
+        record.askedByHost = true;
+    }
+    // A count only goes up, so however far its low bits moved, modulo their
+    // range, is how many there were since.
+    record.hostCounts.jumps += (host.jumps - record.hostJumpBits) & kCharacterCountMask;
+    record.hostCounts.landings += (host.landings - record.hostLandingBits) & kCharacterCountMask;
+    record.hostJumpBits = host.jumps;
+    record.hostLandingBits = host.landings;
+    record.hostCounts.jumpedSinceGrounded = host.jumpedSinceGrounded;
+}
+
+void ReplicationClient::FollowHost(ECS::Entity entity, const MirrorBody &record)
+{
+    _physics->SetCharacterCountsItself(entity, false);
+    _physics->SetCharacterCounts(entity, record.hostCounts);
+
     Physics::CharacterIntent *intent = _scene.GetMut<Physics::CharacterIntent>(entity);
     if (intent == nullptr)
     {
