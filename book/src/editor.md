@@ -68,8 +68,9 @@ properly.
    **Enter**. The object is placed 5 m in front of the camera.
 3. Add a `MeshRenderer` the same way. A cube appears.
 4. To use a different mesh, click the **...** button next to the `mesh` field and
-   pick one in the asset browser that opens. The `prim://` entries are built-in
-   shapes: cubes, spheres, cylinders.
+   pick one in the asset browser that opens. For a built-in shape, type its name
+   into the field instead, such as `prim://sphere` or `prim://cylinder`; see
+   [Built-in shapes](rendering-models.md#built-in-shapes).
 5. Add a `Collider` if it should take part in physics, and a `RigidBody` as well
    if it should move.
 

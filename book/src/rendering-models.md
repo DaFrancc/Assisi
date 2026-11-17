@@ -25,9 +25,9 @@ attached to another entity with a `Parent`, and it then moves with that entity.
 
 ## Built-in shapes
 
-The engine has these shapes built in, for blocking out a level or testing. Pick
-them with the **...** button on the `mesh` field; they are listed as `prim://`
-entries.
+The engine has these shapes built in, for blocking out a level or testing. Type
+one's name, such as `prim://sphere`, into the `mesh` field. The **...** button's
+asset browser lists only files, so they aren't in it.
 
 | `mesh` | Shape | Triangles |
 |---|---|---|
