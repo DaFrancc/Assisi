@@ -149,9 +149,15 @@ struct AnimationTrack
     std::shared_ptr<const Geometry::BlendSpace> space; ///< The space `current` plays, or null.
     Core::AssetId boundAnimation; ///< The animation `current` belongs to.
     Geometry::CrossFade crossFade;
+    float speed = 1.f; ///< The speed `current` last played at.
+    /// The speed `outgoing` plays at: `current`'s when the fade began, whatever
+    /// the state it fades into asks for.
+    float outgoingSpeed = 1.f;
     uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
     bool fading = false;
     bool warned = false; ///< Whether this binding's missing joints were reported.
+    bool loop = true;         ///< Whether `current` last played looping.
+    bool outgoingLoop = true; ///< Whether `outgoing` loops, kept from when the fade began.
 };
 
 /// @brief How a layer combines with the pose below it, inside its mask.
@@ -229,7 +235,8 @@ struct LayerState
 /// their lengths.
 ///
 /// Changing `animation` fades from the pose as it is to the new animation over
-/// `fade` seconds, the outgoing animation still playing as it fades; a change
+/// `fade` seconds, the outgoing animation still playing as it fades, at the
+/// `speed` and `loop` it had before the change; a change
 /// during a fade starts from the pose that fade had reached, so nothing jumps.
 /// A fade takes its seconds as they pass, whatever `speed` is.
 ///

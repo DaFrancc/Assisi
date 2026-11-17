@@ -90,7 +90,10 @@ the pose slides from one to the other.
 
 Change `animation` from your code, and the player's `fade` sets how long the
 slide takes: 0.15 seconds unless you change it. The old animation keeps moving
-while it fades out, so a walk doesn't freeze halfway through a step.
+while it fades out, so a walk doesn't freeze halfway through a step. It keeps
+the `speed` and `loop` it was playing with, too: a looping walk fading into a
+still pose, or into an animation that plays once, goes on walking until its fade
+ends.
 
 - **Changing again during a fade is safe.** The new fade starts from the pose on
   screen at that moment, so nothing jumps.

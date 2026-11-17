@@ -279,6 +279,36 @@ TEST_CASE("Animation playback: a fade mixes the outgoing clip, still playing, in
     CHECK(rig.player.track.outgoing.Sources.empty());
 }
 
+TEST_CASE("Animation playback: a clip fading out keeps its own speed while the new one is still")
+{
+    Rig rig;
+    (void)rig.Advance(4.f * kFrame);
+    REQUIRE(rig.Knee() == doctest::Approx(1.f));
+
+    // A still state: the pose the new clip holds is not moving.
+    rig.player.fade = 1.f;
+    rig.player.speed = 0.f;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(2.f * kFrame);
+    // Halfway to 10 from the slide, which has moved on to 1.5 at its own speed.
+    CHECK(rig.Knee() == doctest::Approx(0.5f * 1.5f + 0.5f * 10.f));
+}
+
+TEST_CASE("Animation playback: a looping clip fading out keeps wrapping while the new one plays once")
+{
+    Rig rig;
+    (void)rig.Advance(kDuration - kFrame);
+    REQUIRE(rig.Knee() == doctest::Approx(kDuration - kFrame));
+
+    // A state that plays once and moves on.
+    rig.player.fade = 1.f;
+    rig.player.loop = false;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(2.f * kFrame);
+    // Halfway to 10 from the slide, which has wrapped round to a quarter second in.
+    CHECK(rig.Knee() == doctest::Approx(0.5f * kFrame + 0.5f * 10.f));
+}
+
 TEST_CASE("Animation playback: a fade interrupted by another starts from the pose it had reached")
 {
     Rig rig;
