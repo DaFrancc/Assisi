@@ -9,6 +9,7 @@
 /// the lets, which a let pass fills each frame before anything reads them.
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -63,6 +64,21 @@ struct Layout
         return paramCount + impliedCount + let;
     }
 };
+
+/// @brief Why FindParam found no param.
+enum class ParamMiss : uint8_t
+{
+    Missing,   ///< Nothing in the file has the name.
+    NotParam,  ///< The name is a function's or a let's, which code doesn't set.
+    OtherType, ///< The param is of another type.
+    Count_,
+};
+
+/// @brief The slot of the param named @p name, of type @p type; or why there
+///        is none, for code that feeds a machine's params to say what it got
+///        wrong.
+[[nodiscard]] std::expected<uint32_t, ParamMiss> FindParam(const Layout &layout, std::string_view name,
+                                                           SlotType type);
 
 /// @brief The slot of the param, function or let named @p name; names in a
 ///        file never collide, so there is at most one.

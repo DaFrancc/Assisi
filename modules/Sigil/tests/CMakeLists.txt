@@ -9,6 +9,7 @@ add_executable(Assisi-Sigil-Tests
   TestGraph.cpp
   TestImports.cpp
   TestIntegration.cpp
+  TestLayout.cpp
   TestLexer.cpp
   TestParser.cpp
   TestStateGraph.cpp

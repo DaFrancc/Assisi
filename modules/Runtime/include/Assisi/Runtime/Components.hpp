@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <Assisi/Prelude.hpp>
@@ -388,6 +389,9 @@ struct AnimatorRun
     std::vector<Sigil::Word> block;           ///< Its params, the engine's values and its lets.
     std::vector<std::vector<uint32_t>> paths; ///< Per layer, the states from the root down to the one playing.
     std::vector<Sigil::Gate> gates;           ///< Scratch: which of a layer's transitions may fire.
+    /// Per slot, the count AnimatorTrigger::FireOnChange last gave the trigger
+    /// there; nothing until it has given one.
+    std::vector<std::optional<uint32_t>> counts;
     std::shared_ptr<const AnimatorGraph> graph;
     bool warned = false; ///< Whether an unbound clip param was reported.
 };
