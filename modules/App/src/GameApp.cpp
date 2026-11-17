@@ -330,12 +330,15 @@ void GameApp::ReportAnimationCost() const
         joints += skinned.pose.size();
         layers += 1 + playback.request.layers.size();
     }
-    const double total = animators + players + _benchmarkPoseSeconds + _benchmarkTransformSeconds;
+    const PoseTimes &stage = _benchmarkPoseTimes;
+    const double total = animators + players + stage.placing + stage.posing + stage.placingAgain;
     Core::Log::Info("Benchmark: animation, milliseconds per frame over {} frames:", _benchmarkFrames);
-    Core::Log::Info("Benchmark:   animators   {:.3f}", animators * kMillisecondsPerSecond / frames);
-    Core::Log::Info("Benchmark:   playback    {:.3f}", players * kMillisecondsPerSecond / frames);
-    Core::Log::Info("Benchmark:   poses       {:.3f}", _benchmarkPoseSeconds * kMillisecondsPerSecond / frames);
-    Core::Log::Info("Benchmark:   transforms  {:.3f}", _benchmarkTransformSeconds * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   animators               {:.3f}", animators * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   playback                {:.3f}", players * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms              {:.3f}", stage.placing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   poses                   {:.3f}", stage.posing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms after poses  {:.3f}",
+                    stage.placingAgain * kMillisecondsPerSecond / frames);
     if (characters == 0)
     {
         return;
@@ -576,6 +579,10 @@ void GameApp::OnUpdate(float dt)
 
             const SystemContext ctx = WorldContext(world, dt, GetSimTick());
             UpdateWorld(ctx);
+            // The drawn world keeps its characters' posed vertices in the same pass.
+            const bool drawn = &world == _world;
+            PoseWorld(world, drawn ? &_assetCache : nullptr,
+                      drawn && MeasuringBenchmark() ? &_benchmarkPoseTimes : nullptr);
             PresentWorld(ctx);
         });
 
@@ -592,20 +599,17 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         return;
     }
 
+    // A world that ran no Update this frame, paused, is posed here instead.
+    EnsurePosed(*_world, &_assetCache);
+
     // Before the camera is chosen, not only inside Render(): a camera is placed
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
-    // behind whatever it is attached to.
-    // Poses first: what follows a joint is placed from where the joint is this frame.
-    const bool measuring = MeasuringBenchmark();
-    const double poseStart = measuring ? MonotonicSeconds() : 0.0;
-    Runtime::EvaluateScenePoses(_world->scene, _assetCache);
-    const double transformStart = measuring ? MonotonicSeconds() : 0.0;
+    // behind whatever it is attached to. After the pose stage it places only
+    // what the Ui systems moved.
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
-    if (measuring)
+    if (MeasuringBenchmark())
     {
-        _benchmarkPoseSeconds += transformStart - poseStart;
-        _benchmarkTransformSeconds += MonotonicSeconds() - transformStart;
         ++_benchmarkFrames;
     }
     ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
