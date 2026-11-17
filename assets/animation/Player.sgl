@@ -52,7 +52,11 @@ layer base {
     // for its landing to count, so every fall ends in one.
     jump + fall -> land when land { fade 0.1; interrupt; };
     land -> fall when airborne { interrupt; };
+    // Moving or crouching ends a landing once the fade into it has shown the
+    // impact, rather than waiting for it to stand up.
+    land -> locomotion when speed > starts_walking { fade 0.2; };
+    land -> crouch when crouched;
     locomotion -> crouch when crouched { interrupt; };
     crouch -> locomotion when !crouched;
-    locomotion + crouch -> interact when interact { interrupt; };
+    locomotion + crouch + land -> interact when interact { interrupt; };
 }
