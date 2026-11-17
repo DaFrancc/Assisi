@@ -171,6 +171,19 @@ struct AnimationTrack
     bool warned = false; ///< Whether this binding's missing joints were reported.
     bool loop = true;         ///< Whether `current` last played looping.
     bool outgoingLoop = true; ///< Whether `outgoing` loops, kept from when the fade began.
+    /// Whether it has advanced yet, even playing no animation: the animation it
+    /// starts with cuts in, since there is nothing to fade from.
+    bool started = false;
+    bool waiting = false; ///< The last advance found clips still loading, so nothing is sampled.
+    /// `current`'s or `outgoing`'s clips are not yet bound to the skeleton:
+    /// advancing takes clips without one, and sampling binds them.
+    bool bindingsStale = false;
+    /// A fade began since the last sampling, which takes the pose on screen
+    /// as the side the fade leaves.
+    bool snapshotPending = false;
+    /// The next sampling starts the pose from what lies underneath: after a
+    /// cut, a new mesh, or a fade that finished.
+    bool refillPending = false;
 };
 
 /// @brief How a layer combines with the pose below it, inside its mask.
@@ -235,6 +248,9 @@ struct LayerState
     bool rootMissing = false;      ///< The mask's root names no joint of the mesh.
     bool exclusionMissing = false; ///< An exclusion names no joint of the mesh.
     bool maskWarned = false;       ///< Whether the missing names were reported.
+    /// A fade began since the layer was last sampled, so an additive layer's
+    /// first frame starts mixing from the one it had.
+    bool fadeStarted = false;
 };
 
 /// @brief How a fade takes the animation going out to the one coming in.

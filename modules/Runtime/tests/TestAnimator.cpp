@@ -11,6 +11,8 @@
 #include "AnimatorTesting.hpp"
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Geometry/AnimationClip.hpp>
+#include <Assisi/Runtime/AnimationPlayback.hpp>
 #include <Assisi/Runtime/AnimatorStep.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -197,6 +199,37 @@ TEST_CASE("Animator: a state played once again from the start when entered on th
     // Playback takes the clip back to the start phase when the count goes up.
     CHECK(character.playback.request.base.restarts == before + 1);
     CHECK(character.playback.request.base.startPhase == 0.f);
+}
+
+TEST_CASE("Animator: with no skeleton to pose, time still moves and a clip played once moves on" * NeedsUal1())
+{
+    const std::string once = Clip("Jump_Start");
+    const std::string after = Clip("Jump_Loop");
+    Character character = Bound("use animation;\nskeleton \"" + std::string{kModel} + "\";\nlayer base {\n" +
+                                "    state a { play \"" + once + "\"; then b; }\n    state b { play \"" + after +
+                                "\"; }\n}\n");
+    // Clips made here rather than loaded: only their lengths matter, since
+    // nothing is sampled.
+    constexpr float kClipSeconds = 0.5f;
+    constexpr float kFrame = 0.1f;
+    // Long enough for the first clip to end and the fade into the second to finish.
+    constexpr int32_t kFrames = 20;
+    Geometry::AnimationClip clip;
+    clip.Duration = kClipSeconds;
+    const std::vector<std::shared_ptr<const Geometry::AnimationClip>> onceClips{
+        std::make_shared<const Geometry::AnimationClip>(clip)};
+    const std::vector<std::shared_ptr<const Geometry::AnimationClip>> afterClips{
+        std::make_shared<const Geometry::AnimationClip>(clip)};
+    for (int32_t frame = 0; frame < kFrames; ++frame)
+    {
+        Runtime::StepAnimator(character.animator, character.run, character.playback);
+        const bool first = character.playback.request.base.animation == ClipId("Jump_Start");
+        const Runtime::ResolvedAnimation animation{.space = nullptr, .clips = first ? onceClips : afterClips};
+        Runtime::AdvancePlayerTime(character.playback, animation, kFrame);
+    }
+    CHECK(Runtime::AnimatorStateNames(character.run, 0) == std::vector<std::string>{"b"});
+    CHECK(character.playback.track.boundAnimation == ClipId("Jump_Loop"));
+    CHECK_FALSE(character.playback.track.fading);
 }
 
 TEST_CASE("Animator: rate, blend position and weight are written every frame" * NeedsUal1())
