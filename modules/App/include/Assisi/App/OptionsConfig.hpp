@@ -5,6 +5,7 @@
 /// @brief User-facing runtime options persisted to options.json.
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/Render/CloudQuality.hpp>
 #include <Assisi/Render/EnvironmentSettings.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/ShadowSettings.hpp>
@@ -63,9 +64,13 @@ struct OptionsConfig
     Render::AaMode aaMode = Render::AaMode::None;
     int32_t msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
 
-    /// @brief Tone curve, exposure and grade. Sanitized on load — the file is
-    /// hand-editable and these lanes reach a shader.
+    /// @brief Tone curve, brightness and dither. Sanitized on load — the file is
+    /// hand-editable and these lanes reach a shader. The level's
+    /// PostProcessVolumes set the exposure, grade and glow under them.
     Render::TonemapSettings tonemap;
+
+    /// @brief Whether bright light glows. How strongly is the level's.
+    bool bloomEnabled = true;
 
     /// @brief The shadow knobs, in their sun and local halves. Sanitized on
     /// load for the same reason, and one more: these size a GPU allocation, so
@@ -79,6 +84,24 @@ struct OptionsConfig
     /// @brief Screen-space ambient occlusion. Sanitized on load: the sample
     /// count bounds a loop over a fixed-size kernel.
     Render::SsaoSettings ambientOcclusion;
+
+    /// @brief Whether the player chose to draw the level's fog, or nullopt to
+    /// leave it on. Read only when the game lets players choose: see FogEnabled.
+    std::optional<bool> fogEnabled;
+
+    /// @brief How finely the clouds are drawn. Sanitized on load: the
+    /// resolution sizes the clouds' sky map.
+    Render::CloudQuality clouds;
+
+    /// @brief Whether the player chose to draw a level's clouds, or nullopt to
+    /// leave them on. Read only when the game lets players choose: see
+    /// CloudsEnabled.
+    std::optional<bool> cloudsEnabled;
+
+    /// @brief Whether the player chose to draw a level's water, or nullopt to
+    /// leave it on. Read only when the game lets players choose: see
+    /// WaterEnabled.
+    std::optional<bool> waterEnabled;
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
@@ -96,6 +119,31 @@ struct OptionsConfig
     [[nodiscard]] FrameSnap FrameSnapping(const AppConfig &config) const
     {
         return frameSnap ? *frameSnap : config.frameSnap;
+    }
+
+    /// @brief Whether to draw the level's fog: the player's choice when
+    /// @p config lets players choose and they have, on otherwise. Off keeps the
+    /// draw distance the fog sets, so it changes how the edge looks, never what
+    /// is drawn.
+    [[nodiscard]] bool FogEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsFog && fogEnabled ? *fogEnabled : true;
+    }
+
+    /// @brief Whether to draw a level's clouds: the player's choice when
+    /// @p config lets players choose and they have, on otherwise. Off keeps the
+    /// light the clouds give the sky, so it changes the sky, never how the
+    /// level is lit.
+    [[nodiscard]] bool CloudsEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsClouds && cloudsEnabled ? *cloudsEnabled : true;
+    }
+
+    /// @brief Whether to draw a level's Oceans and Lakes: the player's choice
+    /// when @p config lets players choose and they have, on otherwise.
+    [[nodiscard]] bool WaterEnabled(const AppConfig &config) const
+    {
+        return config.playerSetsWater && waterEnabled ? *waterEnabled : true;
     }
 
     /// @brief The tap interval to run with: the player's when @p config lets

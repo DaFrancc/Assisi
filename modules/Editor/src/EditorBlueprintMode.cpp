@@ -142,7 +142,7 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     // it — re-uploading them to look at one would be the expensive way round.
     Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
-        Assisi::App::LoadLevel(world, source, {_assetCache, _sceneRenderer},
+        Assisi::App::LoadLevel(world, source, {_assetCache, *_sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
     if (!loaded)
     {
@@ -157,9 +157,12 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     world.levelPath = source;
     // A blueprint world never simulates, so a missing system changes nothing you
     // could see here — but it means the file names something this build cannot
-    // provide, which the author should hear about before saving over it.
-    if (!_worlds.ApplySystems(world, header.systems, source))
-        Assisi::Core::Log::Error("Blueprint mode: '{}' names a system this build does not declare.", source);
+    // provide, which the author should hear about before saving over it. Skipped
+    // names are logged as they are left out, shown in red, and refuse the save.
+    if (!_worlds.ApplySystems(world, header.systems, source, Assisi::App::IfUndeclared::Skip))
+    {
+        Assisi::Core::Log::Error("Blueprint mode: the systems of '{}' could not be installed.", source);
+    }
     world.state = Assisi::App::WorldState::Active;
     // Never simulate: a running world settles its bodies into a pose the file would
     // then remember.
@@ -323,7 +326,7 @@ void EditorApp::SubmitInstanceIcons()
     // a row, not an entity. Rebuilt per frame rather than cached — instances are
     // placed and deleted by the same gestures that would have to invalidate a cache,
     // and there are tens of them, not thousands.
-    std::vector<glm::vec3> positions;
+    std::vector<glm::dvec3> positions;
     const auto rows = _world->instances.All();
     positions.reserve(rows.size());
     for (const auto &[id, row] : rows)

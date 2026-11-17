@@ -96,6 +96,16 @@ which scale they're on: `1 1 1` is white on a 0–1 scale and nearly black on a
 0–255 scale. A channel outside its call's range also fails, with a message
 naming the call that takes that range.
 
+## Images
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `background_image` | a sprite, `sheet:name` | A picture drawn across the whole element, over its `background`. |
+| `tint` | colour | Multiplies the colours of every image the element draws. White, the default, leaves them as they are. |
+| `fit` | `stretch`, `contain`, `cover` | How the element's picture fills the space inside its padding. |
+
+See [Images](ui-images.md) for sprites, pictures and frames.
+
 ## Text
 
 | Attribute | Values | Meaning |
@@ -103,6 +113,12 @@ naming the call that takes that range.
 | `text_size` | a length | Font size. |
 | `text_color` | colour | Text colour. |
 | `text_align` | `left`, `center`, `right` | Horizontal alignment of the text. |
+
+An element that sets no `text_size` or `text_color` takes its parent's, so
+setting either on a container sets it for everything inside. A screen's own
+text size is 24 and its text colour white. A state passes down too: a row with
+`hover:text_color` turns the text of every label inside it while the pointer
+is over the row.
 
 ## Floating
 
@@ -134,9 +150,57 @@ and moves:
 
 | Attribute | Values | Meaning |
 |---|---|---|
-| `visible` | `true`, `false` | Whether the element is shown. A hidden element takes no space. |
+| `visible` | `true`, `false`, or a binding to a `bool` | Whether the element is shown. A hidden element takes no space. See [Showing values from the world](ui-bindings.md#showing-and-hiding). |
 | `enabled` | `true`, `false` | Whether a control responds to the player. |
 | `blocks_pointer` | `true`, `false` | Whether clicks on this element stop here instead of reaching the game. Use on a panel's background. |
 | `takes_keyboard` | `true`, `false` | Whether, while focused, it receives the keyboard even when the game would otherwise have it. |
 | `selectable` | `true`, `false` | Whether the player can select and copy its text. |
-| `style` | a name | Reserved for themes. Accepted and stored, but has no effect yet. |
+| `style` | a name | The [theme](ui-themes.md) style the element takes its look from. |
+
+## States
+
+An element can look different while the player is pointing at it, holding it
+down or has moved to it with the keys, and while it is disabled. Write the
+attribute again with the state in front of it and a `:` between them:
+
+```xml
+<button background="#222222" hover:background="#e63319"
+        pressed:background="#a02010" disabled:text_color="#666666">Quit</button>
+```
+
+| State | Holds while |
+|---|---|
+| `focused` | The keys act on the element: the player moved to it with the arrow keys or Tab. |
+| `hover` | The pointer is over the element, or over anything inside it. |
+| `pressed` | The player is holding the element down, or holding a control inside it. Only a control can be held: a press on a `<text>` presses nothing. |
+| `disabled` | The element has `enabled="false"`. |
+
+Any attribute on this page can be given a state, including sizes and spacing.
+The attributes about what an element is or does can't: `name`, `on_click`,
+`focus`, `visible`, `enabled` and `style`.
+
+Because `hover` holds for everything the pointer is inside, a whole row can
+light up while the pointer is anywhere over it:
+
+```xml
+<row padding="8" gap="12" background="#1a1c24" hover:background="#2a2e3a">
+  <text>Iron sword</text>
+  <button>Equip</button>
+</row>
+```
+
+When more than one state holds and they change the same attribute, the one
+lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`, and
+`hover` over `focused`. A disabled button looks disabled even with the pointer
+on it, and a button being held shows its pressed look rather than its hover
+look.
+
+`focused` shows only while the player is using the keys, as the focus ring
+does. Clicking a button gives it focus without showing it. A text field is the
+exception: it shows `focused` however it got focus, because the player is
+typing into it.
+
+A state that changes a size or spacing moves the elements around it, as the
+same attribute would without a state. A button that grows on hover pushes its
+neighbours aside, and if it grows out from under the pointer it stops being
+hovered.

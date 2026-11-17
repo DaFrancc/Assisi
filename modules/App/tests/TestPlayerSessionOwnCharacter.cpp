@@ -47,7 +47,16 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
     // as it comes, it puts the character back where it stood, and it walks
     // only once the host has seen it asked to.
     const std::filesystem::path root = FreshRoot("assisi_players_own");
-    WritePlayerBlueprint(root);
+    std::string_view movement;
+    SUBCASE("moving by SourceMovement")
+    {
+        movement = "SourceMovement";
+    }
+    SUBCASE("moving by ArcadeMovement")
+    {
+        movement = "ArcadeMovement";
+    }
+    WritePlayerBlueprint(root, movement);
 
     Session session;
     Machine &host = session.Add();
@@ -65,13 +74,13 @@ TEST_CASE("A client's own character moves the moment it is asked, and the host's
     session.Run(kLongWalkFrames,
                 [&]
     {
-        simulated.push_back(client.world.scene.Get<ECS::Transform>(own)->position);
+        simulated.push_back(glm::vec3(client.world.scene.Get<ECS::Transform>(own)->position));
         if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))
         {
             controls->move = {0.f, 1.f};
         }
     });
-    simulated.push_back(client.world.scene.Get<ECS::Transform>(own)->position);
+    simulated.push_back(glm::vec3(client.world.scene.Get<ECS::Transform>(own)->position));
 
     // The host answered all along, and agreed every time.
     const NetSync::ReplicationClient::CorrectionStats &corrections = client.play.Session().Client()->Corrections();

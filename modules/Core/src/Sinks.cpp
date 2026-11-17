@@ -12,6 +12,7 @@
 #endif
 
 #include <Assisi/Core/Diagnostics.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Sinks.hpp>
 
 namespace Assisi::Core
@@ -118,9 +119,9 @@ std::string Timestamp()
     const sys_time<milliseconds> nowUtc = floor<milliseconds>(system_clock::now());
     if (const time_zone *zone = LocalZone())
     {
-        return std::format("{:%H:%M:%S}", zone->to_local(nowUtc));
+        return Format("{:%H:%M:%S}", zone->to_local(nowUtc));
     }
-    return std::format("{:%H:%M:%S}", nowUtc);
+    return Format("{:%H:%M:%S}", nowUtc);
 }
 } // namespace
 

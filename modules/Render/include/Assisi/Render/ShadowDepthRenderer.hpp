@@ -354,7 +354,17 @@ public:
     /// single buffer describes every shadow view of the frame however many
     /// kinds of shadow map produced them — and a shader that samples one of
     /// them indexes the same table whichever kind it was.
-    void BeginFrame();
+    ///
+    /// Shadow maps are drawn measured from one point and sampled by a pass
+    /// measured from another: @p sampledFrom is where the sampling pass's origin
+    /// is in the frame the maps are drawn in, and each row is written so a
+    /// position measured from it lands where it should.
+    ///
+    /// Each Render() also writes its instances and draw commands after the
+    /// previous call's, never over them. The device may run two copies into a
+    /// buffer in either order unless a read between them makes it wait, so a
+    /// call that drew nothing would otherwise leave its write racing the next.
+    void BeginFrame(const glm::vec3 &sampledFrom);
 
     /// @brief The frame's view table, or null before anything has been drawn
     /// into it.
@@ -403,7 +413,8 @@ private:
 
     [[nodiscard]] nvrhi::IBindingSet *GetOrCreateBindingSet(nvrhi::IBuffer *instanceBuffer) const;
     [[nodiscard]] nvrhi::IBindingSet *GetOrCreateMaskedBindingSet(nvrhi::IBuffer *instanceBuffer) const;
-    void EnsureIndirectCapacity(std::uint32_t commandCount) const;
+    /// @return Whether the buffer was replaced, which leaves it holding nothing.
+    [[nodiscard]] bool EnsureIndirectCapacity(std::uint32_t commandCount) const;
 
     nvrhi::IDevice *_device = nullptr;
 
@@ -434,12 +445,22 @@ private:
     mutable nvrhi::BufferHandle _indirectBuffer;
     mutable std::uint32_t _indirectCapacity = 0; // in commands
 
-    // The frame's views, accumulated across every Render() since BeginFrame and
-    // uploaded whole each time, so the table is complete after any of them.
+    // How much of the instance and indirect buffers this frame's Render() calls
+    // have written: the next call writes from here. Back to 0 at BeginFrame, and
+    // when a buffer is replaced, since the new one holds nothing.
+    mutable std::uint32_t _frameInstances = 0;
+    mutable std::uint32_t _frameCommands = 0;
+
+    // The frame's views, accumulated across every Render() since BeginFrame.
+    // Each call uploads only its own rows, or every row when the table had to
+    // grow, so the table is complete after any of them.
     mutable std::vector<ShadowViewGpu> _views;
     mutable Buffer _viewTable;
 
     mutable ShadowDrawList _drawList;
+
+    // See BeginFrame.
+    glm::vec3 _sampledFrom{0.f};
 };
 
 } // namespace Assisi::Render

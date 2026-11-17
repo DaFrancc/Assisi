@@ -167,7 +167,9 @@ The `SystemContext` your system receives holds everything it can reach:
 
 Each frame runs them in that order: `PreUpdate`, then `FixedUpdate` and
 `PostFixedUpdate` as many times as the frame needs, then `Update`, then `Ui`.
-After `Ui` the engine plays the frame's sounds and draws it.
+Between `Update` and `Ui` the engine finishes every animated character's pose
+(see [When a pose is finished](animation.md#when-a-pose-is-finished)). After
+`Ui` it plays the frame's sounds and draws it.
 
 There's no extra phase for running after everything else, like tidying up after
 the rest of `Update`. Mark the system `last` instead (see [Options](#options)).

@@ -78,12 +78,29 @@ ScreenDocument Everything()
     panel.style.textAlign = TextAlign::Right;
     panel.style.textColor = Color{0.9f, 0.8f, 0.7f, 0.6f};
     panel.style.textSize = Em(1.5f);
+    panel.written = PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::BorderColor);
+    panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::BorderColor}};
+    // Two looks writing different properties, one of them through a token, so
+    // a look the codec drops, or two it merges, shows up as a difference.
+    Style hovered;
+    hovered.background = Color{0.9f, 0.2f, 0.1f, 1.f};
+    hovered.sizing[0] = Sizing::Fixed(Px(300.f));
+    ThemedPatch hover{.patch = StylePatch::Changes(StyleState::Hover, Style{}, hovered), .tokens = {}};
+    hover.Bind(TokenUse{.token = InternedString{"accent"}, .property = StyleProperty::TextColor});
+    panel.states.push_back(hover);
+    Style disabled;
+    disabled.textColor = Color{0.4f, 0.4f, 0.4f, 1.f};
+    panel.states.push_back(
+        ThemedPatch{.patch = StylePatch::Changes(StyleState::Disabled, Style{}, disabled), .tokens = {}});
     document.nodes.push_back(panel);
 
+    // A label bound to a field, shown only while another holds.
     ScreenNode resume;
     resume.parent = 1;
     resume.name = InternedString{"resume"};
-    resume.text = document.AddText("Resume");
+    resume.text = document.AddText("Resume {Save.slot}");
+    resume.textIsBound = true;
+    resume.visibleBinding = document.AddText("{Save.exists}");
     resume.widget = BuiltinWidget::Button;
     resume.action = ActionKind::Verb;
     resume.verb = ScreenVerb::Hide;
@@ -114,6 +131,8 @@ ScreenDocument Everything()
     volume.name = InternedString{"volume"};
     volume.widget = BuiltinWidget::ContinuousSlider;
     volume.range = {.min = 0.f, .max = 100.f, .step = 5.f};
+    volume.valueBinding = document.AddText("{=Audio.volume}");
+    volume.changeEvent = InternedString{"Assisi::App::QuitRequested"};
     document.nodes.push_back(volume);
 
     ScreenNode port;
@@ -131,6 +150,20 @@ ScreenDocument Everything()
     port.mask = TextMask::Dots;
     port.check = TextCheck::Refuse;
     document.nodes.push_back(port);
+
+    // One unnamed context and one named, answering every moment between them.
+    ScreenContext player;
+    player.actions[static_cast<std::size_t>(ContextMoment::Clear)] = {
+        .eventName = InternedString{"Game::PlayerLeft"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    player.actions[static_cast<std::size_t>(ContextMoment::Lost)] = {
+        .eventName = {}, .action = ActionKind::Verb, .verb = ScreenVerb::Hide};
+    ScreenContext boss;
+    boss.name = InternedString{"boss"};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Set)] = {
+        .eventName = InternedString{"Game::BossAppeared"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    boss.actions[static_cast<std::size_t>(ContextMoment::Switch)] = {
+        .eventName = InternedString{"Game::BossChanged"}, .action = ActionKind::Event, .verb = ScreenVerb::Hide};
+    document.contexts = {player, boss};
 
     return document;
 }
@@ -186,7 +219,20 @@ TEST_CASE("ScreenBlob: a text handle past the pool is refused")
     // blank label.
     ScreenDocument document;
     document.nodes.emplace_back();
-    document.nodes[0].text = Assisi::Core::PooledString{.offset = 0, .length = 4};
+    const Assisi::Core::PooledString past{.offset = 0, .length = 4};
+
+    SUBCASE("its text")
+    {
+        document.nodes[0].text = past;
+    }
+    SUBCASE("its visible binding")
+    {
+        document.nodes[0].visibleBinding = past;
+    }
+    SUBCASE("its value binding")
+    {
+        document.nodes[0].valueBinding = past;
+    }
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
     REQUIRE_FALSE(read.has_value());
@@ -374,6 +420,75 @@ TEST_CASE("ScreenBlob: an enumerator this build does not have is refused")
         ScreenDocument document;
         document.nodes.emplace_back();
         document.nodes[0].mask = static_cast<TextMask>(9);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a look's state")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        ThemedPatch look;
+        look.patch.state = static_cast<StyleState>(9);
+        document.nodes[0].states.push_back(look);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("the property a token is used for")
+    {
+        // Resolving a look switches over it to find the field the token fills.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].tokens.push_back(
+            TokenUse{.token = InternedString{"accent"}, .property = static_cast<StyleProperty>(200)});
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+}
+
+TEST_CASE("ScreenBlob: a node's looks that no cook writes are refused")
+{
+    SUBCASE("two looks for one state")
+    {
+        // Which of the two the node wore would depend on the order they were
+        // applied in, which nothing promises.
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        ThemedPatch hovered;
+        hovered.patch.state = StyleState::Hover;
+        document.nodes[0].states = {hovered, hovered};
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a look writing a property this build does not have")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        ThemedPatch hovered;
+        hovered.patch.state = StyleState::Hover;
+        hovered.patch.written = PropertyBit(StyleProperty::Count_);
+        document.nodes[0].states.push_back(hovered);
+
+        const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+        REQUIRE_FALSE(read.has_value());
+        CHECK(read.error() == CookedScreenError::Invalid);
+    }
+
+    SUBCASE("a node writing a property this build does not have")
+    {
+        ScreenDocument document;
+        document.nodes.emplace_back();
+        document.nodes[0].written = PropertyBit(StyleProperty::Count_);
 
         const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
         REQUIRE_FALSE(read.has_value());

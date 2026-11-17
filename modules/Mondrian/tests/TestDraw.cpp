@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 
 using namespace Assisi::Mondrian;
 using Assisi::Mondrian::Testing::FixtureFont;
@@ -54,6 +55,25 @@ std::optional<std::size_t> QuadWithRed(const DrawList &list, float red)
         return std::nullopt;
     }
     return static_cast<std::size_t>(found - quads.begin());
+}
+
+/// The first quad of @p kind, or null.
+const QuadInstance *FirstOfKind(const DrawList &list, QuadKind kind)
+{
+    const std::span<const QuadInstance> quads = list.Instances();
+    const std::span<const QuadInstance>::iterator found = std::ranges::find_if(
+        quads, [kind](const QuadInstance &quad) { return quad.kind == static_cast<uint32_t>(kind); });
+    return found != quads.end() ? &*found : nullptr;
+}
+
+constexpr Assisi::Math::Color4<ColorSpace::Srgb> kTint{0.5f, 0.75f, 1.f, 1.f};
+
+/// A frame with a different border on each side, so a mixed-up side shows.
+Sprite Framed()
+{
+    Sprite frame = WholeTexture(kPicture, 16, 16);
+    frame.borders = {.left = 4, .top = 3, .right = 2, .bottom = 1};
+    return frame;
 }
 
 } // namespace
@@ -154,19 +174,135 @@ TEST_CASE("Draw: an image fills its node with the texture it was given")
     NodeTree tree;
     const NodeId picture = tree.Create(tree.Root());
     tree.SetStyle(picture, Filled(64.f, 32.f, 0.f));
-    const Rect half{.x = 0.f, .y = 0.f, .width = 0.5f, .height = 1.f};
-    tree.SetImage(picture, kPicture, half);
+    Sprite half = WholeTexture(kPicture, 0, 0);
+    half.uv.width = 0.5f;
+    tree.SetImage(picture, half);
 
     DrawList drawn = Draw(tree, FixtureFont());
-    const auto quads = drawn.Instances();
-    const auto image = std::ranges::find_if(quads, [](const QuadInstance &quad)
-                                            { return quad.kind == static_cast<uint32_t>(QuadKind::Image); });
-    REQUIRE(image != quads.end());
+    const QuadInstance *image = FirstOfKind(drawn, QuadKind::Image);
+    REQUIRE(image != nullptr);
     CHECK(image->rect.width == 64.f);
     CHECK(image->uv.width == 0.5f);
 
     drawn.Finalize();
     CHECK(std::ranges::any_of(drawn.Entries(), [](const DrawEntry &entry) { return entry.texture == kPicture; }));
+}
+
+TEST_CASE("Draw: a picture sits inside its node's padding, tinted")
+{
+    NodeTree tree;
+    const NodeId picture = tree.Create(tree.Root());
+    Style style = Filled(100.f, 60.f, 0.f);
+    style.padding = Padding::All(Px(10.f));
+    style.tint = kTint;
+    tree.SetStyle(picture, style);
+    tree.SetImage(picture, WholeTexture(kPicture, 0, 0));
+
+    const DrawList drawn = Draw(tree, FixtureFont());
+    const QuadInstance *image = FirstOfKind(drawn, QuadKind::Image);
+    REQUIRE(image != nullptr);
+    CHECK(image->rect.x == 10.f);
+    CHECK(image->rect.width == 80.f);
+    CHECK(image->rect.height == 40.f);
+    CHECK(image->color == kTint);
+}
+
+TEST_CASE("Draw: contain shows all of a picture as large as fits, keeping its shape, in the middle")
+{
+    NodeTree tree;
+    const NodeId picture = tree.Create(tree.Root());
+    Style style = Filled(200.f, 200.f, 0.f);
+    style.fit = ImageFit::Contain;
+    tree.SetStyle(picture, style);
+    tree.SetImage(picture, WholeTexture(kPicture, 100, 50));
+
+    const DrawList drawn = Draw(tree, FixtureFont());
+    const QuadInstance *image = FirstOfKind(drawn, QuadKind::Image);
+    REQUIRE(image != nullptr);
+    CHECK(image->rect.width == 200.f);
+    CHECK(image->rect.height == 100.f);
+    CHECK(image->rect.y == 50.f);
+    CHECK(image->uv.width == 1.f);
+    CHECK(image->uv.height == 1.f);
+}
+
+TEST_CASE("Draw: cover fills the node, keeping the picture's shape, and cuts off what overhangs evenly")
+{
+    NodeTree tree;
+    const NodeId picture = tree.Create(tree.Root());
+    Style style = Filled(100.f, 100.f, 0.f);
+    style.fit = ImageFit::Cover;
+    tree.SetStyle(picture, style);
+    tree.SetImage(picture, WholeTexture(kPicture, 100, 50));
+
+    const DrawList drawn = Draw(tree, FixtureFont());
+    const QuadInstance *image = FirstOfKind(drawn, QuadKind::Image);
+    REQUIRE(image != nullptr);
+    CHECK(image->rect.width == 100.f);
+    CHECK(image->rect.height == 100.f);
+    // Twice as wide as it is tall, scaled up to the node's height: half its
+    // width shows, a quarter cut off each side.
+    CHECK(image->uv.x == doctest::Approx(0.25f));
+    CHECK(image->uv.width == doctest::Approx(0.5f));
+    CHECK(image->uv.height == 1.f);
+}
+
+TEST_CASE("Draw: a sprite with borders draws as a nine-slice whose corners keep their size times the UI scale")
+{
+    NodeTree tree;
+    const NodeId frame = tree.Create(tree.Root());
+    tree.SetStyle(frame, Filled(300.f, 200.f, 0.f));
+    tree.SetImage(frame, Framed());
+
+    const DrawList drawn = Draw(tree, FixtureFont(), kReference, 2.f);
+    const QuadInstance *sliced = FirstOfKind(drawn, QuadKind::NineSlice);
+    REQUIRE(sliced != nullptr);
+    CHECK(sliced->rect.width == 600.f);
+    // Two device pixels to a UI pixel: the corners on the quad are twice the
+    // texels they show.
+    CHECK(sliced->slice[0] == PackSliceInsets(8, 6));
+    CHECK(sliced->slice[1] == PackSliceInsets(4, 2));
+    CHECK(sliced->slice[2] == PackSliceInsets(4, 3));
+    CHECK(sliced->slice[3] == PackSliceInsets(2, 1));
+}
+
+TEST_CASE("Draw: a nine-slice too small for its corners shrinks them in proportion")
+{
+    NodeTree tree;
+    const NodeId frame = tree.Create(tree.Root());
+    tree.SetStyle(frame, Filled(3.f, 2.f, 0.f));
+    tree.SetImage(frame, Framed());
+
+    const DrawList drawn = Draw(tree, FixtureFont());
+    const QuadInstance *sliced = FirstOfKind(drawn, QuadKind::NineSlice);
+    REQUIRE(sliced != nullptr);
+    // Across, 4 + 2 shown in 3 pixels; down, 3 + 1 in 2: each pair halves.
+    CHECK(sliced->slice[0] == PackSliceInsets(2, 1));
+    CHECK(sliced->slice[1] == PackSliceInsets(1, 0));
+    CHECK(sliced->slice[2] == PackSliceInsets(4, 3));
+}
+
+TEST_CASE("Draw: a background image covers the whole node over its background colour, tinted")
+{
+    NodeTree tree;
+    const NodeId panel = tree.Create(tree.Root());
+    Style style = Filled(120.f, 80.f, 0.5f);
+    style.padding = Padding::All(Px(10.f));
+    style.tint = kTint;
+    tree.SetStyle(panel, style);
+    Node *node = tree.Editable(panel);
+    node->background = Framed();
+    node->hasBackgroundImage = true;
+
+    const DrawList drawn = Draw(tree, FixtureFont());
+    const std::optional<std::size_t> colour = QuadWithRed(drawn, 0.5f);
+    const QuadInstance *sliced = FirstOfKind(drawn, QuadKind::NineSlice);
+    REQUIRE(colour.has_value());
+    REQUIRE(sliced != nullptr);
+    CHECK(sliced > &drawn.Instances()[*colour]);
+    CHECK(sliced->rect.width == 120.f);
+    CHECK(sliced->rect.height == 80.f);
+    CHECK(sliced->color == kTint);
 }
 
 TEST_CASE("Draw: what a control paints behind the text comes before the glyphs it marks")

@@ -16,11 +16,13 @@
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/EventScope.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/Input.hpp>
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 #include <cstddef>
@@ -44,6 +46,12 @@ constexpr Mondrian::Extent kViewport{1280, 720};
 struct Ping
 {
     int32_t from = 0;
+};
+
+/// What a screen an entity owned sends when the entity is destroyed.
+struct OwnerDestroyed
+{
+    ScreenId screen;
 };
 
 /// What one world's systems read in the frames so far.
@@ -160,7 +168,7 @@ TEST_CASE("A button's world event reaches only its screen's world, and a univers
     TwoWorlds worlds;
     Mondrian::Screen &screen = AddScreen(
         worlds.first,
-        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.events,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
                                            Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput},
                                            Mondrian::kSortMenu, std::string{"menu"}),
         {});
@@ -185,15 +193,200 @@ TEST_CASE("A button's world event reaches only its screen's world, and a univers
 }
 
 #ifndef NDEBUG
-TEST_CASE("A world refuses a screen built to push into another world's events")
+TEST_CASE("A world refuses a screen built for another world")
 {
     // Its buttons would be heard by the other world's systems while it is shown
     // over this one.
     const Assisi::Testing::ThrowOnContractViolation guard;
     TwoWorlds worlds;
     std::unique_ptr<Mondrian::Screen> screen = std::make_unique<Mondrian::Screen>(
-        worlds.ui, worlds.second.events, Mondrian::ScreenTraits{}, Mondrian::kSortMenu, std::string{"menu"});
+        worlds.ui, worlds.second.screenWorld, Mondrian::ScreenTraits{}, Mondrian::kSortMenu, std::string{"menu"});
 
     CHECK_THROWS_AS(AddScreen(worlds.first, std::move(screen), {}), Core::ContractViolation);
 }
 #endif // !NDEBUG
+
+TEST_CASE("A screen's context is lost when its world destroys the entity, and only that world hears it")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity boss = worlds.first.scene.Create();
+    // The same id, alive in the other world: the context is the first world's.
+    REQUIRE(worlds.second.scene.Create() == boss);
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    screen.OnContext("boss", Mondrian::ContextMoment::Lost, Ping{.from = 1});
+    screen.SetContext("boss", ScreenEntity(boss));
+    screen.Show();
+    worlds.UiFrame({});
+    worlds.RunFrame();
+
+    // Alive until the flush, for the screen as for any system.
+    worlds.first.scene.Destroy(boss);
+    worlds.UiFrame({});
+    worlds.RunFrame();
+    CHECK(worlds.firstHeard.pings == 0);
+
+    worlds.first.scene.FlushDestroyed();
+    worlds.UiFrame({});
+    worlds.RunFrame();
+    CHECK(worlds.firstHeard.pings == 1);
+    CHECK(worlds.secondHeard.pings == 0);
+    CHECK_FALSE(screen.GetContext("boss"));
+}
+
+TEST_CASE("A world gives each screen an id that finds it, and never gives that id again")
+{
+    TwoWorlds worlds;
+    Mondrian::Screen &first = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    const ScreenId firstId = IdOf(worlds.first, first);
+    REQUIRE(firstId);
+    CHECK(FindScreen(worlds.first, firstId) == &first);
+    CHECK_FALSE(IdOf(worlds.second, first)); // not that world's
+
+    RemoveScreen(worlds.first, first);
+    CHECK(FindScreen(worlds.first, firstId) == nullptr);
+
+    // The same file again is another screen: what kept the first id finds
+    // nothing rather than finding this one.
+    Mondrian::Screen &second = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    CHECK(IdOf(worlds.first, second) != firstId);
+    CHECK(FindScreen(worlds.first, firstId) == nullptr);
+}
+
+TEST_CASE("A screen's binding reads its context's component through its world's scene")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity crate = worlds.first.scene.Create();
+    (void)worlds.first.scene.Add(crate, Assisi::ECS::Transform{.position = {1.f, 2.f, 3.f}});
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    const Mondrian::NodeId text = screen.AddText(screen.Root(), Mondrian::Style{}, "");
+    REQUIRE(screen.BindText(text, "{Transform.position:.0f}").has_value());
+    screen.SetContext(ScreenEntity(crate));
+    screen.Show();
+
+    worlds.UiFrame({});
+    CHECK(screen.Tree().Get(text)->text == "1, 2, 3");
+
+    worlds.first.scene.GetMut<Assisi::ECS::Transform>(crate)->position.x = 7.f;
+    worlds.UiFrame({});
+    CHECK(screen.Tree().Get(text)->text == "7, 2, 3");
+}
+
+TEST_CASE("A control bound two-way writes a replicated component through its world's scene, as GetMut does")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity crate = worlds.first.scene.Create();
+    Assisi::Physics::RigidBody body;
+    body.mass = 2.f;
+    (void)worlds.first.scene.Add(crate, body);
+
+    Mondrian::Screen &screen =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
+                                                     Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput,
+                                                                            .beneath = Mondrian::ScreenBeneath::NoHide,
+                                                                            .pause = Mondrian::ScreenPause::Run},
+                                                     Mondrian::kSortMenu, std::string{"inspector"}),
+                  {});
+    const Mondrian::ContinuousSliderId mass = screen.AddContinuousSlider(
+        screen.Root(), Mondrian::SliderRange{.min = 0.f, .max = 10.f, .step = 1.f}, 0.f);
+    REQUIRE(screen.BindControl(mass.node, "{=RigidBody.mass}").has_value());
+    screen.SetContext(ScreenEntity(crate));
+    screen.Show();
+
+    worlds.UiFrame({});
+    CHECK(screen.GetValue(mass) == doctest::Approx(2.f));
+
+    const uint64_t before = worlds.first.scene.ChangeTick<Assisi::Physics::RigidBody>(crate);
+    worlds.ui.SetFocus(screen, mass.node);
+    Mondrian::UiInput right;
+    right.grant = Mondrian::InputGrant::Everything;
+    right.actionPressed[static_cast<std::size_t>(Mondrian::UiAction::Right)] = true;
+    right.actionDown[static_cast<std::size_t>(Mondrian::UiAction::Right)] = true;
+    worlds.UiFrame(right);
+
+    CHECK(worlds.first.scene.Get<Assisi::Physics::RigidBody>(crate)->mass == doctest::Approx(3.f));
+    CHECK(worlds.first.scene.ChangeTick<Assisi::Physics::RigidBody>(crate) > before);
+}
+
+TEST_CASE("A world finds the struct a registered source is by its name")
+{
+    TwoWorlds worlds;
+    CHECK(worlds.first.screenWorld.FindStruct("ScreenNode") != nullptr);
+    CHECK(worlds.first.screenWorld.FindStruct("NoSuchStruct") == nullptr);
+}
+
+TEST_CASE("A screen an entity owned can be removed by what it sends when the entity is destroyed")
+{
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity owner = worlds.first.scene.Create();
+
+    Mondrian::Screen &hud =
+        AddScreen(worlds.first,
+                  std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld, Mondrian::ScreenTraits{},
+                                                     Mondrian::kSortHud, std::string{"hud"}),
+                  {});
+    const ScreenId id = IdOf(worlds.first, hud);
+    hud.OnContext({}, Mondrian::ContextMoment::Lost, OwnerDestroyed{.screen = id});
+    hud.SetContext(ScreenEntity(owner));
+    hud.Show();
+    worlds.UiFrame({});
+    CHECK(worlds.first.events.Read<OwnerDestroyed>().empty());
+
+    worlds.first.scene.Destroy(owner);
+    worlds.first.scene.FlushDestroyed();
+
+    // Heard at the UI's input step, before a system reads anything this frame.
+    worlds.UiFrame({});
+    REQUIRE(worlds.first.events.Read<OwnerDestroyed>().size() == 1);
+    Mondrian::Screen *const found = FindScreen(worlds.first, worlds.first.events.Read<OwnerDestroyed>()[0].screen);
+    REQUIRE(found == &hud);
+
+    RemoveScreen(worlds.first, *found);
+    CHECK(FindScreen(worlds.first, id) == nullptr);
+}
+
+TEST_CASE("A world destroyed under a shown screen bound to its player takes the screen with it")
+{
+    // Travel's last step: the old level goes while its HUD is up and reading its
+    // player. Under the asan preset, the UI touching either afterwards fails.
+    TwoWorlds worlds;
+    const Assisi::ECS::Entity player = worlds.first.scene.Create();
+    Mondrian::Screen &hud = AddScreen(
+        worlds.first,
+        std::make_unique<Mondrian::Screen>(worlds.ui, worlds.first.screenWorld,
+                                           Mondrian::ScreenTraits{.input = Mondrian::ScreenInput::ConsumeInput},
+                                           Mondrian::kSortHud, std::string{"hud"}),
+        {});
+    hud.OnContext({}, Mondrian::ContextMoment::Lost, Ping{.from = 1});
+    hud.SetContext(ScreenEntity(player));
+    hud.Show();
+    worlds.UiFrame({});
+    REQUIRE(worlds.ui.TakesInput());
+
+    worlds.worlds.SetActive(worlds.second);
+    const std::string travelledFrom = worlds.first.name;
+    REQUIRE(worlds.worlds.Destroy(travelledFrom));
+
+    worlds.UiFrame({});
+    worlds.UiFrame({});
+    CHECK_FALSE(worlds.ui.TakesInput());
+    CHECK(worlds.ui.GetDrawList().Instances().empty());
+}

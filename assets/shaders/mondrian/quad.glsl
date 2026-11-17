@@ -11,7 +11,8 @@ const uint kSlotColor        = 3u;
 const uint kSlotBorderColor  = 4u;
 const uint kSlotCornerRadius = 5u;
 const uint kSlotScalars      = 6u; // borderWidth, cornerStyles, kind, transformIndex
-const uint kSlotsPerInstance = 7u;
+const uint kSlotSlice        = 7u; // a nine-slice's insets, two to a word
+const uint kSlotsPerInstance = 8u;
 
 layout(std430, set = 0, binding = 0) readonly buffer Instances
 {
@@ -36,6 +37,11 @@ const uint kCornerRounded   = 1u;
 const uint kCornerCut       = 2u;
 const uint kCornerStyleBits = 2u;
 const uint kCornerStyleMask = 3u;
+
+// Mirrors Assisi::Mondrian::kSliceInsetBits: each word of the slice slot holds
+// two insets, the first in its low half.
+const uint kSliceInsetBits = 16u;
+const uint kSliceInsetMask = 0xFFFFu;
 
 layout(push_constant) uniform PassConstants
 {

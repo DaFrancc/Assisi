@@ -36,8 +36,8 @@ By the end of the book you will be able to:
 
 - **Getting started** gets the engine built and shows you around the repository.
 - **Making a game** covers the day-to-day work, starting with the editor you'll
-  use from the first day: then entities, components, systems, input, physics
-  and levels.
+  use from the first day: then entities, components, systems, input,
+  rendering, physics and levels.
 - **Shipping** covers settings, build types and packaging a game for players.
 - **Going further** covers multiplayer and common problems.
 

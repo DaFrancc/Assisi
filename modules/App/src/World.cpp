@@ -10,6 +10,7 @@
 #include <Assisi/Mondrian/ScreenReader.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
@@ -66,20 +67,41 @@ Network &WorldNetwork(World &world)
     return world.net;
 }
 
+const void *SceneScreenWorld::Read(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity) const
+{
+    // A tag registered for its id alone has nothing to read.
+    if (!component.getByEntity)
+    {
+        return nullptr;
+    }
+    return component.getByEntity(&_scene, entity.index, entity.generation);
+}
+
+void *SceneScreenWorld::Write(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity)
+{
+    // As for reading: a tag has nothing to write.
+    if (!component.getMutable)
+    {
+        return nullptr;
+    }
+    return component.getMutable(&_scene, entity.index, entity.generation);
+}
+
 Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> screen,
                             std::span<const std::string> systems)
 {
     ASSISI_ASSERT(screen != nullptr, "a world was given a screen that is not there");
-    // Its controls push into the queue it was built with, which only this
-    // world's systems read.
-    ASSISI_ASSERT(&screen->Events() == &world.events,
-                  "a world was given a screen built to push into another world's events");
+    // Its controls push into the queue of the world it was built for, which
+    // only that world's systems read, and its contexts are that world's
+    // entities.
+    ASSISI_ASSERT(&screen->Events() == &world.events, "a world was given a screen built for another world");
 
     // Named in the install error if one of them is undeclared: the screen that
     // asked is what a programmer has to go and fix.
     const std::string context(screen->Name());
     world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
-                                              .screen = std::move(screen)});
+                                              .screen = std::move(screen),
+                                              .id = ScreenId{++world.lastScreenId}});
     if (!world.screenStack.back().systems.empty())
     {
         QueueSystemInstall(world, world.screenStack.back().systems, context);
@@ -101,7 +123,7 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, world.events, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.screenWorld, vpath, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
         Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
@@ -125,6 +147,19 @@ Mondrian::Screen *FindScreen(World &world, std::string_view name)
     return at == world.screenStack.end() ? nullptr : at->screen.get();
 }
 
+Mondrian::Screen *FindScreen(World &world, ScreenId id)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    return at == world.screenStack.end() ? nullptr : at->screen.get();
+}
+
+ScreenId IdOf(const World &world, const Mondrian::Screen &screen)
+{
+    const std::vector<World::Screen>::const_iterator at = std::ranges::find_if(
+        world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+    return at == world.screenStack.end() ? ScreenId{} : at->id;
+}
+
 World &WorldManager::Create(std::string_view label)
 {
     // Not refusable: Create returns a reference, so there is no failure value.
@@ -139,7 +174,8 @@ World &WorldManager::Create(std::string_view label)
     return ref;
 }
 
-bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context)
+bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context,
+                                IfUndeclared undeclared)
 {
     // The level's request is recorded whether or not it could be honoured — it is
     // what a save round-trips, and a failed install must not rewrite the file.
@@ -158,14 +194,32 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // instance's systems would otherwise be dropped by the next load and never
     // reinstated. Only App::SpawnBlueprint queued them, so a level *loaded* with
     // instances in it, or one placed in the editor, ran none of their behaviour.
-    std::vector<std::string> required(names.begin(), names.end());
+    const bool skip = undeclared == IfUndeclared::Skip;
+    std::vector<std::string> required;
+    for (const std::string &name : names)
+    {
+        if (skip && SystemCatalog::Instance().Find(name) == nullptr)
+        {
+            Core::Log::Error("'{}' names system '{}', which this build does not declare. It is left out.", context,
+                             name);
+            continue;
+        }
+        required.push_back(name);
+    }
     for (const auto &[name, count] : RequiredSystemCounts(world))
     {
         (void)count;
-        if (std::find(required.begin(), required.end(), name) == required.end())
+        if (std::ranges::find(names, name) != names.end() || std::ranges::find(required, name) != required.end())
         {
-            required.push_back(name);
+            continue;
         }
+        if (skip && SystemCatalog::Instance().Find(name) == nullptr)
+        {
+            Core::Log::Error("'{}': system '{}', needed by {}, is not declared by this build. It is left out.",
+                             context, name, QuotedNames(SourcesRequiring(world, name)));
+            continue;
+        }
+        required.push_back(name);
     }
 
     // Resolve before destroying anything: a refused list leaves the world running
@@ -261,8 +315,15 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
         if (outgoing == _edited)
         {
-            // The authored level stays resident so Stop can restore it.
+            // The authored level stays resident so Stop can restore it, but none
+            // of its screens stays up: a world nobody is playing shows no HUD,
+            // takes no keys and pauses nothing. Stop throws them away, so
+            // nothing needs them shown again.
             outgoing->state = WorldState::Dormant;
+            for (const World::Screen &held : outgoing->screenStack)
+            {
+                held.screen->Hide();
+            }
         }
         else
         {
@@ -271,6 +332,12 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
         }
     }
     return &incoming;
+}
+
+bool WorldManager::AnyStreaming() const
+{
+    return std::ranges::any_of(_worlds, [](const std::unique_ptr<World> &world)
+                               { return world->state == WorldState::Loading || world->streamingPending; });
 }
 
 bool WorldManager::Destroy(std::string_view name)

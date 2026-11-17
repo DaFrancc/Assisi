@@ -612,24 +612,50 @@ void EditorApp::ExtractAnimations(const std::string &vpath)
     _assetBrowserDirty = true;
 }
 
-void EditorApp::UseFileAs(const std::string &vpath, const std::string &kindName)
+namespace
+{
+/// Where @p vpath's sidecar is on disk; nullopt when @p vpath names no file.
+std::optional<std::filesystem::path> SidecarPathOf(const std::string &vpath)
 {
     const std::expected<std::filesystem::path, Assisi::Core::AssetError> file =
         Assisi::Core::AssetSystem::Resolve(vpath);
     if (!file)
     {
-        return;
+        return std::nullopt;
     }
     std::filesystem::path sidecarPath = *file;
     sidecarPath += ".aast";
+    return sidecarPath;
+}
+
+std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError>
+ReadSidecarAt(const std::filesystem::path &sidecarPath)
+{
+    std::ifstream in(sidecarPath, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+    return Assisi::Core::DeserializeSidecar(text);
+}
+
+/// Whether @p sidecar reached @p sidecarPath whole.
+bool WriteSidecarAt(const std::filesystem::path &sidecarPath, const Assisi::Core::AssetSidecar &sidecar)
+{
+    std::ofstream out(sidecarPath, std::ios::binary | std::ios::trunc);
+    out << Assisi::Core::SerializeSidecar(sidecar);
+    return out.good();
+}
+} // namespace
+
+void EditorApp::UseFileAs(const std::string &vpath, const std::string &kindName)
+{
+    const std::optional<std::filesystem::path> sidecarPath = SidecarPathOf(vpath);
+    if (!sidecarPath)
+    {
+        return;
+    }
 
     // Read, change the use, write back: everything else the sidecar holds — its
     // id above all — is kept.
-    std::ifstream in(sidecarPath, std::ios::binary);
-    const std::string text{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
-    in.close();
-    std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar =
-        Assisi::Core::DeserializeSidecar(text);
+    std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar = ReadSidecarAt(*sidecarPath);
     if (!sidecar)
     {
         Assisi::Core::Log::Warn("Use as: '{}' has no readable sidecar ({}).", vpath,
@@ -637,18 +663,54 @@ void EditorApp::UseFileAs(const std::string &vpath, const std::string &kindName)
         return;
     }
     sidecar->uses = {Assisi::Core::AssetUse{.kind = kindName}};
-
-    std::ofstream out(sidecarPath, std::ios::binary | std::ios::trunc);
-    out << Assisi::Core::SerializeSidecar(*sidecar);
-    if (!out.good())
+    if (!WriteSidecarAt(*sidecarPath, *sidecar))
     {
         Assisi::Core::Log::Warn("Use as: could not write the sidecar of '{}'.", vpath);
         return;
     }
-    out.close();
     Assisi::Core::Log::Info("'{}' is now used as {}.", vpath, kindName);
 
     // The database holds the old kind, and the store may hold the file loaded as it.
+    ReimportAssets();
+    GetAssets().Clear();
+    _assetBrowserDirty = true;
+}
+
+bool EditorApp::SplitsSharpSmoothing(const std::string &vpath) const
+{
+    const std::optional<std::filesystem::path> sidecarPath = SidecarPathOf(vpath);
+    if (!sidecarPath)
+    {
+        return false;
+    }
+    const std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar =
+        ReadSidecarAt(*sidecarPath);
+    return sidecar.has_value() && sidecar->splitSharpSmoothing;
+}
+
+void EditorApp::SetSplitSharpSmoothing(const std::string &vpath, bool split)
+{
+    const std::optional<std::filesystem::path> sidecarPath = SidecarPathOf(vpath);
+    if (!sidecarPath)
+    {
+        return;
+    }
+    std::expected<Assisi::Core::AssetSidecar, Assisi::Core::AssetSidecarError> sidecar = ReadSidecarAt(*sidecarPath);
+    if (!sidecar)
+    {
+        Assisi::Core::Log::Warn("Split sharp smoothing: '{}' has no readable sidecar ({}).", vpath,
+                                Assisi::Core::ToString(sidecar.error()));
+        return;
+    }
+    sidecar->splitSharpSmoothing = split;
+    if (!WriteSidecarAt(*sidecarPath, *sidecar))
+    {
+        Assisi::Core::Log::Warn("Split sharp smoothing: could not write the sidecar of '{}'.", vpath);
+        return;
+    }
+    Assisi::Core::Log::Info("'{}' {} its sharp smoothing.", vpath, split ? "now splits" : "no longer splits");
+
+    // The store holds the model as it was imported before.
     ReimportAssets();
     GetAssets().Clear();
     _assetBrowserDirty = true;

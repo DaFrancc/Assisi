@@ -40,7 +40,7 @@ ECS::Entity AddBall(TestScene &test, glm::vec3 position, const Physics::RigidBod
 {
     BodySpec spec = Ball(0.5f, false);
     spec.rigidBody = rigidBody;
-    return AddBody(test.scene, position, spec);
+    return AddBody(test.scene, glm::dvec3(position), spec);
 }
 
 /// A RigidBody at @p gravityScale, its damping at @p damping.
@@ -72,7 +72,7 @@ Physics::Collider Probe()
 
 float Height(const TestScene &test, ECS::Entity entity)
 {
-    return test.world.GetBodyPose(entity).position.y;
+    return static_cast<float>(test.world.GetBodyPose(entity).position.y);
 }
 
 bool IsActive(const TestScene &test, ECS::Entity entity)

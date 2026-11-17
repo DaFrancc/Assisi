@@ -48,7 +48,7 @@ ECS::Entity AddFreeBall(ECS::Scene &scene, glm::vec3 position)
     spec.rigidBody->mass = kMass;
     spec.rigidBody->linearDamping = 0.f;
     spec.rigidBody->angularDamping = 0.f;
-    return PhysicsTests::AddBody(scene, position, spec);
+    return PhysicsTests::AddBody(scene, glm::dvec3(position), spec);
 }
 
 /// A ball with no damping, already built.
@@ -169,7 +169,7 @@ TEST_CASE("Sleep stops a body where it is, and Wake starts it again")
     CHECK_FALSE(test.world.IsBodyActive(ball));
     CHECK(StateOf(test, ball).asleep);
 
-    const glm::vec3 rested = test.scene.Get<ECS::Transform>(ball)->position;
+    const glm::dvec3 rested = test.scene.Get<ECS::Transform>(ball)->position;
     Step(test.world, 10);
     CHECK(test.scene.Get<ECS::Transform>(ball)->position == rested);
 
@@ -200,8 +200,8 @@ TEST_CASE("Pushes on something that cannot be pushed change nothing")
     }
     Step(test.world);
 
-    CHECK(test.scene.Get<ECS::Transform>(wall)->position == glm::vec3(0.f));
-    CHECK(test.scene.Get<ECS::Transform>(platform)->position == glm::vec3(5.f, 0.f, 0.f));
+    CHECK(test.scene.Get<ECS::Transform>(wall)->position == glm::dvec3(0.0));
+    CHECK(test.scene.Get<ECS::Transform>(platform)->position == glm::dvec3(5.0, 0.0, 0.0));
     CHECK(test.world.GetBodyState(platform).linearVelocity == glm::vec3(0.f));
 }
 
@@ -330,8 +330,8 @@ TEST_CASE("A step lists the bodies gameplay pushed or moved, and not one a corre
     test.world.AddImpulse(pushed, {1.f, 0.f, 0.f});
     test.scene.GetMut<ECS::Transform>(moved)->position.y = 1.f;
     test.scene.GetMut<Physics::BodyState>(sped)->linearVelocity = {0.f, 0.f, 2.f};
-    test.world.Teleport(teleported, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(12.f, 2.f, 0.f)});
-    test.world.ApplyCorrection(corrected, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(16.f, 3.f, 0.f)},
+    test.world.Teleport(teleported, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(12.f, 2.f, 0.f)});
+    test.world.ApplyCorrection(corrected, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(16.f, 3.f, 0.f)},
                                Physics::BodyState{.linearVelocity = {1.f, 0.f, 0.f}});
     Step(test.world);
 

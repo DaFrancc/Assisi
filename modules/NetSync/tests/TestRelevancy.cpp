@@ -351,7 +351,7 @@ TEST_CASE("an entity outside the set costs zero bytes, and the mover proves it")
     const SendCost revokedStart = Measure(harness.server, harness.serverSide());
     for (std::uint32_t i = 0; i < kWindow; ++i)
     {
-        harness.serverScene.GetMut<ECS::Transform>(revoked)->position.x += 1.f;
+        harness.serverScene.GetMut<ECS::Transform>(revoked)->position.x += 1.0;
         harness.Step();
     }
     const SendCost revokedMoving = Since(revokedStart, Measure(harness.server, harness.serverSide()));
@@ -366,7 +366,7 @@ TEST_CASE("an entity outside the set costs zero bytes, and the mover proves it")
     const SendCost keptStart = Measure(harness.server, harness.serverSide());
     for (std::uint32_t i = 0; i < kWindow; ++i)
     {
-        harness.serverScene.GetMut<ECS::Transform>(kept)->position.x += 1.f;
+        harness.serverScene.GetMut<ECS::Transform>(kept)->position.x += 1.0;
         harness.Step();
     }
     const SendCost keptMoving = Since(keptStart, Measure(harness.server, harness.serverSide()));

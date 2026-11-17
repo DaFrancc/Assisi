@@ -8,12 +8,14 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/PlayerSession.hpp>
 #include <Assisi/App/StepWorld.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -35,6 +37,10 @@ constexpr std::uint16_t kPastLastPort = 27280;
 /// How far apart two starts are put (m): well clear of two capsules.
 constexpr float kStartsApart = 4.f;
 
+/// Half the width and half the thickness of a floor AddFloors puts down (m).
+constexpr double kFloorHalfWidth = 50.0;
+constexpr double kFloorHalfHeight = 1.0;
+
 nlohmann::json Pose(float y)
 {
     return {{"position", {0.f, y, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}};
@@ -53,10 +59,12 @@ std::filesystem::path FreshRoot(std::string_view name)
     return root;
 }
 
-void WritePlayerBlueprint(const std::filesystem::path &root)
+void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view movement)
 {
     const nlohmann::json body = {{"Transform", Pose(0.f)},
         {"Character", nlohmann::json::object()},
+        {"CharacterLocomotion", nlohmann::json::object()},
+        {std::string(movement), nlohmann::json::object()},
         {"Player", nlohmann::json::object()},
         {"Replicated", nlohmann::json::object()}};
     const nlohmann::json eye = {{"Transform", Pose(1.5f)},
@@ -71,10 +79,11 @@ void WritePlayerBlueprint(const std::filesystem::path &root)
     REQUIRE(out.good());
 }
 
-Machine::Machine()
+Machine::Machine(NetSync::ReplicationConfig config, std::vector<std::string> extra) : play(world, std::move(config))
 {
-    REQUIRE(App::WorldManager::ApplySystems(world, std::vector<std::string>{"LocalPlayer", "CharacterCommand"},
-                                            "players"));
+    std::vector<std::string> systems{"LocalPlayer", "CharacterCommand"};
+    systems.insert(systems.end(), extra.begin(), extra.end());
+    REQUIRE(App::WorldManager::ApplySystems(world, systems, "players"));
 }
 
 void Step(Machine &machine, std::uint64_t localTick)
@@ -104,6 +113,23 @@ void Step(Machine &machine, std::uint64_t localTick)
     {
         machine.afterStep(tick);
     }
+}
+
+void Update(Machine &machine)
+{
+    // No window, so no input, actions or UI, as a headless host; but animation
+    // on, as on a machine somebody plays at.
+    App::UpdateWorld({.world = machine.world,
+                      .dt = kStep,
+                      .simTick = machine.tick,
+                      .input = nullptr,
+                      .actions = nullptr,
+                      .universalEvents = machine.universal,
+                      .isActiveWorld = true,
+                      .worldManager = nullptr,
+                      .assets = &machine.assets,
+                      .animates = true});
+    App::PoseWorld(machine.world);
 }
 
 ECS::Entity LocalPlayerOf(ECS::Scene &scene)
@@ -147,9 +173,9 @@ ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
     return ECS::NullEntity;
 }
 
-Machine &Session::Add()
+Machine &Session::Add(NetSync::ReplicationConfig config, std::vector<std::string> extra)
 {
-    machines.push_back(std::make_unique<Machine>());
+    machines.push_back(std::make_unique<Machine>(std::move(config), std::move(extra)));
     return *machines.back();
 }
 
@@ -170,33 +196,57 @@ std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role)
     return 0;
 }
 
-void JoinOnFloor(Session &session, Machine &host, Machine &client)
+void AddFloors(Session &session, const glm::dvec3 &centre)
 {
-    // A floor on both machines, as a level puts one there.
     for (const std::unique_ptr<Machine> &machine : session.machines)
     {
         const ECS::Entity floor = machine->world.scene.Create();
-        (void)machine->world.scene.Add<ECS::Transform>(floor, ECS::Transform{.position = {0.f, -1.f, 0.f}});
+        (void)machine->world.scene.Add<ECS::Transform>(
+            floor, ECS::Transform{.position = centre + glm::dvec3{0.0, -kFloorHalfHeight, 0.0}});
         Physics::Collider collider;
         collider.shape = Physics::ColliderShape::Box;
-        collider.halfExtents = {50.f, 1.f, 50.f};
+        collider.halfExtents = {kFloorHalfWidth, kFloorHalfHeight, kFloorHalfWidth};
         (void)machine->world.scene.Add<Physics::Collider>(floor, collider);
     }
+}
+
+void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dvec3 &origin)
+{
+    AddFloors(session, origin);
 
     // A start each, apart: two characters made on one start push each other
     // apart, and the host, who sees the other where it is, rightly wins that.
     App::PlayerStart startAt;
     startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
-    for (const float x : {0.f, kStartsApart})
+    for (const double x : {0.0, static_cast<double>(kStartsApart)})
     {
         const ECS::Entity start = host.world.scene.Create();
-        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = {x, 0.f, 0.f}});
+        (void)host.world.scene.Add<ECS::Transform>(start,
+                                                   ECS::Transform{.position = origin + glm::dvec3{x, 0.0, 0.0}});
         (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
     }
 
     const std::uint16_t port = HostOnFreePort(host.play);
     REQUIRE_MESSAGE(port != 0, "could not bind any port in 27240-27279: ", host.play.Session().LastError());
     REQUIRE_MESSAGE(client.play.Join("127.0.0.1", port), client.play.Session().LastError());
+    session.Run(kJoinSteps);
+}
+
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts)
+{
+    App::PlayerStart startAt;
+    startAt.blueprint = Core::AssetPath{std::string_view{"player.abp"}};
+    for (const glm::dvec3 &at : starts)
+    {
+        const ECS::Entity start = host.world.scene.Create();
+        (void)host.world.scene.Add<ECS::Transform>(start, ECS::Transform{.position = at});
+        (void)host.world.scene.Add<App::PlayerStart>(start, startAt);
+    }
+    const std::uint16_t port = HostOnFreePort(host.play);
+    REQUIRE(port != 0);
+    REQUIRE(first.play.Join("127.0.0.1", port));
+    session.Run(kJoinSteps);
+    REQUIRE(second.play.Join("127.0.0.1", port));
     session.Run(kJoinSteps);
 }
 

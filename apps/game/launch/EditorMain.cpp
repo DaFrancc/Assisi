@@ -19,6 +19,7 @@
 #include <Assisi/Editor/EditorApp.hpp>
 #include <Assisi/Editor/SourceAssets.hpp>
 
+#include <Assisi/App/CrashReporter.hpp>
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -28,12 +29,18 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
+#include <Assisi/Mondrian/Import/SpriteSheetCompiler.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
+#include <Assisi/Mondrian/SpriteSheetReader.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -73,6 +80,9 @@ constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
                                "                          build)\n"
                                "  --gpu-cull              start with the GPU-driven cull path on (off by\n"
                                "                          default; the CPU path is the reference)\n"
+                               "  --vulkan-validation     check the device with the Vulkan validation layer,\n"
+                               "                          synchronisation checks included, in any build;\n"
+                               "                          exit with a failure on any error it reports\n"
                                "  -h, --help              show this help and exit\n"
                                "\n"
                                " performance capture - run a scene, print medians, exit:\n"
@@ -99,6 +109,12 @@ constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
                                "                          run with them on measures a frame that differs\n"
                                "                          from the one that ships. Publish the default;\n"
                                "                          use this to find which pass moved\n"
+                               "  --capture-golden <dir>  compare --capture-image's picture with the one\n"
+                               "                          accepted for this level on this GPU, in\n"
+                               "                          <dir>/<GPU>/<level>.png, and fail if they differ;\n"
+                               "                          a diff picture is written beside the image. With\n"
+                               "                          none there yet, or ASSISI_ACCEPT_GOLDEN=1 set,\n"
+                               "                          the picture is accepted instead\n"
                                "\n"
                                "  e.g. Assisi-GameEditor -l levels/PerfBlank.alvl --capture 600 \\\n"
                                "                         --capture-size 2560x1440 --capture-out blank-1440p.json\n";
@@ -122,6 +138,7 @@ struct EditorArgs
     bool server = false;
     bool pieClient = false;
     bool gpuCulling = false;
+    bool vulkanValidation = false;
     bool shouldExit = false;
 };
 
@@ -230,6 +247,15 @@ bool ParseCaptureArg(std::string_view arg, int32_t argc, char **argv, int32_t &i
         if (ok)
         {
             capture.optionsPath = std::string(value);
+        }
+        return true;
+    }
+    if (arg == "--capture-golden")
+    {
+        ok = TakeValue(argc, argv, i, "--capture-golden", value);
+        if (ok)
+        {
+            capture.goldenDirectory = std::string(value);
         }
         return true;
     }
@@ -356,6 +382,10 @@ bool ParseArgs(int32_t argc, char **argv, EditorArgs &out)
         {
             out.gpuCulling = true;
         }
+        else if (arg == "--vulkan-validation")
+        {
+            out.vulkanValidation = true;
+        }
         else if (arg == "--verbosity")
         {
             if (!TakeValue(argc, argv, i, "--verbosity", value))
@@ -445,8 +475,8 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
     }
 
     const Assisi::Mondrian::Import::SourceReader read = &ReadSourceText;
-    const std::expected<Assisi::Mondrian::Import::TextRules, Assisi::Mondrian::Import::MarkupError> rules =
-        Assisi::Mondrian::Import::LoadTextRules(read);
+    const std::expected<Assisi::Mondrian::Import::ScreenRules, Assisi::Mondrian::Import::MarkupError> rules =
+        Assisi::Mondrian::Import::LoadScreenRules(read);
     if (!rules)
     {
         Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", rules.error().file, rules.error().line, rules.error().column,
@@ -471,6 +501,60 @@ std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadErro
         return std::unexpected(Assisi::Mondrian::ScreenReadError::Invalid);
     }
     return std::move(*document);
+}
+
+/// Compiles the theme at @p vpath and reads the bytes back, as the cook would,
+/// so a theme that would fail the cook fails here too.
+std::expected<Assisi::Mondrian::ThemeDocument, Assisi::Mondrian::ThemeReadError> CompileSourceTheme(
+    std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Missing);
+    }
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileThemeText(*text);
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Invalid);
+    }
+    std::expected<Assisi::Mondrian::ThemeDocument, Assisi::Mondrian::CookedThemeError> theme =
+        Assisi::Mondrian::ReadCookedTheme(*cooked);
+    if (!theme)
+    {
+        return std::unexpected(Assisi::Mondrian::ThemeReadError::Invalid);
+    }
+    return std::move(*theme);
+}
+
+/// Compiles the sprite sheet at @p vpath and reads the bytes back, as the cook
+/// would, so a sheet that would fail the cook fails here too.
+std::expected<Assisi::Mondrian::SpriteSheetDocument, Assisi::Mondrian::SpriteSheetReadError>
+CompileSourceSpriteSheet(std::string_view vpath)
+{
+    const std::expected<std::string, Assisi::Core::AssetError> text = Assisi::Core::AssetSystem::ReadText(vpath);
+    if (!text)
+    {
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Missing);
+    }
+    const std::expected<std::vector<std::byte>, Assisi::Mondrian::Import::MarkupError> cooked =
+        Assisi::Mondrian::Import::CompileSpriteSheetText(*text, &ReadSourceText);
+    if (!cooked)
+    {
+        Assisi::Core::Log::Error("Editor: '{}' {}:{}: {}", vpath, cooked.error().line, cooked.error().column,
+                                 cooked.error().message);
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Invalid);
+    }
+    std::expected<Assisi::Mondrian::SpriteSheetDocument, Assisi::Mondrian::CookedSpriteSheetError> sheet =
+        Assisi::Mondrian::ReadCookedSpriteSheet(*cooked);
+    if (!sheet)
+    {
+        return std::unexpected(Assisi::Mondrian::SpriteSheetReadError::Invalid);
+    }
+    return std::move(*sheet);
 }
 
 /// The file the dedicated server reads a collision model from. Its asset index
@@ -503,6 +587,17 @@ int main(int argc, char **argv)
     // String tables the same way: compiled from the file an author edits into
     // the bytes the cook would write, and read back.
     (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
+    // Themes and sprite sheets the same way.
+    (void)Assisi::Mondrian::SetThemeReader(&CompileSourceTheme);
+    (void)Assisi::Mondrian::SetSpriteSheetReader(&CompileSourceSpriteSheet);
+
+    // Started by a crash, as the crashed run's reporter, reading its window from
+    // the source tree like everything else here.
+    if (const std::optional<Assisi::App::CrashReportLaunch> report =
+            Assisi::App::CrashReportLaunchFrom({argv, static_cast<std::size_t>(argc)}))
+    {
+        return Assisi::App::RunCrashReporter(*report);
+    }
 
     EditorArgs args;
     args.capture.frames = 0; // 0 means "not a capture run"; --capture sets it
@@ -521,6 +616,17 @@ int main(int argc, char **argv)
     if (!args.capture.imagePath.empty() && args.capture.frames == 0)
     {
         args.capture.frames = 1;
+    }
+    if (!args.capture.goldenDirectory.empty() && args.capture.imagePath.empty())
+    {
+        std::fprintf(stderr, "--capture-golden compares the picture --capture-image takes; give both\n\n%s", kUsage);
+        return EXIT_FAILURE;
+    }
+    // From the environment rather than a flag, so a test runner accepts new
+    // pictures without the tests' command lines changing.
+    if (const char *accept = std::getenv("ASSISI_ACCEPT_GOLDEN"); accept != nullptr && std::string_view(accept) == "1")
+    {
+        args.capture.acceptGolden = true;
     }
 
     // --connect on its own means the headless test client; --connect with
@@ -564,7 +670,8 @@ int main(int argc, char **argv)
                                    .restrictedViewer = args.pieClient,
                                    .enableEditorVisuals = args.editorVisuals,
                                    .perfCapture = args.capture,
-                                   .gpuCulling = args.gpuCulling});
+                                   .gpuCulling = args.gpuCulling,
+                                   .vulkanValidation = args.vulkanValidation});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

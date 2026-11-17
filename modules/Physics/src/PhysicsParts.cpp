@@ -55,8 +55,10 @@ PiecePlacement PlacementIn(const ECS::Scene &scene, ECS::Entity owner, ECS::Enti
     const ECS::Transform ownerWorld = ECS::WorldTransformOf(scene, owner);
     const ECS::Transform pieceWorld = ECS::WorldTransformOf(scene, piece);
     const glm::quat inverse = glm::inverse(glm::normalize(ownerWorld.rotation));
+    // Subtracted in doubles, then narrowed: a piece sits close to its owner, so
+    // the offset is small wherever the two are in the world.
     return PiecePlacement{glm::normalize(inverse * pieceWorld.rotation),
-                          inverse * (pieceWorld.position - ownerWorld.position), pieceWorld.scale};
+                          inverse *glm::vec3(pieceWorld.position - ownerWorld.position), pieceWorld.scale};
 }
 
 bool PlacementIsFinite(const PiecePlacement &placement)

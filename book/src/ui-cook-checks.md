@@ -3,6 +3,9 @@
 Every one of these fails the cook with the file, line and column:
 
 - An unknown element, attribute or value.
+- A state that isn't `focused`, `hover`, `pressed` or `disabled`, two states on
+  one attribute, a state on an attribute about what an element is or does such
+  as `on_click`, or a `:` with no name on one side of it.
 - Text or child elements inside an element that can't hold them.
 - A length with an unknown unit, a `px` suffix, or a space before its unit.
 - A colour written as bare numbers, or with a channel outside its call's range.
@@ -11,11 +14,35 @@ Every one of these fails the cook with the file, line and column:
 - Two nodes with the same name, or a name containing `.`.
 - More than one element with `focus="true"`.
 - An `on_click` on anything other than a button.
+- An `on_change` on anything but a toggle, a slider or a stepped slider, or
+  naming an event whose `value` field isn't the type that control holds.
 - An event that no header under `apps/game/src/` declares.
 - An action that doesn't exist, has the wrong number of arguments, or is written
   without parentheses.
 - A `step` target that doesn't exist on the screen or isn't a slider, or a
   `step` of 0 moves.
+- A `<context>` anywhere but directly inside `<screen>`, holding text or
+  elements, or with an attribute it doesn't have. A context `name` that isn't
+  letters, digits and `_`, or two contexts with one name, or two unnamed. A
+  `step(...)` in a context's `on_set`, `on_switch`, `on_clear` or `on_lost`.
+- A binding that isn't `{Component.field}`, `{context:Component.field}` or
+  either with `:format`, a `{` nothing closes, or a `}` that closes nothing.
+  A name that is no reflected component or struct, a field it doesn't have, a
+  field type text can't show, or a format the type doesn't take. A context the
+  screen doesn't declare, or any context on a registered source. A name that is
+  both a component and a struct.
+- A binding in a text field's text or a placeholder. A `visible` holding
+  anything but one binding, or bound to a field that isn't a `bool`.
+- A `{=...}` anywhere but a toggle's `on` or a slider's or stepped slider's
+  `value`. A control's binding holding anything but one binding, naming a field
+  type the control can't hold, or giving a format.
+- `steps`, `min` or `max` on a stepped slider bound to an enum, or no `steps` on
+  one bound to a whole number.
+- A key on a binding that names no table, a table `config/ui.json` doesn't list,
+  a table with no entry for one of the enum's enumerators or for `true` or
+  `false`, or a key on a field that is neither an enum nor a `bool`.
+- With `requireStringKeys` on, words around a binding, or an enum or `bool`
+  bound in text with no key.
 - A template that is declared in the wrong place, is badly formed, contains
   itself, or nests more than eight deep.
 - An unnamed instance that would repeat names made by another.
@@ -32,6 +59,14 @@ Every one of these fails the cook with the file, line and column:
   entry the table doesn't have.
 - Text written as it is, when `requireStringKeys` is on and the screen isn't
   `debug_only`.
+- A `style` one theme `config/ui.json` lists doesn't have, a `$token` one
+  listed theme doesn't have, or one whose value in some mode its attribute
+  can't hold. A style or a token used while `ui.json` lists no theme. A state
+  on `style`, or a token for an attribute about what an element is or does.
+- A `sprite` or `background_image` naming a sheet `config/ui.json` doesn't
+  list, or a sprite its sheet doesn't have. A `texture` naming an image that
+  isn't there. An `<image>` naming no picture, or a `sprite` and a `texture` on
+  one element.
 
 An error inside a template library names the library's file. An error about a
 node's text points at the element that wrote it, or at the `placeholder`
@@ -47,7 +82,40 @@ These fail the cook of a string table, with the line:
 Two listed tables with the same file name, or a listed table that isn't
 there, fail the cook of every screen.
 
+These fail the cook of a theme, with the line:
+
+- A root that isn't `<theme>`, an attribute on it, or anything in it but
+  `<palette>` and `<style>`.
+- No palette, a palette with no `mode`, two palettes for one mode, or a palette
+  holding anything.
+- A token one palette gives and another doesn't, a token's name that isn't
+  letters, digits and `_`, or a token's value that names another token.
+- A style with no `name`, two styles with one name, or a style holding anything.
+- A style's attribute that is unknown, belongs to one kind of control, or says
+  what a node is or does, or a value the attribute can't hold.
+- A style's `$token` the palettes don't give, or give a value in some mode its
+  attribute can't hold.
+- An `extends` naming a style the theme doesn't declare, or a chain of them
+  that comes back round to where it started.
+
+A listed theme that isn't there, or doesn't compile, fails the cook of every
+screen. So does one naming a sprite no listed sheet has, in a token's value in
+any mode or in a style.
+
+These fail the cook of a sprite sheet, with the line:
+
+- A root that isn't `<sheet>`, no `texture`, or an image that isn't there or
+  isn't an image.
+- A sprite with no `name`, a name holding `:`, or two sprites with one name.
+- A `rect` that isn't four whole numbers, holds no pixels, or reaches past the
+  image's edge.
+- `borders` that aren't one or four whole numbers, or don't fit inside their
+  sprite.
+
+Two listed sheets with the same file name, or a listed sheet that isn't there
+or doesn't compile, fail the cook of every screen.
+
 ## What's next
 
-Themes, for keeping colours and sizes out of the layout, and data bindings, for
-showing values from the world, are planned next.
+Bindings that change other attributes, such as a colour or an image, are
+planned next.

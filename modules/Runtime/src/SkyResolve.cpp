@@ -3,14 +3,15 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
 
-#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Celestial.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindResolve.hpp>
 
 #include <cmath>
+#include <utility>
 
 namespace Assisi::Runtime
 {
@@ -23,9 +24,9 @@ namespace
 /// refusing: the aim then comes from the place and the planet, which is a
 /// complete answer, and it is what an author gets while assembling the entity one
 /// component at a time.
-TimeOfDay ClockOf(ECS::Scene &scene, bool &sawAny)
+TimeOfDay ClockOf(ECS::Scene &scene, std::uint32_t &count)
 {
-    std::uint32_t count = 0;
+    count = 0;
     TimeOfDay found;
     for (auto [entity, clock] : scene.Query<TimeOfDay>())
     {
@@ -36,14 +37,28 @@ TimeOfDay ClockOf(ECS::Scene &scene, bool &sawAny)
             found = clock;
         }
     }
-    sawAny = count > 0;
-    if (count > 1)
-    {
-        Core::Log::Warn("ResolveSky: {} TimeOfDay components in the scene; the first is the clock.", count);
-    }
     return found;
 }
+
 } // namespace
+
+std::string_view SkyWarningMessage(SkyWarning warning)
+{
+    switch (warning)
+    {
+    case SkyWarning::SeveralClocks:
+        return "more than one TimeOfDay in the scene; the first found is the clock.";
+    case SkyWarning::MoonWithoutSun:
+        return "a Moon without a Sun has no ecliptic to orbit; it is ignored.";
+    case SkyWarning::SunWithoutClock:
+        return "a Sun with no TimeOfDay in the scene stands at noon on an equinox.";
+    case SkyWarning::CloudsWithoutSkybox:
+        return "Clouds on a light with no Skybox beside them are not drawn: clouds are part of a sky.";
+    case SkyWarning::Count_:
+        break;
+    }
+    return "an unknown sky warning.";
+}
 
 SkyResolution ResolveSky(ECS::Scene &scene)
 {
@@ -83,19 +98,22 @@ SkyResolution ResolveSky(ECS::Scene &scene)
     const Skybox *skybox = scene.Get<Skybox>(sunEntity);
     const Sun *sunPlace = scene.Get<Sun>(sunEntity);
     const Moon *moonBody = sunPlace != nullptr ? scene.Get<Moon>(sunEntity) : nullptr;
-    if (sunPlace == nullptr && scene.Get<Moon>(sunEntity) != nullptr)
-    {
-        Core::Log::Warn("ResolveSky: a Moon without a Sun has no ecliptic to orbit; it is ignored.");
-    }
-
-    bool haveClock = false;
-    const TimeOfDay clock = Sanitized(ClockOf(scene, haveClock));
-    if (sunPlace != nullptr && !haveClock)
-    {
-        Core::Log::Warn("ResolveSky: a Sun with no TimeOfDay in the scene stands at noon on an equinox.");
-    }
+    std::uint32_t clockCount = 0;
+    const TimeOfDay clock = Sanitized(ClockOf(scene, clockCount));
 
     SkyResolution resolution;
+    resolution.warnings.set(std::to_underlying(SkyWarning::SeveralClocks), clockCount > 1);
+    resolution.warnings.set(std::to_underlying(SkyWarning::MoonWithoutSun),
+                            sunPlace == nullptr && scene.Get<Moon>(sunEntity) != nullptr);
+    resolution.warnings.set(std::to_underlying(SkyWarning::SunWithoutClock), sunPlace != nullptr && clockCount == 0);
+    const Clouds *clouds = scene.Get<Clouds>(sunEntity);
+    resolution.warnings.set(std::to_underlying(SkyWarning::CloudsWithoutSkybox),
+                            clouds != nullptr && skybox == nullptr);
+    if (clouds != nullptr && skybox != nullptr)
+    {
+        resolution.clouds.settings = ToCloudSettings(*clouds, ResolveWind(scene).wind);
+        resolution.clouds.present = true;
+    }
     resolution.settings = skybox != nullptr ? ToSkySettings(*skybox) : Render::SkySettings{};
     if (skybox != nullptr)
     {
@@ -236,6 +254,29 @@ SkyResolution ResolveSky(ECS::Scene &scene)
 
     resolution.status = skybox != nullptr ? SkyStatus::Ready : SkyStatus::NoSkybox;
     return resolution;
+}
+
+FogResolution ResolveFog(ECS::Scene &scene)
+{
+    FogResolution resolution;
+    for (auto [entity, fog] : scene.Query<Fog>())
+    {
+        (void)entity;
+        if (resolution.present)
+        {
+            resolution.several = true;
+            break;
+        }
+        resolution.settings = Render::Sanitized(ToFogSettings(fog));
+        resolution.present = true;
+    }
+    return resolution;
+}
+
+float SceneDrawDistance(ECS::Scene &scene, float farZ)
+{
+    const FogResolution fog = ResolveFog(scene);
+    return fog.present ? Render::FogDrawDistance(farZ, fog.settings) : farZ;
 }
 
 } // namespace Assisi::Runtime

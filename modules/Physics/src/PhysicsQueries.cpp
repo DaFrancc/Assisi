@@ -94,9 +94,9 @@ bool Deeper(const QueryHit &a, const QueryHit &b)
 
 } // namespace
 
-QueryHit PhysicsWorld::Impl::RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH::RayCastResult &result) const
+QueryHit PhysicsWorld::Impl::RayHit(const glm::dvec3 &origin, glm::vec3 sweep, const JPH::RayCastResult &result) const
 {
-    const glm::vec3 position = origin + sweep * result.mFraction;
+    const glm::dvec3 position = origin + glm::dvec3(sweep * result.mFraction);
 
     QueryHit hit;
     hit.position = position;
@@ -109,8 +109,7 @@ QueryHit PhysicsWorld::Impl::RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH
     JPH::BodyLockRead lock(physicsSystem.GetBodyLockInterface(), result.mBodyID);
     if (lock.Succeeded())
     {
-        hit.normal = ToGlm(
-            lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, JPH::RVec3(position.x, position.y, position.z)));
+        hit.normal = ToGlm(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, ToJolt(position)));
         hit.piece = PieceOf(lock.GetBody(), result.mSubShapeID2);
     }
     return hit;
@@ -126,12 +125,12 @@ ECS::Entity PhysicsWorld::Impl::PieceStruck(const JPH::BodyID &body, const JPH::
     return PieceOf(lock.GetBody(), subShape);
 }
 
-QueryHit PhysicsWorld::Impl::ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResult &result) const
+QueryHit PhysicsWorld::Impl::ShapeHit(const glm::dvec3 &base, glm::vec3 sweep, const JPH::ShapeCastResult &result) const
 {
     const JPH::Vec3 axis = result.mPenetrationAxis.NormalizedOr(JPH::Vec3::sZero());
 
     QueryHit hit;
-    hit.position = ToGlm(result.mContactPointOn2);
+    hit.position = base + glm::dvec3(ToGlm(result.mContactPointOn2));
     // The penetration axis moves the hit body out of the sweep, so its opposite
     // points out of the struck surface — the same sense a ray's normal has.
     hit.normal = -ToGlm(axis);
@@ -141,12 +140,12 @@ QueryHit PhysicsWorld::Impl::ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResul
     return hit;
 }
 
-QueryHit PhysicsWorld::Impl::OverlapHit(const JPH::CollideShapeResult &result) const
+QueryHit PhysicsWorld::Impl::OverlapHit(const glm::dvec3 &base, const JPH::CollideShapeResult &result) const
 {
     const JPH::Vec3 axis = result.mPenetrationAxis.NormalizedOr(JPH::Vec3::sZero());
 
     QueryHit hit;
-    hit.position = ToGlm(result.mContactPointOn2);
+    hit.position = base + glm::dvec3(ToGlm(result.mContactPointOn2));
     hit.normal = -ToGlm(axis);
     hit.distance = result.mPenetrationDepth;
     hit.entity = OwnerOf(EntityFor(result.mBodyID2));
@@ -186,9 +185,10 @@ void PhysicsWorld::Impl::CollectShapeCast(const Collider &collider, const Pose &
     const FilterLayerFilter layerFilter{layers, FilterOfCollider(collider)};
     const OwnerBodiesFilter bodyFilter{*this, OwnerOf(ignore), /*exceptions=*/ false};
 
-    // Zero base offset, so the contact points come back in world space. Jolt is
-    // built here at single precision, where the offset buys no accuracy.
-    physicsSystem.GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), hits, {}, layerFilter,
+    // Contact points come back as floats relative to the base offset, so it is
+    // where the cast starts: ShapeHit adds it back, and a cast far from the world's
+    // origin keeps its precision.
+    physicsSystem.GetNarrowPhaseQuery().CastShape(cast, settings, ToJolt(start.position), hits, {}, layerFilter,
                                                   bodyFilter);
 }
 
@@ -207,12 +207,13 @@ void PhysicsWorld::Impl::CollectOverlap(const Collider &collider, const Pose &at
     {
         return;
     }
+    // Relative to where the shape is held, as a cast's are; OverlapHit adds it back.
     const JPH::RMat44 centreOfMass = WorldTransformOf(at).PreTranslated(held->GetCenterOfMass());
     physicsSystem.GetNarrowPhaseQuery().CollideShape(held, JPH::Vec3::sReplicate(1.f), centreOfMass, settings,
-                                                     JPH::RVec3::sZero(), hits, {}, layerFilter, bodyFilter);
+                                                     ToJolt(at.position), hits, {}, layerFilter, bodyFilter);
 }
 
-std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
+std::optional<QueryHit> PhysicsWorld::CastRay(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter,
                                               ECS::Entity ignore) const
 {
     if (glm::dot(sweep, sweep) < kMinSweepLengthSq)
@@ -220,7 +221,7 @@ std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep,
         return std::nullopt;
     }
 
-    const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
+    const JPH::RRayCast ray{ToJolt(origin), ToJoltVector(sweep)};
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
     const FilterLayerFilter layerFilter{_impl->layers, filter};
     const Impl::OwnerBodiesFilter bodyFilter{*_impl, _impl->OwnerOf(ignore), /*exceptions=*/ false};
@@ -236,7 +237,7 @@ std::optional<QueryHit> PhysicsWorld::CastRay(glm::vec3 origin, glm::vec3 sweep,
     return _impl->RayHit(origin, sweep, collector.mHit);
 }
 
-void PhysicsWorld::CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
+void PhysicsWorld::CastRayAll(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
                               std::vector<QueryHit> &out) const
 {
     out.clear();
@@ -245,7 +246,7 @@ void PhysicsWorld::CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter
         return;
     }
 
-    const JPH::RRayCast ray{JPH::RVec3(origin.x, origin.y, origin.z), JPH::Vec3(sweep.x, sweep.y, sweep.z)};
+    const JPH::RRayCast ray{ToJolt(origin), ToJoltVector(sweep)};
     JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
     const FilterLayerFilter layerFilter{_impl->layers, filter};
     const Impl::OwnerBodiesFilter bodyFilter{*_impl, _impl->OwnerOf(ignore), /*exceptions=*/ false};
@@ -273,7 +274,7 @@ std::optional<QueryHit> PhysicsWorld::CastShape(const Collider &collider, const 
     {
         return std::nullopt;
     }
-    return _impl->ShapeHit(sweep, collector.mHit);
+    return _impl->ShapeHit(start.position, sweep, collector.mHit);
 }
 
 void PhysicsWorld::CastShapeAll(const Collider &collider, const Pose &start, glm::vec3 sweep, ECS::Entity ignore,
@@ -289,7 +290,7 @@ void PhysicsWorld::CastShapeAll(const Collider &collider, const Pose &start, glm
     _impl->CollectShapeCast(collider, start, sweep, ignore, collector);
     for (const JPH::ShapeCastResult &result : collector.mHits)
     {
-        out.push_back(_impl->ShapeHit(sweep, result));
+        out.push_back(_impl->ShapeHit(start.position, sweep, result));
     }
     std::stable_sort(out.begin(), out.end(), Nearer);
     KeepFirstPerPiece(out);
@@ -303,7 +304,7 @@ std::optional<QueryHit> PhysicsWorld::Overlap(const Collider &collider, const Po
     std::optional<QueryHit> deepest;
     for (const JPH::CollideShapeResult &result : collector.mHits)
     {
-        const QueryHit hit = _impl->OverlapHit(result);
+        const QueryHit hit = _impl->OverlapHit(at.position, result);
         if (hit.entity != ECS::NullEntity && (!deepest.has_value() || Deeper(hit, *deepest)))
         {
             deepest = hit;
@@ -324,7 +325,7 @@ void PhysicsWorld::OverlapAll(const Collider &collider, const Pose &at, ECS::Ent
     // the number of ways it touched them.
     for (const JPH::CollideShapeResult &result : collector.mHits)
     {
-        out.push_back(_impl->OverlapHit(result));
+        out.push_back(_impl->OverlapHit(at.position, result));
     }
     std::stable_sort(out.begin(), out.end(), Deeper);
     KeepFirstPerPiece(out);

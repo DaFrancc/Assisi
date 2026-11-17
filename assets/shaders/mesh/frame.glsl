@@ -1,15 +1,7 @@
-// mesh.frag's inputs: varyings, per-frame constants, clustered lights and the
-// shadow view table.
-
-layout(location = 0) in vec3  vWorldPos;
-layout(location = 1) in vec3  vNormal;
-layout(location = 2) in vec2  vTexCoord;
-layout(location = 3) in float vViewZ;
-layout(location = 4) in vec3  vTangent;
-layout(location = 5) in float vTangentSign;
-layout(location = 6) in flat uint vMaterialIndex; // row into the material table
-
-layout(location = 0) out vec4 outColor;
+// The scene's per-frame constants, clustered lights and the shadow view table,
+// for the shaders that light surfaces: mesh.frag and water.frag.
+//
+// Uses vViewZ, which the including shader declares as an input.
 
 // Mirrors Render::FrameConstants and mesh.vert's copy; the member order is the
 // layout.
@@ -45,6 +37,13 @@ layout(binding = 256) uniform FrameConstants
     // offset in world units, w = depth range in world units.
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];
+    // The level's fog; view.x is zero without one.
+    FogConstants fog;
+    // The placed fog volumes: x = how many (zero skips them), y = screen square
+    // columns, z = rows, w = a square's side in pixels.
+    uvec4 fogVolumes;
+    // The clouds' shadow on the ground; area.w is zero without one.
+    CloudShadowConstants cloudShadow;
 } uFrame;
 
 // Must match Render::MaterialDebugView.
@@ -56,6 +55,7 @@ const uint kDebugNormal    = 4u;
 const uint kDebugOcclusion = 5u;
 const uint kDebugEmissive  = 6u;
 const uint kDebugScreenOcclusion = 7u;
+const uint kDebugSmoothing       = 8u;
 
 // ---- Clustered lights (mirror Render::ClusterGrid's GPU structs) ------------
 

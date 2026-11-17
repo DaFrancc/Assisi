@@ -125,7 +125,7 @@ glm::vec3 ClampedShapeScale(ColliderShape shape, glm::vec3 scale)
     case ColliderShape::Count_:
         break;
     }
-    return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
+    return ToGlm(valid);
 }
 
 JPH::ShapeRefC PlaceShape(const JPH::ShapeRefC &base, const Collider &collider, glm::vec3 scale, glm::vec3 valid)
@@ -199,7 +199,7 @@ glm::vec3 PhysicsWorld::Impl::ClampedScale(const Collider &collider, glm::vec3 s
     // A model's pieces may be round, which take only some scales; the shape
     // knows which.
     const JPH::Vec3 valid = shape->MakeScaleValid(JPH::Vec3(scale.x, scale.y, scale.z));
-    return glm::vec3(valid.GetX(), valid.GetY(), valid.GetZ());
+    return ToGlm(valid);
 }
 
 Collider PhysicsWorld::Impl::AsBuilt(ECS::Entity entity, const Collider &collider, BodyMotion motion) const
@@ -788,10 +788,10 @@ void PhysicsWorld::AddForce(ECS::Entity entity, glm::vec3 force)
     _impl->Request(Impl::BodyRequest{.value = force, .entity = entity, .kind = Impl::RequestKind::Force});
 }
 
-void PhysicsWorld::AddForceAt(ECS::Entity entity, glm::vec3 force, glm::vec3 point)
+void PhysicsWorld::AddForceAt(ECS::Entity entity, glm::vec3 force, const glm::dvec3 &point)
 {
     _impl->Request(
-        Impl::BodyRequest{.value = force, .point = point, .entity = entity, .kind = Impl::RequestKind::ForceAt});
+        Impl::BodyRequest{.point = point, .value = force, .entity = entity, .kind = Impl::RequestKind::ForceAt});
 }
 
 void PhysicsWorld::AddImpulse(ECS::Entity entity, glm::vec3 impulse)
@@ -799,10 +799,10 @@ void PhysicsWorld::AddImpulse(ECS::Entity entity, glm::vec3 impulse)
     _impl->Request(Impl::BodyRequest{.value = impulse, .entity = entity, .kind = Impl::RequestKind::Impulse});
 }
 
-void PhysicsWorld::AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, glm::vec3 point)
+void PhysicsWorld::AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, const glm::dvec3 &point)
 {
     _impl->Request(
-        Impl::BodyRequest{.value = impulse, .point = point, .entity = entity, .kind = Impl::RequestKind::ImpulseAt});
+        Impl::BodyRequest{.point = point, .value = impulse, .entity = entity, .kind = Impl::RequestKind::ImpulseAt});
 }
 
 void PhysicsWorld::AddTorque(ECS::Entity entity, glm::vec3 torque)
@@ -896,7 +896,7 @@ Pose PhysicsWorld::GetBodyPose(ECS::Entity entity) const
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::RVec3 pos = bodies.GetPosition(id);
     const JPH::Quat rot = bodies.GetRotation(id);
-    return Pose{glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ()), glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ())};
+    return Pose{glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ()), ToGlm(pos)};
 }
 
 BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
@@ -910,7 +910,7 @@ BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
     if (slot->kind == Impl::SlotKind::Character)
     {
         const JPH::Vec3 velocity = _impl->FindCharacter(_impl->OwnerOf(entity))->character->GetLinearVelocity();
-        return BodyState{.linearVelocity = glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ()),
+        return BodyState{.linearVelocity = ToGlm(velocity),
                          .angularVelocity = glm::vec3(0.f),
                          .asleep = false};
     }
@@ -918,8 +918,8 @@ BodyState PhysicsWorld::GetBodyState(ECS::Entity entity) const
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::Vec3 lin = bodies.GetLinearVelocity(slot->body);
     const JPH::Vec3 ang = bodies.GetAngularVelocity(slot->body);
-    return BodyState{.linearVelocity = glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()),
-                     .angularVelocity = glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ()),
+    return BodyState{.linearVelocity = ToGlm(lin),
+                     .angularVelocity = ToGlm(ang),
                      .asleep = !bodies.IsActive(slot->body)};
 }
 
@@ -975,7 +975,7 @@ void PhysicsWorld::SetGravity(glm::vec3 gravity)
 glm::vec3 PhysicsWorld::GetGravity() const
 {
     const JPH::Vec3 g = _impl->physicsSystem.GetGravity();
-    return glm::vec3(g.GetX(), g.GetY(), g.GetZ());
+    return ToGlm(g);
 }
 
 } // namespace Assisi::Physics

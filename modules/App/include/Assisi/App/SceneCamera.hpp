@@ -23,8 +23,8 @@ namespace Assisi::App
 /// @brief A camera and the pose it looks from, as a pair that travels together.
 struct SceneView
 {
-    /// Where the camera is, as propagated; what Runtime::ViewMatrix takes.
-    glm::mat4 world{1.f};
+    /// Where the camera is, as propagated: what SceneRenderer::Render takes.
+    ECS::WorldMatrix world;
 
     /// The camera's own Transform, which is relative to its parent if it has one.
     Runtime::Transform pose;
@@ -42,6 +42,10 @@ struct SceneView
 /// Empty when the scene nominates none, which is a caller's decision to make
 /// rather than an error: a game falls back to a default view, an editor to the
 /// camera the author is flying.
+///
+/// The camera's farZ comes back shortened to the scene's haze (see
+/// Runtime::SceneDrawDistance), so whatever projects through it agrees with
+/// what was drawn.
 ///
 /// A camera on this machine's player looks where the player has turned so far,
 /// every frame, including turning no fixed step has used yet, and is not blended

@@ -16,6 +16,7 @@
 #include <Assisi/App/ResourceStore.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Core/Reflect/StructRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 // Complete, not forward-declared: a World holds its screens by unique_ptr, so
 // its destructor needs to know how to destroy one. The edge runs App to
@@ -82,6 +83,80 @@ enum class StartProgress : std::uint8_t
     Loaded,
 
     Count_
+};
+
+/// @brief What WorldManager::ApplySystems does with a system this build does not
+/// declare, whether the level names it or something in the world needs it.
+enum class IfUndeclared : std::uint8_t
+{
+    /// The whole list is refused and the world keeps what it had: a game, which
+    /// must not run content with its behaviour missing.
+    Refuse,
+
+    /// Left out, with the rest installed: the editor, which opens the file so the
+    /// author can see what is missing and refuses to save or play it.
+    Skip,
+
+    Count_
+};
+
+/// @brief Which of a world's screens: what a component keeps to reach a screen
+/// its entity owns, since a system cannot keep a pointer from one frame to the
+/// next. Never reused within a world, so one kept after its screen has gone
+/// finds nothing rather than another screen.
+struct ScreenId
+{
+    uint32_t value = 0;
+
+    [[nodiscard]] friend constexpr bool operator==(const ScreenId &, const ScreenId &) = default;
+
+    /// @brief Whether this names a screen at all.
+    [[nodiscard]] explicit constexpr operator bool() const { return value != 0; }
+};
+
+static_assert(ECS::InvalidEntityIndex == Mondrian::kNoEntityIndex,
+              "a null entity must cross to the UI and back as a null entity");
+
+/// @brief @p entity as a screen holds it.
+[[nodiscard]] constexpr Mondrian::EntityId ScreenEntity(ECS::Entity entity)
+{
+    return {.index = entity.index, .generation = entity.generation};
+}
+
+/// @brief The entity a screen holds as @p entity.
+[[nodiscard]] constexpr ECS::Entity SceneEntity(Mondrian::EntityId entity)
+{
+    return {.index = entity.index, .generation = entity.generation};
+}
+
+/// @brief A world as its screens see it: the queue they push its events into,
+/// which of its entities are still alive, and their components.
+class SceneScreenWorld final : public Mondrian::ScreenWorld
+{
+public:
+    /// @p scene and @p events must outlive it, which a world's own members do.
+    SceneScreenWorld(ECS::Scene &scene, Core::EventQueue &events) : _scene(scene), _events(events) {}
+
+    [[nodiscard]] Core::EventQueue &Events() override { return _events; }
+    [[nodiscard]] bool IsAlive(Mondrian::EntityId entity) const override
+    {
+        return _scene.IsAlive(SceneEntity(entity));
+    }
+    [[nodiscard]] const Core::Reflect::ComponentMeta *FindComponent(std::string_view name) const override
+    {
+        return Core::Reflect::ComponentRegistry::Instance().Find(name);
+    }
+    [[nodiscard]] const Core::Reflect::StructSpec *FindStruct(std::string_view name) const override
+    {
+        return Core::Reflect::StructRegistry::Instance().Find(name);
+    }
+    [[nodiscard]] const void *Read(const Core::Reflect::ComponentMeta &component,
+                                   Mondrian::EntityId entity) const override;
+    [[nodiscard]] void *Write(const Core::Reflect::ComponentMeta &component, Mondrian::EntityId entity) override;
+
+private:
+    ECS::Scene &_scene;
+    Core::EventQueue &_events;
 };
 
 /// @brief One resident level: its entities, its physics, and the bookkeeping
@@ -162,6 +237,12 @@ struct World
     /// the level's.
     std::vector<std::string> systemNames;
 
+    /// What this world's screens are built with to reach it. Declared after
+    /// `scene` and `events`, which it reads, and before `screenStack`, whose
+    /// screens hold it, so it is made after the one and destroyed after the
+    /// other.
+    SceneScreenWorld screenWorld{scene, events};
+
     /// A screen this world shows, and the systems it asked for when it was
     /// added.
     ///
@@ -173,6 +254,7 @@ struct World
     {
         std::vector<std::string> systems;
         std::unique_ptr<Mondrian::Screen> screen;
+        ScreenId id;
     };
 
     /// The screens this world owns, destroyed with it.
@@ -215,6 +297,9 @@ struct World
     /// built in memory). What the level handshake and the title bar report.
     std::string levelPath;
 
+    /// The id the last screen added was given; the next is one more.
+    uint32_t lastScreenId = 0;
+
     WorldState state = WorldState::Loading;
 
     /// How far through starting this world is — which one-shot phases have had
@@ -244,6 +329,9 @@ struct World
     /// UpgradeStreamingAssets' per-scene "loads were in flight last tick" flag,
     /// which drives the one-tick tail that picks up the final resolve.
     bool streamingPending = false;
+
+    /// Whether PoseWorld has run this frame; EndWorldFrame clears it.
+    bool posed = false;
 
     /// Change-detection bookmark for ECS::PropagateTransforms — the scene
     /// tick at the end of this world's last propagation. Per world, not per
@@ -301,7 +389,18 @@ void RemoveScreen(World &world, Mondrian::Screen &screen);
 /// built in C++ by the name its constructor was given. A scan, which is what
 /// a system with nowhere to keep a pointer uses; anything touching the same
 /// nodes every frame keeps the pointer and the ids it writes to instead.
+///
+/// For a screen a world has one of, such as its pause menu: with several of one
+/// name, it is the first added. A screen an entity owns, such as its health
+/// bar, is kept by its ScreenId in a component on that entity.
 [[nodiscard]] Mondrian::Screen *FindScreen(World &world, std::string_view name);
+
+/// @brief The screen @p world holds as @p id, or null once it has gone.
+[[nodiscard]] Mondrian::Screen *FindScreen(World &world, ScreenId id);
+
+/// @brief The id @p world holds @p screen by, or a null id when it does not
+/// hold it. What a component keeps to reach the screen again.
+[[nodiscard]] ScreenId IdOf(const World &world, const Mondrian::Screen &screen);
 
 /// @brief Owns every resident world and tracks the two roles the app cares
 /// about: which world is *active* and which is *edited*.
@@ -371,8 +470,13 @@ public:
     ///
     /// Static: it needs nothing of a manager, and a host that keeps a lone
     /// world, such as a dedicated server, installs through it too.
+    ///
+    /// @param undeclared What becomes of a name this build does not declare. Under
+    ///        Skip, `world.systemNames` still records every name the level gave,
+    ///        so the editor can show the missing ones and refuse to save.
     [[nodiscard]] static bool ApplySystems(World &world, std::span<const std::string> names,
-                                           std::string_view context);
+                                           std::string_view context,
+                                           IfUndeclared undeclared = IfUndeclared::Refuse);
 
     /// @brief Destroys the named world.
     ///
@@ -397,6 +501,10 @@ public:
     void SetEdited(World &world);
 
     [[nodiscard]] std::size_t Count() const { return _worlds.size(); }
+
+    /// @brief Whether any resident world is still loading, or still streaming in
+    /// the meshes and materials its level names.
+    [[nodiscard]] bool AnyStreaming() const;
 
     /// @brief Calls @p fn(World&) for each resident world in **creation
     /// order** — deterministic, so stepping several worlds is reproducible.

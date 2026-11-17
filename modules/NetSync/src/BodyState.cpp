@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/Math/Float.hpp>
 
@@ -106,17 +107,14 @@ const ViewSmoothing &Smoothing() { return gSmoothing; }
 
 void SetSmoothing(const ViewSmoothing &smoothing) { gSmoothing = smoothing; }
 
-void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
+void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer)
 {
     const BodyQuantization &q = gQuantization;
 
     writer.WriteVarId(state.netId); // wire write
     writer.WriteBool(state.asleep);
 
-    writer.WriteFloatQuantized(state.position.x, -q.positionExtent, q.positionExtent, q.positionBits);
-    writer.WriteFloatQuantized(state.position.y, -q.positionExtent, q.positionExtent, q.positionBits);
-    writer.WriteFloatQuantized(state.position.z, -q.positionExtent, q.positionExtent, q.positionBits);
-
+    WriteWorldPosition(state.position, reference, writer);
     WriteQuaternion(state.rotation, writer);
 
     // A sleeping body has no motion by definition, so six values of zero would be
@@ -143,10 +141,27 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
     {
         writer.WriteBits(static_cast<std::uint32_t>(state.stance), kEnumBits<Physics::Stance>);
         writer.WriteBits(static_cast<std::uint32_t>(state.ground), kEnumBits<Physics::GroundState>);
+
+        // What it is asked to do. The vertical of a move is never read, so only
+        // the two horizontal components go.
+        writer.WriteFloatQuantized(std::clamp(state.move.x, -1.f, 1.f), -1.f, 1.f, q.moveBits);
+        writer.WriteFloatQuantized(std::clamp(state.move.z, -1.f, 1.f), -1.f, 1.f, q.moveBits);
+        writer.WriteBits(static_cast<std::uint32_t>(state.wantedStance), kEnumBits<Physics::Stance>);
+        writer.WriteBool(state.sprint);
+        const bool scaled = state.speedScale != 1.f;
+        writer.WriteBool(scaled);
+        if (scaled)
+        {
+            writer.WriteFloat(state.speedScale);
+        }
+
+        writer.WriteBits(state.jumps & kCharacterCountMask, kCharacterCountBits);
+        writer.WriteBits(state.landings & kCharacterCountMask, kCharacterCountBits);
+        writer.WriteBool(state.jumpedSinceGrounded);
     }
 }
 
-bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
+bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState &outState)
 {
     const BodyQuantization &q = gQuantization;
 
@@ -154,10 +169,10 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     state.netId  = reader.ReadVarId<NetId>(); // wire read
     state.asleep = reader.ReadBool();
 
-    state.position.x = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
-    state.position.y = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
-    state.position.z = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
-
+    if (!ReadWorldPosition(reader, reference, state.position))
+    {
+        return false;
+    }
     state.rotation = ReadQuaternion(reader);
 
     if (!state.asleep)
@@ -182,6 +197,31 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     {
         reader.Invalidate();
         return false;
+    }
+    if (state.character)
+    {
+        state.move.x = reader.ReadFloatQuantized(-1.f, 1.f, q.moveBits);
+        state.move.z = reader.ReadFloatQuantized(-1.f, 1.f, q.moveBits);
+        if (!ReadEnum(reader, state.wantedStance))
+        {
+            reader.Invalidate();
+            return false;
+        }
+        state.sprint = reader.ReadBool();
+        // Handed to the character's movement, which would carry a NaN into
+        // its velocity and from there into everything it touches.
+        if (reader.ReadBool())
+        {
+            state.speedScale = reader.ReadFloat();
+            if (!Math::IsFinite(state.speedScale))
+            {
+                reader.Invalidate();
+                return false;
+            }
+        }
+        state.jumps = reader.ReadBits(kCharacterCountBits);
+        state.landings = reader.ReadBits(kCharacterCountBits);
+        state.jumpedSinceGrounded = reader.ReadBool();
     }
 
     if (!reader.Ok() || state.netId == InvalidNetId)
@@ -213,15 +253,15 @@ namespace
 /// "@p name: mine vs host's".
 template <typename T> std::string Difference(std::string_view name, const T &mine, const T &host)
 {
-    return std::format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
-                       Core::Reflect::PredictedFieldText(host));
+    return Core::Format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
+                        Core::Reflect::PredictedFieldText(host));
 }
 
 } // namespace
 
 std::string PredictedBodyDifference(const BodyState &mine, const BodyState &host, const ViewSmoothing &smoothing)
 {
-    if (glm::length(mine.position - host.position) > smoothing.predictionTolerance)
+    if (glm::length(mine.position - host.position) > static_cast<double>(smoothing.predictionTolerance))
     {
         return Difference("position", mine.position, host.position);
     }

@@ -34,11 +34,11 @@ using namespace Assisi;
 namespace
 {
 
-constexpr Physics::Pose kUpright{glm::quat{1.f, 0.f, 0.f, 0.f}, glm::vec3{0.f}};
+constexpr Physics::Pose kUpright{glm::quat{1.f, 0.f, 0.f, 0.f}, glm::dvec3{0.0}};
 
 Physics::Pose At(glm::vec3 position)
 {
-    return Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, position};
+    return Physics::Pose{glm::quat{1.f, 0.f, 0.f, 0.f}, glm::dvec3(position)};
 }
 
 /// A unit box, reconciled into @p world so a query can find it at once.
@@ -47,7 +47,7 @@ ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &world, glm::vec3 
 {
     const PhysicsTests::BodySpec descriptor =
         PhysicsTests::WithFilter(PhysicsTests::Box({0.5f, 0.5f, 0.5f}, isStatic), filter);
-    const ECS::Entity entity = PhysicsTests::AddBody(scene, at, descriptor);
+    const ECS::Entity entity = PhysicsTests::AddBody(scene, glm::dvec3(at), descriptor);
     world.Reconcile();
     return entity;
 }

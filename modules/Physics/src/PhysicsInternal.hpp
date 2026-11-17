@@ -432,6 +432,36 @@ JPH::Vec3 Accelerate(JPH::Vec3Arg velocity, JPH::Vec3Arg wishDirection, float ta
 /// its direction.
 JPH::Vec3 LimitSpeed(JPH::Vec3Arg velocity, float maxSpeed);
 
+/// Moves @p from toward @p to by at most @p maxDelta, landing exactly on @p to
+/// rather than overshooting and oscillating around it. A zero @p maxDelta
+/// returns @p from unchanged.
+JPH::Vec3 MoveToward(JPH::Vec3Arg from, JPH::Vec3Arg to, float maxDelta);
+
+/// A move shorter than this, or a facing with less than this along the ground,
+/// has no direction to measure a sprint's angle with (a fraction of a full
+/// move).
+constexpr float kMinSprintMove = 1.0e-3f;
+
+/// The widest a sprint's angle can be: straight back from where it faces.
+constexpr float kMaxSprintAngleDegrees = 180.f;
+
+/// Less time than this in the air, without a jump, is a stair edge or a bump
+/// rather than a fall, and touching down after it is not a landing (s).
+constexpr float kLandingAirTime = 0.1f;
+
+/// What a character with no movement component moves by: no walk, no jump, and
+/// the world's own gravity.
+inline constexpr LocomotionSettings kNoLocomotion{.gravityScale = 1.f};
+
+/// @brief Which movement component a character steers by.
+enum class MovementModel : std::uint8_t
+{
+    None,   ///< Neither: it does not walk or jump.
+    Source, ///< SourceMovement.
+    Arcade, ///< ArcadeMovement.
+    Count_,
+};
+
 /// Whether every component is a number. Nothing that fails this is handed to
 /// Jolt or written to a component: one NaN in a body spreads to everything it
 /// touches within a step.
@@ -442,7 +472,7 @@ inline bool IsFinite(const Pose &pose)
     return IsFinite(pose.position) && IsFinite(pose.rotation);
 }
 
-inline JPH::RVec3 ToJolt(glm::vec3 position)
+inline JPH::RVec3 ToJolt(const glm::dvec3 &position)
 {
     return JPH::RVec3(position.x, position.y, position.z);
 }
@@ -462,6 +492,11 @@ inline JPH::Quat ToJolt(glm::quat rotation)
 inline glm::vec3 ToGlm(JPH::Vec3Arg vector)
 {
     return glm::vec3(vector.GetX(), vector.GetY(), vector.GetZ());
+}
+
+inline glm::dvec3 ToGlm(JPH::RVec3Arg position)
+{
+    return glm::dvec3(position.GetX(), position.GetY(), position.GetZ());
 }
 
 inline glm::quat ToGlm(JPH::QuatArg rotation)
@@ -497,10 +532,10 @@ inline bool IsModelShape(ColliderShape shape)
     return shape == ColliderShape::Convex || shape == ColliderShape::Mesh;
 }
 
-/// The world matrix @p entity's Transform is relative to, composed from the
-/// local poses up its Parent chain: the simulation pose, not the drawn one the
-/// propagated world matrices hold. Null for a root.
-std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity);
+/// The world pose @p entity's Transform is relative to, composed from the local
+/// poses up its Parent chain: the simulation pose, not the drawn one the
+/// propagated world matrices hold, and with its position exact. Null for a root.
+std::optional<ECS::Transform> SimulationParentPose(const ECS::Scene &scene, ECS::Entity entity);
 
 /// Builds the Jolt collision shape for a Collider's primitive, unscaled and
 /// without its offset, at the collider's density and carrying @p entity in its
@@ -549,10 +584,11 @@ struct CookedShapeKeyHash
     std::size_t operator()(const CookedShapeKey &key) const noexcept;
 };
 
-/// A point and two perpendicular directions: one end of a joint.
+/// A point and two perpendicular directions: one end of a joint. The point is a
+/// double because a placed frame's is in world space.
 struct JointFrame
 {
-    glm::vec3 point{0.f};
+    glm::dvec3 point{0.0};
     glm::vec3 axis{0.f, 1.f, 0.f};
     glm::vec3 normal{1.f, 0.f, 0.f};
 };
@@ -691,10 +727,10 @@ struct PhysicsWorld::Impl
     /// position changed, since the look systems turn it every frame.
     struct TransformStamp
     {
-        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3 position{0.f};
-        glm::vec3 scale{1.f};
+        glm::dvec3 position{0.0};
         uint64_t tick = 0;
+        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 scale{1.f};
     };
 
     /// What an entity's slot holds.
@@ -1125,8 +1161,8 @@ private:
     /// by the kinds applied at a point.
     struct BodyRequest
     {
+        glm::dvec3 point{0.0};
         glm::vec3 value{0.f};
-        glm::vec3 point{0.f};
         ECS::Entity entity{ECS::NullEntity};
         RequestKind kind = RequestKind::Force;
     };
@@ -1240,6 +1276,9 @@ private:
     /// changed, since the solver bakes that in.
     void EditCharacter(ECS::Entity entity, const Character &character);
 
+    /// Copies into @p record the movement components its entity has now.
+    void ReadMovement(CharacterRecord &record) const;
+
     /// Destroys whatever the slot at @p index holds, queuing the contact Exits
     /// its departure causes.
     void DestroySlot(std::uint32_t index);
@@ -1268,8 +1307,8 @@ private:
     /// what touched; `pairs` turns that into phases once the step is over.
     struct TouchRecord
     {
+        glm::dvec3 point{0.0};    ///< The middle of the contact, in world space.
         glm::vec3 normal{0.f};    ///< Away from body1's surface, as Jolt reports it.
-        glm::vec3 point{0.f};     ///< The middle of the contact, in world space.
         glm::vec3 velocity1{0.f}; ///< Pre-solve, so an impact's speed survives the solver.
         glm::vec3 velocity2{0.f};
 
@@ -1294,9 +1333,9 @@ private:
     /// destroyed since still names who it was.
     struct PairState
     {
+        glm::dvec3 point{0.0};
         std::uint64_t stamp = 0;
         glm::vec3 normal{0.f};
-        glm::vec3 point{0.f};
         glm::vec3 velocity1{0.f};
         glm::vec3 velocity2{0.f};
 
@@ -1411,13 +1450,13 @@ private:
     // --- Queries (PhysicsQueries.cpp) ------------------------------------------
 
     /// One ray hit, for a ray from @p origin along @p sweep.
-    QueryHit RayHit(glm::vec3 origin, glm::vec3 sweep, const JPH::RayCastResult &result) const;
+    QueryHit RayHit(const glm::dvec3 &origin, glm::vec3 sweep, const JPH::RayCastResult &result) const;
 
     /// One shape-cast hit, for a cast along @p sweep.
-    QueryHit ShapeHit(glm::vec3 sweep, const JPH::ShapeCastResult &result) const;
+    QueryHit ShapeHit(const glm::dvec3 &base, glm::vec3 sweep, const JPH::ShapeCastResult &result) const;
 
     /// One overlap hit; its distance is the depth.
-    QueryHit OverlapHit(const JPH::CollideShapeResult &result) const;
+    QueryHit OverlapHit(const glm::dvec3 &base, const JPH::CollideShapeResult &result) const;
 
     /// The piece @p subShape names on @p body, read under the body's lock.
     ECS::Entity PieceStruck(const JPH::BodyID &body, const JPH::SubShapeID &subShape) const;
@@ -1581,21 +1620,27 @@ private:
         /// keeps the full mask, which is what lets the sensor see it.
         CollisionFilter queryFilter;
 
-        float jumpSpeed = 0.f;
-        float walkSpeed = 0.f;
-        float crouchSpeedScale = 0.f;
-        float friction = 0.f;
-        float stopSpeed = 0.f;
-        float groundAcceleration = 0.f;
-        float airAcceleration = 0.f;
-        float airWishSpeedCap = 0.f;
-        float bunnyHopSpeedCap = 0.f;
+        /// The CharacterLocomotion's preset resolved, or kNoLocomotion for a
+        /// character with no movement component.
+        LocomotionSettings locomotion = kNoLocomotion;
+
+        /// The movement component's tuning; only the one @ref movement names
+        /// is read.
+        SourceMovement source;
+        ArcadeMovement arcade;
+
         float standingEyeHeight = 0.f;
         float crouchEyeHeight = 0.f;
         float eyeSpeed = 0.f;
-        float gravityScale = 1.f;
         float coyoteTime = 0.f;
         float jumpBufferTime = 0.f;
+        float maxFallSpeed = 0.f; ///< Zero is no limit; see CharacterLocomotion.
+
+        float sprintSpeedScale = 1.f;
+
+        /// The cosine of CharacterLocomotion::sprintMaxAngle: the least the
+        /// facing and the direction asked for may agree by to sprint.
+        float sprintMinCosine = -1.f;
         float maxStepHeight = 0.f;
         float radius = 0.f;
         float standingHalfHeight = 0.f;
@@ -1621,9 +1666,23 @@ private:
         /// holds is let go; see Carrier::graceTime.
         float graceRemaining = 0.f;
 
+        /// See CharacterState::jumps and CharacterState::landings.
+        std::uint32_t jumps = 0;
+        std::uint32_t landings = 0;
+
         Stance stance = Stance::Standing;
 
-        BunnyHopPolicy bunnyHop = BunnyHopPolicy::Cap;
+        MovementModel movement = MovementModel::None;
+
+        /// Its CharacterLocomotion allows a sprint, and it has a movement
+        /// component to sprint with.
+        bool canSprint = false;
+
+        /// See CharacterLocomotion::sprintInAir.
+        bool sprintInAir = false;
+
+        /// Whether its most recent step sprinted; see CharacterState::sprinting.
+        bool sprinting = false;
 
         /// Set when a jump fires, cleared on landing. Without it the jump buffer
         /// would fire a second jump in the same flight the moment the first one
@@ -1642,6 +1701,10 @@ private:
         /// whatever its options say.
         bool pushable = true;
 
+        /// Cleared by PhysicsWorld::SetCharacterCountsItself: its jumps and
+        /// landings are given rather than counted.
+        bool countsItself = true;
+
         /// Riding, but standing on other ground that it moves with rather than
         /// the base (CarrierFooting::Ground): the base's change of speed is not
         /// passed on to it.
@@ -1653,10 +1716,45 @@ private:
         /// character's motion, timers and stance as they are.
         void Retune(const Character &character);
 
+        /// Copies the movement a step reads from the components beside the
+        /// Character, each null when the entity has none. At most one of
+        /// @p sourceTuning and @p arcadeTuning is set, as their components
+        /// exclude each other.
+        void RetuneMovement(const CharacterLocomotion *locomotionTuning, const SourceMovement *sourceTuning,
+                            const ArcadeMovement *arcadeTuning);
+
+        /// Whether a jump asked for now would fire.
+        [[nodiscard]] bool MayJump() const;
+
         /// The horizontal velocity, relative to the ground, that one step of
         /// intent turns @p velocity into. @p wish is the horizontal request;
-        /// @p grounded is standing on walkable ground and not jumping this step.
-        JPH::Vec3 Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
+        /// @p standing is standing on walkable ground, and @p jumping is a jump
+        /// firing this step.
+        JPH::Vec3 Steer(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing, bool jumping,
+                        float deltaTime) const;
+
+        /// SourceMovement's part of @ref Steer. @p grounded is standing and not
+        /// jumping.
+        JPH::Vec3 SteerSource(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool grounded, float deltaTime) const;
+
+        /// ArcadeMovement's part of @ref Steer.
+        JPH::Vec3 SteerArcade(JPH::Vec3Arg velocity, JPH::Vec3Arg wish, bool standing, float deltaTime) const;
+
+        /// What a jump firing this step leaves of the horizontal @p velocity,
+        /// given the horizontal request @p wish. Only SourceMovement's bunny-hop
+        /// policy changes it.
+        JPH::Vec3 TakeOff(JPH::Vec3Arg velocity, JPH::Vec3Arg wish) const;
+
+        /// Whether a step with @p intent sprints, @p standing or not: asked to
+        /// while moving within the sprint angle, allowed to, and not crouched.
+        /// In the air, unless sprintInAir is set, it keeps the sprint it left
+        /// the ground with.
+        [[nodiscard]] bool Sprints(const CharacterIntent &intent, bool standing) const;
+
+        /// The walk speed as its step's sprint and speed scale make it, before
+        /// any crouch: what a full `move` asks for standing, and what the
+        /// take-off limits are measured against.
+        float ScaledWalkSpeed() const;
 
         /// The most horizontal speed a jump may leave the ground with.
         float TakeOffSpeedLimit() const;
@@ -1784,7 +1882,7 @@ private:
     /// Puts @p record's character and its inner body at @p feet with
     /// @p velocity, finds what it touches there, and writes and snaps its
     /// Transform.
-    void PlaceCharacter(CharacterRecord &record, glm::vec3 feet, glm::vec3 velocity);
+    void PlaceCharacter(CharacterRecord &record, const glm::dvec3 &feet, glm::vec3 velocity);
     /// Puts the character back as @p frame's physics state has it, ground and
     /// contacts included; placed as PlaceCharacter does when that state does
     /// not read back.

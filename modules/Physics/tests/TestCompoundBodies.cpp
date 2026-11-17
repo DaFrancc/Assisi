@@ -53,15 +53,15 @@ Physics::Collider UnitBox()
 }
 
 /// A one-metre dynamic crate at @p position.
-ECS::Entity AddCrate(ECS::Scene &scene, glm::vec3 position)
+ECS::Entity AddCrate(ECS::Scene &scene, const glm::dvec3 &position)
 {
-    return AddBody(scene, position, Box(glm::vec3(0.5f), /*isStatic=*/ false));
+    return AddBody(scene, glm::dvec3(position), Box(glm::vec3(0.5f), /*isStatic=*/ false));
 }
 
 /// What a ray straight down through @p x, @p z hits first.
 std::optional<Physics::QueryHit> RayDown(const Physics::PhysicsWorld &world, float x, float z)
 {
-    return world.CastRay(glm::vec3(x, kRayHeight, z), glm::vec3(0.f, -kRayLength, 0.f), Physics::CollisionFilter{},
+    return world.CastRay(glm::dvec3(x, kRayHeight, z), glm::vec3(0.f, -kRayLength, 0.f), Physics::CollisionFilter{},
                          ECS::NullEntity);
 }
 
@@ -70,8 +70,8 @@ std::optional<Physics::QueryHit> RayDown(const Physics::PhysicsWorld &world, flo
 TEST_CASE("A hit on a piece names the piece and the body it belongs to")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f));
-    const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::vec3(0.f, 2.f, 0.f), UnitBox());
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f));
+    const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::dvec3(0.f, 2.f, 0.f), UnitBox());
     test.world.Reconcile();
 
     const std::optional<Physics::QueryHit> onHandle = RayDown(test.world, 0.f, 0.f);
@@ -81,7 +81,7 @@ TEST_CASE("A hit on a piece names the piece and the body it belongs to")
     CHECK(onHandle->position.y == doctest::Approx(2.5f).epsilon(0.01));
 
     const std::optional<Physics::QueryHit> onCrate =
-        test.world.CastRay(glm::vec3(5.f, 0.f, 0.f), glm::vec3(-10.f, 0.f, 0.f), {}, ECS::NullEntity);
+        test.world.CastRay(glm::dvec3(5.f, 0.f, 0.f), glm::vec3(-10.f, 0.f, 0.f), {}, ECS::NullEntity);
     REQUIRE(onCrate.has_value());
     CHECK(onCrate->entity == crate);
     CHECK(onCrate->piece == crate);
@@ -93,10 +93,10 @@ TEST_CASE("A hit on a piece names the piece and the body it belongs to")
 TEST_CASE("A compound body's mass adds up each piece's volume at its density")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f));
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f));
     Physics::Collider lead = UnitBox();
     lead.density = 2.f * Physics::kWaterDensity;
-    const ECS::Entity base = AddChildCollider(test.scene, crate, glm::vec3(0.f, -1.f, 0.f), lead);
+    const ECS::Entity base = AddChildCollider(test.scene, crate, glm::dvec3(0.f, -1.f, 0.f), lead);
     test.world.Reconcile();
 
     CHECK(test.world.Mass(crate) == doctest::Approx(3.f * kUnitBoxMass).epsilon(kMassEpsilon));
@@ -115,8 +115,8 @@ TEST_CASE("A compound body comes to rest on its lowest piece")
 {
     TestScene test;
     const ECS::Entity floor = AddFloor(test.scene);
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f, 4.f, 0.f));
-    const ECS::Entity foot = AddChildCollider(test.scene, crate, glm::vec3(0.f, -1.5f, 0.f), UnitBox());
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f, 4.f, 0.f));
+    const ECS::Entity foot = AddChildCollider(test.scene, crate, glm::dvec3(0.f, -1.5f, 0.f), UnitBox());
 
     bool footLanded = false;
     bool crateLanded = false;
@@ -149,8 +149,8 @@ TEST_CASE("A RigidBody whose only colliders are on its children gets a body")
     const ECS::Entity owner = test.scene.Create();
     REQUIRE(test.scene.Add(owner, ECS::Transform{.position = {0.f, 3.f, 0.f}}) != nullptr);
     REQUIRE(test.scene.Add(owner, Physics::RigidBody{}) != nullptr);
-    const ECS::Entity left = AddChildCollider(test.scene, owner, glm::vec3(-1.f, 0.f, 0.f), UnitBox());
-    (void)AddChildCollider(test.scene, owner, glm::vec3(1.f, 0.f, 0.f), UnitBox());
+    const ECS::Entity left = AddChildCollider(test.scene, owner, glm::dvec3(-1.f, 0.f, 0.f), UnitBox());
+    (void)AddChildCollider(test.scene, owner, glm::dvec3(1.f, 0.f, 0.f), UnitBox());
     test.world.Reconcile();
 
     CHECK(test.world.HasBody(owner));
@@ -167,12 +167,12 @@ TEST_CASE("A RigidBody whose only colliders are on its children gets a body")
 TEST_CASE("Editing a piece's Transform, or one between it and its body, moves where hits land")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f));
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f));
     test.scene.GetMut<Physics::RigidBody>(crate)->gravityScale = 0.f;
 
     SUBCASE("The piece itself")
     {
-        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::vec3(0.f, 2.f, 0.f), UnitBox());
+        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::dvec3(0.f, 2.f, 0.f), UnitBox());
         test.world.Reconcile();
         test.scene.GetMut<ECS::Transform>(handle)->position = glm::vec3(3.f, 0.f, 0.f);
         test.world.Reconcile();
@@ -190,7 +190,7 @@ TEST_CASE("Editing a piece's Transform, or one between it and its body, moves wh
         const ECS::Entity arm = test.scene.Create();
         REQUIRE(test.scene.Add(arm, ECS::Transform{.position = {0.f, 2.f, 0.f}}) != nullptr);
         REQUIRE(test.scene.Add(arm, ECS::Parent{.parent = crate}) != nullptr);
-        const ECS::Entity hand = AddChildCollider(test.scene, arm, glm::vec3(0.f), UnitBox());
+        const ECS::Entity hand = AddChildCollider(test.scene, arm, glm::dvec3(0.f), UnitBox());
         test.world.Reconcile();
         test.scene.GetMut<ECS::Transform>(arm)->position = glm::vec3(-3.f, 0.f, 0.f);
         test.world.Reconcile();
@@ -210,9 +210,9 @@ TEST_CASE("Editing a piece's Transform, or one between it and its body, moves wh
 TEST_CASE("A piece moved to another body becomes part of that body")
 {
     TestScene test;
-    const ECS::Entity first = AddCrate(test.scene, glm::vec3(0.f));
-    const ECS::Entity second = AddCrate(test.scene, glm::vec3(10.f, 0.f, 0.f));
-    const ECS::Entity handle = AddChildCollider(test.scene, first, glm::vec3(0.f, 2.f, 0.f), UnitBox());
+    const ECS::Entity first = AddCrate(test.scene, glm::dvec3(0.f));
+    const ECS::Entity second = AddCrate(test.scene, glm::dvec3(10.f, 0.f, 0.f));
+    const ECS::Entity handle = AddChildCollider(test.scene, first, glm::dvec3(0.f, 2.f, 0.f), UnitBox());
     test.world.Reconcile();
     REQUIRE(test.world.Mass(first) == doctest::Approx(2.f * kUnitBoxMass).epsilon(kMassEpsilon));
 
@@ -235,8 +235,8 @@ TEST_CASE("A piece moved to another body becomes part of that body")
 TEST_CASE("Removing a piece's Collider takes it out of its body")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f));
-    const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::vec3(3.f, 0.f, 0.f), UnitBox());
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f));
+    const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::dvec3(3.f, 0.f, 0.f), UnitBox());
     test.world.Reconcile();
     REQUIRE(RayDown(test.world, 3.f, 0.f).has_value());
 
@@ -253,8 +253,8 @@ TEST_CASE("A disabled collider has no body and no piece, and is never hit")
 
     SUBCASE("A piece")
     {
-        const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f));
-        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::vec3(3.f, 0.f, 0.f), UnitBox());
+        const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f));
+        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::dvec3(3.f, 0.f, 0.f), UnitBox());
         test.scene.GetMut<Physics::Collider>(handle)->enabled = false;
         test.world.Reconcile();
         CHECK_FALSE(RayDown(test.world, 3.f, 0.f).has_value());
@@ -268,7 +268,7 @@ TEST_CASE("A disabled collider has no body and no piece, and is never hit")
 
     SUBCASE("A static collider")
     {
-        const ECS::Entity wall = AddBody(test.scene, glm::vec3(0.f), Box(glm::vec3(0.5f), /*isStatic=*/ true));
+        const ECS::Entity wall = AddBody(test.scene, glm::dvec3(0.f), Box(glm::vec3(0.5f), /*isStatic=*/ true));
         test.scene.GetMut<Physics::Collider>(wall)->enabled = false;
         test.world.Reconcile();
         CHECK_FALSE(test.world.HasBody(wall));
@@ -284,7 +284,7 @@ TEST_CASE("IgnoreCollision lets two bodies pass through each other until it is u
 {
     TestScene test;
     const ECS::Entity floor = AddFloor(test.scene);
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f, 2.f, 0.f));
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f, 2.f, 0.f));
     constexpr int32_t kFallSteps = 120;
 
     SUBCASE("Named by the body")
@@ -294,14 +294,14 @@ TEST_CASE("IgnoreCollision lets two bodies pass through each other until it is u
         CHECK(test.scene.Get<ECS::Transform>(crate)->position.y < -1.f);
 
         test.world.IgnoreCollision(crate, floor, false);
-        test.world.Teleport(crate, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(0.f, 2.f, 0.f)});
+        test.world.Teleport(crate, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(0.f, 2.f, 0.f)});
         Step(test.world, kFallSteps);
         CHECK(test.scene.Get<ECS::Transform>(crate)->position.y == doctest::Approx(0.5f).epsilon(0.02));
     }
 
     SUBCASE("Named by a piece, which stands for its whole body")
     {
-        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::vec3(0.f, 1.f, 0.f), UnitBox());
+        const ECS::Entity handle = AddChildCollider(test.scene, crate, glm::dvec3(0.f, 1.f, 0.f), UnitBox());
         test.world.IgnoreCollision(handle, floor);
         Step(test.world, kFallSteps);
         CHECK(test.scene.Get<ECS::Transform>(crate)->position.y < -1.f);
@@ -311,26 +311,26 @@ TEST_CASE("IgnoreCollision lets two bodies pass through each other until it is u
 TEST_CASE("A collider's role comes from what is above it")
 {
     ECS::Scene scene;
-    const ECS::Entity crate = AddCrate(scene, glm::vec3(0.f));
+    const ECS::Entity crate = AddCrate(scene, glm::dvec3(0.f));
     const ECS::Entity plain = scene.Create();
     REQUIRE(scene.Add(plain, ECS::Transform{}) != nullptr);
-    const ECS::Entity character = PhysicsTests::AddCharacter(scene, glm::vec3(5.f, 0.f, 0.f));
+    const ECS::Entity character = PhysicsTests::AddCharacter(scene, glm::dvec3(5.f, 0.f, 0.f));
 
-    const ECS::Entity piece = AddChildCollider(scene, crate, glm::vec3(0.f, 2.f, 0.f), UnitBox());
+    const ECS::Entity piece = AddChildCollider(scene, crate, glm::dvec3(0.f, 2.f, 0.f), UnitBox());
     const ECS::Entity arm = scene.Create();
     REQUIRE(scene.Add(arm, ECS::Transform{}) != nullptr);
     REQUIRE(scene.Add(arm, ECS::Parent{.parent = crate}) != nullptr);
-    const ECS::Entity deep = AddChildCollider(scene, arm, glm::vec3(0.f), UnitBox());
-    const ECS::Entity onPlain = AddChildCollider(scene, plain, glm::vec3(0.f), UnitBox());
-    const ECS::Entity hitbox = AddChildCollider(scene, character, glm::vec3(0.f, 1.5f, 0.f), UnitBox());
+    const ECS::Entity deep = AddChildCollider(scene, arm, glm::dvec3(0.f), UnitBox());
+    const ECS::Entity onPlain = AddChildCollider(scene, plain, glm::dvec3(0.f), UnitBox());
+    const ECS::Entity hitbox = AddChildCollider(scene, character, glm::dvec3(0.f, 1.5f, 0.f), UnitBox());
 
     Physics::Collider sensor = UnitBox();
     sensor.channel = Physics::CollisionChannel::Trigger;
-    const ECS::Entity trigger = AddChildCollider(scene, crate, glm::vec3(0.f), sensor);
+    const ECS::Entity trigger = AddChildCollider(scene, crate, glm::dvec3(0.f), sensor);
 
     Physics::Collider riding = UnitBox();
     riding.attach = Physics::ColliderAttach::Body;
-    const ECS::Entity rider = AddChildCollider(scene, crate, glm::vec3(0.f), riding);
+    const ECS::Entity rider = AddChildCollider(scene, crate, glm::dvec3(0.f), riding);
 
     using Physics::ColliderRole;
     using Physics::ResolveColliderPlacement;

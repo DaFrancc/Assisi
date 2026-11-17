@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/SceneDepth.hpp>
 #include <Assisi/Render/Ssao.hpp>
 #include <Assisi/Render/SsaoSettings.hpp>
 
@@ -29,18 +30,12 @@ constexpr float kFar = 1000.0f;
 /// back: single-precision depth, and nothing else.
 constexpr float kRoundTripTolerance = 1e-3f;
 
-/// The same, at the far plane itself, where depth has the least to say: there
-/// one float step of depth is about 0.6 of a unit of distance, so the general
-/// tolerance (one unit at a thousand) is under two steps, and fast-math's
-/// reordered arithmetic is enough to cross it. This is about eight.
-constexpr float kFarPlaneTolerance = 5e-3f;
-
 /// A pixel's worth of disagreement, for anything measured on the target.
 constexpr float kPixelTolerance = 1e-2f;
 
 glm::mat4 Projection()
 {
-    return glm::perspective(glm::radians(kFovDegrees), kWidth / kHeight, kNear, kFar);
+    return ScenePerspective(glm::radians(kFovDegrees), kWidth / kHeight, kNear, kFar);
 }
 
 /// Where the rasterizer puts a view-space point: through the projection to NDC,
@@ -201,7 +196,7 @@ TEST_CASE("A stored depth gives back the distance it was stored from")
     }
     // The depth clear is the far plane, which is what keeps the sky out of
     // every range check and every blur.
-    CHECK(SsaoLinearDepth(1.0f, terms) == doctest::Approx(kFar).epsilon(kFarPlaneTolerance));
+    CHECK(SsaoLinearDepth(kSceneDepthFar, terms) == doctest::Approx(kFar).epsilon(kRoundTripTolerance));
 }
 
 TEST_CASE("A pixel and its distance rebuild the point that was rasterized there")

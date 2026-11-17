@@ -54,8 +54,13 @@ public:
     ///
     /// A source that holds textures already encoded returns them in the format
     /// they were encoded in; one decoding from an image file encodes to @p format.
+    /// A non-zero @p alphaCutoff is a cutout material's: each mip keeps the share
+    /// of texels at or above it that the base has (Image::PreserveAlphaCoverage).
+    /// An encoded texture already had that done by the cook, at the cutoff of the
+    /// materials binding it.
     [[nodiscard]] virtual std::expected<Image::DecodedImage, AssetLoadError>
-    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format) const = 0;
+    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format,
+                float alphaCutoff) const = 0;
 
     /// @brief The SPIR-V for a shader stage named by virtual path
     ///        ("shaders/mesh.vert.spv").

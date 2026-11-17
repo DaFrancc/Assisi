@@ -18,12 +18,15 @@
 #include <Assisi/Mondrian/Screen.hpp>
 #include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
+#include <Assisi/Core/EventCatalog.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/StringPool.hpp>
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -109,6 +112,36 @@ enum class ScreenVerb : uint8_t
     return false;
 }
 
+/// @brief What a @p widget hands the event its change pushes, or None for a node
+/// that has no value to hand.
+[[nodiscard]] constexpr Core::EventValueKind ChangeValueKind(BuiltinWidget widget)
+{
+    switch (widget)
+    {
+    case BuiltinWidget::Toggle:
+        return Core::EventValueKind::Bool;
+    case BuiltinWidget::ContinuousSlider:
+        return Core::EventValueKind::Float;
+    case BuiltinWidget::SteppedSlider:
+        return Core::EventValueKind::Int32;
+    case BuiltinWidget::None:
+    case BuiltinWidget::Button:
+    case BuiltinWidget::Scroll:
+    case BuiltinWidget::TextField:
+    case BuiltinWidget::Count_:
+        break;
+    }
+    return Core::EventValueKind::None;
+}
+
+/// @brief Whether a @p widget can push @p event when it changes: it has a value,
+/// and the event takes that kind or takes none.
+[[nodiscard]] constexpr bool ChangePushes(BuiltinWidget widget, Core::EventValueKind event)
+{
+    const Core::EventValueKind held = ChangeValueKind(widget);
+    return held != Core::EventValueKind::None && (event == held || event == Core::EventValueKind::None);
+}
+
 /// @brief One node of a screen, as the file described it.
 ///
 /// Its text lives in the document's pool, so a node alone names its words but
@@ -116,13 +149,17 @@ enum class ScreenVerb : uint8_t
 ASTRUCT()
 struct ScreenNode
 {
-    /// Fully resolved: every attribute the file wrote, over the defaults.
-    ///
-    /// Which fields were *written* is not recorded, because nothing yet reads a
-    /// style from anywhere else. When a named style supplies a base for these to
-    /// override, this table gains that set — and the layout hash is what makes
-    /// it a change rather than a migration.
+    /// Every attribute the file wrote, over the defaults. Which of them it
+    /// wrote is in written, and the node's named style gives way to those.
     AFIELD() Style style;
+
+    /// How the node looks in each state the file wrote a look for, at most one
+    /// per state. Each holds only what its state changes.
+    AFIELD() std::vector<ThemedPatch> states;
+
+    /// The resting properties the file took from the theme's tokens. Each is in
+    /// written too, and its value in style is a default until a theme fills it.
+    AFIELD() std::vector<TokenUse> tokens;
 
     /// What a slider's ends mean, and how far one press moves it. A stepped
     /// slider moves a whole step at a time and ignores the step here.
@@ -141,16 +178,34 @@ struct ScreenNode
     /// to look one up in.
     AFIELD() Core::PooledString pattern;
 
+    /// The binding that decides whether the node is visible, as written, such
+    /// as `{CharacterState.sprinting}`; empty when visible decides alone.
+    AFIELD() Core::PooledString visibleBinding;
+
+    /// The binding a control's value follows, as written, such as
+    /// `{=OptionsView.volume}`; empty for a control that holds its own.
+    AFIELD() Core::PooledString valueBinding;
+
     /// What Screen::Find looks this node up by. Empty for an unnamed node.
     AFIELD() Core::InternedString name;
 
-    /// The named style this node asks for, or empty. Carried and not resolved:
-    /// there is nowhere yet for a name to resolve to, and a file written today
-    /// should not have to be edited when there is.
+    /// The style this node names in whichever theme the UI has, or empty.
     AFIELD() Core::InternedString styleName;
 
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;
+
+    /// The event a control pushes when the player moves it, by catalog name, or
+    /// empty for none.
+    AFIELD() Core::InternedString changeEvent;
+
+    /// The picture the node shows: a sprite as `sheet:name`, or the asset path
+    /// of an image shown whole. At most one of the two; both empty for none.
+    AFIELD() Core::InternedString sprite;
+    AFIELD() Core::InternedString texture;
+
+    /// Which properties of style the file wrote, one bit per StyleProperty.
+    AFIELD() uint64_t written = 0;
 
     /// Where a continuous slider starts, within its range.
     AFIELD() float value = 0.f;
@@ -209,7 +264,41 @@ struct ScreenNode
     AFIELD() bool textIsKey = false;
     AFIELD() bool placeholderIsKey = false;
 
+    /// Whether text holds bindings, kept as written for the loader to read,
+    /// braces and all. Text that holds none is stored as it is shown.
+    AFIELD() bool textIsBound = false;
+
     [[nodiscard]] friend bool operator==(const ScreenNode &, const ScreenNode &) = default;
+};
+
+/// @brief What a context does at one moment, as the file wrote it: nothing, a
+/// verb that needs no target, or an event pushed.
+ASTRUCT()
+struct ContextAction
+{
+    /// The event pushed, by catalog name. Set only for ActionKind::Event.
+    AFIELD() Core::InternedString eventName;
+
+    AFIELD() ActionKind action = ActionKind::None;
+
+    /// Meaningful only for ActionKind::Verb.
+    AFIELD() ScreenVerb verb = ScreenVerb::Hide;
+
+    [[nodiscard]] friend bool operator==(const ContextAction &, const ContextAction &) = default;
+};
+
+/// @brief A context a screen declares: the entity it is about, which code
+/// gives it, and what the screen does at each moment.
+ASTRUCT()
+struct ScreenContext
+{
+    /// One per ContextMoment, in its order.
+    AFIELD() std::array<ContextAction, kContextMomentCount> actions;
+
+    /// Empty for the screen's unnamed context.
+    AFIELD() Core::InternedString name;
+
+    [[nodiscard]] friend bool operator==(const ScreenContext &, const ScreenContext &) = default;
 };
 
 /// @brief A whole screen: its nodes, its traits, and what it needs installed.
@@ -229,6 +318,9 @@ struct ScreenDocument
     /// loader for whoever owns the world to install; the UI cannot install
     /// anything and does not try.
     AFIELD() std::vector<Core::InternedString> systems;
+
+    /// The contexts the file declares, at most one per name.
+    AFIELD() std::vector<ScreenContext> contexts;
 
     /// Which node takes focus when the screen is shown, or kNoNode.
     AFIELD() uint32_t focus = kNoNode;

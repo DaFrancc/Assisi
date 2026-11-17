@@ -171,6 +171,13 @@ TYPES: dict[str, TypeCodegen] = {
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
         '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
+    # glm::dvec3 — a position that stays exact far from the origin. Read and
+    # written as doubles end to end; a level written with float values reads back
+    # unchanged, since every float is a double.
+    'glm::dvec3': TypeCodegen(
+        'DVec3',
+        '{{ {a}.x, {a}.y, {a}.z }}',
+        '{{ double _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadDoubleArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',

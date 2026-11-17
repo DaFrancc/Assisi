@@ -45,8 +45,18 @@ struct ResumeRequested
 {
 };
 
-/// Shows the pause menu on Escape, and closes it with a click when Resume is
-/// pressed.
+/// Pushed by the menu's Contrast button.
+AEVENT()
+struct ContrastToggled
+{
+};
+
+/// The theme's two modes, which Contrast moves between.
+inline constexpr std::string_view kEverydayMode = "dark";
+inline constexpr std::string_view kContrastMode = "high_contrast";
+
+/// Shows the pause menu on Escape, closes it with a click when Resume is
+/// pressed, and switches the theme's mode when Contrast is.
 ///
 /// The click plays on the world's default emitter, which plays on while the
 /// world is paused. Back closes the menu without one: the UI answers it before

@@ -170,6 +170,33 @@ vec3 CookTorrance(BrdfContext c, vec3 N, vec3 V, vec3 L, vec3 radiance)
     return (diffuse * (1.0 - F) + F * spec * c.energyComp) * radiance * NdotL;
 }
 
+// How much of a light a normal-mapped surface keeps, from 0 to 1, for a surface
+// whose own normal is @p Ng and whose mapped normal is @p N. A bump tilted
+// toward the light can face it while the surface under it faces away; lit by
+// the bump alone, the light would stop dead at the surface's horizon, in a hard
+// line broken up by the bumps. This fades it to zero there instead, smoothly,
+// and is 1 wherever the bump faces no more of the light than the surface: one
+// over the light the bump gains, capped at 1 and softened as g + g^2 - g^3. It
+// never adds light. Must match Render::BumpShadowing.
+float BumpShadowing(vec3 Ng, vec3 N, vec3 L)
+{
+    float NgdotL = dot(Ng, L);
+    float NdotL  = dot(N, L);
+    float NgdotN = dot(Ng, N);
+    if (NgdotL <= 0.0)
+    {
+        return 0.0;
+    }
+    // A bump facing away takes no light anyway, and one bent past the
+    // surface's plane has no gain to measure.
+    if (NdotL <= 0.0 || NgdotN <= 0.0)
+    {
+        return 1.0;
+    }
+    float g = min(1.0, NgdotL / (NdotL * NgdotN));
+    return g * (1.0 + g - g * g);
+}
+
 // Windowed inverse-square attenuation: zero at and past the radius. Takes the
 // squared distance and squared radius.
 float AttenuationSq(float d2, float radiusSq)

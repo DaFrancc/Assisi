@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/AssetKind.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <array>
@@ -16,7 +17,7 @@ namespace Assisi::Core
 namespace
 {
 
-constexpr std::array<std::pair<AssetKindId, std::string_view>, 9> kBuiltInKinds{{
+constexpr std::array<std::pair<AssetKindId, std::string_view>, 11> kBuiltInKinds{{
     {kReflectedKind, "reflected"},
     {kSceneKind, "scene"},
     {kMeshKind, "mesh"},
@@ -26,6 +27,8 @@ constexpr std::array<std::pair<AssetKindId, std::string_view>, 9> kBuiltInKinds{
     {kFontKind, "font"},
     {kScreenKind, "screen"},
     {kStringTableKind, "string table"},
+    {kThemeKind, "theme"},
+    {kSpriteSheetKind, "sprite sheet"},
 }};
 
 } // namespace
@@ -53,7 +56,7 @@ std::string DescribeKind(AssetKindId kind)
     {
         return registered->name;
     }
-    return std::format("unknown kind {:016x}", kind.hash);
+    return Format("unknown kind {:016x}", kind.hash);
 }
 
 std::string_view ToString(CookedBlobError error) noexcept

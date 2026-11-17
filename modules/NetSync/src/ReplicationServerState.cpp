@@ -2,6 +2,8 @@
 
 #include <Assisi/NetSync/ReplicationServer.hpp>
 
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
@@ -14,6 +16,15 @@
 
 namespace Assisi::NetSync
 {
+namespace
+{
+
+/// How many replicated parents AttachmentRootOf climbs: deeper than any real
+/// hierarchy, so a cycle in Parent ends the walk rather than hanging it.
+constexpr std::uint32_t kMaxAttachmentDepth = 256;
+
+} // namespace
+
 void ReplicationServer::ReconcileNetIds()
 {
     _liveNetIds.clear();
@@ -138,6 +149,7 @@ void ReplicationServer::ReconcileNetIds()
     // whole live set once per connection — the cost relevancy exists to avoid.
     _alwaysRelevant.clear();
     _controllerOnly.clear();
+    _attachedTo.clear();
     if (_relevancy != nullptr)
     {
         for (const NetId netId : _liveNetIds)
@@ -145,6 +157,9 @@ void ReplicationServer::ReconcileNetIds()
             const ECS::Entity entity = EntityOf(netId);
             if (entity == ECS::NullEntity)
                 continue;
+
+            if (const NetId root = AttachmentRootOf(entity); root != InvalidNetId)
+                _attachedTo.emplace_back(netId, root);
 
             const Replicated *marker = _scene.Get<Replicated>(entity);
             if (marker == nullptr || marker->relevance == Relevance::Default)
@@ -161,8 +176,28 @@ void ReplicationServer::ReconcileNetIds()
             }
         }
     }
-    // Both lists come out sorted because `_liveNetIds` is, and the binary
+    // All three lists come out sorted because `_liveNetIds` is, and the binary
     // searches downstream depend on that.
+}
+
+NetId ReplicationServer::AttachmentRootOf(ECS::Entity entity) const
+{
+    NetId root = InvalidNetId;
+    ECS::Entity current = entity;
+    for (std::uint32_t depth = 0; depth < kMaxAttachmentDepth; ++depth)
+    {
+        const ECS::Parent *parent = _scene.Get<ECS::Parent>(current);
+        if (parent == nullptr || parent->parent == ECS::NullEntity)
+            break;
+
+        const NetId parentId = NetIdOf(parent->parent);
+        if (parentId == InvalidNetId)
+            break; // not replicated: the chain the client can rebuild ends here
+
+        root = parentId;
+        current = parent->parent;
+    }
+    return root;
 }
 
 Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const
@@ -240,18 +275,39 @@ void ReplicationServer::CaptureBodyStates()
         BodyRecord &record = _bodyStates[netId];
 
         // A character never sleeps and carries its velocity in CharacterState,
-        // so a client can carry it on between updates.
+        // and what it is asked to do in CharacterIntent, so a client can carry
+        // it on between updates as it goes on here.
         if (const Physics::CharacterState *character = _scene.Get<Physics::CharacterState>(entity))
         {
-            record.state = BodyState{.netId = netId,
-                                     .position = transform.position,
+            const Physics::CharacterIntent *intent = _scene.Get<Physics::CharacterIntent>(entity);
+            Physics::CharacterIntent asked = intent != nullptr ? *intent : Physics::CharacterIntent{};
+            // Taken as zero, as its movement takes them: a speed that is not a
+            // number would be refused by every client, and the snapshot with it.
+            if (!Math::IsFinite(asked.move))
+            {
+                asked.move = glm::vec3{0.f};
+            }
+            if (!Math::IsFinite(asked.speedScale) || asked.speedScale < 0.f)
+            {
+                asked.speedScale = 0.f;
+            }
+            const Physics::CharacterCounts counts = _physics->CharacterCountsOf(entity);
+            record.state = BodyState{.position = transform.position,
+                                     .netId = netId,
                                      .rotation = transform.rotation,
                                      .linearVelocity = character->velocity,
                                      .angularVelocity = glm::vec3{0.f},
+                                     .move = asked.move,
+                                     .speedScale = asked.speedScale,
+                                     .jumps = counts.jumps,
+                                     .landings = counts.landings,
                                      .asleep = false,
                                      .character = true,
                                      .stance = character->stance,
-                                     .ground = character->ground};
+                                     .ground = character->ground,
+                                     .wantedStance = asked.stance,
+                                     .sprint = asked.sprint,
+                                     .jumpedSinceGrounded = counts.jumpedSinceGrounded};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -259,8 +315,12 @@ void ReplicationServer::CaptureBodyStates()
         if (std::find(_activeBodies.begin(), _activeBodies.end(), entity) != _activeBodies.end())
         {
             const Physics::BodyState &state = *_scene.Get<Physics::BodyState>(entity);
-            record.state = BodyState{netId,  transform.position,    transform.rotation,
-                                     state.linearVelocity, state.angularVelocity, /*asleep=*/ false};
+            record.state = BodyState{.position = transform.position,
+                                     .netId = netId,
+                                     .rotation = transform.rotation,
+                                     .linearVelocity = state.linearVelocity,
+                                     .angularVelocity = state.angularVelocity,
+                                     .asleep = false};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -284,7 +344,7 @@ void ReplicationServer::CaptureBodyStates()
         // A body asleep and unmoved records nothing, which is where the
         // idle-bandwidth property comes from.
         {
-            const glm::vec3 position = transform.position;
+            const glm::dvec3 position = transform.position;
             const glm::quat rotation = transform.rotation;
 
             const bool firstSighting = record.tick == 0;
@@ -295,14 +355,14 @@ void ReplicationServer::CaptureBodyStates()
             // trigger a send either.
             const bool movedAtRest =
                 !firstSighting && record.state.asleep &&
-                (glm::distance(record.state.position, position) > 1e-5f ||
+                (glm::distance(record.state.position, position) > 1e-5 ||
                  std::abs(glm::dot(record.state.rotation, rotation)) < 1.f - 1e-6f);
 
             if (!firstSighting && !justSlept && !movedAtRest)
                 continue;
 
             const bool transition = justSlept;
-            record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/ true};
+            record.state = BodyState{.position = position, .netId = netId, .rotation = rotation, .asleep = true};
             record.tick  = _bodyStateTick;
 
             // Every other update is superseded by the next one; a delayed final

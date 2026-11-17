@@ -19,12 +19,17 @@ namespace Assisi::Editor
 /// round shape is not the Transform's, so the caller composes in what
 /// PhysicsWorld::GetColliderScale reports. A parented entity's Transform is an
 /// offset from its parent, so the parent's world matrix is composed in exactly as
-/// Physics does, through ECS::ParentWorldMatrix; for an unparented one @p local
-/// already is the world pose.
+/// Physics does; for an unparented one @p local already is the world pose. Like
+/// Physics, it leaves out the entity's ParentFrame, so the overlay of a body on
+/// something held at a joint shows where the body is, at its parent's origin
+/// plus its offset, not where the held thing is drawn.
 ///
 /// Reads the *parent's* propagated world matrix, so propagation must
 /// have run this frame. Not the entity's own world matrix, whose scale a
 /// non-uniformly scaled parent would shear into the rotation.
-[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local);
+///
+/// Measured from @p origin, as the overlay it is drawn in is: the camera.
+[[nodiscard]] glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local,
+                                          const glm::dvec3 &origin);
 
 } // namespace Assisi::Editor

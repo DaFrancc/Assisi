@@ -1,0 +1,10 @@
+{
+  "guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "reflected"
+    }
+  ],
+  "version": 1
+}

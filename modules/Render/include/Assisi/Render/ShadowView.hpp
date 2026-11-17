@@ -17,6 +17,7 @@
 /// out. The UV form the shader samples with is derived from it, so the two can
 /// never disagree.
 
+#include <array>
 #include <cstdint>
 
 #include <nvrhi/nvrhi.h>
@@ -153,6 +154,109 @@ struct ShadowView
 /// @brief The rasterizer viewport and scissor that confine drawing to the
 /// view's rectangle.
 [[nodiscard]] nvrhi::Viewport ShadowViewViewport(const ShadowView &view);
+
+/// @brief The steepest receiver a shadow lookup follows, in texels of depth per
+/// texel across the map: about 89.94 degrees off the light. Must match
+/// shadow_filters.glsl's kMaxReceiverSlope.
+///
+/// It is there for a surface exactly edge-on to the map, whose plane has no
+/// finite slope. Anything short of that is followed: the plane comes from the
+/// surface's normal, so it is right however steep it is, and a lower limit
+/// leaves a light hung against a wall shadowing that wall in stripes. A surface
+/// past it takes a thousandth of the light.
+inline constexpr float kMaxReceiverSlopeTexels = 1000.f;
+
+/// @brief How far the receiver's plane deepens across @p view's target, as
+/// d(depth)/du and d(depth)/dv in target UV, for the surface through
+/// @p position with geometric normal @p normal.
+///
+/// A shadow lookup compares each texel it reads against this plane at that
+/// texel's centre, not against the depth at the lookup's own point. On a
+/// surface the light grazes, the texels on the light's side are the surface
+/// itself, nearer the light, and one depth for all of them reads those as a
+/// blocker: stripes of shadow across a lit surface.
+///
+/// Exact for perspective views as well as orthographic ones, because a
+/// projection maps a plane to a plane. @p depthPerUv is one texel of depth over
+/// one texel of UV, the unit kMaxReceiverSlopeTexels is counted in. Zero for a
+/// surface edge-on to the view. mesh.frag computes the same plane.
+[[nodiscard]] glm::vec2 ReceiverPlaneSlope(const ShadowView &view, const glm::vec3 &position, const glm::vec3 &normal,
+                                           float depthPerUv);
+
+/// @brief The depth a shadow lookup compares a texel against: for a receiver at
+/// depth @p reference, whose plane deepens by @p slope across the target, and a
+/// texel centred @p offset from the receiver's own point, in UV.
+///
+/// The plane where it runs toward the light, which is where the receiver's own
+/// surface is nearer the light than at its point and one depth would read it as
+/// a blocker. The receiver's own depth where the plane runs away from the light:
+/// the receiver's surface there is deeper than its point, so that depth already
+/// clears it, and the plane taken further would read whatever the receiver meets
+/// as a blocker of it, such as the floor at the foot of a wall the light grazes.
+/// mesh.frag compares against the same depth.
+[[nodiscard]] float ShadowComparedDepth(float reference, const glm::vec2 &offset, const glm::vec2 &slope);
+
+/// @brief The cosine to the light below which a shadow lookup starts to lift
+/// onto the curved surface (see TerminatorGate): about six degrees above the
+/// horizon of the triangle or of its interpolated normal. mesh.frag uses the
+/// same.
+inline constexpr float kTerminatorCutoff = 0.1f;
+
+/// @brief A triangle as the lit pass draws it: its corners and their vertex
+/// normals, in one space.
+struct ShadedTriangle
+{
+    std::array<glm::vec3, 3> corners{};
+    std::array<glm::vec3, 3> normals{};
+};
+
+/// @brief How far a shadow lookup at @p barycentric on @p triangle moves to
+/// reach the curved surface the triangle's vertex normals describe.
+///
+/// A smooth-shaded mesh is lit as that curve, but its shadow map holds the flat
+/// triangles. Near the edge between light and dark a triangle can face away
+/// from the light while the curve still faces it, and the map rightly has the
+/// triangle behind its neighbours: a stripe of shadow per triangle that no bias
+/// clears. Lifted onto the curve, the lookup is outside a convex mesh, and none
+/// of the mesh lies between it and the light.
+///
+/// The lift runs along the interpolated normal, by how far the point lies below
+/// each corner's tangent plane, blended as the corners blend. Both are linear in
+/// the corners' values, which is what lets mesh.frag interpolate them from the
+/// vertex shader and compute the same lift per pixel, from one float beside the
+/// normal it already has. On a triangle of a sphere with normals pointing out
+/// from its centre, the plane through the lifted point facing the interpolated
+/// normal has the whole sphere behind it. Zero where the lift points against
+/// @p facing, the side the surface faces: a triangle curving inward, which
+/// lifted would leave its mesh's own shadow.
+[[nodiscard]] glm::vec3 SmoothSurfaceLift(const ShadedTriangle &triangle, const glm::vec3 &barycentric,
+                                          const glm::vec3 &facing);
+
+/// @brief How much of SmoothSurfaceLift a lookup toward the light along
+/// @p toLight takes, from 0 to 1, for a surface whose interpolated normal is
+/// @p normal and whose triangle faces @p facet, turned to @p normal's side.
+///
+/// All of it on a triangle facing away from the light, which is where the
+/// stripes are; none where both normals face the light by more than
+/// kTerminatorCutoff; blended between, so the lift fades in rather than
+/// switching on. The lift slides contact shadows across the surface by its
+/// length over the light's slope, so only the lookups that need it take it.
+/// mesh.frag gates the same way.
+[[nodiscard]] float TerminatorGate(const glm::vec3 &normal, const glm::vec3 &facet, const glm::vec3 &toLight);
+
+/// @brief How much of a light along @p toLight a normal-mapped surface keeps,
+/// from 0 to 1, for a surface whose own normal is @p geometric and whose mapped
+/// normal is @p mapped.
+///
+/// A bump tilted toward the light can face it while the surface under it faces
+/// away. Lit by the bump alone, the light would stop dead at the surface's
+/// horizon, in a hard line broken up by the bumps; the shadow map has nothing
+/// to say past it either. This fades the light to zero there instead: one over
+/// the light the bump gains on the surface, (Ng.L) / ((N.L)(Ng.N)), capped at
+/// 1 and softened as g + g^2 - g^3 so it leaves the light smoothly. It is 1
+/// wherever the bump gains nothing, so an unmapped surface keeps all its light,
+/// and it never adds any. mesh.frag fades the same way.
+[[nodiscard]] float BumpShadowing(const glm::vec3 &geometric, const glm::vec3 &mapped, const glm::vec3 &toLight);
 
 /// @brief One view's record in the table the GPU reads, std430-packed.
 ///

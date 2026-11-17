@@ -7,7 +7,9 @@
 #include <span>
 #include <vector>
 
+#include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshCuller.hpp>
 
 using Assisi::Geometry::DefaultLodScreenSize;
@@ -346,6 +348,24 @@ TEST_CASE("An unresolved material slot packs the skip sentinel")
     // Capacity still counts every submesh — the shader skips the sentinel one
     // at draw time, but the buffer is sized for the upper bound.
     CHECK(tables.drawCapacity == 2);
+}
+
+TEST_CASE("A see-through material packs the skip sentinel, as an unresolved slot does")
+{
+    // The culled draws are opaque and unsorted; the blended pass draws these.
+    Assisi::Geometry::MaterialData source;
+    Assisi::Render::Material material;
+    material.Create(nullptr, 3u, source, Assisi::Render::MaterialTextures{});
+    CHECK(Assisi::Render::CullMaterialFor(&material) == EncodeCullMaterial(3u, MeshPipeline::Opaque));
+
+    source.Alpha = Assisi::Geometry::AlphaMode::Mask;
+    material.Create(nullptr, 3u, source, Assisi::Render::MaterialTextures{});
+    CHECK(Assisi::Render::CullMaterialFor(&material) == EncodeCullMaterial(3u, MeshPipeline::Mask));
+
+    source.Alpha = Assisi::Geometry::AlphaMode::Blend;
+    material.Create(nullptr, 3u, source, Assisi::Render::MaterialTextures{});
+    CHECK(Assisi::Render::CullMaterialFor(&material) == kNoMaterial);
+    CHECK(Assisi::Render::CullMaterialFor(nullptr) == kNoMaterial);
 }
 
 TEST_CASE("Geometry with no submeshes is a no-op")

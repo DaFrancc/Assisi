@@ -38,7 +38,7 @@ namespace
 constexpr int32_t kSteps = 120;
 constexpr float kStep = 1.f / 60.f;
 
-bool Finite(glm::vec3 value)
+template <typename Vector> bool Finite(const Vector &value)
 {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }

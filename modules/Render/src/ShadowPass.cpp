@@ -65,32 +65,7 @@ bool ShadowPass::Initialize(const InitParams &params)
         Core::Log::Error("ShadowPass: failed to load the still-depth restore shaders.");
         return false;
     }
-    return CreateNoCascadesTexture();
-}
-
-bool ShadowPass::CreateNoCascadesTexture()
-{
-    nvrhi::TextureDesc desc;
-    desc.width = 1;
-    desc.height = 1;
-    desc.arraySize = 1;
-    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
-    desc.format = nvrhi::Format::D32;
-    desc.isShaderResource = true;
-    // Never drawn into, but a depth-format image is sampled from the depth
-    // read-only layout, and Vulkan admits an image to that layout only if it
-    // was created usable as a depth attachment.
-    desc.isRenderTarget = true;
-    desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    desc.keepInitialState = true;
-    desc.debugName = "ShadowPass::NoCascades";
-    _noCascadesTexture = _device->createTexture(desc);
-    if (_noCascadesTexture == nullptr)
-    {
-        Core::Log::Error("ShadowPass: failed to create the empty cascade texture.");
-        return false;
-    }
-    _cascadeTexture = _noCascadesTexture;
+    _canDraw = true;
     return true;
 }
 
@@ -98,7 +73,7 @@ void ShadowPass::ReleaseTargets()
 {
     _cascadeFramebuffers.clear();
     _stillFramebuffers.clear();
-    _cascadeTexture = _noCascadesTexture;
+    _cascadeTexture = nullptr;
     _stillTexture = nullptr;
     _restoreSet = nullptr;
     _restorePipeline = nullptr;
@@ -269,9 +244,11 @@ void ShadowPass::RestoreStillDepth(nvrhi::ICommandList *commandList, std::uint32
 
 bool ShadowPass::Configure(const SunShadowSettings &settings, bool active)
 {
-    if (_device == nullptr || _depthRenderer == nullptr || !_depthRenderer->IsReady())
+    if (!_canDraw)
     {
-        return false; // Initialize failed; the pass stays inactive for good
+        // Initialize failed and the pass stays inactive for good. Fails only
+        // when asked for shadows, so the caller can turn them off once.
+        return !active;
     }
 
     if (!active)
@@ -357,8 +334,6 @@ ShadowPass::Stats ShadowPass::Render(nvrhi::ICommandList *commandList, const Sun
             return stats;
         }
     }
-
-    ASSISI_PROFILE_GPU_PASS(commandList, "shadow-cascades");
 
     // Each draw below numbers its views from zero, so each gets the casters
     // whose bits name its views, shifted to start there.

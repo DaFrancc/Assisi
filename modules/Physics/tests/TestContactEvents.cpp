@@ -37,7 +37,7 @@ constexpr int32_t kSleepSteps = 300;
 
 ECS::Entity Spawn(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, bool isStatic)
 {
-    return PhysicsTests::AddBody(scene, at, PhysicsTests::Box(halfExtents, isStatic));
+    return PhysicsTests::AddBody(scene, glm::dvec3(at), PhysicsTests::Box(halfExtents, isStatic));
 }
 
 /// Floor with its top at y = 0, plus a box dropped from @p dropFrom.

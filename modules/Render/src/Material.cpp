@@ -39,6 +39,18 @@ void Material::Create(nvrhi::IDevice * /*device*/, uint32_t id, const Geometry::
     // derivatives to add nothing is pure cost.
     if (source.SpecularAntiAliasing && source.SpecularAaVarianceClamp > 0.f)
         flags |= kMaterialFlagSpecularAntiAliasing;
+    if (source.ShadowsFollowSmoothing)
+    {
+        flags |= kMaterialFlagShadowsFollowSmoothing;
+    }
+    if (source.EmissiveFactor != glm::vec3(0.f))
+    {
+        flags |= kMaterialFlagHasEmissive;
+    }
+    if (textures.hasOcclusionTexture && source.OcclusionStrength != 0.f)
+    {
+        flags |= kMaterialFlagHasOcclusion;
+    }
     _constants.flags = glm::uvec4(flags, 0u, 0u, 0u);
     _constants.texIndices =
         glm::uvec4(textures.baseColor, textures.normal, textures.metallicRoughness, textures.occlusion);

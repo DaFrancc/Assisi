@@ -20,4 +20,11 @@ namespace Assisi::Mondrian
 /// that stop nothing are looked through, to whatever lies beneath.
 [[nodiscard]] NodeId HitTest(const NodeTree &tree, const LayoutResult &layout, Point point);
 
+/// @brief The topmost node at @p point, whatever it is, or null: what the
+/// pointer is over, as against what it would press.
+///
+/// Placed and clipped as HitTest places them, but no node is looked through,
+/// so a label inside a row is what is pointed at rather than nothing.
+[[nodiscard]] NodeId PointedAt(const NodeTree &tree, const LayoutResult &layout, Point point);
+
 } // namespace Assisi::Mondrian

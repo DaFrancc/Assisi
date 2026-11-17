@@ -65,20 +65,32 @@ edit them by hand, but it helps to know the shape:
   renaming an asset doesn't break levels, as long as its `.aast` file moves with
   it.
 
-**A level that names a system the game doesn't have won't load**, in the editor
-or in the game. It usually means a system was renamed or deleted in code:
+**A level that names a system the game doesn't have won't load in the game.**
+It usually means a system was renamed or deleted in code:
 
-- The editor refuses to open it.
 - The game refuses to start, if it's the startup level.
 - A `RequestTravel` to it fails, and you stay in the current level.
 
-Each time, the log names the missing system. Systems required by blueprints
-placed in the level count too. The strictness is deliberate: a level that
-loaded anyway would look fine but silently do nothing.
+Each time, the log names the missing system. The strictness is deliberate: a
+level that loaded anyway would look fine but silently do nothing.
 
-To fix it, add the system back, or open the level in an editor built from the
-old code and remove the name in the **Systems** panel. You can also delete the
-name from the level file's `systems` list by hand.
+**Blueprints and screens list systems too, and the same rule holds for them:**
+
+- A level that places a blueprint needing a missing system won't load either.
+- A blueprint spawned while the game runs, or a screen that's shown, that needs
+  a missing system ends the game on the spot, in a shipped build as much as a
+  debug one. The [crash report](troubleshooting.md#when-the-game-crashes) gives
+  the system and the file that asked for it.
+
+**The editor opens these levels anyway**, so you can see what's wrong. The
+**Systems** panel shows each missing system in red, the log names the level or
+blueprint that asks for it, and the editor won't save the file or start **Play**
+until it's fixed.
+
+To fix it, add the system back, or open the file in an editor built from the
+old code and remove the name in the **Systems** panel, or remove the blueprint
+that needs it. You can also delete the name from the file's `systems` list by
+hand.
 
 </details>
 

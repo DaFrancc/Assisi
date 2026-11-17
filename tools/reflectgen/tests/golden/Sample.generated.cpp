@@ -7,6 +7,7 @@
 #include <Assisi/ECS/EntityRef.hpp>
 #include <type_traits>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
+#include <cstddef>
 #include <string>
 #include <Assisi/Core/Reflect/ContainerJson.hpp>
 #include <Assisi/Core/Reflect/ContainerOps.hpp>
@@ -594,8 +595,12 @@ static_assert(std::is_trivially_copyable_v<Assisi::Runtime::SamplePredicted>,
               "Assisi::Runtime::SamplePredicted is ACOMP(predicted), so it must be trivially copyable");
 static_assert(alignof(Assisi::Runtime::SamplePredicted) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__,
               "Assisi::Runtime::SamplePredicted is ACOMP(predicted) and is kept in plain byte storage");
-static_assert(sizeof(Assisi::Runtime::SamplePredicted) == sizeof(decltype(Assisi::Runtime::SamplePredicted::aim)) + sizeof(decltype(Assisi::Runtime::SamplePredicted::heat)),
-              "Assisi::Runtime::SamplePredicted holds a member with no AFIELD, or padding: a predicted component must be exactly its fields, largest first");
+static_assert(offsetof(Assisi::Runtime::SamplePredicted, aim) == 0,
+              "Assisi::Runtime::SamplePredicted holds a member with no AFIELD: a predicted component must be only its fields");
+static_assert(offsetof(Assisi::Runtime::SamplePredicted, heat) == (offsetof(Assisi::Runtime::SamplePredicted, aim) + sizeof(decltype(Assisi::Runtime::SamplePredicted::aim)) + alignof(decltype(Assisi::Runtime::SamplePredicted::heat)) - 1) / alignof(decltype(Assisi::Runtime::SamplePredicted::heat)) * alignof(decltype(Assisi::Runtime::SamplePredicted::heat)),
+              "Assisi::Runtime::SamplePredicted holds a member with no AFIELD: a predicted component must be only its fields");
+static_assert(sizeof(Assisi::Runtime::SamplePredicted) == (offsetof(Assisi::Runtime::SamplePredicted, heat) + sizeof(decltype(Assisi::Runtime::SamplePredicted::heat)) + alignof(Assisi::Runtime::SamplePredicted) - 1) / alignof(Assisi::Runtime::SamplePredicted) * alignof(Assisi::Runtime::SamplePredicted),
+              "Assisi::Runtime::SamplePredicted holds a member with no AFIELD: a predicted component must be only its fields");
 bool _reflectgen_SamplePredicted_equals(const void *a, const void *b)
 {
     const Assisi::Runtime::SamplePredicted &lhs = *static_cast<const Assisi::Runtime::SamplePredicted *>(a);

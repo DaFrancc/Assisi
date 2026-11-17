@@ -40,9 +40,11 @@ target_sources(Assisi-MondrianImport
     "include/Assisi/Mondrian/Import/Csv.hpp"
     "include/Assisi/Mondrian/Import/Markup.hpp"
     "include/Assisi/Mondrian/Import/ScreenCompiler.hpp"
+    "include/Assisi/Mondrian/Import/ScreenRules.hpp"
     "include/Assisi/Mondrian/Import/SourceReader.hpp"
+    "include/Assisi/Mondrian/Import/SpriteSheetCompiler.hpp"
     "include/Assisi/Mondrian/Import/StringTableCompiler.hpp"
-    "include/Assisi/Mondrian/Import/TextRules.hpp"
+    "include/Assisi/Mondrian/Import/ThemeCompiler.hpp"
   PRIVATE
     "src/Csv.cpp"
     "src/Markup.cpp"
@@ -54,11 +56,15 @@ target_sources(Assisi-MondrianImport
     "src/ScreenCompiler.cpp"
     "src/ScreenLibraries.cpp"
     "src/ScreenLibraries.hpp"
+    "src/ScreenRules.cpp"
     "src/ScreenTemplates.cpp"
     "src/ScreenWalk.cpp"
     "src/ScreenWalk.hpp"
+    "src/SpriteSheetCompiler.cpp"
     "src/StringTableCompiler.cpp"
-    "src/TextRules.cpp"
+    "src/ThemeCompiler.cpp"
+    "src/ThemeTokens.cpp"
+    "src/ThemeTokens.hpp"
 )
 
 target_include_directories(Assisi-MondrianImport
@@ -69,6 +75,10 @@ target_include_directories(Assisi-MondrianImport
 target_link_libraries(Assisi-MondrianImport
   PUBLIC
     Assisi::Mondrian
+  PRIVATE
+    # ImageImport: a sheet's texture size, read from the image's header, to
+    # check each sprite lies inside it.
+    Assisi::ImageImport
 )
 
 add_library(Assisi::MondrianImport ALIAS Assisi-MondrianImport)

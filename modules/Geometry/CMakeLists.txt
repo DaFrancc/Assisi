@@ -17,6 +17,7 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/AnimationSampling.hpp"
     "include/Assisi/Geometry/AnimationBlend.hpp"
     "include/Assisi/Geometry/BlendSpace.hpp"
+    "include/Assisi/Geometry/Spline.hpp"
   PRIVATE
     "src/AnimationBlend.cpp"
     "src/AnimationPayload.cpp"
@@ -28,6 +29,7 @@ target_sources(Assisi-Geometry
     "src/MeshValidate.cpp"
     "src/Pose.cpp"
     "src/MaterialFile.cpp"
+    "src/Spline.cpp"
 )
 
 target_include_directories(Assisi-Geometry
@@ -60,6 +62,7 @@ target_sources(Assisi-GeometryImport
     "include/Assisi/Geometry/MeshImporter.hpp"
     "include/Assisi/Geometry/AssetImport.hpp"
     "include/Assisi/Geometry/AnimationImport.hpp"
+    "include/Assisi/Geometry/SmoothingCheck.hpp"
   PRIVATE
     "src/AnimationCooking.cpp"
     "src/AnimationExtract.cpp"
@@ -69,6 +72,7 @@ target_sources(Assisi-GeometryImport
     "src/GltfSource.hpp"
     "src/MeshImporter.cpp"
     "src/AssetImport.cpp"
+    "src/SmoothingCheck.cpp"
 )
 
 target_link_libraries(Assisi-GeometryImport
@@ -100,6 +104,7 @@ assisi_reflect(
   HEADERS
     include/Assisi/Geometry/MaterialData.hpp
     include/Assisi/Geometry/BlendSpace.hpp
+    include/Assisi/Geometry/Spline.hpp
 )
 
 if (ASSISI_BUILD_TESTS)

@@ -1,0 +1,800 @@
+diff --git a/glm/detail/type_quat.inl b/glm/detail/type_quat.inl
+index 6a8f9871..085b5b0d 100644
+--- a/glm/detail/type_quat.inl
++++ b/glm/detail/type_quat.inl
+@@ -272,6 +272,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator=(qua<U, Q> const& q)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->w = static_cast<T>(q.w);
+ 		this->x = static_cast<T>(q.x);
+ 		this->y = static_cast<T>(q.y);
+@@ -283,6 +284,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator+=(qua<U, Q> const& q)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_quat_add<T, Q, detail::is_aligned<Q>::value>::call(*this, qua<T, Q>(q)));
+ 	}
+ 
+@@ -290,6 +292,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator-=(qua<U, Q> const& q)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_quat_sub<T, Q, detail::is_aligned<Q>::value>::call(*this, qua<T, Q>(q)));
+ 	}
+ 
+@@ -297,6 +300,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator*=(qua<U, Q> const& r)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		qua<T, Q> const p(*this);
+ 		qua<T, Q> const q(r);
+ 
+@@ -311,6 +315,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator*=(U s)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_quat_mul_scalar<T, Q, detail::is_aligned<Q>::value>::call(*this, static_cast<U>(s)));
+ 	}
+ 
+@@ -318,6 +323,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR qua<T, Q> & qua<T, Q>::operator/=(U s)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_quat_div_scalar<T, Q, detail::is_aligned<Q>::value>::call(*this, static_cast<U>(s)));
+ 	}
+ 
+diff --git a/glm/detail/type_vec2.inl b/glm/detail/type_vec2.inl
+index e8408997..4bf68206 100644
+--- a/glm/detail/type_vec2.inl
++++ b/glm/detail/type_vec2.inl
+@@ -146,6 +146,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x = static_cast<T>(v.x);
+ 		this->y = static_cast<T>(v.y);
+ 		return *this;
+@@ -155,6 +156,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator+=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(scalar);
+ 		this->y += static_cast<T>(scalar);
+ 		return *this;
+@@ -164,6 +166,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator+=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(v.x);
+ 		this->y += static_cast<T>(v.x);
+ 		return *this;
+@@ -173,6 +176,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator+=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(v.x);
+ 		this->y += static_cast<T>(v.y);
+ 		return *this;
+@@ -182,6 +186,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator-=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(scalar);
+ 		this->y -= static_cast<T>(scalar);
+ 		return *this;
+@@ -191,6 +196,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator-=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(v.x);
+ 		this->y -= static_cast<T>(v.x);
+ 		return *this;
+@@ -200,6 +206,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator-=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(v.x);
+ 		this->y -= static_cast<T>(v.y);
+ 		return *this;
+@@ -209,6 +216,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator*=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(scalar);
+ 		this->y *= static_cast<T>(scalar);
+ 		return *this;
+@@ -218,6 +226,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator*=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(v.x);
+ 		this->y *= static_cast<T>(v.x);
+ 		return *this;
+@@ -227,6 +236,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator*=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(v.x);
+ 		this->y *= static_cast<T>(v.y);
+ 		return *this;
+@@ -236,6 +246,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator/=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x /= static_cast<T>(scalar);
+ 		this->y /= static_cast<T>(scalar);
+ 		return *this;
+@@ -245,6 +256,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator/=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x /= static_cast<T>(v.x);
+ 		this->y /= static_cast<T>(v.x);
+ 		return *this;
+@@ -254,6 +266,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator/=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x /= static_cast<T>(v.x);
+ 		this->y /= static_cast<T>(v.y);
+ 		return *this;
+@@ -299,6 +312,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator%=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= static_cast<T>(scalar);
+ 		this->y %= static_cast<T>(scalar);
+ 		return *this;
+@@ -308,6 +322,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator%=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= static_cast<T>(v.x);
+ 		this->y %= static_cast<T>(v.x);
+ 		return *this;
+@@ -317,6 +332,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator%=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= static_cast<T>(v.x);
+ 		this->y %= static_cast<T>(v.y);
+ 		return *this;
+@@ -326,6 +342,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator&=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= static_cast<T>(scalar);
+ 		this->y &= static_cast<T>(scalar);
+ 		return *this;
+@@ -335,6 +352,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator&=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= static_cast<T>(v.x);
+ 		this->y &= static_cast<T>(v.x);
+ 		return *this;
+@@ -344,6 +362,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator&=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= static_cast<T>(v.x);
+ 		this->y &= static_cast<T>(v.y);
+ 		return *this;
+@@ -353,6 +372,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator|=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= static_cast<T>(scalar);
+ 		this->y |= static_cast<T>(scalar);
+ 		return *this;
+@@ -362,6 +382,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator|=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= static_cast<T>(v.x);
+ 		this->y |= static_cast<T>(v.x);
+ 		return *this;
+@@ -371,6 +392,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator|=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= static_cast<T>(v.x);
+ 		this->y |= static_cast<T>(v.y);
+ 		return *this;
+@@ -380,6 +402,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator^=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= static_cast<T>(scalar);
+ 		this->y ^= static_cast<T>(scalar);
+ 		return *this;
+@@ -389,6 +412,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator^=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= static_cast<T>(v.x);
+ 		this->y ^= static_cast<T>(v.x);
+ 		return *this;
+@@ -398,6 +422,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator^=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= static_cast<T>(v.x);
+ 		this->y ^= static_cast<T>(v.y);
+ 		return *this;
+@@ -407,6 +432,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator<<=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= static_cast<T>(scalar);
+ 		this->y <<= static_cast<T>(scalar);
+ 		return *this;
+@@ -416,6 +442,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator<<=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= static_cast<T>(v.x);
+ 		this->y <<= static_cast<T>(v.x);
+ 		return *this;
+@@ -425,6 +452,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator<<=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= static_cast<T>(v.x);
+ 		this->y <<= static_cast<T>(v.y);
+ 		return *this;
+@@ -434,6 +462,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator>>=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(scalar);
+ 		this->y >>= static_cast<T>(scalar);
+ 		return *this;
+@@ -443,6 +472,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator>>=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(v.x);
+ 		this->y >>= static_cast<T>(v.x);
+ 		return *this;
+@@ -452,6 +482,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<2, T, Q> & vec<2, T, Q>::operator>>=(vec<2, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(v.x);
+ 		this->y >>= static_cast<T>(v.y);
+ 		return *this;
+diff --git a/glm/detail/type_vec3.inl b/glm/detail/type_vec3.inl
+index 4e44047b..8c7d35fd 100644
+--- a/glm/detail/type_vec3.inl
++++ b/glm/detail/type_vec3.inl
+@@ -215,6 +215,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q>& vec<3, T, Q>::operator=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x = static_cast<T>(v.x);
+ 		this->y = static_cast<T>(v.y);
+ 		this->z = static_cast<T>(v.z);
+@@ -225,6 +226,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator+=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(scalar);
+ 		this->y += static_cast<T>(scalar);
+ 		this->z += static_cast<T>(scalar);
+@@ -235,6 +237,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator+=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(v.x);
+ 		this->y += static_cast<T>(v.x);
+ 		this->z += static_cast<T>(v.x);
+@@ -245,6 +248,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator+=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x += static_cast<T>(v.x);
+ 		this->y += static_cast<T>(v.y);
+ 		this->z += static_cast<T>(v.z);
+@@ -255,6 +259,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator-=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(scalar);
+ 		this->y -= static_cast<T>(scalar);
+ 		this->z -= static_cast<T>(scalar);
+@@ -265,6 +270,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator-=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(v.x);
+ 		this->y -= static_cast<T>(v.x);
+ 		this->z -= static_cast<T>(v.x);
+@@ -275,6 +281,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator-=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x -= static_cast<T>(v.x);
+ 		this->y -= static_cast<T>(v.y);
+ 		this->z -= static_cast<T>(v.z);
+@@ -285,6 +292,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator*=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(scalar);
+ 		this->y *= static_cast<T>(scalar);
+ 		this->z *= static_cast<T>(scalar);
+@@ -295,6 +303,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator*=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(v.x);
+ 		this->y *= static_cast<T>(v.x);
+ 		this->z *= static_cast<T>(v.x);
+@@ -305,6 +314,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator*=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x *= static_cast<T>(v.x);
+ 		this->y *= static_cast<T>(v.y);
+ 		this->z *= static_cast<T>(v.z);
+@@ -325,6 +335,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator/=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x /= static_cast<T>(v.x);
+ 		this->y /= static_cast<T>(v.x);
+ 		this->z /= static_cast<T>(v.x);
+@@ -335,6 +346,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator/=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x /= static_cast<T>(v.x);
+ 		this->y /= static_cast<T>(v.y);
+ 		this->z /= static_cast<T>(v.z);
+@@ -383,6 +395,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator%=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= scalar;
+ 		this->y %= scalar;
+ 		this->z %= scalar;
+@@ -393,6 +406,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator%=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= v.x;
+ 		this->y %= v.x;
+ 		this->z %= v.x;
+@@ -403,6 +417,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator%=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x %= v.x;
+ 		this->y %= v.y;
+ 		this->z %= v.z;
+@@ -413,6 +428,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator&=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= scalar;
+ 		this->y &= scalar;
+ 		this->z &= scalar;
+@@ -423,6 +439,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator&=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= v.x;
+ 		this->y &= v.x;
+ 		this->z &= v.x;
+@@ -433,6 +450,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator&=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x &= v.x;
+ 		this->y &= v.y;
+ 		this->z &= v.z;
+@@ -443,6 +461,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator|=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= scalar;
+ 		this->y |= scalar;
+ 		this->z |= scalar;
+@@ -453,6 +472,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator|=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= v.x;
+ 		this->y |= v.x;
+ 		this->z |= v.x;
+@@ -463,6 +483,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator|=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x |= v.x;
+ 		this->y |= v.y;
+ 		this->z |= v.z;
+@@ -473,6 +494,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator^=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= scalar;
+ 		this->y ^= scalar;
+ 		this->z ^= scalar;
+@@ -483,6 +505,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator^=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= v.x;
+ 		this->y ^= v.x;
+ 		this->z ^= v.x;
+@@ -493,6 +516,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator^=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x ^= v.x;
+ 		this->y ^= v.y;
+ 		this->z ^= v.z;
+@@ -503,6 +527,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator<<=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= scalar;
+ 		this->y <<= scalar;
+ 		this->z <<= scalar;
+@@ -513,6 +538,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator<<=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= static_cast<T>(v.x);
+ 		this->y <<= static_cast<T>(v.x);
+ 		this->z <<= static_cast<T>(v.x);
+@@ -523,6 +549,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator<<=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x <<= static_cast<T>(v.x);
+ 		this->y <<= static_cast<T>(v.y);
+ 		this->z <<= static_cast<T>(v.z);
+@@ -533,6 +560,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator>>=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(scalar);
+ 		this->y >>= static_cast<T>(scalar);
+ 		this->z >>= static_cast<T>(scalar);
+@@ -543,6 +571,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator>>=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(v.x);
+ 		this->y >>= static_cast<T>(v.x);
+ 		this->z >>= static_cast<T>(v.x);
+@@ -553,6 +582,7 @@ namespace glm
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<3, T, Q> & vec<3, T, Q>::operator>>=(vec<3, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x >>= static_cast<T>(v.x);
+ 		this->y >>= static_cast<T>(v.y);
+ 		this->z >>= static_cast<T>(v.z);
+diff --git a/glm/detail/type_vec4.inl b/glm/detail/type_vec4.inl
+index d48fae75..f2d2583a 100644
+--- a/glm/detail/type_vec4.inl
++++ b/glm/detail/type_vec4.inl
+@@ -529,6 +529,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q>& vec<4, T, Q>::operator=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		this->x = static_cast<T>(v.x);
+ 		this->y = static_cast<T>(v.y);
+ 		this->z = static_cast<T>(v.z);
+@@ -540,6 +541,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator+=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_add<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -547,6 +549,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator+=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_add<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v.x)));
+ 	}
+ 
+@@ -554,6 +557,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator+=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_add<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -561,6 +565,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator-=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_sub<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -568,6 +573,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator-=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_sub<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v.x)));
+ 	}
+ 
+@@ -575,6 +581,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator-=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_sub<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -582,6 +589,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator*=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mul<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -589,6 +597,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator*=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mul<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v.x)));
+ 	}
+ 
+@@ -596,6 +605,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator*=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mul<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -603,6 +613,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator/=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_div<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -610,6 +621,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator/=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_div<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v.x)));
+ 	}
+ 
+@@ -617,6 +629,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator/=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_div<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -664,6 +677,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator%=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mod<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -671,6 +685,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator%=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mod<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -678,6 +693,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator%=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_mod<T, Q, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -685,6 +701,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator&=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_and<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -692,6 +709,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator&=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_and<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -699,6 +717,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator&=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_and<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -706,6 +725,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator|=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_or<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -713,6 +733,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator|=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_or<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -720,6 +741,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator|=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_or<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -727,6 +749,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator^=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_xor<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -734,6 +757,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator^=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_xor<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -741,6 +765,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator^=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_xor<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -748,6 +773,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator<<=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_left<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -755,6 +781,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator<<=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_left<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -762,6 +789,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator<<=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_left<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -769,6 +797,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator>>=(U scalar)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_right<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(scalar)));
+ 	}
+ 
+@@ -776,6 +805,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator>>=(vec<1, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_right<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 
+@@ -783,6 +813,7 @@ namespace detail
+ 	template<typename U>
+ 	GLM_FUNC_QUALIFIER GLM_CONSTEXPR vec<4, T, Q> & vec<4, T, Q>::operator>>=(vec<4, U, Q> const& v)
+ 	{
++		static_assert(sizeof(U) <= sizeof(T), "Assisi: this would narrow a wider type silently; write the conversion out, as glm::vec3(v) or glm::quat(q)");
+ 		return (*this = detail::compute_vec4_shift_right<T, Q, detail::is_int<T>::value, sizeof(T) * 8, detail::is_aligned<Q>::value>::call(*this, vec<4, T, Q>(v)));
+ 	}
+ 

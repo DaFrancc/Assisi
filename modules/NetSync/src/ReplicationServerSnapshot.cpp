@@ -193,6 +193,7 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
     }
 
     const auto prefixEnd = record.written.begin() + static_cast<std::ptrdiff_t>(writtenFromComponents);
+    CellReference reference;
 
     // The effective set, not the live one. This is an independent walk with its
     // own acked-based gate, and acked does *not* imply relevant: an entity that
@@ -228,7 +229,7 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
         }
 
         writer.WriteBool(true);
-        WriteBodyState(found->second.state, writer);
+        WriteBodyState(found->second.state, reference, writer);
 
         // Record the delivery. This entity may already have an entry from the
         // component pass; if not, componentTick stays 0 and the ack's max()
@@ -380,9 +381,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         // member's transform from this one, so a rounding difference here is a
         // permanent difference in every member's pose — on members that never
         // change and are therefore never corrected.
-        writer.WriteFloat(block.info.placement.position.x);
-        writer.WriteFloat(block.info.placement.position.y);
-        writer.WriteFloat(block.info.placement.position.z);
+        writer.WriteDouble(block.info.placement.position.x);
+        writer.WriteDouble(block.info.placement.position.y);
+        writer.WriteDouble(block.info.placement.position.z);
         writer.WriteFloat(block.info.placement.rotation.w);
         writer.WriteFloat(block.info.placement.rotation.x);
         writer.WriteFloat(block.info.placement.rotation.y);

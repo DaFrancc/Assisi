@@ -47,6 +47,7 @@ constexpr std::uint32_t kVec3Floats = 3;
 constexpr std::uint32_t kVec4Floats = 4;
 constexpr std::uint32_t kQuatFloats = 4;
 constexpr std::uint32_t kMat4Floats = 16;
+constexpr std::uint32_t kDVec3Doubles = 3;
 
 /// Bits of the smallest possible element of each vector-typed field, used to
 /// reject an absurd element count against the bits actually left in the buffer
@@ -99,6 +100,23 @@ void ReadFloats(BitReader &reader, std::byte *address, std::uint32_t count)
     {
         const float value = reader.ReadFloat();
         StorePod(address + i * sizeof(float), value);
+    }
+}
+
+void WriteDoubles(BitWriter &writer, const std::byte *address, std::uint32_t count)
+{
+    for (std::uint32_t i = 0; i < count; ++i)
+    {
+        writer.WriteDouble(LoadPod<double>(address + i * sizeof(double)));
+    }
+}
+
+void ReadDoubles(BitReader &reader, std::byte *address, std::uint32_t count)
+{
+    for (std::uint32_t i = 0; i < count; ++i)
+    {
+        const double value = reader.ReadDouble();
+        StorePod(address + i * sizeof(double), value);
     }
 }
 
@@ -612,6 +630,9 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::Mat4:
         WriteFloats(writer, address, kMat4Floats);
         return true;
+    case FieldType::DVec3:
+        WriteDoubles(writer, address, kDVec3Doubles);
+        return true;
     case FieldType::Enum:
     {
         std::uint64_t value = 0;
@@ -782,6 +803,9 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
         return true;
     case FieldType::Mat4:
         ReadFloats(reader, address, kMat4Floats);
+        return true;
+    case FieldType::DVec3:
+        ReadDoubles(reader, address, kDVec3Doubles);
         return true;
     case FieldType::Enum:
     {
@@ -963,6 +987,8 @@ const char *FieldTypeName(FieldType type)
         return "quat";
     case FieldType::Mat4:
         return "mat4";
+    case FieldType::DVec3:
+        return "dvec3";
     case FieldType::Enum:
         return "enum";
     case FieldType::String:

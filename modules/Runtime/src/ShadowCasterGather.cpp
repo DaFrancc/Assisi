@@ -19,6 +19,16 @@ namespace Assisi::Runtime
 {
 namespace
 {
+/// Whether a caster's sphere @p caster reaches into a local light's volume
+/// @p light. A local light is a point with a range, so what can occlude for it
+/// is what stands inside its reach.
+bool SpheresTouch(const Assisi::Geometry::BoundingSphere &caster, const Assisi::Geometry::BoundingSphere &light)
+{
+    const glm::vec3 separation = caster.center - light.center;
+    const float reach = caster.radius + light.radius;
+    return glm::dot(separation, separation) <= reach * reach;
+}
+
 /// @brief Whether @p lhs draws through a pipeline class that sorts before
 /// @p rhs's, or the same class and an earlier geometry.
 ///
@@ -92,6 +102,12 @@ void EmitShadowCasters(const ShadowCasterSource &source, std::uint32_t viewMask,
         const Assisi::Render::Material *material = subMesh.MaterialSlot < source.meshRenderer.materials.size()
                                                        ? source.meshRenderer.materials[subMesh.MaterialSlot]
                                                        : nullptr;
+        // A see-through surface casts nothing: a shadow map holds only whether
+        // something blocks the light, and clear glass would shade like a wall.
+        if (material != nullptr && material->IsBlended())
+        {
+            continue;
+        }
         const bool alphaMasked = material != nullptr && material->IsAlphaMasked();
         // The same flag the mesh pass reads. A double-sided caster is a surface
         // with no interior, so the depth pass must record both of its faces; a
@@ -134,7 +150,7 @@ template <typename Visit> void ForEachMovingCaster(Assisi::ECS::Scene &scene,
         {
             continue;
         }
-        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedMesh>(entity));
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedPose>(entity));
         if (mesh != nullptr)
         {
             visit(entity, *world, *meshRenderer, *mesh);
@@ -148,7 +164,7 @@ template <typename Visit> void ForEachCaster(Assisi::ECS::Scene &scene, Visit &&
 {
     for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
     {
-        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
         if (mesh != nullptr)
         {
             visit(entity, world, meshRenderer, *mesh);
@@ -188,7 +204,7 @@ void SunShadowCasterGather::Gather(Assisi::ECS::Scene &scene, Assisi::Render::Sh
     _lodSelector = lodSelector;
     const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
                          const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
-                     { AddCaster(entity, world.matrix, meshRenderer, mesh); };
+                     { AddCaster(entity, Assisi::ECS::MatrixFrom(world, _frame.origin), meshRenderer, mesh); };
     if (_stillViews > 0u)
     {
         ForEachCaster(scene, add);
@@ -248,9 +264,10 @@ void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::mat
     const Assisi::Render::ShadowCasterMotion motion =
         still ? Assisi::Render::ShadowCasterMotion::Still : Assisi::Render::ShadowCasterMotion::Moving;
     const ShadowCasterSource source{mesh, meshRenderer, world, worldSphere};
-    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), worldSphere) : 0u;
+    const Assisi::Geometry::BoundingSphere fromCamera{worldSphere.center - _frame.camera, worldSphere.radius};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), fromCamera) : 0u;
     const std::uint32_t coarser =
-        lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh.Lods(), worldSphere, level) & viewMask
+        lodSelector != nullptr ? lodSelector->CoarserShadowViews(entity, mesh.Lods(), fromCamera, level) & viewMask
                                : 0u;
 
     // At most two copies, each masked to the views that draw it, so every
@@ -267,7 +284,7 @@ void SunShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::mat
 }
 
 void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::Entity> changed,
-                        std::vector<Assisi::Render::ShadowMover> &out)
+                        const glm::dvec3 &origin, std::vector<Assisi::Render::ShadowMover> &out)
 {
     ASSISI_PROFILE_SCOPE("shadow-movers");
 
@@ -280,17 +297,18 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
         {
             continue; // it moved, but nothing it does reaches a shadow map
         }
-        const SkinnedMesh *skinned = scene.Get<SkinnedMesh>(entity);
+        const SkinnedPose *skinned = scene.Get<SkinnedPose>(entity);
         const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, skinned);
         if (mesh == nullptr)
         {
             continue;
         }
+        const glm::mat4 matrix = Assisi::ECS::MatrixFrom(*world, origin);
         const std::uint64_t poseHash = skinned != nullptr
-                                           ? Assisi::Render::ShadowPoseHash(world->matrix, skinned->paletteHash)
-                                           : Assisi::Render::ShadowPoseHash(world->matrix);
+                                           ? Assisi::Render::ShadowPoseHash(matrix, skinned->paletteHash)
+                                           : Assisi::Render::ShadowPoseHash(matrix);
         out.push_back(Assisi::Render::ShadowMover{
-                ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), world->matrix),
+                ShadowCasterId(entity), Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), matrix),
                 poseHash});
     }
 }
@@ -322,16 +340,22 @@ void LocalShadowCasterGather::Gather(Assisi::ECS::Scene &scene,
     _lightVolumes = lightVolumes;
     // A list that does not line up with the lights cannot say which of them
     // rest, so every one of them is taken to want its still casters.
-    _stillRequests = stillRequests.size() == lightVolumes.size() ? stillRequests : std::span<const std::uint8_t>{};
+    const bool requestsFit = stillRequests.size() == lightVolumes.size();
+    _rebakingLights.clear();
+    for (std::uint32_t light = 0; light < lightVolumes.size(); ++light)
+    {
+        if (!requestsFit || stillRequests[light] != 0u)
+        {
+            _rebakingLights.push_back(light);
+        }
+    }
 
     _mobility = &mobility;
     _lodSelector = lodSelector;
     const auto add = [&](Assisi::ECS::Entity entity, const Assisi::ECS::WorldMatrix &world,
                          const MeshRenderer &meshRenderer, const Assisi::Render::MeshBuffer &mesh)
-                     { AddCaster(entity, world.matrix, meshRenderer, mesh); };
-    const bool anyStill = _stillRequests.empty() ||
-                          std::ranges::any_of(_stillRequests, [](std::uint8_t wanted) { return wanted != 0u; });
-    if (anyStill)
+                     { AddCaster(entity, Assisi::ECS::MatrixFrom(world, _frame.origin), meshRenderer, mesh); };
+    if (!_rebakingLights.empty())
     {
         ForEachCaster(scene, add);
         return;
@@ -372,17 +396,24 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     // inside of. A still caster is tested only against the lights rebaking
     // this frame, since those are the only rows that draw still casters.
     const std::size_t firstReach = reached.size();
-    for (std::uint32_t light = 0; light < _lightVolumes.size(); ++light)
+    if (still)
     {
-        if (still && !_stillRequests.empty() && _stillRequests[light] == 0u)
+        for (const std::uint32_t light : _rebakingLights)
         {
-            continue;
+            if (SpheresTouch(worldSphere, _lightVolumes[light]))
+            {
+                reached.push_back(light);
+            }
         }
-        const glm::vec3 separation = worldSphere.center - _lightVolumes[light].center;
-        const float reach = worldSphere.radius + _lightVolumes[light].radius;
-        if (glm::dot(separation, separation) <= reach * reach)
+    }
+    else
+    {
+        for (std::uint32_t light = 0; light < _lightVolumes.size(); ++light)
         {
-            reached.push_back(light);
+            if (SpheresTouch(worldSphere, _lightVolumes[light]))
+            {
+                reached.push_back(light);
+            }
         }
     }
     if (reached.size() == firstReach)
@@ -407,14 +438,20 @@ void LocalShadowCasterGather::AddCaster(Assisi::ECS::Entity entity, const glm::m
     // the lights the entity's sphere did.
     const std::size_t before = _casters.size();
     const ShadowCasterSource source{mesh, meshRenderer, world, worldSphere};
-    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), worldSphere) : 0u;
+    const Assisi::Geometry::BoundingSphere fromCamera{worldSphere.center - _frame.camera, worldSphere.radius};
+    const uint32_t level = lodSelector != nullptr ? lodSelector->Select(entity, mesh.Lods(), fromCamera) : 0u;
     EmitShadowCasters(source, ~0u, level, motion, _casters);
+    const std::size_t reachCount = reached.size() - firstReach;
     for (std::size_t emitted = before; emitted < _casters.size(); ++emitted)
     {
         if (emitted != before)
         {
-            reached.insert(reached.end(), reached.begin() + static_cast<std::ptrdiff_t>(firstReach),
-                           reached.begin() + static_cast<std::ptrdiff_t>(reached.size()));
+            // Grown first and copied by position: inserting a range of the
+            // vector into itself is undefined.
+            const std::size_t at = reached.size();
+            reached.resize(at + reachCount);
+            std::copy_n(reached.begin() + static_cast<std::ptrdiff_t>(firstReach), reachCount,
+                        reached.begin() + static_cast<std::ptrdiff_t>(at));
         }
         _casterStart.push_back(static_cast<std::uint32_t>(reached.size()));
     }

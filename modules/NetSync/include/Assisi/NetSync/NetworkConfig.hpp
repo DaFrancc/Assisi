@@ -47,12 +47,12 @@ struct NetworkConfig
 
     // --- Quantization. Inside the protocol hash: a mismatched pair refuses to
     // connect rather than decoding each other's bytes into the wrong numbers.
-    AFIELD() float positionExtent = BodyQuantization{}.positionExtent;
     AFIELD() uint32_t positionBits = BodyQuantization{}.positionBits;
     AFIELD() float linearVelocityMax = BodyQuantization{}.linearVelocityMax;
     AFIELD() uint32_t linearVelocityBits = BodyQuantization{}.linearVelocityBits;
     AFIELD() float angularVelocityMax = BodyQuantization{}.angularVelocityMax;
     AFIELD() uint32_t angularVelocityBits = BodyQuantization{}.angularVelocityBits;
+    AFIELD() uint32_t moveBits = BodyQuantization{}.moveBits;
 
     // --- Smoothing. Purely view-side and not hashed: two machines that smooth
     // differently still agree about every byte.

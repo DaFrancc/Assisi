@@ -4,13 +4,17 @@
 
 #include "MarkupValues.hpp"
 #include "ScreenAttributes.hpp"
+#include "ThemeTokens.hpp"
 
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian::Import
 {
@@ -106,15 +110,171 @@ MarkupError At(const TextPlace &where, std::string message)
     return MarkupError{.message = std::move(message), .line = where.line, .column = where.column};
 }
 
-/// Reads @p text as a key or as literal text, leaving it as the key without its
-/// mark or as the text it stands for. True when it is a key.
-std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text, const TextPlace &where)
+/// What a node's text turned out to be.
+enum class TextIs : uint8_t
+{
+    Written, ///< shown as it is
+    Key,     ///< a key into a string table
+    Bound,   ///< holding bindings, kept as written for the loader
+    Count_
+};
+
+/// @p source as a file writes it, for a message.
+std::string Written(const BindingSource &source)
+{
+    std::string written{kBindingOpen};
+    if (source.twoWay)
+    {
+        written += kTwoWayMark;
+    }
+    if (!source.context.empty())
+    {
+        written += source.context + kBindingSeparator;
+    }
+    written += source.component + kFieldSeparator + source.field;
+    if (!source.format.empty())
+    {
+        written += kBindingSeparator + source.format;
+    }
+    return written + kBindingClose;
+}
+
+/// What @p name is among the types this program reflects.
+BindingOwner OwnerOf(const ScreenRules &rules, std::string_view name)
+{
+    return {.component = rules.components ? rules.components(name) : nullptr,
+            .structure = rules.structs ? rules.structs(name) : nullptr};
+}
+
+/// Whether the words @p binding shows can reach a player: the table it names
+/// has an entry for every value, and a project requiring keys is given one.
+std::expected<void, std::string> CheckWords(const Walk &walk, const BindingSource &source, const FieldBinding &binding)
+{
+    if (binding.use == BindingUse::Text && ShowsProgramWords(binding) &&
+        walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly)
+    {
+        return std::unexpected("'" + Written(source) +
+                               "' shows a word from the code, and this project requires text a player reads to come "
+                               "from a string table. Give it a key, such as {" +
+                               source.component + kFieldSeparator + source.field + ":#table:key}.");
+    }
+    for (const std::string &label : LabelsOf(binding))
+    {
+        // Each is the binding's key, which ResolveBinding split, and a name.
+        const std::optional<TableKey> split = SplitKey(label);
+        if (!split)
+        {
+            continue;
+        }
+        const std::unordered_map<std::string, StringTable>::const_iterator table =
+            walk.rules.tables.byName.find(std::string{split->table});
+        if (table == walk.rules.tables.byName.end())
+        {
+            return std::unexpected("'" + Written(source) + "' names the string table '" + std::string{split->table} +
+                                   "', and there is none. List its file in " + std::string{kUiConfigPath} + ".");
+        }
+        if (!table->second.entries.contains(std::string{split->key}))
+        {
+            return std::unexpected("'" + Written(source) + "' needs the entry '" + std::string{split->key} +
+                                   "' in the string table '" + std::string{split->table} + "', and it has none.");
+        }
+    }
+    return {};
+}
+
+/// Whether @p source names a field of a component or struct this program has
+/// that @p use can take, from a context the screen declares.
+std::expected<void, std::string> CheckBinding(const Walk &walk, const BindingSource &source, BindingUse use)
+{
+    if (!source.context.empty() && !walk.checkingAlone &&
+        !std::ranges::contains(walk.document.contexts, Core::InternedString{source.context}, &ScreenContext::name))
+    {
+        return std::unexpected("'" + Written(source) + "' reads the context '" + source.context +
+                               "', which this screen does not declare. Declare it with <context name=\"" +
+                               source.context + "\" />.");
+    }
+    const std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(source, OwnerOf(walk.rules, source.component), use);
+    if (resolved)
+    {
+        return CheckWords(walk, source, *resolved);
+    }
+    switch (resolved.error())
+    {
+    case BindingError::UnknownComponent:
+        return std::unexpected("'" + Written(source) + "' names '" + source.component +
+                               "', which is not a component or struct this build reflects.");
+    case BindingError::UnknownField:
+        return std::unexpected("'" + Written(source) + "' names '" + source.field + "', which " + source.component +
+                               " does not have.");
+    default:
+        return std::unexpected("'" + Written(source) + "' " + std::string{ToString(resolved.error())} + ".");
+    }
+}
+
+/// Whether @p words, outside every binding, say nothing a player reads.
+bool IsBlank(std::string_view words)
+{
+    return std::ranges::all_of(words, [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; });
+}
+
+/// The braces in @p text: its bindings checked when it holds any, and each
+/// `{{` and `}}` made one brace when it holds none. A binding is refused where
+/// @p bindable is false, which is everywhere but a text's or a button's words.
+std::expected<TextIs, MarkupError> ResolveBraces(const Walk &walk, std::string &text, const TextPlace &where,
+                                                 bool bindable)
+{
+    const std::expected<std::vector<TextRun>, BindingError> runs = SplitBoundText(text);
+    if (!runs)
+    {
+        return std::unexpected(At(where, "the " + std::string{where.slot} + " '" + text + "' " +
+                                             std::string{ToString(runs.error())} + "."));
+    }
+    if (std::ranges::none_of(*runs, &TextRun::bound))
+    {
+        text = runs->front().words;
+        return TextIs::Written;
+    }
+    if (!bindable)
+    {
+        return std::unexpected(At(where, "the " + std::string{where.slot} + " '" + text +
+                                             "' holds a binding, and only a text's words and a button's label are "
+                                             "filled from the world. A { shown as it is is written {{."));
+    }
+    const bool keysRequired = walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly;
+    for (const TextRun &run : *runs)
+    {
+        if (keysRequired && !IsBlank(run.words))
+        {
+            return std::unexpected(At(where, "the text '" + text +
+                                                 "' has words around its bindings, and this project requires text "
+                                                 "a player reads to come from a string table. Give the words a text "
+                                                 "of their own with a key."));
+        }
+        if (!run.bound)
+        {
+            continue;
+        }
+        if (const std::expected<void, std::string> checked = CheckBinding(walk, run.binding, BindingUse::Text);
+            !checked)
+        {
+            return std::unexpected(At(where, checked.error()));
+        }
+    }
+    return TextIs::Bound;
+}
+
+/// Reads @p text as a key, as bound text, or as literal text, leaving it as
+/// the key without its mark, as written, or as the text it stands for.
+/// @p bindable is whether a binding may be in it.
+std::expected<TextIs, MarkupError> ResolveText(const Walk &walk, std::string &text, const TextPlace &where,
+                                               bool bindable)
 {
     // Nothing written is nothing to translate, and a template checked on its
     // own leaves a parameter's text empty until an instance gives it one.
     if (text.empty())
     {
-        return false;
+        return TextIs::Written;
     }
     if (text.size() > 1 && text[0] == kKeyMark && text[1] == kKeyMark)
     {
@@ -142,7 +302,15 @@ std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text
                                                  std::string{split->key} + "'."));
         }
         text = std::move(qualified);
-        return true;
+        return TextIs::Key;
+    }
+    if (text.find(kBindingOpen) != std::string::npos || text.find(kBindingClose) != std::string::npos)
+    {
+        const std::expected<TextIs, MarkupError> braced = ResolveBraces(walk, text, where, bindable);
+        if (!braced || *braced == TextIs::Bound)
+        {
+            return braced;
+        }
     }
     if (walk.rules.literals == LiteralText::RequiresKey && !walk.document.debugOnly)
     {
@@ -151,7 +319,106 @@ std::expected<bool, MarkupError> ResolveText(const Walk &walk, std::string &text
                                              "to come from a string table. Write a key such as #pause:title, or mark "
                                              "the screen debug_only=\"true\" if players never see it."));
     }
-    return false;
+    return TextIs::Written;
+}
+
+/// The attribute a bool binding can drive.
+constexpr std::string_view kVisibleAttribute = "visible";
+
+/// The attribute holding what a toggle shows, and what a slider does.
+constexpr std::string_view kToggleValueAttribute = "on";
+constexpr std::string_view kSliderValueAttribute = "value";
+
+/// Whether @p name is the attribute saying what @p widget holds.
+bool IsValueAttribute(BuiltinWidget widget, std::string_view name)
+{
+    return ControlUse(widget).has_value() &&
+           name == (widget == BuiltinWidget::Toggle ? kToggleValueAttribute : kSliderValueAttribute);
+}
+
+/// @p attribute's value, which is one binding @p use can take, kept as written.
+std::expected<Core::PooledString, MarkupError> KeepBinding(Walk &walk, const MarkupAttribute &attribute, BindingUse use)
+{
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(attribute.value);
+    if (!source)
+    {
+        return std::unexpected(
+            At(attribute, "'" + attribute.value + "' " + std::string{ToString(source.error())} + "."));
+    }
+    if (const std::expected<void, std::string> checked = CheckBinding(walk, *source, use); !checked)
+    {
+        return std::unexpected(At(attribute, checked.error()));
+    }
+    return walk.document.AddText(attribute.value);
+}
+
+/// `visible="{Component.field}"`: shown while that bool holds.
+std::expected<void, MarkupError> ApplyVisibleBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::expected<Core::PooledString, MarkupError> kept = KeepBinding(walk, attribute, BindingUse::Bool);
+    if (!kept)
+    {
+        return std::unexpected(kept.error());
+    }
+    node.visibleBinding = *kept;
+    return {};
+}
+
+/// `value="{=Component.field}"`: what the control holds follows that field.
+std::expected<void, MarkupError> ApplyValueBinding(Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    // Whether this attribute holds the node's value was asked before coming here.
+    const std::expected<Core::PooledString, MarkupError> kept =
+        KeepBinding(walk, attribute, ControlUse(node.widget).value_or(BindingUse::Count_));
+    if (!kept)
+    {
+        return std::unexpected(kept.error());
+    }
+    node.valueBinding = *kept;
+    return {};
+}
+
+/// Whether what a stepped slider says about its steps suits the field it is
+/// bound to: an enum decides them, and a whole number leaves them to the file.
+/// Asked once everything the node writes has settled, so it does not matter
+/// which of a template and its instance wrote them.
+std::expected<void, MarkupError> CheckBoundSteps(const Walk &walk, const MarkupElement &element, const ScreenNode &node)
+{
+    const std::string_view written = walk.document.Text(node.valueBinding);
+    if (node.widget != BuiltinWidget::SteppedSlider || written.empty())
+    {
+        return {};
+    }
+    // A binding that does not read was refused when it was kept.
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(written);
+    if (!source)
+    {
+        return {};
+    }
+    const std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(*source, OwnerOf(walk.rules, source->component), BindingUse::Stepped);
+    if (!resolved)
+    {
+        return {};
+    }
+    const ScreenNode unwritten;
+    if (resolved->field->type == Core::Reflect::FieldType::Enum)
+    {
+        if (node.steps != unwritten.steps || node.range != unwritten.range)
+        {
+            return std::unexpected(At(element, "a stepped slider bound to an enum has a step for each enumerator, so "
+                                      "it writes no steps, min or max."));
+        }
+        return {};
+    }
+    // A template checked alone may leave them to a parameter it has no value
+    // for yet.
+    if (node.steps <= unwritten.steps && !walk.checkingAlone)
+    {
+        return std::unexpected(At(element, "a stepped slider bound to a whole number says how many positions it has, "
+                                  "with steps."));
+    }
+    return {};
 }
 
 /// Resolves node @p index's text and placeholder, each once, now that every
@@ -163,14 +430,18 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
 {
     ScreenNode &node = walk.document.nodes[index];
     std::string words{walk.document.Text(node.text)};
-    const std::expected<bool, MarkupError> text =
-        ResolveText(walk, words, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column});
+    // A field's text is the player's, so only plain text and a label are
+    // filled from the world.
+    const bool bindable = node.widget == BuiltinWidget::None || node.widget == BuiltinWidget::Button;
+    const std::expected<TextIs, MarkupError> text = ResolveText(
+        walk, words, TextPlace{.slot = "text", .line = textFrom.line, .column = textFrom.column}, bindable);
     if (!text)
     {
         return std::unexpected(text.error());
     }
     node.text = walk.document.AddText(words);
-    node.textIsKey = *text;
+    node.textIsKey = *text == TextIs::Key;
+    node.textIsBound = *text == TextIs::Bound;
 
     // At the attribute where one was written, and at the element otherwise.
     TextPlace placeAt{.slot = "placeholder", .line = placeholderFrom.line, .column = placeholderFrom.column};
@@ -180,13 +451,13 @@ std::expected<void, MarkupError> ResolveNodeText(Walk &walk, uint32_t index, con
         placeAt.column = written->column;
     }
     std::string shown{walk.document.Text(node.placeholder)};
-    const std::expected<bool, MarkupError> placeholder = ResolveText(walk, shown, placeAt);
+    const std::expected<TextIs, MarkupError> placeholder = ResolveText(walk, shown, placeAt, false);
     if (!placeholder)
     {
         return std::unexpected(placeholder.error());
     }
     node.placeholder = walk.document.AddText(shown);
-    node.placeholderIsKey = *placeholder;
+    node.placeholderIsKey = *placeholder == TextIs::Key;
     return {};
 }
 
@@ -411,6 +682,100 @@ std::expected<void, MarkupError> ApplyFocus(Walk &walk, uint32_t index, const Ma
     return {};
 }
 
+/// `style`, which names a style every theme the project lists must have.
+std::expected<void, MarkupError> ApplyStyleName(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    const std::string &name = attribute.value;
+    if (name.empty())
+    {
+        node.styleName = {};
+        return {};
+    }
+    if (walk.rules.themes.empty())
+    {
+        return std::unexpected(At(attribute, "the style '" + name + "' is named, and " + std::string{kUiConfigPath} +
+                                                 " lists no theme to hold it. List one under \"themes\"."));
+    }
+    for (const ProjectTheme &theme : walk.rules.themes)
+    {
+        const ThemeDocument &document = theme.compiled.document;
+        if (document.FindStyle(name) == nullptr)
+        {
+            std::string message = "the theme '" + theme.vpath + "' has no style '" + name + "'.";
+            for (std::size_t style = 0; style < document.styles.size(); ++style)
+            {
+                message += style == 0 ? " Its styles are: " : ", ";
+                message += document.styles[style].name.View();
+            }
+            message += document.styles.empty() ? "" : ".";
+            return std::unexpected(At(attribute, std::move(message)));
+        }
+    }
+    node.styleName = Core::InternedString{name};
+    return {};
+}
+
+/// Refuses @p attribute giving a node a picture when it already names @p other
+/// the other way: a node shows one.
+std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute,
+                                                     const Core::InternedString &other)
+{
+    if (!attribute.value.empty() && !other.Empty())
+    {
+        return std::unexpected(At(attribute, "a node shows one picture, named by a sprite or by a texture; this one "
+                                             "already names '" +
+                                                 std::string{other.View()} + "'."));
+    }
+    return {};
+}
+
+/// `sprite`, which a sheet the project lists must have.
+std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.texture); !refused)
+    {
+        return refused;
+    }
+    if (!attribute.value.empty())
+    {
+        if (const std::expected<void, std::string> checked = CheckSprite(walk.rules, attribute.value); !checked)
+        {
+            return std::unexpected(At(attribute, "'sprite' " + checked.error()));
+        }
+    }
+    node.sprite = Core::InternedString{attribute.value};
+    return {};
+}
+
+/// `texture`, which must be an image the project has.
+std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
+{
+    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.sprite); !refused)
+    {
+        return refused;
+    }
+    if (!attribute.value.empty())
+    {
+        if (!walk.rules.read)
+        {
+            return std::unexpected(At(attribute, "the image '" + attribute.value +
+                                                     "' cannot be checked here: nothing reads the project's files."));
+        }
+        const std::expected<std::string, std::string> bytes = walk.rules.read(attribute.value);
+        if (!bytes)
+        {
+            return std::unexpected(
+                At(attribute, "the texture '" + attribute.value + "' could not be read (" + bytes.error() + ")."));
+        }
+        if (const std::expected<Extent, std::string> size = ImageSize(*bytes); !size)
+        {
+            return std::unexpected(At(attribute, "'" + attribute.value + "' " + size.error()));
+        }
+    }
+    node.texture = Core::InternedString{attribute.value};
+    return {};
+}
+
 /// An attribute the table leaves to this file, with its parameters replaced.
 std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, HandledAttribute handled,
                                               const MarkupAttribute &attribute)
@@ -431,20 +796,19 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
         return ApplyFocus(walk, index, attribute);
     case HandledAttribute::Pattern:
         return ApplyPattern(walk.document, node, attribute);
+    case HandledAttribute::StyleName:
+        return ApplyStyleName(walk, node, attribute);
+    case HandledAttribute::Sprite:
+        return ApplySprite(walk, node, attribute);
+    case HandledAttribute::Texture:
+        return ApplyTexture(walk, node, attribute);
     case HandledAttribute::Background:
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
-    {
-        // A colour's likeliest mistakes each have one fix to name, which a
-        // table entry saying only "bad value" could not.
-        const ParsedColor read = ParseColor(attribute.value);
-        if (!read)
-        {
-            return std::unexpected(At(attribute, read.error()));
-        }
-        ColorField(node.style, handled) = *read;
-        return {};
-    }
+    case HandledAttribute::Tint:
+        return ApplyColor(node.style, handled, attribute);
+    case HandledAttribute::Change:
+        return ApplyOnChange(walk, node, attribute);
     case HandledAttribute::Action:
         // Read before its parameters are replaced, so never reaches here.
     case HandledAttribute::None:
@@ -453,6 +817,82 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     }
     return {};
 }
+
+/// The look node @p node has in @p state, made empty if it has none yet.
+ThemedPatch &LookIn(ScreenNode &node, StyleState state)
+{
+    std::vector<ThemedPatch>::iterator look =
+        std::ranges::find_if(node.states, [state](const ThemedPatch &held) { return held.patch.state == state; });
+    if (look == node.states.end())
+    {
+        ThemedPatch empty;
+        empty.patch.state = state;
+        node.states.push_back(std::move(empty));
+        look = std::prev(node.states.end());
+    }
+    return *look;
+}
+
+/// The use of a token @p attribute writes for @p property, once every theme
+/// the project lists gives it a value that property can hold in every mode.
+std::expected<TokenUse, MarkupError> UseToken(const Walk &walk, StyleProperty property,
+                                              const MarkupAttribute &attribute)
+{
+    const std::expected<std::string_view, MarkupError> token = TokenNamed(attribute);
+    if (!token)
+    {
+        return std::unexpected(token.error());
+    }
+    if (walk.rules.themes.empty())
+    {
+        return std::unexpected(At(attribute, "'" + attribute.value + "' is a token, and " + std::string{kUiConfigPath} +
+                                                 " lists no theme to give it a value. List one under \"themes\"."));
+    }
+    for (const ProjectTheme &theme : walk.rules.themes)
+    {
+        if (const std::expected<void, MarkupError> checked =
+                CheckToken(theme.compiled, "the theme '" + theme.vpath + "'", *token, property, attribute);
+            !checked)
+        {
+            return std::unexpected(checked.error());
+        }
+    }
+    return TokenUse{.token = Core::InternedString{*token}, .property = property};
+}
+
+/// @p attribute read into the look node @p index has in @p state, over what
+/// that look already writes.
+std::expected<void, MarkupError> ApplyLook(Walk &walk, uint32_t index, StyleState state, const AttributeSpec &spec,
+                                           const MarkupAttribute &attribute)
+{
+    ThemedPatch &look = LookIn(walk.document.nodes[index], state);
+    if (NamesToken(attribute.value))
+    {
+        const std::expected<TokenUse, MarkupError> use = UseToken(walk, *spec.property, attribute);
+        if (!use)
+        {
+            return std::unexpected(use.error());
+        }
+        look.Bind(*use);
+        return {};
+    }
+    Style written = look.patch.values;
+    if (const std::expected<void, MarkupError> read = ApplyStyleAttribute(spec, attribute, written); !read)
+    {
+        return read;
+    }
+    look.Take(*spec.property, written);
+    return {};
+}
+
+/// Records that node @p node writes @p property itself, with a value written
+/// out, so neither its named style nor a token it took before fills it.
+void WriteOwn(ScreenNode &node, StyleProperty property)
+{
+    node.written |= PropertyBit(property);
+    std::erase_if(node.tokens, [property](const TokenUse &use) { return use.property == property; });
+}
+
 
 /// Whether the step @p element writes, if it writes one, has a value in the
 /// scope open now. In a template's own check, one naming a parameter with no
@@ -562,10 +1002,27 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        const AttributeSpec *const spec = FindAttribute(written.name, node.widget, isRoot);
+        const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
+        if (!state)
+        {
+            return std::unexpected(state.error());
+        }
+        const std::string_view name = *state ? AfterPrefix(written.name) : std::string_view{written.name};
+        const AttributeSpec *const spec = FindAttribute(name, node.widget, isRoot);
         if (spec == nullptr)
         {
             return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
+        }
+        if (*state && spec->handled == HandledAttribute::StyleName)
+        {
+            return std::unexpected(At(written, "a node names one style, which holds its own look for each state. "
+                                               "Write the state on the style's attributes instead."));
+        }
+        if (*state && !spec->property)
+        {
+            return std::unexpected(At(written, "'" + std::string{name} +
+                                                   "' says what the node is or does rather than how it looks, so it "
+                                                   "cannot be given a state."));
         }
 
         // Read as written: which parts of a call came from parameters decides
@@ -591,11 +1048,57 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             continue;
         }
         MarkupAttribute attribute = written;
+        attribute.name = name;
         attribute.value = substituted->text;
 
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        if (attribute.name == kVisibleAttribute && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (const std::expected<void, MarkupError> bound = ApplyVisibleBinding(walk, node, attribute); !bound)
+            {
+                return bound;
+            }
+            continue;
+        }
+        if (IsValueAttribute(node.widget, attribute.name) && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (const std::expected<void, MarkupError> bound = ApplyValueBinding(walk, node, attribute); !bound)
+            {
+                return bound;
+            }
+            continue;
+        }
+        // Checked here, where the project's sheets are in hand, whether it is
+        // the node's own look or a state's.
+        if (spec->property == StyleProperty::BackgroundImage && !attribute.value.empty() &&
+            !NamesToken(attribute.value))
+        {
+            if (const std::expected<void, std::string> checked = CheckSprite(walk.rules, attribute.value); !checked)
+            {
+                return std::unexpected(At(attribute, "'" + attribute.name + "' " + checked.error()));
+            }
+        }
+        if (*state)
+        {
+            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, **state, *spec, attribute); !look)
+            {
+                return look;
+            }
+            continue;
+        }
+        if (spec->property && NamesToken(attribute.value))
+        {
+            const std::expected<TokenUse, MarkupError> use = UseToken(walk, *spec->property, attribute);
+            if (!use)
+            {
+                return std::unexpected(use.error());
+            }
+            WriteOwn(node, use->property);
+            node.tokens.push_back(*use);
+            continue;
         }
         if (spec->handled != HandledAttribute::None)
         {
@@ -604,12 +1107,18 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
             {
                 return handled;
             }
-            continue;
         }
-        if (!spec->apply(AttributeTarget{.document = walk.document, .node = node}, attribute.value))
+        else if (!spec->apply(AttributeTarget{.document = walk.document, .node = node, .style = node.style},
+                              attribute.value))
         {
-            return std::unexpected(
-                At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name + "' can hold."));
+            return std::unexpected(At(attribute, "'" + attribute.value + "' is not a value '" + attribute.name +
+                                                     "' can hold." + (NamesToken(attribute.value)
+                                                                          ? " A token gives only how a node looks."
+                                                                          : "")));
+        }
+        if (spec->property)
+        {
+            WriteOwn(node, *spec->property);
         }
     }
     return {};
@@ -650,6 +1159,10 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     node.widget = kind.widget;
     Seed(node);
     node.style.direction = kind.direction;
+    if (kind.namesDirection)
+    {
+        node.written |= PropertyBit(StyleProperty::Direction);
+    }
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
     walk.document.nodes.push_back(std::move(node));
 
@@ -723,6 +1236,11 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     {
         return std::unexpected(required.error());
     }
+    if (const std::expected<void, MarkupError> steps = CheckBoundSteps(walk, instance, walk.document.nodes[index]);
+        !steps)
+    {
+        return std::unexpected(steps.error());
+    }
     // Once the template's text and the instance's have settled which wins, and
     // pointing at whichever wrote it.
     const MarkupElement &textFrom = instance.text.empty() ? root : instance;
@@ -747,6 +1265,11 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     {
         return std::unexpected(At(element, "an import sits directly inside the <" + std::string{kScreenElement} +
                                                "> or <" + std::string{kTemplatesElement} + ">, and nowhere else."));
+    }
+    if (element.name == kContextElement)
+    {
+        return std::unexpected(At(element, "a context is declared directly inside the <" +
+                                               std::string{kScreenElement} + ">, and nowhere else."));
     }
     if (element.name == kTemplatesElement)
     {
@@ -792,6 +1315,10 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     // are written over.
     Seed(node);
     node.style.direction = kind->direction;
+    if (kind->namesDirection)
+    {
+        node.written |= PropertyBit(StyleProperty::Direction);
+    }
 
     const uint32_t index = static_cast<uint32_t>(walk.document.nodes.size());
     walk.document.nodes.push_back(std::move(node));
@@ -805,6 +1332,11 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
         !required)
     {
         return std::unexpected(required.error());
+    }
+    if (const std::expected<void, MarkupError> steps = CheckBoundSteps(walk, element, walk.document.nodes[index]);
+        !steps)
+    {
+        return std::unexpected(steps.error());
     }
     if (const std::expected<void, MarkupError> resolved = ResolveNodeText(walk, index, element, element); !resolved)
     {

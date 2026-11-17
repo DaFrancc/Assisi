@@ -19,6 +19,18 @@ class AssetProvider;
 namespace Assisi::App
 {
 
+/// @brief Installs every reader content other than the renderer's goes through
+/// — levels, configs, fonts, screens and string tables — over @p provider.
+///
+/// The cooked blob and nothing else. A game has no parser to fall back to,
+/// which is the point: the markup never reaches the shipped binary. @p provider
+/// must outlive the readers.
+void InstallCookedReaders(const Core::AssetProvider &provider);
+
+/// @brief Removes the readers InstallCookedReaders installed, before the
+/// provider they read through goes.
+void RemoveCookedReaders();
+
 class CookedAssetSource final : public Render::AssetSource
 {
 public:
@@ -35,7 +47,8 @@ public:
     /// A cooked texture comes back in the format and colour space it was cooked in:
     /// the cook chose them from the channel every material binds it as.
     [[nodiscard]] std::expected<Image::DecodedImage, Render::AssetLoadError>
-    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format) const override;
+    LoadTexture(const Core::AssetId &id, Image::ColorSpace space, Image::PixelFormat format,
+                float alphaCutoff) const override;
 
     [[nodiscard]] std::expected<std::vector<std::byte>, Render::AssetLoadError>
     LoadShader(std::string_view vpath) const override;

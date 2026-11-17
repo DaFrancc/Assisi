@@ -61,9 +61,9 @@ GapWalk WalkThroughGap(std::int32_t gapSteps)
 
     GapWalk result;
     client.afterStep = [&client, &result, own](std::uint64_t tick)
-                       { result.onClient[tick] = client.world.scene.Get<ECS::Transform>(own)->position; };
+                       { result.onClient[tick] = glm::vec3(client.world.scene.Get<ECS::Transform>(own)->position); };
     host.afterStep = [&host, &result, onHost](std::uint64_t tick)
-                     { result.onHost[tick] = host.world.scene.Get<ECS::Transform>(onHost)->position; };
+                     { result.onHost[tick] = glm::vec3(host.world.scene.Get<ECS::Transform>(onHost)->position); };
     const std::function<void()> walk = [&client, own]
                                        {
                                            if (App::PlayerInput *controls = client.world.scene.GetMut<App::PlayerInput>(own))

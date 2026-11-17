@@ -32,11 +32,14 @@ The main settings file:
 | `startupScene` | The level the game opens when it starts. **Required**: without it the game refuses to start. |
 | `width`, `height` | The window size on first launch. After that, the size the player picked wins. |
 | `physicsHz` | How many physics steps run per second. This is also how often `FixedUpdate` systems run. |
-| `clearColor` | The background color where nothing is drawn: red, green, blue, alpha, from 0 to 1. |
+| `clearColor` | The background color where nothing is drawn: red, green, blue, alpha, from 0 to 1. A level with a sky draws the sky there instead, and a foggy level with no sky draws its fog's colour. |
 | `keepLogs` | How many old log files to keep. `0` keeps only the current one. |
-| `keepDumps` | How many old crash reports to keep. |
+| `keepDumps` | How many old crashes' files to keep: each crash's crash log and minidump. |
 | `simulateFrom` | `"Begin"`: the game starts running as soon as the level is set up, while textures and meshes may still be loading in. `"Loaded"`: the game waits until everything has loaded, which suits a game with a loading screen. |
 | `frameSnap` | `"Snapped"` (default): a frame that took almost exactly one, two or more display refreshes counts as exactly that, so at a steady frame rate the same number of `FixedUpdate` steps runs every frame. `"Unsnapped"`: the frame's measured time is used as it is. The player can override this. |
+| `playerSetsFog` | Whether a player may turn the level's fog off from their options. `false` (default): fog is always drawn. See [Fog](rendering-settings.md#fog). |
+| `playerSetsClouds` | Whether a player may turn a level's clouds off from their options. `false` (default): clouds are always drawn. See [Clouds](rendering-settings.md#clouds). |
+| `playerSetsWater` | Whether a player may turn a level's water off from their options. `false` (default): water is always drawn. See [Water](rendering-settings.md#water). |
 | `uiScaleMatch` | How big a UI pixel is. `"ShorterSide"` (default): 1/1080 of the screen's shorter side, so the UI reads the same on landscape, portrait, square and ultrawide screens. `"Width"`: 1/1920 of the screen's width. `"Height"`: 1/1080 of the screen's height. See [Lengths](ui-layout.md#lengths). |
 
 Any setting you leave out keeps its default.
@@ -47,8 +50,10 @@ The default key bindings for named actions. See [Input](input.md).
 
 ## `ui.json`
 
-Which `.csv` files are string tables, and how strictly the cook checks the text
-screens show. See [String tables](ui-string-tables.md#listing-tables).
+Which `.csv` files are string tables, how strictly the cook checks the text
+screens show, which `.amth` files are themes and which `.amsp` files are
+sprite sheets. See [String tables](ui-string-tables.md#listing-tables),
+[Themes](ui-themes.md#listing-themes) and [Images](ui-images.md#sprite-sheets).
 
 ## `buses.json`
 
@@ -67,10 +72,17 @@ single-player game. See [Multiplayer basics](multiplayer.md).
 The player's settings are saved in `options.json`, next to the executable:
 
 - Window size.
-- Graphics: anti-aliasing mode, VSync, frame rate limit, frame snapping. The
-  editor's **F11** window edits these. Frame snapping is `frameSync.snap` in
-  `options.json`: `"game"` follows your `frameSnap`, and `"snapped"` or
-  `"unsnapped"` overrides it.
+- Graphics: shadows, anti-aliasing, tone mapping, bloom, sky reflections,
+  ambient occlusion, cloud quality, VSync, frame rate limit, frame snapping. The editor's **F11**
+  window edits these; [Graphics settings](rendering-settings.md) lists each
+  one. Frame snapping is `frameSync.snap` in `options.json`: `"game"` follows
+  your `frameSnap`, and `"snapped"` or `"unsnapped"` overrides it.
+- Fog, only if your `playerSetsFog` allows it. See
+  [Fog](rendering-settings.md#fog).
+- Clouds on or off, only if your `playerSetsClouds` allows it. See
+  [Clouds](rendering-settings.md#clouds).
+- Water on or off, only if your `playerSetsWater` allows it. See
+  [Water](rendering-settings.md#water).
 - Rebound keys.
 - Audio bus volumes. See [Volumes the player sets](audio.md#volumes-the-player-sets).
 
@@ -87,8 +99,11 @@ find an `options.json.tmp` beside it afterwards; the next save replaces it.
 <summary>Logs and crash reports</summary>
 
 The game writes a log file for each run, named like
-`assisi-20260918-132711-44514.log`, next to its executable. Crash reports go in
-the same place. `keepLogs` and `keepDumps` control how many old ones are kept.
+`assisi-20260918-132711-44514.log`, next to its executable. A crash's files go
+in the same place (see
+[When the game crashes](troubleshooting.md#when-the-game-crashes)), and on Linux
+a `crashpad` folder holds a minidump while it is being written. `keepLogs` and
+`keepDumps` control how many old ones are kept.
 
 To store these somewhere else, set the `ASSISI_USER_ROOT` environment variable
 to a folder. `options.json` goes there too.

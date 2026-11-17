@@ -1,0 +1,183 @@
+#version 450
+
+/// cloud_noise.comp
+/// Fills one of the clouds' two tiling 3D noise textures, once, the first time a
+/// level asks for clouds. Every channel repeats across the texture's edges, so the
+/// clouds can sample it with a wrapping sampler over any distance.
+///
+/// The shape texture: red is Perlin noise carved by Worley noise, the billowing
+/// mass a cumulus is made of; green, blue and alpha are Worley noise at three
+/// rising frequencies, which erode that mass into separate puffs. The detail
+/// texture holds Worley noise at three rising frequencies in red, green and blue,
+/// which wear away the clouds' edges into wisps.
+///
+/// Integer hashing makes the result the same on every GPU.
+///
+/// Dispatch: ceil(size / 4)^3 workgroups.
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+// NVRHI's Vulkan backend offsets UAV bindings by +384.
+layout(binding = 384, rgba8) uniform writeonly image3D uDestination;
+
+layout(push_constant) uniform PushConstants
+{
+    uint size;   // texels along each edge
+    uint kind;   // which texture: kShapeTexture or kDetailTexture
+    uint padding0;
+    uint padding1;
+} uPush;
+
+// Must match Render::CloudNoiseKind.
+const uint kShapeTexture  = 0u;
+const uint kDetailTexture = 1u;
+
+// How many Perlin cells cross the shape texture at its coarsest octave. Four
+// makes one cloud about a quarter of the texture across.
+const int kShapePerlinCells = 4;
+// How many Worley cells cross the shape texture in its coarsest channel. The
+// red channel's carving uses the same frequency as the Perlin noise, so the
+// cells and the billows share a scale.
+const int kShapeWorleyCells = 4;
+// Cells in the detail texture's coarsest channel.
+const int kDetailWorleyCells = 2;
+// Each octave is twice the frequency of the one before.
+const int kOctaveRatio = 2;
+// Octave weights for a three-octave sum, each half the one before and adding to
+// one, so the sum stays in [0, 1].
+const vec3 kOctaveWeights = vec3(0.625, 0.25, 0.125);
+// The largest unsigned integer, as a float, to turn a hash into [0, 1].
+const float kHashScale = 1.0 / 4294967295.0;
+
+// Where each kind of noise mostly lies, which is stretched to fill [0, 1] so a
+// threshold anywhere in it cuts a matching share: the carved Perlin noise
+// spends nine tenths of itself between about 0.6 and 0.85, the Worley octaves
+// between about 0.27 and 0.66. Measured over the generated textures.
+const vec2 kShapeRange  = vec2(0.58, 0.88);
+const vec2 kWorleyRange = vec2(0.25, 0.70);
+
+// A 3D integer hash with no visible correlation between neighbouring cells.
+uvec3 Pcg3d(uvec3 v)
+{
+    // The constants are PCG's: a linear congruential step, then rounds that mix
+    // each lane into the others.
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+vec3 Hash3(ivec3 cell)
+{
+    return vec3(Pcg3d(uvec3(cell))) * kHashScale;
+}
+
+// A lattice cell taken back into [0, period), so the noise repeats.
+ivec3 Wrap(ivec3 cell, int period)
+{
+    return ((cell % period) + period) % period;
+}
+
+// Worley noise inverted, in [0, 1]: one at a cell's feature point, falling to
+// zero a cell's width away, which gives rounded puffs rather than cracks.
+float Worley(vec3 position, int period)
+{
+    vec3  scaled  = position * float(period);
+    ivec3 cell    = ivec3(floor(scaled));
+    float nearest = 1.0;
+    for (int z = -1; z <= 1; ++z)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int x = -1; x <= 1; ++x)
+            {
+                ivec3 neighbour = cell + ivec3(x, y, z);
+                vec3  feature   = vec3(neighbour) + Hash3(Wrap(neighbour, period));
+                nearest = min(nearest, distance(scaled, feature));
+            }
+        }
+    }
+    return 1.0 - clamp(nearest, 0.0, 1.0);
+}
+
+float WorleyOctaves(vec3 position, int period)
+{
+    return dot(kOctaveWeights, vec3(Worley(position, period), Worley(position, period * kOctaveRatio),
+                                    Worley(position, period * kOctaveRatio * kOctaveRatio)));
+}
+
+// Perlin gradient noise in about [-1, 1].
+float Perlin(vec3 position, int period)
+{
+    vec3  scaled = position * float(period);
+    ivec3 cell   = ivec3(floor(scaled));
+    vec3  local  = scaled - vec3(cell);
+    // The quintic fade: zero first and second derivatives at the cell edges, so
+    // no grid shows through.
+    vec3 fade = local * local * local * (local * (local * 6.0 - 15.0) + 10.0);
+
+    float corners[8];
+    for (int i = 0; i < 8; ++i)
+    {
+        ivec3 offset   = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        vec3  gradient = normalize(Hash3(Wrap(cell + offset, period)) * 2.0 - 1.0);
+        corners[i] = dot(gradient, local - vec3(offset));
+    }
+    float x00 = mix(corners[0], corners[1], fade.x);
+    float x10 = mix(corners[2], corners[3], fade.x);
+    float x01 = mix(corners[4], corners[5], fade.x);
+    float x11 = mix(corners[6], corners[7], fade.x);
+    return mix(mix(x00, x10, fade.y), mix(x01, x11, fade.y), fade.z);
+}
+
+float PerlinOctaves(vec3 position, int period)
+{
+    float sum = dot(kOctaveWeights, vec3(Perlin(position, period), Perlin(position, period * kOctaveRatio),
+                                         Perlin(position, period * kOctaveRatio * kOctaveRatio)));
+    return clamp(0.5 + 0.5 * sum, 0.0, 1.0);
+}
+
+float Remap(float value, float fromLow, float fromHigh, float toLow, float toHigh)
+{
+    return toLow + (value - fromLow) / (fromHigh - fromLow) * (toHigh - toLow);
+}
+
+float Stretch(float value, vec2 range)
+{
+    return clamp((value - range.x) / (range.y - range.x), 0.0, 1.0);
+}
+
+void main()
+{
+    uvec3 texel = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(texel, uvec3(uPush.size))))
+    {
+        return;
+    }
+    vec3 position = (vec3(texel) + 0.5) / float(uPush.size);
+
+    vec4 noise;
+    if (uPush.kind == kShapeTexture)
+    {
+        float worley = WorleyOctaves(position, kShapeWorleyCells);
+        // The Perlin billows, with the Worley cells lifting their floor: where a
+        // cell is strong the mass stays, between cells the Perlin noise decides.
+        noise.r = Stretch(Remap(PerlinOctaves(position, kShapePerlinCells), 0.0, 1.0, worley, 1.0), kShapeRange);
+        noise.g = Stretch(worley, kWorleyRange);
+        noise.b = Stretch(WorleyOctaves(position, kShapeWorleyCells * kOctaveRatio), kWorleyRange);
+        noise.a = Stretch(WorleyOctaves(position, kShapeWorleyCells * kOctaveRatio * kOctaveRatio), kWorleyRange);
+    }
+    else
+    {
+        noise.r = Stretch(WorleyOctaves(position, kDetailWorleyCells), kWorleyRange);
+        noise.g = Stretch(WorleyOctaves(position, kDetailWorleyCells * kOctaveRatio), kWorleyRange);
+        noise.b = Stretch(WorleyOctaves(position, kDetailWorleyCells * kOctaveRatio * kOctaveRatio), kWorleyRange);
+        noise.a = 1.0;
+    }
+    imageStore(uDestination, ivec3(texel), noise);
+}

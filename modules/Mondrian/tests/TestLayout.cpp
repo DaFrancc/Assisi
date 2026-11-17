@@ -127,6 +127,23 @@ TEST_CASE("Layout: UI lengths are scaled to device pixels")
     CHECK(scene.RectOf(box).height == 20.f);
 }
 
+TEST_CASE("Layout: a picture sized to fit is one UI pixel to each of its own, padding around it")
+{
+    Scene scene;
+    Style style;
+    style.padding = Padding::All(Px(5.f));
+    const NodeId picture = scene.Add(scene.tree.Root(), style);
+    scene.tree.SetImage(picture, WholeTexture(TextureId{1}, 40, 30));
+    const NodeId unknown = scene.Add(scene.tree.Root(), Style{});
+    scene.tree.SetImage(unknown, WholeTexture(TextureId{1}, 0, 0));
+    scene.Run(kReference, 2.f);
+
+    CHECK(scene.RectOf(picture).width == 100.f);
+    CHECK(scene.RectOf(picture).height == 80.f);
+    // A picture of no known size asks for no room of its own.
+    CHECK(scene.RectOf(unknown).width == 0.f);
+}
+
 TEST_CASE("Layout: text wraps at its final width before heights are fitted")
 {
     // A single pass that measured text on both axes at once would size the
@@ -255,6 +272,20 @@ TEST_CASE("Layout: a text size in em is of its parent's, and chains down the tre
     CHECK(scene.NodeOf(child).textSize == 20.f);
     CHECK(scene.NodeOf(grandchild).textSize == 20.f);
     CHECK(scene.NodeOf(grandchild).padding.left == doctest::Approx(20.f));
+}
+
+TEST_CASE("Layout: a text size nobody sets is the parent's, and the root's is the default")
+{
+    Scene scene;
+    Style parentStyle = Box(Fixed(100.f), Fixed(100.f));
+    parentStyle.textSize = Px(10.f);
+    const NodeId parent = scene.Add(scene.tree.Root(), parentStyle);
+    const NodeId child = scene.Add(parent, Box(Fixed(50.f), Fixed(50.f)));
+    const NodeId beside = scene.Add(scene.tree.Root(), Box(Fixed(50.f), Fixed(50.f)));
+    scene.Run();
+
+    CHECK(scene.NodeOf(child).textSize == 10.f);
+    CHECK(scene.NodeOf(beside).textSize == kDefaultTextSize);
 }
 
 TEST_CASE("Layout: each edge of a padding keeps its own unit")
@@ -485,6 +516,32 @@ TEST_CASE("Layout: a scroll offset moves children, clips them, and stops at the 
     scene.tree.SetScrollOffset(list, {.x = 0.f, .y = 500.f});
     scene.Run();
     CHECK(scene.RectOf(second).y == 20.f);
+}
+
+TEST_CASE("Layout: a container shrinks below its content on the axis it scrolls, so what follows it stays in view")
+{
+    Scene scene;
+    const NodeId panel = scene.Add(scene.tree.Root(), Box(Fixed(100.f), Fixed(300.f), Direction::Column));
+    Style listStyle = Box(Sizing::Grow(), Sizing::Grow(), Direction::Column);
+    listStyle.enabledScrollBars = {false, true};
+    const NodeId list = scene.Add(panel, listStyle);
+    scene.Add(list, Box(Fixed(80.f), Fixed(1000.f)));
+    const NodeId below = scene.Add(panel, Box(Fixed(100.f), Fixed(50.f)));
+    scene.Run();
+
+    CHECK(scene.RectOf(list).height == 250.f);
+    CHECK(scene.NodeOf(list).contentSize.y == 1000.f);
+    CHECK(scene.RectOf(below).y == 250.f);
+
+    // With room to spare it is as tall as what it holds, as any Fit or Grow is.
+    Style roomy = Box(Fixed(100.f), Sizing::Fit(), Direction::Column);
+    const NodeId fitted = scene.Add(scene.tree.Root(), roomy);
+    Style fittedList = Box(Sizing::Grow(), Sizing::Fit(), Direction::Column);
+    fittedList.enabledScrollBars = {false, true};
+    const NodeId inner = scene.Add(fitted, fittedList);
+    scene.Add(inner, Box(Fixed(80.f), Fixed(120.f)));
+    scene.Run();
+    CHECK(scene.RectOf(inner).height == 120.f);
 }
 
 TEST_CASE("Layout: a hidden node takes no space and is not placed")

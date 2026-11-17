@@ -1,0 +1,121 @@
+{
+  "entities": [
+    {
+      "name": "Camera",
+      "components": {
+        "Camera": {"farZ": 3000.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+        "Transform": {"position": [-5.0, 1.7, 11.0], "rotation": [0.96976, -0.04507, -0.23962, -0.01114], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Sun",
+      "components": {
+        "DirectionalLight": {"color": [1.0, 0.96, 0.9], "direction": [0.25, -0.35, 1.0], "intensity": 3.0},
+        "Skybox": {"preset": 0}
+      }
+    },
+    {
+      "name": "Wind",
+      "components": {
+        "Wind": {"speed": 6.0, "bearingDegrees": 0.0, "gustFactor": 1.8}
+      }
+    },
+    {
+      "name": "Pond",
+      "components": {
+        "Lake": {"preset": 0, "size": [30.0, 20.0]},
+        "Transform": {"position": [0.0, -0.3, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+      }
+    },
+    {
+      "name": "Pond floor",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [0.0, -2.3, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [30.0, 2.0, 20.0]}
+      }
+    },
+    {
+      "name": "Meadow north",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [0.0, -1.0, -60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [220.0, 2.0, 100.0]}
+      }
+    },
+    {
+      "name": "Meadow south",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [0.0, -1.0, 60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [220.0, 2.0, 100.0]}
+      }
+    },
+    {
+      "name": "Meadow west",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [-62.5, -1.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [95.0, 2.0, 20.0]}
+      }
+    },
+    {
+      "name": "Meadow east",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [62.5, -1.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [95.0, 2.0, 20.0]}
+      }
+    },
+    {
+      "name": "Post 1",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [-6.0, 0.75, -11.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [0.15, 1.5, 0.15]}
+      }
+    },
+    {
+      "name": "Post 2",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+        "Transform": {"position": [4.0, 0.75, -11.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [0.15, 1.5, 0.15]}
+      }
+    },
+    {
+      "name": "Tree 1",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}},
+        "Transform": {"position": [-10.0, 4.0, -18.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [5.0, 8.0, 5.0]}
+      }
+    },
+    {
+      "name": "Tree 2",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}},
+        "Transform": {"position": [2.0, 5.0, -22.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [6.0, 10.0, 6.0]}
+      }
+    },
+    {
+      "name": "Tree 3",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "59190885-1678-40b2-8405-f644ab59459e", "path": "materials/fog_foliage.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}},
+        "Transform": {"position": [14.0, 3.5, -16.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [4.5, 7.0, 4.5]}
+      }
+    },
+    {
+      "name": "Rock",
+      "components": {
+        "MeshRenderer": {"castsShadows": true, "materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000009", "path": "prim://icosphere"}},
+        "Transform": {"position": [16.0, 0.2, 2.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.2, 0.8, 1.0]}
+      }
+    },
+    {
+      "name": "Route along the shore",
+      "components": {
+        "CameraLinePath": {"from": [-12.0, 1.7, 13.0], "lookAlongPath": false, "lookAt": [0.0, -0.3, -6.0], "order": 0, "seconds": 5.0, "to": [12.0, 1.7, 13.0]}
+      }
+    },
+    {
+      "name": "Route round the pond",
+      "components": {
+        "CameraCirclePath": {"center": [0.0, 0.0, 0.0], "height": 1.7, "lookAt": [0.0, -0.3, 0.0], "order": 1, "radius": 20.0, "seconds": 5.0, "startDegrees": 0.0, "sweepDegrees": 360.0}
+      }
+    }
+  ],
+  "version": 2
+}

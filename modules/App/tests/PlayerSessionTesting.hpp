@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -22,9 +24,12 @@
 #include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/NetworkedPlay.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/AssetStore.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/Physics/CollisionSource.hpp>
 
 namespace Assisi::App::Testing
@@ -55,18 +60,23 @@ std::filesystem::path FreshRoot(std::string_view name);
 
 /// A player: a character with a camera, both sent to every client whole. The
 /// client that plays it predicts both, so the host's copies of them arriving
-/// late never set its own back.
-void WritePlayerBlueprint(const std::filesystem::path &root);
+/// late never set its own back. @p movement names the character's movement
+/// component.
+void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view movement = "SourceMovement");
 
 /// One machine: its world, its session, its players, and its own fixed-step
 /// clock and tick, since a client runs a little faster or slower than the host.
 struct Machine
 {
-    /// Runs the systems the editor's play runs a player with.
-    Machine();
+    /// Runs the systems the editor's play runs a player with, and @p extra,
+    /// its session tuned by @p config.
+    explicit Machine(NetSync::ReplicationConfig config = {}, std::vector<std::string> extra = {});
 
     App::World world{Physics::NoCollisionAssets()};
-    App::NetworkedPlay play{world};
+    /// What this machine's frame systems resolve assets through. Never
+    /// initialized: a test provides what its systems need (AssetStore::Provide).
+    Core::AssetStore assets;
+    App::NetworkedPlay play;
     Core::EventQueue universal{Core::EventScope::Universal};
     App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
     /// The tick each step was, in order: the session's, not the local count.
@@ -81,6 +91,10 @@ struct Machine
 
 /// One fixed step on @p machine, as every program runs one.
 void Step(Machine &machine, std::uint64_t localTick);
+
+/// @p machine's per-frame phase, after its fixed steps, as every program runs
+/// it: its Update systems, with its asset store and animation on.
+void Update(Machine &machine);
 
 template <typename T> std::int32_t Count(ECS::Scene &scene)
 {
@@ -111,7 +125,9 @@ struct Session
 {
     std::vector<std::unique_ptr<Machine>> machines;
 
-    Machine &Add();
+    /// A machine running @p extra systems besides a player's, such as the
+    /// animation systems.
+    Machine &Add(NetSync::ReplicationConfig config = {}, std::vector<std::string> extra = {});
 
     /// Runs @p frames frames. Real time has to match: these are real sockets,
     /// and a client's clock measures the trip in milliseconds and leads by it
@@ -134,6 +150,7 @@ struct Session
                 {
                     Step(*machine, ++machine->tick);
                 }
+                Update(*machine);
                 // Once a frame, after the steps, as the editor draws.
                 machine->play.Session().SmoothView(kStep);
             }
@@ -148,8 +165,17 @@ struct Session
 /// Hosts @p play on the first free port of a small range; 0 when none was.
 std::uint16_t HostOnFreePort(App::NetworkedPlay &play, App::HostRole role = App::HostRole::Player);
 
-/// A host and @p client on a floor, a start each for the host to make their
-/// characters at, @p client joined and settled.
-void JoinOnFloor(Session &session, Machine &host, Machine &client);
+/// A floor on every machine in @p session, its top centred on @p centre, as a
+/// level puts one there.
+void AddFloors(Session &session, const glm::dvec3 &centre);
+
+/// A host and @p client on a floor around @p origin, a start each for the host
+/// to make their characters at, @p client joined and settled.
+void JoinOnFloor(Session &session, Machine &host, Machine &client, const glm::dvec3 &origin = glm::dvec3{0.0});
+
+/// @p first and @p second joined to @p host, with the players spread over
+/// @p starts in the order the host spreads them: @p second, the host, @p first
+/// for three starts.
+void JoinTwo(Session &session, Machine &host, Machine &first, Machine &second, std::span<const glm::dvec3> starts);
 
 } // namespace Assisi::App::Testing

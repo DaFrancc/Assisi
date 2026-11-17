@@ -6,6 +6,7 @@
 ///        override the hooks, and call Run() from main().
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/App/AppPasses.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/App/PerfCapture.hpp>
 #include <Assisi/App/PlayerSettings.hpp>
@@ -21,6 +22,8 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Mondrian/Engine/QuadPass.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
+#include <Assisi/Mondrian/UiConfig.hpp>
+#include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -30,14 +33,21 @@
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace Assisi::App
 {
+
+namespace Passes
+{
+class AppPassGraph;
+}
 
 /// @brief Base class for all Assisi applications.
 ///
@@ -63,7 +73,10 @@ namespace Assisi::App
 ///     (e.g. its sample count) — rebuild any graphics pipelines built against
 ///     the old one (see Render::MeshPass::RebuildPipeline)
 ///   - OnShutdown()              — called after the loop exits
-class Application
+///
+/// The frame itself is the declared passes of AppPasses.hpp; this class hosts
+/// the hooks above in them.
+class Application : private Passes::FrameHooks
 {
 public:
     Application();
@@ -122,6 +135,12 @@ public:
     /// machine's or another day's. Must be called before Initialize().
     void SetExactResolution(int32_t width, int32_t height);
 
+    /// @brief Checks the device with the Vulkan validation layer, synchronisation
+    /// checks included, in any build, and fails Initialize() when the layer is
+    /// not installed. Any error the layer reports makes the run exit with a
+    /// failure. Must be called before Initialize().
+    void RequireVulkanValidation() { _vulkanValidationRequired = true; }
+
     /// @brief Whether this process is a capture run.
     [[nodiscard]] bool IsCapturing() const { return _perfCapture != nullptr; }
 
@@ -164,6 +183,25 @@ public:
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
 protected:
+    /// @brief Selects the constructor an app reporting another one's crash uses.
+    struct CrashReporterRole
+    {
+    };
+
+    /// @brief An app that reports a crashed one's crash. It keeps no log file and
+    /// handles no crash of its own: the crashed run's files are left as they are,
+    /// and a crash in the reporter cannot start another reporter.
+    explicit Application(CrashReporterRole role);
+
+    /// @brief Open the window at @p width by @p height, whatever the options and
+    /// the game config say, for an app that is not the game. Must be called
+    /// before Initialize().
+    void SetWindowSize(int32_t width, int32_t height)
+    {
+        _windowWidth = width;
+        _windowHeight = height;
+    }
+
     /// @brief Refuse the launch: close the app and make Run exit with failure.
     ///
     /// For OnStart to call once it has logged what is wrong. Every app that can
@@ -226,6 +264,22 @@ protected:
     virtual void OnQuitRequested() { RequestClose(); }
 
     virtual void OnShutdown() {}
+
+    /// @brief Whether the level's assets are still arriving. A capture's warm-up
+    /// waits for them, so its picture and its timings are of the level as it
+    /// stands loaded, not of the stand-ins drawn while it streams in.
+    [[nodiscard]] virtual bool AssetsStreaming() const { return false; }
+
+    /// @brief Checks the picture a capture took, once it is written, on the GPU
+    /// named @p deviceName. Returning false fails the run. The editor compares
+    /// it with the picture accepted for the level; the image decoder that needs
+    /// stays out of a shipped game.
+    [[nodiscard]] virtual bool CheckCaptureImage(const Render::CapturedImage & /*image*/,
+                                                 const std::string & /*deviceName*/)
+    {
+        return true;
+    }
+
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
     /// @brief Called after the anti-aliasing mode/MSAA sample count changes
@@ -308,6 +362,17 @@ protected:
         return _config.physicsHz > 0.0 ? static_cast<double>(_simTick) / _config.physicsHz : 0.0;
     }
 
+    /// @brief The simulated time this frame is drawn at: SimulatedSeconds, and
+    /// the share of the next step the render blend draws. What continuous motion
+    /// that every machine must agree on, such as waves, is drawn from: smooth at
+    /// any frame rate, and the same on every machine sharing the tick.
+    [[nodiscard]] double PresentedSimulatedSeconds() const
+    {
+        return _config.physicsHz > 0.0
+                   ? (static_cast<double>(_simTick) + static_cast<double>(_interpolationAlpha)) / _config.physicsHz
+                   : 0.0;
+    }
+
     /// @brief Fraction of a fixed physics step left unconsumed by the current
     /// frame — in [0, 1). The render blend draws fixed-step motion this far
     /// between the last two steps (see ECS::SetBlendAlpha), so motion stays
@@ -347,6 +412,12 @@ protected:
     /// request before that frame replaces the first.
     void CaptureNextFrame(std::string path) { _frameImagePath = std::move(path); }
 
+    /// @brief Write the frame being drawn to @p path as a PNG, exactly as it
+    /// reaches the screen: debug UI included. Asked for during the UI, it is
+    /// that same frame. Waits for the GPU that frame. A second request before it
+    /// replaces the first.
+    void ScreenshotNextFrame(std::string path) { _screenshotPath = std::move(path); }
+
     /// @brief Feed one frame to the running capture, and close the app once it
     /// has the frames it asked for.
     void RecordCaptureFrame(double cpuMs, double gpuMs, double rawDt, Render::Vulkan::VulkanContext *context);
@@ -375,7 +446,13 @@ protected:
     /// @brief Tells the post chain that this frame's scene target holds display
     /// values rather than radiance, so the tone map must copy it through. For the
     /// material debug views, which show a channel raw.
-    void SetTonemapPassthrough(bool passthrough) { _postProcess.SetTonemapPassthrough(passthrough); }
+    void SetTonemapPassthrough(bool passthrough) { _tonemapPassthrough = passthrough; }
+
+    /// @brief How the scene is finished from this frame on: its exposure,
+    /// grade, white balance and glow, as its PostProcessVolumes set them at the
+    /// camera. The app calls this after drawing its scene; the player's own
+    /// settings go on top. Until it does, the defaults.
+    void SetScenePostProcess(const Render::PostProcessSettings &settings) { _scenePostProcess = settings; }
 
     /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
     /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable
@@ -436,10 +513,31 @@ private:
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
-    /// Loads every string table the UI settings list and hands them to the UI.
-    /// A game whose tables do not load still runs, showing keys where the text
+
+    /// The hooks above, hosted in the frame's passes. Final, so an app keeps
+    /// overriding OnRender and its siblings rather than these.
+    void DrawScene(Render::RenderFrame &frame, Passes::SceneLook &look) final;
+    void DrawOverlays(Render::RenderFrame &frame) final;
+    void DrawUi(Render::RenderFrame &frame) final;
+    void CaptureFrame(nvrhi::ICommandList *commandList, nvrhi::ITexture *screen) final;
+    /// Reads the UI settings, loads the string tables and themes they list,
+    /// and keeps them for the sprite sheets, which load once OnStart has run.
+    void LoadUiSettings();
+    /// Loads every string table @p settings list and hands them to the UI. A
+    /// game whose tables do not load still runs, showing keys where the text
     /// would be.
-    void LoadUiStrings();
+    void LoadUiStrings(const Mondrian::UiConfig &settings);
+    /// Loads every theme @p settings list and hands them to the UI, which puts
+    /// the first on. A game whose themes do not load still runs, each node
+    /// wearing only its own look.
+    void LoadUiThemes(const Mondrian::UiConfig &settings);
+    /// Loads every sprite sheet @p settings list, uploads each one's texture
+    /// and hands its sprites to the UI. A sprite of a sheet that does not load
+    /// shows the placeholder.
+    void LoadUiSprites(const Mondrian::UiConfig &settings);
+    /// Uploads the image at @p vpath for the UI and registers it: all of it as
+    /// one picture of its size, or nullopt, logged, when it cannot be loaded.
+    [[nodiscard]] std::optional<Mondrian::Sprite> LoadUiTexture(std::string_view vpath);
     /// Builds the mixer from the game's bus declarations and starts a device on
     /// it. A game that cannot open a sound device still runs, silently, with
     /// sounds starting and finishing as they would.
@@ -473,10 +571,13 @@ private:
     std::unique_ptr<Window::InputContext> _input;
     Window::ActionMap _actions;
 
-    /// The UI's font and string tables. Declared before the UI, which points at
-    /// them, so they are destroyed after.
+    /// The UI's font, string tables and themes. Declared before the UI, which
+    /// points at them, so they are destroyed after.
     Mondrian::Font _uiFont;
     Mondrian::StringTables _uiStrings;
+    Mondrian::Themes _uiThemes;
+    /// The UI settings, read with the window and kept for the sheets they list.
+    Mondrian::UiConfig _uiSettings;
     /// The DisplayedString resolver installed before this app's own, put back
     /// when the app goes: the one it installs points at _uiStrings.
     Core::DisplayedStringResolver _previousStringResolver;
@@ -488,6 +589,9 @@ private:
     Mondrian::Engine::QuadPass _uiPass;
     Render::Texture _uiPlaceholderTexture;
     Render::Texture _uiFontAtlas;
+    /// Every image the UI has asked for, sheets' and screens', each kept until
+    /// the app goes: the pass draws from them by the ids it gave them.
+    std::vector<Render::Texture> _uiTextures;
 
     /// Audio, created with the window, so a headless process has none. The
     /// device is declared after the mixer it plays, so it is destroyed first and
@@ -530,11 +634,20 @@ private:
     Core::AssetStore _assets;
 
     Render::PostProcess _postProcess;
+    /// The frame's passes, built with the renderer: a headless process has none.
+    std::unique_ptr<Passes::AppPassGraph> _passes;
+    Render::PostProcessSettings _scenePostProcess;
+    /// When the last frame was drawn, which the automatic exposure adapts over.
+    std::chrono::steady_clock::time_point _lastPostProcess{};
+    /// See SetTonemapPassthrough.
+    bool _tonemapPassthrough = false;
     Core::EventQueue _universalEvents{Core::EventScope::Universal};
     bool _initialized = false;
 
     bool _headless = false;
     bool _restrictedViewer = false;
+    /// False for a crash reporter, which starts no reporter for itself.
+    bool _reportsOwnCrashes = true;
     /// Tracks the presentation half specifically: teardown of PostProcess and
     /// RenderSystem must be gated on *that* having been brought up, not on
     /// Initialize() having succeeded — headless satisfies the latter without any
@@ -559,15 +672,63 @@ private:
     /// in Initialize, which is what loads the options.
     std::string _captureImagePath;
     std::string _captureOptionsPath;
+    /// The capture's picture could not be written or CheckCaptureImage refused
+    /// it, which fails the run.
+    bool _captureFailed = false;
+    /// See RequireVulkanValidation.
+    bool _vulkanValidationRequired = false;
 
     /// See CaptureNextFrame. Empty when no picture is asked for.
     std::string _frameImagePath;
+
+    /// The finished frame, read back by CaptureFrame and written once the frame
+    /// is submitted: the capture's picture, and the one CaptureNextFrame asked for.
+    struct FrameReadback
+    {
+        Render::FrameCapture capture;
+        Render::FrameCapture requested;
+        std::string requestedPath;
+        bool captured = false;
+        bool requestedTaken = false;
+    };
+    FrameReadback _readback;
+
+    /// See ScreenshotNextFrame. Empty when none is asked for.
+    std::string _screenshotPath;
+
+    /// A screenshot copied on the GPU, waiting for the GPU to finish the copy.
+    struct PendingScreenshot
+    {
+        Render::FrameCapture capture;
+        std::string path;
+    };
+    std::vector<PendingScreenshot> _pendingScreenshots;
+    /// PNG encodes running on workers. Waited for at shutdown, which ends the
+    /// process without waiting for workers, so none is lost half-written.
+    std::vector<Core::Task<bool>> _screenshotWrites;
+
+    /// Hands each screenshot whose copy the GPU has finished to a worker to
+    /// encode and write. Never waits for the GPU.
+    void CollectScreenshots(nvrhi::IDevice *device);
+
+    /// Writes every screenshot still pending and waits for those being written.
+    /// Called at shutdown with the GPU idle.
+    void FinishScreenshots(nvrhi::IDevice *device);
+
+    /// Writes the capture's picture recorded in @p capture and hands it to
+    /// CheckCaptureImage. Either failing fails the run.
+    void FinishCaptureImage(Render::Vulkan::VulkanContext &context, Render::FrameCapture &capture);
 
     /// Resolution a capture or SetExactResolution asked to render at, 0 when
     /// nothing asked. Applied in InitializePresentation rather than when set,
     /// because Initialize() reloads _config from the game config in between.
     int32_t _captureWidth = 0;
     int32_t _captureHeight = 0;
+
+    /// The window size SetWindowSize asked for, 0 when nothing asked. Applied in
+    /// InitializePresentation, for the same reason.
+    int32_t _windowWidth = 0;
+    int32_t _windowHeight = 0;
 
     /// Whether the capture asked for per-pass timers. Off by default because
     /// they change the frame's render-pass structure — see PerfCaptureConfig.

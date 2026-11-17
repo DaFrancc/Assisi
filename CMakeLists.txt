@@ -316,7 +316,8 @@ endfunction()
 # holds test cases, named <NAME>.<file stem>, so ctest runs a suite's files side
 # by side instead of the whole suite as one long test. <NAME>.Other runs every
 # case outside those files, so between them they run each case exactly once.
-# PROPERTIES are set on every one of them.
+# PROPERTIES are set on every one of them, and each is labelled with the
+# executable's target name, so `ctest -L` picks one suite's tests alone.
 #
 # Cases are picked by doctest's source-file filter, which matches the end of the
 # path a case was compiled from. A file whose name ends another's would pick up
@@ -355,6 +356,8 @@ function(Assisi_add_doctest_tests target_name)
   if (ARG_PROPERTIES)
     set_tests_properties(${_tests} PROPERTIES ${ARG_PROPERTIES})
   endif()
+  # Appended after PROPERTIES, which would replace it.
+  set_property(TEST ${_tests} APPEND PROPERTY LABELS "${target_name}")
 endfunction()
 
 
@@ -608,6 +611,40 @@ FetchContent_Declare(glm
     SYSTEM
 )
 FetchContent_MakeAvailable(glm)
+# Every conversion between vector types is written out: a dvec3 narrowed to a
+# vec3 without a word is a position losing its precision unseen. Set on glm's
+# own target, so it also reaches a file that includes GLM's headers directly.
+target_compile_definitions(glm INTERFACE GLM_FORCE_EXPLICIT_CTOR)
+
+# glm-no-narrowing-assignment.patch: GLM_FORCE_EXPLICIT_CTOR covers
+# construction, but an assignment operator cannot be explicit, and GLM's
+# cross-type operator= and compound operators (+=, *= and the rest, on vectors
+# and quaternions) narrow with a static_cast inside. The patch adds a
+# static_assert to each that refuses a wider type than the vector's own, so
+# `vec3 = dvec3` fails to build as `vec3 v = dvec3` already does. Widening is
+# untouched: `dvec3 += vec3` still compiles.
+#
+# Applied as the fastgltf patch below is, and for the same reason.
+find_package(Git REQUIRED)
+set(_glm_patch "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glm-no-narrowing-assignment.patch")
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_glm_patch}"
+    WORKING_DIRECTORY "${glm_SOURCE_DIR}"
+    RESULT_VARIABLE _glm_patched
+    OUTPUT_QUIET ERROR_QUIET
+)
+if (NOT _glm_patched EQUAL 0)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply "${_glm_patch}"
+        WORKING_DIRECTORY "${glm_SOURCE_DIR}"
+        RESULT_VARIABLE _glm_patch_rc
+    )
+    if (NOT _glm_patch_rc EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${_glm_patch} to ${glm_SOURCE_DIR}. "
+                            "Refresh the patch against the pinned glm tag.")
+    endif()
+    message(STATUS "glm: applied glm-no-narrowing-assignment.patch")
+endif()
 
 # --- stb (header-only; no CMake build)
 # Pinned to a bare commit, so NO GIT_SHALLOW: a depth-1 fetch can only grab a
@@ -911,6 +948,14 @@ set(CPP_EXCEPTIONS_ENABLED            ON  CACHE BOOL "" FORCE)
 # old for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT to reach it. Off here, and given
 # /Z7 below like everything else.
 set(GENERATE_DEBUG_SYMBOLS            OFF CACHE BOOL "" FORCE)
+# Positions stay exact far from the origin; Jolt keeps everything else in
+# floats. Jolt makes it a PUBLIC definition, and every machine in a session must
+# match: saved physics state and determinism do not carry between the builds.
+# A plain variable, which Jolt's option() defers to, rather than a cache entry:
+# a cached ON outlives this file, so a build directory reused for code written
+# against float Jolt would keep building doubles and fail to compile.
+unset(DOUBLE_PRECISION CACHE)
+set(DOUBLE_PRECISION ON)
 FetchContent_Declare(JoltPhysics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
     GIT_TAG        v5.2.0
@@ -1449,6 +1494,54 @@ if (TARGET sodium)
     install(TARGETS sodium EXPORT GameNetworkingSockets ARCHIVE DESTINATION lib)
 endif()
 
+# --- Crashpad (Linux only): writes a minidump of a crashed process
+#
+# Sentry's fork, for its CMake build; Google's own builds only with GN. Linux
+# only: Windows writes its minidump itself through DbgHelp (App/CrashReport.cpp),
+# which needs nothing beside the game.
+#
+# The game starts crashpad_handler only when it crashes, and the handler reads
+# the dying process from outside and writes the dump, so a corrupt heap in the
+# game cannot spoil it. It is built beside the game (apps/game) and ships with it.
+#
+# Nothing is uploaded, so libcurl is not needed. The fork links its uploader on
+# Linux against it; the empty target below stands in for it, and the uploader
+# is swapped for Crashpad's own socket one, which needs no library and is what
+# its GN build uses. It is never called. zlib is Crashpad's bundled copy, built
+# in, so the handler needs no system zlib either.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CRASHPAD_ZLIB_SYSTEM OFF CACHE BOOL "" FORCE)
+    add_library(CURL::libcurl INTERFACE IMPORTED)
+    FetchContent_Declare(crashpad
+        GIT_REPOSITORY https://github.com/getsentry/crashpad.git
+        GIT_TAG        db81331bc0dd5904cbf84de59f96e87e8366f182 # master @ 2026-10-26
+        EXCLUDE_FROM_ALL
+        SYSTEM
+    )
+    # The handler links its C++ runtime statically, as the game does (apps/game),
+    # and for the same reason as there: its C code (zlib) would otherwise put
+    # libgcc_s back into its link. Crashpad's directories take the lists as they
+    # are when it is added, so they are trimmed around that and put back.
+    foreach(_language C ASM)
+        set(_crashpad_saved_${_language}_implicit "${CMAKE_${_language}_IMPLICIT_LINK_LIBRARIES}")
+        list(REMOVE_ITEM CMAKE_${_language}_IMPLICIT_LINK_LIBRARIES gcc_s gcc_s_asneeded)
+    endforeach()
+    FetchContent_MakeAvailable(crashpad)
+    foreach(_language C ASM)
+        set(CMAKE_${_language}_IMPLICIT_LINK_LIBRARIES "${_crashpad_saved_${_language}_implicit}")
+    endforeach()
+
+    get_target_property(_crashpad_util_sources crashpad_util SOURCES)
+    list(FIND _crashpad_util_sources "net/http_transport_libcurl.cc" _crashpad_curl_uploader)
+    if (_crashpad_curl_uploader EQUAL -1)
+        message(FATAL_ERROR "Crashpad no longer builds net/http_transport_libcurl.cc into crashpad_util, "
+                            "so the libcurl stand-in above no longer fits. Check what the new pin uploads with.")
+    endif()
+    list(REMOVE_AT _crashpad_util_sources ${_crashpad_curl_uploader})
+    list(APPEND _crashpad_util_sources "net/http_transport_socket.cc")
+    set_property(TARGET crashpad_util PROPERTY SOURCES "${_crashpad_util_sources}")
+endif()
+
 # End of third-party dependencies — restore normal message verbosity and the
 # deprecation-warning / policy state so our own configuration output (modules,
 # reflectgen, apps) prints and is diagnosed as usual.
@@ -1564,6 +1657,11 @@ add_subdirectory(apps/sglc)
 if (ASSISI_BUILD_TESTS)
     add_subdirectory(tools/reflectgen)
     add_subdirectory(tools/assisi)
+
+    # Engine code formats through Core::Format; see the script for why.
+    add_test(NAME NoStdFormat
+             COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/cmake/AssisiNoStdFormat.cmake")
 endif()
 
 # Must be last: it counts ACOMP(replicable) types across every header that has

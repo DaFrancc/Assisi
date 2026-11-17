@@ -10,6 +10,7 @@ target_link_libraries(Assisi-App-TestSystems INTERFACE Assisi::App)
 assisi_reflect(
   TARGET Assisi-App-TestSystems
   HEADERS
+    support/include/Assisi/App/TestComponents.hpp
     support/include/Assisi/App/TestMessages.hpp
     support/include/Assisi/App/TestSystems.hpp
 )
@@ -26,6 +27,7 @@ add_executable(Assisi-App-Tests
   TestChildProcess.cpp
   TestConfigReader.cpp
   TestCookedAssets.cpp
+  TestCrashReport.cpp
   TestFixedStepClock.cpp
   TestFrameEvents.cpp
   TestInstanceViews.cpp
@@ -37,12 +39,15 @@ add_executable(Assisi-App-Tests
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
   TestPlayerSystems.cpp
+  TestPoseStage.cpp
+  TestJointAttachment.cpp
   TestSceneCamera.cpp
   TestShippedLevels.cpp
   TestStartupScene.cpp
   TestStepWorld.cpp
   TestSystemRegistry.cpp
   TestUiInputBridge.cpp
+  TestUndeclaredSystems.cpp
   TestWorld.cpp
   TestWorldContacts.cpp
   TestWorldEvents.cpp
@@ -50,6 +55,7 @@ add_executable(Assisi-App-Tests
   # The session cases run in real time, a few seconds each, so they are spread
   # over files that ctest runs side by side.
   TestBlueprintReplication.cpp
+  TestAnimationReplication.cpp
   PlayerSessionTesting.cpp
   TestPlayerSessionBodies.cpp
   TestPlayerSessionContact.cpp
@@ -57,10 +63,14 @@ add_executable(Assisi-App-Tests
   TestPlayerSessionGapWalks.cpp
   TestPlayerSessionMessages.cpp
   TestPlayerSessionOthers.cpp
+  TestPlayerSessionOtherState.cpp
+  TestPlayerSessionPlayerBodies.cpp
   TestPlayerSessionOwnCharacter.cpp
   TestPlayerSessionPlayers.cpp
+  TestPlayerSessionReach.cpp
   TestPlayerSessionTicks.cpp
   TestPlayerSessionWalls.cpp
+  TestPlayerSessionAnimation.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
@@ -96,6 +106,9 @@ target_link_libraries(Assisi-App-Tests
     Assisi::App
     Assisi-App-TestSystems
     Assisi::TestSupport
+    # The animator compiler, for the session tests that give characters built in
+    # code an animator written in the test.
+    Assisi::RuntimeImport
 )
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen
@@ -127,6 +140,25 @@ target_sources(Assisi-App-Tests PRIVATE
 )
 
 Assisi_add_doctest_tests(Assisi-App-Tests NAME App)
+
+# A program that crashes on purpose under the engine's crash handlers, for
+# TestCrashReport.cpp: a real crash, a real crashpad_handler and the real
+# reporter it starts, without a game around them. The handler goes beside it, as
+# it goes beside a game.
+add_executable(Assisi-CrashHelper CrashHelper.cpp)
+Assisi_apply_defaults(Assisi-CrashHelper)
+target_link_libraries(Assisi-CrashHelper PRIVATE Assisi::App)
+assisi_link_reflections(Assisi-CrashHelper)
+add_dependencies(Assisi-App-Tests Assisi-CrashHelper)
+if (TARGET crashpad_handler)
+  add_custom_command(TARGET Assisi-CrashHelper POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:crashpad_handler>"
+            "$<TARGET_FILE_DIR:Assisi-CrashHelper>"
+    VERBATIM)
+  add_dependencies(Assisi-CrashHelper crashpad_handler)
+  target_compile_definitions(Assisi-App-Tests PRIVATE ASSISI_CRASHPAD)
+endif()
+target_compile_definitions(Assisi-App-Tests PRIVATE ASSISI_CRASH_HELPER="$<TARGET_FILE:Assisi-CrashHelper>")
 
 # The session cases run real sockets in real time. Packed in with a test on
 # every other CPU, a client's clock reads the time it waited for one as a slow

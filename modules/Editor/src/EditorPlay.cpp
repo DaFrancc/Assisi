@@ -4,6 +4,7 @@
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -16,6 +17,7 @@
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -58,6 +60,21 @@ void EditorApp::StartPlay(NetIntent intent)
         Assisi::Core::Log::Warn("Play: close the blueprint editor first - a blueprint world is content, "
                                 "not a level to run.");
         return;
+    }
+
+    // A game running this content would end. Played here, it runs with the
+    // behaviour missing, which tests a game that can never happen.
+    if (_world != nullptr)
+    {
+        std::vector<std::string> undeclared = Assisi::App::UndeclaredRequiredSystems(*_world);
+        if (!undeclared.empty())
+        {
+            Assisi::Core::Log::Error("Play: refusing to start - '{}' needs systems this build does not declare: {}.",
+                                     _world->levelPath, Assisi::App::QuotedNames(undeclared));
+            _refusedForSystems = std::move(undeclared);
+            _undeclaredRefusal = UndeclaredRefusal::Play;
+            return;
+        }
     }
 
     // Play-in-editor hosting sidesteps both gates below structurally, not by
@@ -374,7 +391,7 @@ void EditorApp::StopPlay()
         // Every entity was destroyed and revived, and the clock went back to the
         // hour play started at — so the cascades hold depth from a sun that has
         // now moved, cast by geometry that has been rebuilt underneath them.
-        _sceneRenderer.OnSceneReplaced();
+        _sceneRenderer->OnSceneReplaced();
     }
 
     // A joined session loaded the *host's* level into this world, retargeting its

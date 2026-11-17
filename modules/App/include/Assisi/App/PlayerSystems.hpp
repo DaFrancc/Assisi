@@ -85,7 +85,8 @@ void PlayerGatherSystem(SystemContext &ctx);
 /// Turning goes on the character, about world up; looking up and down goes on
 /// the camera parented to it, so the body turns and the head tilts. Movement is
 /// taken in the character's frame after it turns. A press asks for one jump
-/// however long it is held. A character without PlayerInput is left alone, so
+/// however long it is held; Crouch and Sprint are asked for while they are
+/// held. A character without PlayerInput is left alone, so
 /// an AI keeps writing its own intent.
 ///
 /// Every machine runs it on every character with controls, which is what makes

@@ -58,39 +58,81 @@ to entities in the editor, but it helps to know what they are.
 | `Transform` | `<Assisi/ECS/Transform.hpp>` | Position, rotation and scale. Almost every entity has one. |
 | `Parent` | `<Assisi/ECS/Hierarchy.hpp>` | Attaches an entity to another, so it moves with it. |
 | `MeshRenderer` | `<Assisi/Runtime/Components.hpp>` | Draws a mesh with materials. |
-| `SkinnedMesh` | `<Assisi/Runtime/Components.hpp>` | Holds the pose of a rigged mesh: where each of its joints is. See [Animation](animation.md). |
+| `SkinnedMesh` | `<Assisi/Runtime/Components.hpp>` | Marks a rigged mesh, and brings a `SkinnedPose` that holds where each of its joints is. See [Animation](animation.md). |
 | `AnimationPlayer` | `<Assisi/Runtime/Components.hpp>` | Plays an animation clip or a blend space on the entity's `SkinnedMesh`, fading when it changes. See [Playing a clip](animation.md#playing-a-clip). |
 | `Camera` | `<Assisi/Runtime/Components.hpp>` | A camera. The one with `isActive` set is the one you see through. |
 | `DirectionalLight`, `PointLight`, `SpotLight` | `<Assisi/Runtime/LightComponents.hpp>` | Lights. |
 | `Collider` | `<Assisi/Physics/PhysicsComponents.hpp>` | A collision shape. On its own, static geometry. See [Physics](physics.md). |
 | `RigidBody` | `<Assisi/Physics/PhysicsComponents.hpp>` | Makes a `Collider` move. |
 | `Character` | `<Assisi/Physics/PhysicsComponents.hpp>` | A player or NPC the character controller moves. |
+| `ArcadeMovement`, `SourceMovement` | `<Assisi/Physics/PhysicsComponents.hpp>` | How a character speeds up, slows down and steers in the air. See [The character controller](physics-character.md). |
 | `Skybox` | `<Assisi/Runtime/SkyComponents.hpp>` | A sky, lit by the sun. |
+| `Clouds` | `<Assisi/Runtime/SkyComponents.hpp>` | Clouds in that sky, with their shadows on the ground. See [Clouds](rendering-sky.md#clouds). |
+| `Fog` | `<Assisi/Runtime/SkyComponents.hpp>` | Haze and low mist that fade distant things into the sky's colour, and the level's draw distance. See [Fog](rendering-sky.md#fog). |
+| `FogBox`, `FogSphere`, `FogOutline` | `<Assisi/Runtime/FogVolume.hpp>` | Fog in one place only: a box, a sphere, or a curve on the ground filled to a height. See [Fog volumes](rendering-sky.md#fog-volumes). |
 | `TimeOfDay`, `Sun`, `Moon` | `<Assisi/Runtime/TimeOfDay.hpp>` | A clock, a sun that moves with it, and a moon. |
+| `PostProcessVolume` | `<Assisi/Runtime/PostProcessVolume.hpp>` | The level's exposure, contrast, saturation, white balance and bloom, everywhere or inside a box. See [The level's look](rendering-post-processing.md). |
+| `Path` | `<Assisi/Runtime/Path.hpp>` | A curve through points you place, for a route something follows. See [Splines](splines.md). |
 
 `Transform` looks like this:
 
 ```cpp
 struct Transform
 {
-    glm::vec3 position{0.f, 0.f, 0.f};
+    glm::dvec3 position{0.0, 0.0, 0.0};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 scale{1.f, 1.f, 1.f};
 };
+```
+
+#### Positions are doubles
+
+`position` is a `glm::dvec3`: three `double`s rather than three `float`s. A
+`float` gets coarser the further a number is from zero: 100 km from the center
+of the world it can only say where something is to the nearest 8 mm, and a
+character walking there would stutter. A `double` stays exact to far below a
+millimeter across the whole world. In multiplayer, a moving body's position is
+sent to the nearest 2 mm, and that's the same anywhere in the world.
+
+The rule for your own code: **a place in the world is a `glm::dvec3`; a
+direction, a velocity or an offset from something nearby is a `glm::vec3`.**
+Turning one into the other is always written out, and the compiler refuses it
+when it isn't:
+
+```cpp
+const glm::dvec3 enemy = scene.Get<ECS::Transform>(enemyEntity)->position;
+const glm::dvec3 self  = scene.Get<ECS::Transform>(selfEntity)->position;
+
+// The difference between two nearby places is small, so it fits a vec3.
+const glm::vec3 toEnemy = glm::vec3(enemy - self);
+
+// Moving by a velocity: adding a vec3 to a dvec3 with += needs no conversion.
+transform.position += velocity * dt;
+
+// Placing something at a position held as a vec3 says so.
+transform.position = glm::dvec3(spawnPoint);
 ```
 
 Adding a `Transform` also adds a `WorldMatrix`. You don't add, save or write a
 `WorldMatrix` yourself. Once a frame the engine fills it with where the entity
 is drawn: its pose combined with its parents', smoothed between fixed steps.
 Game code reads and writes the `Transform`. Only code that draws things reads
-the matrix, through an ordinary query:
+the matrix, through an ordinary query.
+
+The world is divided into **cells**, cubes 512 m wide, and a `WorldMatrix` is
+stored as the cell the entity is in plus a matrix measured from that cell's
+centre, so it stays exact however far out the entity is. Everything is drawn
+measured from the camera, so a `Render` system turns the matrix into one
+measured from `ctx.origin`, the camera's position:
 
 ```cpp
-for (auto [entity, world, marker] : scene.Query<ECS::WorldMatrix, Marker>())
+for (auto [entity, world, marker] : ctx.scene.Query<ECS::WorldMatrix, Marker>())
 {
-    DrawMarker(world.matrix, marker);
+    DrawMarker(ECS::MatrixFrom(world, ctx.origin), marker);
 }
 ```
+
+`ctx.view` is measured from the same place, so the two go together.
 
 ### The sky, the sun and the moon
 
@@ -104,6 +146,11 @@ entity**, the one with the `DirectionalLight`. That light *is* the sun.
 | `TimeOfDay` | A clock: the hour, the day, and how many real seconds a day lasts. |
 | `Sun` | The sun follows the clock: it rises, crosses the sky and sets. The light's own `direction` is ignored. |
 | `Moon` | A moon that rises, sets, goes through phases and lights the world at night. Needs a `Sun` on the same entity. |
+| `Clouds` | Clouds that drift with the wind and shadow the ground. Pick a **preset**: `Fair`, `Scattered`, `Broken` or `Overcast`. Needs a `Skybox` on the same entity. |
+
+The wind isn't part of the sky: add a [`Wind`](rendering-wind.md) to any
+entity, and both the clouds and the water move with it. Without one the air is
+still.
 
 For the clock to move while the game runs, add the **`TimeOfDay` system** to
 the level's systems list. Without it the time stays where you set it, which is
@@ -114,7 +161,8 @@ The color and brightness of daylight come from the `DirectionalLight`, not the
 surface all follow.
 
 The `Pretty` level (`assets/levels/Pretty.alvl`) is a working example to open in
-the editor.
+the editor. [Sky and time of day](rendering-sky.md) explains each of these
+components in full.
 
 <details>
 <summary>The main settings on each</summary>

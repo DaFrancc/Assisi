@@ -18,6 +18,7 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/ReplicationConfig.hpp"
     "include/Assisi/NetSync/ReplicationProviders.hpp"
     "include/Assisi/NetSync/ReplicationServer.hpp"
+    "include/Assisi/NetSync/WorldPosition.hpp"
   PRIVATE
     "src/BodyOwnership.cpp"
     "src/BodyReport.cpp"
@@ -37,6 +38,7 @@ target_sources(Assisi-NetSync
     "src/ReplicationServerOwnership.cpp"
     "src/ReplicationServerSnapshot.cpp"
     "src/ReplicationServerState.cpp"
+    "src/WorldPosition.cpp"
 )
 
 target_include_directories(Assisi-NetSync

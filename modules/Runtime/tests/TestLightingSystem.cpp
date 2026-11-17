@@ -8,6 +8,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/Matrix.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -100,9 +101,10 @@ TEST_CASE("a parented spot aims with its parent")
 
     const Assisi::ECS::WorldMatrix *world = scene.Get<Assisi::ECS::WorldMatrix>(light);
     REQUIRE(world != nullptr);
-    CHECK(Approx3(SpotWorldDirection(world->matrix), glm::vec3(0.f, 0.f, -1.f)));
+    const glm::mat4 drawn = Assisi::ECS::MatrixFrom(*world, glm::dvec3(0.0));
+    CHECK(Approx3(SpotWorldDirection(drawn), glm::vec3(0.f, 0.f, -1.f)));
     // Position follows the same matrix, and the two must agree about the turn.
-    CHECK(Approx3(Assisi::Math::TranslationOf(world->matrix), glm::vec3(0.f, 0.f, 2.f)));
+    CHECK(Approx3(Assisi::Math::TranslationOf(drawn), glm::vec3(0.f, 0.f, 2.f)));
 }
 
 namespace
@@ -213,4 +215,69 @@ TEST_CASE("A light the clock does not drive is still gathered as authored")
     lighting.Gather(scene, &sky.light);
     REQUIRE(lighting.ShadowCastingSun().has_value());
     CHECK(Approx3(lighting.ShadowCastingSun()->direction, authored));
+}
+
+TEST_CASE("A shadow-casting light far out is measured from the shadow origin, as the shadow maps are")
+{
+    using Assisi::ECS::Transform;
+    using Assisi::Runtime::PointLight;
+    using Assisi::Runtime::SpotLight;
+
+    // About 500 km out, a whole number of cells, and a light a little way into
+    // the cell: on the 2^-9 m grid, so its offset is exact, and off the grid a
+    // float has that far out, so a position that went through one would not be.
+    constexpr glm::ivec3 kFarCells{977, 0, -977};
+    constexpr glm::dvec3 kIntoCell{20.501953125, 6.25, -3.748046875};
+    const glm::dvec3 shadowOrigin = Assisi::Math::WorldCellCentre(kFarCells);
+
+    ECS::Scene scene;
+    const ECS::Entity point = scene.Create();
+    (void)scene.Add(point, Transform{.position = shadowOrigin + kIntoCell});
+    (void)scene.Add(point, PointLight{});
+    const ECS::Entity spot = scene.Create();
+    (void)scene.Add(spot, Transform{.position = shadowOrigin - kIntoCell});
+    (void)scene.Add(spot, SpotLight{});
+    (void)ECS::PropagateTransforms(scene, 0u);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, nullptr,
+                    Assisi::Runtime::LightFrame{.view = shadowOrigin + glm::dvec3{1.0, 2.0, 3.0}, .shadow = shadowOrigin});
+
+    REQUIRE(lighting.ShadowCastingPointLights().size() == 1u);
+    REQUIRE(lighting.ShadowCastingSpotLights().size() == 1u);
+    CHECK(lighting.ShadowCastingPointLights()[0].position == glm::vec3(kIntoCell));
+    CHECK(lighting.ShadowCastingSpotLights()[0].position == glm::vec3(-kIntoCell));
+}
+
+TEST_CASE("Past the buffer's capacity, the lights nearest the camera are the ones kept")
+{
+    using Assisi::ECS::Transform;
+    using Assisi::Runtime::PointLight;
+    using Assisi::Render::ClusterGrid;
+
+    // Listed farthest first, so the scene's order would keep the far ones. The
+    // nearest light casts shadows, so its shadow row must follow it.
+    constexpr std::uint32_t kExtra = 8;
+    constexpr std::uint32_t kLights = ClusterGrid::kMaxPointLights + kExtra;
+    constexpr double kSpacing = 10.0;
+    ECS::Scene scene;
+    for (std::uint32_t light = 0; light < kLights; ++light)
+    {
+        const ECS::Entity entity = scene.Create();
+        const double distance = kSpacing * static_cast<double>(kLights - light);
+        (void)scene.Add(entity, Transform{.position = glm::dvec3(distance, 0.0, 0.0)});
+        (void)scene.Add(entity, PointLight{.radius = 1.f, .castsShadows = light + 1u == kLights});
+    }
+    (void)ECS::PropagateTransforms(scene, 0u);
+
+    LightingSystem lighting;
+    lighting.Gather(scene, nullptr, Assisi::Runtime::LightFrame{});
+
+    REQUIRE(lighting.PointLightShadowFlags().size() == ClusterGrid::kMaxPointLights);
+    REQUIRE(lighting.ShadowCastingPointLights().size() == 1u);
+    const LightingSystem::LocalLight &nearest = lighting.ShadowCastingPointLights()[0];
+    CHECK(nearest.position.x == doctest::Approx(kSpacing));
+    // Last of the rows kept, as it was last of the lights gathered.
+    CHECK(nearest.index == ClusterGrid::kMaxPointLights - 1u);
+    CHECK(lighting.PointLightShadowFlags()[nearest.index] == Assisi::Runtime::ShadowCaster::Yes);
 }

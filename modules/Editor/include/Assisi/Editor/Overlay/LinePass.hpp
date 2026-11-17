@@ -10,20 +10,12 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Editor/Overlay/LineVertices.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Editor
 {
-
-/// @brief One endpoint of a line segment: a world-space position and an RGBA
-/// colour written straight to the scene target. Segments are drawn as a LineList,
-/// so vertices come in consecutive pairs (0-1, 2-3, ...).
-struct LineVertex
-{
-    glm::vec3 position;
-    glm::vec4 color;
-};
 
 /// @brief Draws coloured line segments in world space — a minimal debug/overlay
 /// line facility with no knowledge of what it is drawing (the editor uses it for
@@ -41,15 +33,22 @@ class LinePass
 public:
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the lines
     ///        composite into (the scene target, including its depth attachment).
+    /// @param thickVertexShaderSpvPath  The vertex stage that widens a thick
+    ///        line's corners; the pixel stage is shared.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
-                                  const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath);
+                                  const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
+                                  const std::string &thickVertexShaderSpvPath);
 
     /// @brief Rebuild both pipelines for a new scene render-target format (e.g. an
     /// MSAA toggle). Shaders, input layout and binding set are reused. No-op (true)
     /// before Initialize().
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
 
-    [[nodiscard]] bool IsValid() const { return _depthTestedPipeline != nullptr && _onTopPipeline != nullptr; }
+    [[nodiscard]] bool IsValid() const
+    {
+        return _depthTestedPipeline != nullptr && _onTopPipeline != nullptr && _thickDepthTestedPipeline != nullptr &&
+               _thickOnTopPipeline != nullptr;
+    }
 
     /// @brief Record one LineList batch. @p viewProjection is the camera's
     /// projection*view; @p onTop selects the x-ray (depth-test-off) pipeline. The
@@ -59,6 +58,12 @@ public:
     void Draw(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
               std::span<const LineVertex> vertices, bool onTop);
 
+    /// @brief Record one batch of thick lines, built by AppendThickLines: the same
+    /// depth modes as Draw, as triangles. No-op if not initialised or @p corners
+    /// is empty.
+    void DrawThick(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                   std::span<const ThickLineVertex> corners, bool onTop);
+
 private:
     [[nodiscard]] bool BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
     /// @brief Grow buffer @p slot to hold at least @p vertexCount vertices, reusing
@@ -66,6 +71,8 @@ private:
     /// Each depth mode owns a slot so a frame's two Draw() calls never write the
     /// same buffer (which would be a write-after-read hazard on one command list).
     [[nodiscard]] bool EnsureVertexCapacity(int32_t slot, uint32_t vertexCount);
+    /// @brief The same for a thick batch's buffer @p slot, in corners.
+    [[nodiscard]] bool EnsureThickCapacity(int32_t slot, uint32_t cornerCount);
 
     nvrhi::IDevice *_device = nullptr;
 
@@ -84,6 +91,18 @@ private:
     // Draw() calls in a frame never write the same resource.
     nvrhi::BufferHandle _vertexBuffers[2];
     uint32_t _vertexCapacities[2] = {0, 0};            // in vertices
+
+    // The thick lines' own stage, layout and pipelines: triangles rather than a
+    // line list, and the viewport in their push constants so a corner can be
+    // pushed a number of pixels. Buffers per depth mode, as above.
+    nvrhi::ShaderHandle _thickVertexShader;
+    nvrhi::InputLayoutHandle _thickInputLayout;
+    nvrhi::BindingLayoutHandle _thickBindingLayout;
+    nvrhi::BindingSetHandle _thickBindingSet;
+    nvrhi::GraphicsPipelineHandle _thickDepthTestedPipeline;
+    nvrhi::GraphicsPipelineHandle _thickOnTopPipeline;
+    nvrhi::BufferHandle _thickBuffers[2];
+    uint32_t _thickCapacities[2] = {0, 0}; // in corners
 };
 
 } // namespace Assisi::Editor

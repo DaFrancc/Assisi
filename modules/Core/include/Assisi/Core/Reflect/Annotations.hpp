@@ -125,9 +125,9 @@
 
 /// ASTRUCT() — marks a struct as a reflected value struct: a field of an ACOMP,
 /// AASSET, AMSG or another ASTRUCT may hold one inline, alone or in a container,
-/// and every codec walks its AFIELDs in place. It registers nothing of its own
-/// that a scene or a file names; a cooked format that is one struct reaches its
-/// table through Core::Reflect::FindStruct<T>().
+/// and every codec walks its AFIELDs in place. Code reaches its table through
+/// Core::Reflect::StructTraits<T>, and a file naming it, such as a screen
+/// binding a registered source, through Core::Reflect::StructRegistry.
 ///
 /// Takes no arguments. Inside one, AFIELD(norep) and entity or instance
 /// references are refused — the struct has no wire or scene of its own — and a
@@ -232,6 +232,35 @@
 ///
 /// See Assisi/App/SystemCatalog.hpp.
 #define ASYSTEM(...)
+
+/// APASS(name = "...", ...) — marks a struct as a render pass.
+///
+///   APASS(name = "sky", after = "draw-scene")
+///   struct SkyBackgroundPass
+///   {
+///       bool Wanted(const SceneFrame &frame) const;
+///       void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
+///                   Reads<SceneDepth, CloudMap> in, Writes<SceneColor, SkyPass> out);
+///   };
+///
+/// Record's signature is the declaration: reflectgen orders every pass after
+/// the passes that write what it reads, and after or before any pass `after`
+/// and `before` name, and refuses a cycle, a read nothing writes, or two
+/// writers it cannot order. `name` is the pass's timer;
+/// `timers = {"a", "b"}` declares the timers a pass opens one after another
+/// instead; `base` marks a pass every frame records, which has no Wanted;
+/// `untimed` marks a pass that opens a GPU marker but no timer, because what it
+/// calls opens timers of its own.
+///
+/// The struct holds the pass's own state. Its hooks are optional and found by
+/// the compiler: Wanted (false turns the pass off), Release (called while it
+/// is off), Initialize and OnTargetsChanged. See Assisi/Render/FramePass.hpp.
+#define APASS(...)
+
+/// APASSIMPORTS() — marks the struct of references to what a graph's owner
+/// shares with its passes: the objects several passes use, which the passes
+/// reach through Reads<> and Writes<> like everything else.
+#define APASSIMPORTS(...)
 
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The

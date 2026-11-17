@@ -56,10 +56,10 @@ struct Fixture
     void Nudge(Entity entity, float dx)
     {
         if (Transform *transform = scene.GetMut<Transform>(entity))
-            transform->position.x += dx;
+            transform->position.x += static_cast<double>(dx);
     }
 
-    [[nodiscard]] float X(Entity entity) { return scene.Get<Transform>(entity)->position.x; }
+    [[nodiscard]] float X(Entity entity) { return static_cast<float>(scene.Get<Transform>(entity)->position.x); }
 
     /// One frame with the handles held, in the order the draw code runs it: record
     /// before writing, write, and report the hold. The drag itself moves nothing —

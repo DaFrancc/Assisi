@@ -245,12 +245,12 @@ TEST_CASE("A blueprint's systems begin at the drain that installs them")
     REQUIRE(Runs(*world, "Started") == 1u);
 
     QueueSystemInstall(*world, std::vector<std::string>{"StartedLate"}, "car.abp");
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
 
     CHECK(Runs(*world, "StartedLate") == 1u); // the newcomer began
     CHECK(Runs(*world, "Started") == 1u);     // and the incumbent did not begin twice
 
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
     CHECK(Runs(*world, "StartedLate") == 1u);
 
     std::filesystem::remove_all(root);
@@ -266,6 +266,8 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, universal);
 
@@ -273,18 +275,17 @@ TEST_CASE("A screen brings the systems it declared, and takes its claim when it 
     REQUIRE(world != nullptr);
     REQUIRE_FALSE(world->systems.Has("StartedLate"));
 
-    Assisi::Mondrian::Ui ui{universal};
     const std::array<std::string, 1> needs{"StartedLate"};
     Assisi::Mondrian::Screen &screen =
         AddScreen(*world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                   needs);
 
     // Queued, not installed on the spot: registering mid-walk would mutate what
     // is being iterated, so it lands at the frame's safe point.
     CHECK_FALSE(world->systems.Has("StartedLate"));
-    DrainSystemInstalls(StartContext(*world));
+    REQUIRE(DrainSystemInstalls(StartContext(*world)).has_value());
     CHECK(world->systems.Has("StartedLate"));
 
     // It is counted as required, so a re-apply that names nothing keeps it.
@@ -312,7 +313,7 @@ TEST_CASE("A world's screens are destroyed with it")
         WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
         World &world = worlds.Create("Doomed");
         AddScreen(world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world.events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world.screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"hud"}),
                   {});
         REQUIRE(FindScreen(world, "hud") != nullptr);
@@ -337,17 +338,18 @@ TEST_CASE("A world's one-shot systems can build its screens again after its mark
     RunCounts::Instance().Reset();
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     InstallServices(worlds, universal);
 
     World *const world = worlds.LoadLevel("levels/A.alvl");
     REQUIRE(world != nullptr);
 
-    Assisi::Mondrian::Ui ui{universal};
     const auto build = [&ui, world]
     {
         AddScreen(*world,
-                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->events, Assisi::Mondrian::ScreenTraits{},
+                  std::make_unique<Assisi::Mondrian::Screen>(ui, world->screenWorld, Assisi::Mondrian::ScreenTraits{},
                                                              Assisi::Mondrian::kSortMenu, std::string{"pause"}),
                   {});
     };

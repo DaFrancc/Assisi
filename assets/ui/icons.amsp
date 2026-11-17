@@ -1,0 +1,5 @@
+<!-- The game's icons, drawn white so a tint colours them. -->
+<sheet texture="ui/icons.png">
+  <sprite name="pause" rect="0 0 32 32" />
+  <sprite name="contrast" rect="32 0 32 32" />
+</sheet>

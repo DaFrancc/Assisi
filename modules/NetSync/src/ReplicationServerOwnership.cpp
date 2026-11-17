@@ -44,7 +44,7 @@ std::size_t Root(std::vector<std::size_t> &parent, std::size_t index)
     return index;
 }
 
-bool Finite(glm::vec3 value)
+template <typename Vector> bool Finite(const Vector &value)
 {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
@@ -148,12 +148,12 @@ std::string_view ReplicationServer::RefusalOf(const BodyState &state, std::uint3
         return "spinning faster than reportMaxSpin";
     }
 
-    std::vector<glm::vec3> feet;
+    std::vector<glm::dvec3> feet;
     FeetOf(client, feet);
     float nearest = std::numeric_limits<float>::infinity();
-    for (const glm::vec3 at : feet)
+    for (const glm::dvec3 &at : feet)
     {
-        nearest = std::min(nearest, glm::length(state.position - at));
+        nearest = std::min(nearest, static_cast<float>(glm::length(state.position - at)));
     }
     if (nearest > limits.leaveDistance + limits.reportReachSlack)
     {
@@ -164,7 +164,7 @@ std::string_view ReplicationServer::RefusalOf(const BodyState &state, std::uint3
     if (believed != _believed.end() && tick > believed->second.tick)
     {
         const float seconds = static_cast<float>(tick - believed->second.tick) / static_cast<float>(_config.tickRateHz);
-        const float moved = glm::length(state.position - believed->second.state.position);
+        const float moved = static_cast<float>(glm::length(state.position - believed->second.state.position));
         if (moved > limits.reportMaxSpeed * seconds + limits.reportReachSlack)
         {
             return "further from its last report than reportMaxSpeed reaches";
@@ -281,7 +281,7 @@ std::vector<BodyGroup> ReplicationServer::BodyGroups() const
 
     // How near each player is: its nearest character to the group's nearest
     // body, and whether any of its characters touches any of them.
-    std::vector<glm::vec3> feet;
+    std::vector<glm::dvec3> feet;
     for (const std::pair<const std::uint32_t, std::vector<ECS::Entity>> &controlled : _controlledByClient)
     {
         FeetOf(controlled.first, feet);
@@ -294,10 +294,10 @@ std::vector<BodyGroup> ReplicationServer::BodyGroups() const
             PlayerReach reach{.distance = std::numeric_limits<float>::infinity(), .client = controlled.first};
             for (const ECS::Entity body : members[g])
             {
-                const glm::vec3 centre = _physics->GetBodyPose(body).position;
-                for (const glm::vec3 at : feet)
+                const glm::dvec3 centre = _physics->GetBodyPose(body).position;
+                for (const glm::dvec3 &at : feet)
                 {
-                    reach.distance = std::min(reach.distance, glm::length(centre - at));
+                    reach.distance = std::min(reach.distance, static_cast<float>(glm::length(centre - at)));
                 }
                 for (const ECS::Entity character : controlled.second)
                 {
@@ -314,7 +314,7 @@ std::vector<BodyGroup> ReplicationServer::BodyGroups() const
     return groups;
 }
 
-void ReplicationServer::FeetOf(std::uint32_t client, std::vector<glm::vec3> &out) const
+void ReplicationServer::FeetOf(std::uint32_t client, std::vector<glm::dvec3> &out) const
 {
     out.clear();
     const std::unordered_map<std::uint32_t, std::vector<ECS::Entity>>::const_iterator controlled =
@@ -365,8 +365,8 @@ void ReplicationServer::PlaceSimulator(NetId netId, ECS::Entity entity, std::uin
     // check allows for over the ticks between.
     const Physics::Pose pose = _physics->GetBodyPose(entity);
     const Physics::BodyState motion = _physics->GetBodyState(entity);
-    _believed[netId] = BelievedReport{.state = BodyState{.netId = netId,
-                                                         .position = pose.position,
+    _believed[netId] = BelievedReport{.state = BodyState{.position = pose.position,
+                                                         .netId = netId,
                                                          .rotation = pose.rotation,
                                                          .linearVelocity = motion.linearVelocity,
                                                          .angularVelocity = motion.angularVelocity,

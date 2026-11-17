@@ -8,13 +8,14 @@ namespace Assisi::NetSync
 void WriteBodyReports(std::span<const BodyReport *const> reports, Core::BitWriter &writer)
 {
     writer.WriteVarUInt32(static_cast<std::uint32_t>(reports.size()));
+    CellReference reference;
     for (const BodyReport *report : reports)
     {
         writer.WriteVarUInt64(report->tick);
         writer.WriteVarUInt32(static_cast<std::uint32_t>(report->bodies.size()));
         for (const BodyState &body : report->bodies)
         {
-            WriteBodyState(body, writer);
+            WriteBodyState(body, reference, writer);
         }
     }
 }
@@ -28,6 +29,7 @@ bool ReadBodyReports(Core::BitReader &reader, std::vector<BodyReport> &out)
         return false;
     }
     std::vector<BodyReport> decoded(ticks);
+    CellReference reference;
     for (BodyReport &report : decoded)
     {
         report.tick = reader.ReadVarUInt64();
@@ -39,7 +41,7 @@ bool ReadBodyReports(Core::BitReader &reader, std::vector<BodyReport> &out)
         report.bodies.resize(bodies);
         for (BodyState &body : report.bodies)
         {
-            if (!ReadBodyState(reader, body))
+            if (!ReadBodyState(reader, reference, body))
             {
                 return false;
             }

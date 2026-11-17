@@ -1985,8 +1985,12 @@ std::vector<std::byte> ForgeSnapshot(std::uint64_t serverTick, const std::vector
         writer.WriteVarUInt32(record.memberCount);
         writer.WriteBool(true); // every member present, the ordinary case
 
-        const float placement[10] = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f}; // identity
-        for (const float value : placement)
+        // Identity: the position as doubles, then the rotation and scale.
+        const double position[3] = {0.0, 0.0, 0.0};
+        for (const double value : position)
+            writer.WriteDouble(value);
+        const float rotationAndScale[7] = {1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f};
+        for (const float value : rotationAndScale)
             writer.WriteFloat(value);
     }
 

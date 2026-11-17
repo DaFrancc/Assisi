@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Core)
 
 target_sources(Assisi-Core
   PRIVATE
+    "src/Abort.cpp"
     "src/AssetDatabase.cpp"
     "src/AssetDocument.cpp"
     "src/AssetId.cpp"
@@ -37,12 +38,14 @@ target_sources(Assisi-Core
     "src/InternedString.cpp"
     "src/StringJson.cpp"
     "src/StringPool.cpp"
+    "src/StructRegistry.cpp"
     "src/FieldMeta.cpp"
     "src/ComponentRegistry.cpp"
     "src/MessageRegistry.cpp"
     "src/JobSystem.cpp"
     "src/JsonRead.cpp"
     "src/LooseFileProvider.cpp"
+    "src/Format.cpp"
     "src/Logger.cpp"
     "src/Platform.cpp"
     "src/Sinks.cpp"
@@ -79,6 +82,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/EventQueue.hpp"
     "include/Assisi/Core/EventRoute.hpp"
     "include/Assisi/Core/EventScope.hpp"
+    "include/Assisi/Core/Format.hpp"
     "include/Assisi/Core/Logger.hpp"
     "include/Assisi/Core/Received.hpp"
     "include/Assisi/Core/Sinks.hpp"

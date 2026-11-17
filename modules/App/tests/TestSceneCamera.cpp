@@ -50,8 +50,9 @@ TEST_CASE("ActiveSceneCamera returns the active camera with its world matrix int
     const std::optional<SceneView> view = ActiveSceneCamera(scene);
 
     REQUIRE(view.has_value());
-    CHECK(view->pose.position == kCameraPosition);
-    CHECK(view->world == glm::translate(glm::mat4(1.f), kCameraPosition));
+    CHECK(glm::vec3(view->pose.position) == kCameraPosition);
+    CHECK(view->world.inCell == glm::translate(glm::mat4(1.f), kCameraPosition));
+    CHECK(view->world.cell == glm::ivec3(0));
 }
 
 TEST_CASE("ActiveSceneCamera is empty when the scene nominates none")
@@ -78,6 +79,6 @@ TEST_CASE("ActiveSceneCamera says so when two cameras are active")
     const std::optional<SceneView> view = ActiveSceneCamera(scene);
 
     REQUIRE(view.has_value());
-    CHECK(view->pose.position == kCameraPosition); // the first, not the last
+    CHECK(glm::vec3(view->pose.position) == kCameraPosition); // the first, not the last
     CHECK(log.Mentions("more than one Camera is marked active"));
 }

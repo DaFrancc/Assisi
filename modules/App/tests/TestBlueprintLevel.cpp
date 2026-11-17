@@ -28,6 +28,7 @@
 #include <Assisi/Math/Matrix.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -96,7 +97,7 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
         (void)descriptor;
         REQUIRE(world.physics.HasBody(entity));
         ++bodies;
-        const glm::vec3 position = world.physics.GetBodyPose(entity).position;
+        const glm::vec3 position = glm::vec3(world.physics.GetBodyPose(entity).position);
         CHECK(position.x == doctest::Approx(30.f));
         CHECK(position.y == doctest::Approx(tag.memberIndex == 0 ? 0.f : 1.f));
     }
@@ -127,7 +128,9 @@ TEST_CASE("App: a child of a walking character follows it")
                        {"components",
                         {{"Transform",
                             {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                            {"Character", {{"walkSpeed", 5.f}, {"groundAcceleration", 1000.f}}}}}},
+                            {"Character", nlohmann::json::object()},
+                            {"CharacterLocomotion", {{"preset", static_cast<int32_t>(Physics::LocomotionPreset::Arcade)}}},
+                            {"ArcadeMovement", {{"groundAcceleration", 1000.f}}}}}},
                        {{"name", "eye"},
                            {"components",
                             {{"Transform",
@@ -179,7 +182,7 @@ TEST_CASE("App: a child of a walking character follows it")
     uint64_t tick = 0;
     for (int32_t i = 0; i < 120; ++i)
     {
-        world.scene.GetMut<Physics::CharacterIntent>(body)->move = {1.f, 0.f, 0.f}; // walkSpeed is 5 m/s
+        world.scene.GetMut<Physics::CharacterIntent>(body)->move = {1.f, 0.f, 0.f}; // the Arcade preset walks at 5 m/s
         world.physics.Update(kStep);
         tick = ECS::PropagateTransforms(world.scene, tick);
     }
@@ -194,9 +197,9 @@ TEST_CASE("App: a child of a walking character follows it")
 
     // And the child came with it: its world matrix is the character's pose plus
     // its own local offset, not the pose the level was composed at.
-    const glm::vec3 eyeWorld = Math::TranslationOf(world.scene.Get<ECS::WorldMatrix>(eye)->matrix);
+    const glm::vec3 eyeWorld = glm::vec3(ECS::WorldPositionOf(*world.scene.Get<ECS::WorldMatrix>(eye)));
     CHECK(eyeWorld.x == doctest::Approx(bodyTransform->position.x).epsilon(0.01));
-    CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5f).epsilon(0.05));
+    CHECK(eyeWorld.y == doctest::Approx(bodyTransform->position.y + 1.5).epsilon(0.05));
 
     fs::remove_all(root, ec);
 }

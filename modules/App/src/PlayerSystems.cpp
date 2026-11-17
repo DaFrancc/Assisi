@@ -35,6 +35,13 @@ constexpr std::string_view kPlayerActionEnumType = "Assisi::App::PlayerAction";
 /// Radians of turn per pixel of mouse movement.
 const float kLookRadiansPerPixel = glm::radians(kLookDegreesPerPixel);
 
+/// How far a world's removals of LocalPlayer have been read, so each is
+/// announced once.
+struct LocalPlayerCursor
+{
+    uint64_t tick = 0;
+};
+
 /// Whether @p entity is this machine's player, by the world's LocalClient.
 bool IsLocalPlayer(const ECS::Scene &scene, ECS::Entity entity, const LocalClient &local)
 {
@@ -155,6 +162,7 @@ std::vector<std::string> PlayerActionNames()
     std::vector<std::string> names(static_cast<std::size_t>(PlayerAction::Count_));
     names[static_cast<std::size_t>(PlayerAction::Jump)] = kActionJump;
     names[static_cast<std::size_t>(PlayerAction::Crouch)] = kActionCrouch;
+    names[static_cast<std::size_t>(PlayerAction::Sprint)] = kActionSprint;
     for (const Core::Reflect::EnumConstant &label : Core::Reflect::EnumLabelsOf(kPlayerActionEnumType))
     {
         if (label.value >= 0 && label.value < static_cast<std::int64_t>(names.size()))
@@ -178,6 +186,21 @@ void LocalPlayerSystem(SystemContext &ctx)
     ECS::Scene &scene = ctx.world.scene;
     const LocalClient *found = ctx.world.resources.Find<LocalClient>();
     const LocalClient local = found != nullptr ? *found : LocalClient{};
+
+    // A destroyed player leaves no Player to walk below, so the scene's log of
+    // removals is what tells of it. A log that no longer reaches this far back
+    // has lost a removal only after thousands of them in one step, or a cleared
+    // scene, and nothing is left to ask either way.
+    uint64_t &seen = ctx.world.resources.Get<LocalPlayerCursor>().tick;
+    std::vector<ECS::Entity> removed;
+    (void)scene.RemovedSince<LocalPlayer>(seen, removed);
+    for (const ECS::Entity entity : removed)
+    {
+        if (!scene.IsAlive(entity))
+        {
+            ctx.events.Push(LocalPlayerLost{.entity = entity});
+        }
+    }
 
     // Collected first: adding and removing components while a query walks them
     // can move what it is walking.
@@ -205,12 +228,16 @@ void LocalPlayerSystem(SystemContext &ctx)
         {
             (void)scene.Add<PlayerInput>(entity);
         }
+        ctx.events.Push(LocalPlayerGained{.entity = entity});
     }
     for (const ECS::Entity entity : lost)
     {
         (void)scene.Remove<LocalPlayer>(entity);
         (void)scene.Remove<PlayerInput>(entity);
+        ctx.events.Push(LocalPlayerLost{.entity = entity});
     }
+    // After the removals above, which have been announced already.
+    seen = scene.CurrentChangeTick();
 }
 
 void PlayerGatherSystem(SystemContext &ctx)
@@ -291,6 +318,7 @@ void CharacterCommandSystem(SystemContext &ctx)
         intent.move = WorldMove(scene, entity, controls.move);
         intent.stance =
             controls.held.Has(PlayerAction::Crouch) ? Physics::Stance::Crouching : Physics::Stance::Standing;
+        intent.sprint = controls.held.Has(PlayerAction::Sprint);
         // OR rather than assign: the step clears the request once it has taken
         // it, and a press must survive steps that could not jump yet.
         intent.jump = intent.jump || controls.pressed.Has(PlayerAction::Jump);

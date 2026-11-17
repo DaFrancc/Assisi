@@ -4,6 +4,7 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -12,6 +13,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <utility>
 #include <vector>
 
 #include "ReplicationInternal.hpp"
@@ -30,11 +33,11 @@ namespace
 /// received one is only rounding: a body at rest on the floor would be pulled a
 /// millimetre into it every snapshot and stood back up between them, a tremble
 /// with nothing behind it.
-glm::vec3 WithinRoundingKept(glm::vec3 received, glm::vec3 local, float step)
+glm::dvec3 WithinRoundingKept(glm::dvec3 received, const glm::dvec3 &local, float step)
 {
     for (glm::length_t axis = 0; axis < 3; ++axis)
     {
-        if (std::abs(received[axis] - local[axis]) <= step)
+        if (std::abs(received[axis] - local[axis]) <= static_cast<double>(step))
         {
             received[axis] = local[axis];
         }
@@ -110,7 +113,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // gap as an error to smooth away, drawn as a bob.
     const bool character = _scene.Has<Physics::Character>(entity);
     const Physics::Pose simulated = _physics->GetBodyPose(entity);
-    const glm::vec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
+    const glm::dvec3 simulatedPosition = character ? _physics->CaptureCharacter(entity).position : simulated.position;
 
     // A character's capsule never turns: where it faces is its Transform, which
     // its controls turn. The one this machine controls keeps the facing its own
@@ -130,6 +133,22 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         _physics->SetCharacterPushable(entity, predicted);
     }
 
+    // Asked to do what the host's is, so it moves on between records as it
+    // does there rather than slowing to a stop, and counting the host's jumps
+    // and landings: here the host's word moves it into the air, so it would
+    // miss jumps and count landings at its own moments. The one this machine
+    // controls is asked by its own controls, and counts its own.
+    if (character && state.character && !ControlsEntity(entity))
+    {
+        TakeHostCharacter(entity, record, state);
+        FollowHost(entity, record);
+    }
+    else if (character)
+    {
+        record.askedByHost = false;
+        _physics->SetCharacterCountsItself(entity, true);
+    }
+
     ++_corrections.applied;
 
     // Compared with where the client had it at the same tick, not where it is
@@ -144,7 +163,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         return;
     }
 
-    const float divergence = glm::length(simulatedPosition - state.position);
+    const float divergence = static_cast<float>(glm::length(simulatedPosition - state.position));
     _corrections.divergenceSum += static_cast<double>(divergence);
     _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
 
@@ -152,12 +171,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // snapped and the offset absorbs the whole difference, so nothing happens on
     // screen this instant. Successive corrections accumulate into the same
     // offset, which keeps a stream of small ones smooth.
-    const Physics::Pose rendered{record.rotationError * simulatedRotation, simulatedPosition + record.positionError};
+    const Physics::Pose rendered{record.rotationError * simulatedRotation,
+                                 simulatedPosition + glm::dvec3(record.positionError)};
 
     // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
     // physics state, and a half-applied correction is not one. Hiding the jump
     // belongs to the view.
-    const glm::vec3 correctedPosition =
+    const glm::dvec3 correctedPosition =
         WithinRoundingKept(state.position, simulatedPosition, Quantization().PositionStep());
     _physics->ApplyCorrection(entity, Physics::Pose{state.rotation, correctedPosition},
                               Physics::BodyState{.linearVelocity = state.linearVelocity,
@@ -176,10 +196,52 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     record.restRotation = state.rotation;
 }
 
+void ReplicationClient::TakeHostCharacter(ECS::Entity entity, MirrorBody &record, const BodyState &host)
+{
+    record.hostIntent.move = host.move;
+    record.hostIntent.speedScale = host.speedScale;
+    record.hostIntent.stance = host.wantedStance;
+    record.hostIntent.sprint = host.sprint;
+
+    // The host's numbers are its own, and a change is all a reader looks for:
+    // the first record, whatever it holds, changes nothing, or a character
+    // would jump as it appeared or as control of it passed on.
+    if (!record.askedByHost)
+    {
+        record.hostCounts = _physics->CharacterCountsOf(entity);
+        record.hostJumpBits = host.jumps;
+        record.hostLandingBits = host.landings;
+        record.askedByHost = true;
+    }
+    // A count only goes up, so however far its low bits moved, modulo their
+    // range, is how many there were since.
+    record.hostCounts.jumps += (host.jumps - record.hostJumpBits) & kCharacterCountMask;
+    record.hostCounts.landings += (host.landings - record.hostLandingBits) & kCharacterCountMask;
+    record.hostJumpBits = host.jumps;
+    record.hostLandingBits = host.landings;
+    record.hostCounts.jumpedSinceGrounded = host.jumpedSinceGrounded;
+}
+
+void ReplicationClient::FollowHost(ECS::Entity entity, const MirrorBody &record)
+{
+    _physics->SetCharacterCountsItself(entity, false);
+    _physics->SetCharacterCounts(entity, record.hostCounts);
+
+    Physics::CharacterIntent *intent = _scene.GetMut<Physics::CharacterIntent>(entity);
+    if (intent == nullptr)
+    {
+        return;
+    }
+    intent->move = record.hostIntent.move;
+    intent->speedScale = record.hostIntent.speedScale;
+    intent->stance = record.hostIntent.stance;
+    intent->sprint = record.hostIntent.sprint;
+}
+
 void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered,
                                          const Physics::Pose &corrected)
 {
-    record.positionError = rendered.position - corrected.position;
+    record.positionError = glm::vec3(rendered.position - corrected.position);
     record.rotationError = glm::normalize(rendered.rotation * glm::inverse(corrected.rotation));
 
     const ViewSmoothing &smoothing = Smoothing();
@@ -241,8 +303,8 @@ BodyState ReplicationClient::CaptureBody(NetId netId, ECS::Entity entity) const
 {
     const Physics::Pose pose = _physics->GetBodyPose(entity);
     const Physics::BodyState motion = _physics->GetBodyState(entity);
-    return BodyState{.netId = netId,
-                     .position = pose.position,
+    return BodyState{.position = pose.position,
+                     .netId = netId,
                      .rotation = pose.rotation,
                      .linearVelocity = motion.linearVelocity,
                      .angularVelocity = motion.angularVelocity,
@@ -427,7 +489,10 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
 
 void ReplicationClient::Interpolate(double serverTimeTicks)
 {
-    for (const auto &[netId, history] : _transformHistory)
+    std::erase_if(_interpolatedParents,
+                  [this](const std::pair<const NetId, ECS::Entity> &entry)
+                  { return !_transformHistory.contains(entry.first); });
+    for (auto &[netId, history] : _transformHistory)
     {
         if (history.empty())
             continue;
@@ -439,6 +504,15 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
         if (transform == nullptr)
             continue;
+
+        if (RestartForNewParent(netId, entity->second, history))
+        {
+            transform->position = history.back().position;
+            transform->rotation = history.back().rotation;
+            transform->scale    = history.back().scale;
+            ECS::SnapTransform(_scene, entity->second);
+            continue;
+        }
 
         // Past the newest sample: hold the last known pose rather than
         // extrapolate. A wrong guess costs a visible snap when the real value
@@ -486,6 +560,22 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         // the error is worst where rotation is fastest.
         transform->rotation = glm::slerp(before->rotation, after->rotation, t);
     }
+}
+
+bool ReplicationClient::RestartForNewParent(NetId netId, ECS::Entity entity, std::deque<TransformSample> &history)
+{
+    const ECS::Parent *parent = _scene.Get<ECS::Parent>(entity);
+    const ECS::Entity parentNow = parent != nullptr ? parent->parent : ECS::NullEntity;
+    const auto [known, first] = _interpolatedParents.try_emplace(netId, parentNow);
+    if (first || known->second == parentNow)
+    {
+        return false;
+    }
+    known->second = parentNow;
+    // Every sample but the newest is measured from the parent before: the
+    // newest came with whatever made this machine change the parent.
+    history.erase(history.begin(), std::prev(history.end()));
+    return true;
 }
 
 ECS::Entity ReplicationClient::EntityOf(NetId netId) const

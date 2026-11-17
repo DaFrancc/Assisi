@@ -23,18 +23,24 @@
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/Import/FontImport.hpp>
 #include <Assisi/Mondrian/Import/ScreenCompiler.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
+#include <Assisi/Mondrian/Import/SpriteSheetCompiler.hpp>
 #include <Assisi/Mondrian/Import/StringTableCompiler.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ThemeCompiler.hpp>
 #include <Assisi/Mondrian/ScreenBlob.hpp>
+#include <Assisi/Mondrian/Sprite.hpp>
 #include <Assisi/Mondrian/StringTable.hpp>
+#include <Assisi/Mondrian/Theme.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 #include <Assisi/Runtime/CookedScene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <filesystem>
 #include <format>
 #include <span>
@@ -121,12 +127,12 @@ class ReflectedCooker final : public Cooker
         if (meta == nullptr)
         {
             return std::unexpected(
-                Failure(vpath, std::format("names type '{}', which this build does not have", typeName)));
+                Failure(vpath, Core::Format("names type '{}', which this build does not have", typeName)));
         }
         if (!meta->construct || !meta->destroy || !meta->deserialize)
         {
             return std::unexpected(
-                Failure(vpath, std::format("type '{}' has no construct/deserialize hooks", typeName)));
+                Failure(vpath, Core::Format("type '{}' has no construct/deserialize hooks", typeName)));
         }
 
         // The caller knows the type only by that name, so the instance has to come
@@ -226,18 +232,22 @@ class MeshCooker final : public Cooker
 
     [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
     {
+        // The model's sidecar holds its import settings, such as splitting sharp
+        // smoothing, so changing one re-cooks the mesh.
+        std::vector<std::string> dependencies{std::string{vpath} + ".aast"};
+
         // A `.gltf` reads its vertex data from a sibling `.bin`, so editing that
         // changes the cooked mesh without touching the file this is keyed on.
         // Named by convention rather than by parsing the document: getting it
         // wrong costs a spurious re-cook, and parsing here would mean reading
         // every mesh twice on every walk.
-        if (!HasExtension(vpath, ".gltf"))
+        if (HasExtension(vpath, ".gltf"))
         {
-            return {};
+            std::string sibling{vpath};
+            sibling.replace(sibling.size() - 5, 5, ".bin");
+            dependencies.push_back(std::move(sibling));
         }
-        std::string sibling{vpath};
-        sibling.replace(sibling.size() - 5, 5, ".bin");
-        return {sibling};
+        return dependencies;
     }
 
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
@@ -314,6 +324,19 @@ class TextureCooker final : public Cooker
                static_cast<std::uint64_t>(context.textureQuality);
     }
 
+    [[nodiscard]] std::uint64_t AssetKeyVariant(Core::AssetId id, const CookContext &context) const override
+    {
+        // How it is stored rather than which channel binds it: channels stored
+        // alike share one blob. The colour space fits in the low byte and the
+        // format in the next; the cutoff its mips keep coverage at sits above.
+        constexpr std::uint32_t kSpaceBits = 8;
+        constexpr std::uint32_t kCutoffShift = 32;
+        const Geometry::MaterialChannelFormat storage = StorageOf(id, context);
+        const float cutoff = context.roles != nullptr ? context.roles->AlphaCutoffOf(id) : 0.f;
+        return (static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(cutoff)) << kCutoffShift) |
+               (static_cast<std::uint64_t>(storage.format) << kSpaceBits) | static_cast<std::uint64_t>(storage.space);
+    }
+
     [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId id,
                                                                         const CookContext &context) const override
     {
@@ -328,20 +351,20 @@ class TextureCooker final : public Cooker
             const auto [first, second] = context.roles->Conflict(id);
             if (!first.empty())
             {
-                return std::unexpected(
-                    Failure(vpath, std::format("is bound as two different channels, by '{}' and '{}' - one GUID is one "
-                                               "blob, so copy the file if both are wanted",
-                                               first, second)));
+                const std::string_view how = context.roles->ConflictIsOverAlpha(id)
+                                                 ? "cut out at another alpha cutoff, or cut out and blended,"
+                                                 : "bound as two different channels,";
+                const std::string reason = Core::Format(
+                    "is {} by '{}' and '{}' - one GUID is one blob, so copy the file if both are wanted", how, first,
+                    second);
+                return std::unexpected(Failure(vpath, reason));
             }
         }
 
-        // Unbound textures are loaded straight from their path — the sky's moon —
-        // and are colour. A normal map reaches the GPU through a material slot or
-        // not at all, so there is no unbound one to get wrong.
-        const Geometry::MaterialChannelFormat wanted =
-            Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
+        const Geometry::MaterialChannelFormat wanted = StorageOf(id, context);
 
-        std::expected<Image::DecodedImage, Core::AssetError> decoded = Image::DecodeImage(vpath, wanted.space);
+        std::expected<Image::DecodedImage, Core::AssetError> decoded =
+            Image::DecodeTexture(vpath, wanted.space, context.roles->AlphaCutoffOf(id));
         if (!decoded)
         {
             return std::unexpected(Failure(vpath, "could not be decoded"));
@@ -362,6 +385,18 @@ class TextureCooker final : public Cooker
         Image::WriteCookedTexture(writer, *compressed);
         const std::span<const std::byte> bytes = writer.Data();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+
+  private:
+    /// The format and colour space the channel binding @p id stores it in.
+    /// Unbound textures are loaded straight from their path — the sky's moon —
+    /// and are colour. A normal map reaches the GPU through a material slot or
+    /// not at all, so there is no unbound one to get wrong.
+    [[nodiscard]] static Geometry::MaterialChannelFormat StorageOf(Core::AssetId id, const CookContext &context)
+    {
+        const std::optional<Geometry::MaterialChannel> channel =
+            context.roles != nullptr ? context.roles->ChannelOf(id) : std::nullopt;
+        return Geometry::FormatFor(channel.value_or(Geometry::MaterialChannel::BaseColor));
     }
 };
 
@@ -399,9 +434,9 @@ class ShaderCooker final : public Cooker
         const std::string compiled = std::string{vpath} + ".spv";
         if (!Core::AssetSystem::Exists(compiled))
         {
-            return std::unexpected(Failure(vpath, std::format("has no compiled '{}' beside it, so this stage "
-                                                              "would be missing from the cooked tree",
-                                                              compiled)));
+            return std::unexpected(Failure(vpath, Core::Format("has no compiled '{}' beside it, so this stage "
+                                                               "would be missing from the cooked tree",
+                                                               compiled)));
         }
         return {};
     }
@@ -490,7 +525,7 @@ class FontCooker final : public Cooker
         const std::expected<std::vector<std::byte>, CookError> fontFile = ReadSource(source);
         if (!fontFile)
         {
-            return std::unexpected(Failure(vpath, std::format("names '{}', which could not be read", source)));
+            return std::unexpected(Failure(vpath, Core::Format("names '{}', which could not be read", source)));
         }
 
         const std::expected<Mondrian::Font, Mondrian::Import::FontImportError> font =
@@ -525,7 +560,7 @@ std::expected<std::string, std::string> ReadMarkup(std::string_view vpath)
 /// jump to it, after the file when it is not the one being cooked.
 std::string Where(const Mondrian::Import::MarkupError &error)
 {
-    const std::string place = std::format("{}:{}: {}", error.line, error.column, error.message);
+    const std::string place = Core::Format("{}:{}: {}", error.line, error.column, error.message);
     return error.file.empty() ? place : error.file + ":" + place;
 }
 
@@ -605,8 +640,9 @@ class ScreenCooker final : public Cooker
     {
         // Editing a library changes every screen built from it without
         // touching the screen this is keyed on; so does editing a string
-        // table, or the settings that say which tables there are. A file not
-        // there yet counts for nothing, so listing one later re-cooks too.
+        // table, a theme or a sprite sheet, or the settings that say which
+        // there are. A file not there yet counts for nothing, so listing one
+        // later re-cooks too.
         if (!HasExtension(vpath, ".amdn"))
         {
             return {};
@@ -626,6 +662,14 @@ class ScreenCooker final : public Cooker
             {
                 dependencies.emplace_back(table.View());
             }
+            for (const Core::AssetPath &theme : config->themes)
+            {
+                dependencies.emplace_back(theme.View());
+            }
+            for (const Core::AssetPath &sheet : config->spriteSheets)
+            {
+                dependencies.emplace_back(sheet.View());
+            }
         }
         return dependencies;
     }
@@ -636,8 +680,8 @@ class ScreenCooker final : public Cooker
         {
             return {};
         }
-        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
-            Mondrian::Import::LoadTextRules(ReadMarkup);
+        const std::expected<Mondrian::Import::ScreenRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadScreenRules(ReadMarkup);
         if (!rules)
         {
             return std::unexpected(Failure(vpath, Where(rules.error())));
@@ -660,14 +704,99 @@ class ScreenCooker final : public Cooker
             return std::unexpected(Failure(vpath, "could not be read"));
         }
 
-        const std::expected<Mondrian::Import::TextRules, Mondrian::Import::MarkupError> rules =
-            Mondrian::Import::LoadTextRules(ReadMarkup);
+        const std::expected<Mondrian::Import::ScreenRules, Mondrian::Import::MarkupError> rules =
+            Mondrian::Import::LoadScreenRules(ReadMarkup);
         if (!rules)
         {
             return std::unexpected(Failure(vpath, Where(rules.error())));
         }
         const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
             Mondrian::Import::CompileScreenText(*text, Core::EventCatalog::Instance(), ReadMarkup, *rules);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
+        }
+        return *cooked;
+    }
+};
+
+/// `.amth` themes: palette modes of tokens and named styles, every value parsed
+/// here, so the game reads none.
+class ThemeCooker final : public Cooker
+{
+  public:
+    [[nodiscard]] std::string_view Name() const override { return "theme"; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kThemeKind; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        // The layout as well as the framing version, as a screen's: a field
+        // added to Style changes what every theme cooks to.
+        const std::array<std::uint64_t, 2> parts{Mondrian::kThemePayloadVersion, Mondrian::ThemeLayoutHash()};
+        return Core::ContentHash64(std::as_bytes(std::span{parts}));
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileThemeText(*text);
+        if (!cooked)
+        {
+            return std::unexpected(Failure(vpath, Where(cooked.error())));
+        }
+        return *cooked;
+    }
+};
+
+/// `.amsp` sprite sheets: one texture's named rectangles, each checked against
+/// the texture's size, which is read here and carried in the sheet so the game
+/// never opens the image to learn it.
+class SpriteSheetCooker final : public Cooker
+{
+  public:
+    [[nodiscard]] std::string_view Name() const override { return "sprite sheet"; }
+    [[nodiscard]] Core::AssetKindId Kind() const override { return Core::kSpriteSheetKind; }
+
+    [[nodiscard]] std::uint64_t KeyVariant(const CookContext &) const override
+    {
+        const std::array<std::uint64_t, 2> parts{Mondrian::kSpriteSheetPayloadVersion,
+                                                 Mondrian::SpriteSheetLayoutHash()};
+        return Core::ContentHash64(std::as_bytes(std::span{parts}));
+    }
+
+    [[nodiscard]] std::vector<std::string> Dependencies(std::string_view vpath) const override
+    {
+        // The texture's size is what every rectangle is checked against, and
+        // what the sheet carries.
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return {};
+        }
+        std::string texture = Mondrian::Import::SpriteSheetTexture(*text);
+        if (texture.empty())
+        {
+            return {};
+        }
+        return {std::move(texture)};
+    }
+
+    [[nodiscard]] std::expected<std::vector<std::byte>, CookError> Cook(std::string_view vpath, Core::AssetId,
+                                                                        const CookContext &) const override
+    {
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(vpath);
+        if (!text)
+        {
+            return std::unexpected(Failure(vpath, "could not be read"));
+        }
+        const std::expected<std::vector<std::byte>, Mondrian::Import::MarkupError> cooked =
+            Mondrian::Import::CompileSpriteSheetText(*text, ReadMarkup);
         if (!cooked)
         {
             return std::unexpected(Failure(vpath, Where(cooked.error())));
@@ -692,7 +821,7 @@ class TreeCookContext final : public Core::AssetCookContext
         std::expected<std::vector<std::byte>, Core::AssetError> bytes = Core::AssetSystem::ReadBinary(vpath);
         if (!bytes)
         {
-            return std::unexpected(std::format("\"{}\" can't be read: {}", vpath, Core::ToString(bytes.error())));
+            return std::unexpected(Core::Format("\"{}\" can't be read: {}", vpath, Core::ToString(bytes.error())));
         }
         return std::move(*bytes);
     }
@@ -805,7 +934,8 @@ class VerbatimCooker final : public Cooker
 
 } // namespace
 
-bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material)
+bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel, std::string_view material,
+                        std::optional<float> alphaUse)
 {
     if (texture.IsNil())
     {
@@ -815,20 +945,50 @@ bool TextureRoles::Bind(Core::AssetId texture, Geometry::MaterialChannel channel
     Binding fresh;
     fresh.material = std::string{material};
     fresh.channel = channel;
+    fresh.alphaUse = alphaUse;
 
     const auto [slot, inserted] = _bindings.try_emplace(texture, std::move(fresh));
-    if (inserted || slot->second.channel == channel)
+    if (inserted)
     {
+        return true;
+    }
+    Binding &kept = slot->second;
+    // Two channels stored alike share the blob: glTF packs occlusion into the
+    // red channel of the metal-roughness image, which is one file read by both.
+    const Geometry::MaterialChannelFormat keptFormat = Geometry::FormatFor(kept.channel);
+    const Geometry::MaterialChannelFormat wanted = Geometry::FormatFor(channel);
+    const bool sameFormat = keptFormat.format == wanted.format && keptFormat.space == wanted.space;
+    // A material that reads no alpha is served by any mips.
+    const bool sameAlpha = !kept.alphaUse || !alphaUse || *kept.alphaUse == *alphaUse;
+    if (sameFormat && sameAlpha)
+    {
+        if (!kept.alphaUse)
+        {
+            kept.alphaUse = alphaUse;
+        }
         return true;
     }
 
     // Recorded rather than reported here: the cook of that texture is where the
     // path is known, and this walk has only ids.
-    if (slot->second.conflictingMaterial.empty())
+    if (kept.conflictingMaterial.empty())
     {
-        slot->second.conflictingMaterial = std::string{material};
+        kept.conflictingMaterial = std::string{material};
+        kept.conflictOverAlpha = sameFormat;
     }
     return false;
+}
+
+float TextureRoles::AlphaCutoffOf(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found == _bindings.end() ? 0.f : found->second.alphaUse.value_or(0.f);
+}
+
+bool TextureRoles::ConflictIsOverAlpha(Core::AssetId texture) const
+{
+    const std::unordered_map<Core::AssetId, Binding>::const_iterator found = _bindings.find(texture);
+    return found != _bindings.end() && !found->second.conflictingMaterial.empty() && found->second.conflictOverAlpha;
 }
 
 std::optional<Geometry::MaterialChannel> TextureRoles::ChannelOf(Core::AssetId texture) const
@@ -868,6 +1028,8 @@ std::vector<std::unique_ptr<Cooker>> MakeCookers()
     cookers.push_back(std::make_unique<FontCooker>());
     cookers.push_back(std::make_unique<StringTableCooker>());
     cookers.push_back(std::make_unique<ScreenCooker>());
+    cookers.push_back(std::make_unique<ThemeCooker>());
+    cookers.push_back(std::make_unique<SpriteSheetCooker>());
     cookers.push_back(std::make_unique<VerbatimCooker>());
     // One per kind a module registered. The engine's own kinds have no load
     // function in the registry, and their cookers are the ones above.

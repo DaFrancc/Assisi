@@ -8,7 +8,7 @@
 /// Internal to the import library.
 
 #include <Assisi/Mondrian/Import/Markup.hpp>
-#include <Assisi/Mondrian/Import/TextRules.hpp>
+#include <Assisi/Mondrian/Import/ScreenRules.hpp>
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
@@ -39,6 +39,10 @@ inline constexpr std::string_view kTemplateElement = "template";
 
 /// The element bringing a library's templates into a file.
 inline constexpr std::string_view kImportElement = "import";
+
+/// The element declaring one of a screen's contexts, which only the screen
+/// itself holds.
+inline constexpr std::string_view kContextElement = "context";
 
 /// What a template library's path ends in, and what a screen's does.
 inline constexpr std::string_view kLibraryExtension = ".amdt";
@@ -161,7 +165,7 @@ struct Walk
     ScreenDocument &document;
     const Core::EventCatalog &catalog;
     /// What a node's text is checked against.
-    const TextRules &rules;
+    const ScreenRules &rules;
     /// Every node name written so far, so a second node carrying one is
     /// refused with the first's place in hand, and a target can be resolved.
     std::unordered_map<std::string, NamedNode> names;
@@ -176,6 +180,9 @@ struct Walk
     /// Whether some node has already claimed focus, so a second can be refused
     /// rather than quietly winning.
     bool focusClaimed = false;
+    /// Whether this walk checks templates on their own, where the contexts of
+    /// whatever screen uses them cannot be seen.
+    bool checkingAlone = false;
 };
 
 /// Text with every parameter it uses replaced by its value.
@@ -229,8 +236,17 @@ struct Substituted
 /// it: a call is a verb, and a bare name is an event.
 [[nodiscard]] std::expected<void, MarkupError> ApplyAction(Walk &walk, uint32_t index, const MarkupAttribute &written);
 
+/// The event @p node pushes when the player moves it, from its `on_change`,
+/// which must be able to take what the control holds.
+[[nodiscard]] std::expected<void, MarkupError> ApplyOnChange(const Walk &walk, ScreenNode &node,
+                                                             const MarkupAttribute &attribute);
+
 /// Every target a verb named, looked up now that every node has been read.
 [[nodiscard]] std::expected<void, MarkupError> ResolveTargets(Walk &walk);
+
+/// Adds the context @p element declares to the document, with what it does at
+/// each moment, refusing a second context of one name.
+[[nodiscard]] std::expected<void, MarkupError> ApplyContext(Walk &walk, const MarkupElement &element);
 
 // ── ScreenTemplates.cpp ──────────────────────────────────────────────────────
 
@@ -249,7 +265,7 @@ struct Substituted
 /// @p debugOnly is whether the file is a debug-only screen, whose literal text
 /// @p rules do not refuse; a library is never one.
 [[nodiscard]] std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const MarkupElement &root,
-                                                              const Core::EventCatalog &catalog, const TextRules &rules,
-                                                              bool debugOnly);
+                                                              const Core::EventCatalog &catalog,
+                                                              const ScreenRules &rules, bool debugOnly);
 
 } // namespace Assisi::Mondrian::Import

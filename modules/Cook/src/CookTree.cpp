@@ -8,6 +8,7 @@
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Geometry/MaterialChannels.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
@@ -114,8 +115,8 @@ void CookOne(CookRun &run, std::uint32_t index)
 
     if (!WriteWholeFile(planned.output, *cooked))
     {
-        RecordFailure(run, Failure(planned.vpath, std::format("could not be written to '{}'",
-                                                              planned.output.generic_string())));
+        RecordFailure(run, Failure(planned.vpath, Core::Format("could not be written to '{}'",
+                                                               planned.output.generic_string())));
         return;
     }
 
@@ -157,7 +158,7 @@ std::uint64_t MixHash(std::uint64_t seed, std::uint64_t value)
 /// version, the payload kind, the cooker's own settings, and the codec layout the
 /// reflected and scene cookers write through.
 std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::uint64_t> dependencyHashes,
-                      const Cooker &cooker, const CookContext &context)
+                      const Cooker &cooker, Core::AssetId id, const CookContext &context)
 {
     std::uint64_t key = HashOf(source);
     for (const std::uint64_t dependency : dependencyHashes)
@@ -168,6 +169,7 @@ std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::ui
     const std::string_view cookerName = cooker.Name();
     key = MixHash(key, Core::ContentHash64(std::as_bytes(std::span{cookerName})));
     key = MixHash(key, cooker.KeyVariant(context));
+    key = MixHash(key, cooker.AssetKeyVariant(id, context));
     // The component table, which both the scene blocks and every asset block are
     // written against. A field added to a component changes what a cooked level
     // means without changing one byte of the level file.
@@ -202,7 +204,8 @@ std::expected<TextureRoles, CookError> GatherTextureRoles(const std::vector<std:
         {
             // A false here is a conflict, which is reported when that texture is
             // cooked — that is where the path is known.
-            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath);
+            (void)roles.Bind(Geometry::ChannelTexture(*material, channel), channel, vpath,
+                             Geometry::AlphaUseOf(*material, channel));
         }
     }
     return roles;
@@ -246,18 +249,18 @@ std::expected<FileRole, CookError> RoleOf(Core::AssetId id, std::string_view vpa
         if (kind == nullptr)
         {
             return std::unexpected(
-                Failure(vpath, std::format("is used as '{}', which is not a kind this build has", *kindName)));
+                Failure(vpath, Core::Format("is used as '{}', which is not a kind this build has", *kindName)));
         }
         const bool generated = registry.GeneratorOf(extension) == kind;
         if (!registry.Reads(kind->id, extension) && !generated)
         {
             return std::unexpected(
-                Failure(vpath, std::format("is used as '{}', which does not read {} files", *kindName, extension)));
+                Failure(vpath, Core::Format("is used as '{}', which does not read {} files", *kindName, extension)));
         }
         const Cooker *cooker = CookerOf(*kind, cookers);
         if (cooker == nullptr)
         {
-            return std::unexpected(Failure(vpath, std::format("is used as '{}', which nothing cooks", *kindName)));
+            return std::unexpected(Failure(vpath, Core::Format("is used as '{}', which nothing cooks", *kindName)));
         }
         return FileRole{.cooker = cooker, .partOfAnother = false};
     }
@@ -294,8 +297,8 @@ std::string SerializeManifest(const std::vector<ManifestEntry> &entries)
     text.reserve(entries.size() * 96u);
     for (const ManifestEntry &entry : entries)
     {
-        text += std::format("{} {} {} {}\n", entry.vpath, entry.guid, Core::ToHex64(entry.cookKey),
-                            Core::ToHex64(entry.outputHash));
+        text += Core::Format("{} {} {} {}\n", entry.vpath, entry.guid, Core::ToHex64(entry.cookKey),
+                             Core::ToHex64(entry.outputHash));
     }
     return text;
 }
@@ -498,7 +501,7 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
         if (const std::string boundBy = roles->BoundBy(id); !boundBy.empty() && owner->Kind() != Core::kTextureKind)
         {
             return std::unexpected(Failure(
-                vpath, std::format("is bound as a texture by '{}' but is used as '{}'", boundBy, owner->Name())));
+                vpath, Core::Format("is bound as a texture by '{}' but is used as '{}'", boundBy, owner->Name())));
         }
 
         const std::expected<std::vector<std::byte>, Core::AssetError> source = Core::AssetSystem::ReadBinary(vpath);
@@ -521,7 +524,7 @@ std::expected<CookReport, CookError> CookTree(const std::filesystem::path &sourc
         planned.vpath  = vpath;
         planned.id     = id;
         planned.cooker = owner;
-        planned.key    = CookKey(*source, dependencyHashes, *owner, context);
+        planned.key    = CookKey(*source, dependencyHashes, *owner, id, context);
         planned.output = cookedRoot / (id.ToString() + std::string{kCookedExtension});
 
         // The manifest says what was produced; the tree says what is there.

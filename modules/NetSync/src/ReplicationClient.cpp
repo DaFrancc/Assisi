@@ -754,9 +754,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 entry.memberPresent[member] = reader.ReadBool() ? 1u : 0u;
         }
 
-        entry.placement.position.x = reader.ReadFloat();
-        entry.placement.position.y = reader.ReadFloat();
-        entry.placement.position.z = reader.ReadFloat();
+        entry.placement.position.x = reader.ReadDouble();
+        entry.placement.position.y = reader.ReadDouble();
+        entry.placement.position.z = reader.ReadDouble();
         entry.placement.rotation.w = reader.ReadFloat();
         entry.placement.rotation.x = reader.ReadFloat();
         entry.placement.rotation.y = reader.ReadFloat();
@@ -1193,10 +1193,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // here starts at the authoritative state rather than re-settling from the
     // level file's pose.
     const std::size_t bodySectionStart = reader.BitsRead();
+    CellReference reference;
     while (reader.Ok() && reader.ReadBool())
     {
         BodyState state;
-        if (!ReadBodyState(reader, state))
+        if (!ReadBodyState(reader, reference, state))
             return false;
         if (const std::unordered_map<NetId, Confirmed>::iterator found = _confirmed.find(state.netId);
             found != _confirmed.end())

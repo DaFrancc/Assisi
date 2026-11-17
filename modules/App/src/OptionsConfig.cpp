@@ -206,10 +206,14 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             const auto &tm = json.at("toneMap");
             ReadMapped(tm, "operator", cfg.tonemap.op, TonemapOperatorFromString);
             ReadField(tm, "exposureStops", cfg.tonemap.exposureStops);
-            ReadField(tm, "contrast", cfg.tonemap.contrast);
-            ReadField(tm, "saturation", cfg.tonemap.saturation);
+            ReadField(tm, "dither", cfg.tonemap.dither);
             // Whatever the file said, the shader only ever sees values in range.
             cfg.tonemap = Render::Sanitized(cfg.tonemap);
+        }
+
+        if (json.contains("bloom"))
+        {
+            ReadField(json.at("bloom"), "enabled", cfg.bloomEnabled);
         }
 
         if (json.contains("shadows"))
@@ -292,6 +296,31 @@ OptionsConfig OptionsConfig::FromJsonText(std::string_view text)
             ReadField(occlusion, "radius", cfg.ambientOcclusion.radius);
             ReadField(occlusion, "strength", cfg.ambientOcclusion.strength);
             cfg.ambientOcclusion = Render::Sanitized(cfg.ambientOcclusion);
+        }
+
+        // Present means chosen, as with the tap interval.
+        if (json.contains("fog") && json.at("fog").contains("enabled"))
+        {
+            cfg.fogEnabled = json.at("fog").at("enabled").get<bool>();
+        }
+
+        if (json.contains("clouds"))
+        {
+            const auto &clouds = json.at("clouds");
+            ReadField(clouds, "resolution", cfg.clouds.resolution);
+            ReadField(clouds, "steps", cfg.clouds.steps);
+            cfg.clouds = Render::Sanitized(cfg.clouds);
+            // Present means chosen, as with the fog.
+            if (clouds.contains("enabled"))
+            {
+                cfg.cloudsEnabled = clouds.at("enabled").get<bool>();
+            }
+        }
+
+        // Present means chosen, as with the fog.
+        if (json.contains("water") && json.at("water").contains("enabled"))
+        {
+            cfg.waterEnabled = json.at("water").at("enabled").get<bool>();
         }
 
         if (json.contains("window"))
@@ -444,8 +473,8 @@ nlohmann::json FullJson(const OptionsConfig &options)
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
     json["toneMap"]["operator"] = TonemapOperatorToString(tonemap.op);
     json["toneMap"]["exposureStops"] = tonemap.exposureStops;
-    json["toneMap"]["contrast"] = tonemap.contrast;
-    json["toneMap"]["saturation"] = tonemap.saturation;
+    json["toneMap"]["dither"] = tonemap.dither;
+    json["bloom"]["enabled"] = options.bloomEnabled;
 
     json["shadows"]["pcss"] = ShadowPcssToString(shadows.pcss);
 
@@ -501,6 +530,14 @@ nlohmann::json FullJson(const OptionsConfig &options)
     occlusion["radius"] = ambientOcclusion.radius;
     occlusion["strength"] = ambientOcclusion.strength;
 
+    nlohmann::json &clouds = json["clouds"];
+    clouds["resolution"] = options.clouds.resolution;
+    clouds["steps"] = options.clouds.steps;
+    if (options.cloudsEnabled)
+    {
+        clouds["enabled"] = *options.cloudsEnabled;
+    }
+
     json["frameSync"]["mode"] = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
     json["frameSync"]["fpsLimit"] = fpsLimit;
 
@@ -523,6 +560,16 @@ nlohmann::json FullJson(const OptionsConfig &options)
     if (options.multiTapSeconds)
     {
         json["controls"]["multiTapSeconds"] = *options.multiTapSeconds;
+    }
+
+    if (options.fogEnabled)
+    {
+        json["fog"]["enabled"] = *options.fogEnabled;
+    }
+
+    if (options.waterEnabled)
+    {
+        json["water"]["enabled"] = *options.waterEnabled;
     }
 
     // Only a volume the player set: every other bus follows the game's own

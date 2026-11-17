@@ -3,6 +3,7 @@
 
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Mondrian/SampleScreen.hpp>
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
@@ -99,6 +100,7 @@ UiInput Holding(UiAction action, double time)
 struct Sample
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
     /// After the Ui, so it is destroyed first: a screen may not outlive the UI
@@ -108,7 +110,7 @@ struct Sample
 
     Sample()
     {
-        held = AddSampleScreen(ui, events, kPlaceholder);
+        held = AddSampleScreen(ui, world, kPlaceholder);
         screen = held.get();
         ui.Show(*screen);
         Frame(ui, kLandscape);
@@ -263,9 +265,10 @@ TEST_CASE("Mondrian: the sample screen's list scrolls its content and keeps it i
 TEST_CASE("Mondrian: input before any layout hits nothing and does not assert")
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
-    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, events, kPlaceholder);
+    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, world, kPlaceholder);
     ui.Show(*screen);
     const InputResult result = ui.ProcessInput(Pressing({.x = 640.f, .y = 360.f}));
     CHECK_FALSE(result.pointerUsed);
@@ -470,9 +473,10 @@ TEST_CASE("Mondrian: hovering focuses only when the developer asks, and never wh
 TEST_CASE("Mondrian: focus set before the first layout survives it")
 {
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     Ui ui{universal};
-    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, events, kPlaceholder);
+    const std::unique_ptr<Screen> screen = AddSampleScreen(ui, world, kPlaceholder);
     ui.Show(*screen);
     ui.SetFocus(*screen, screen->Find("Resume"));
     Frame(ui, kLandscape);

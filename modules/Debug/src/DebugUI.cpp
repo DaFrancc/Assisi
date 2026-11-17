@@ -280,7 +280,7 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
                                    reinterpret_cast<void *>(vulkanContext.GetVkInstance()));
 
     // Match the depth format VulkanContext actually chose for the swapchain
-    // (D24S8 -> D32S8 -> D32, device-dependent). Only advertise a stencil
+    // (D32 -> D32S8 -> D24S8, device-dependent). Only advertise a stencil
     // aspect when the chosen format carries one — D32_SFLOAT does not.
     s_colorFormat = vulkanContext.GetSwapchainFormat();
     const VkFormat kDepthFormat   = vulkanContext.GetDepthFormat();

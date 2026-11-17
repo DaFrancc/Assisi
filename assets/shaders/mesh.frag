@@ -7,6 +7,10 @@
 #extension GL_GOOGLE_include_directive : require
 
 // Each piece may use anything the pieces before it declare.
+#include "sky/fog.glsl"
+#include "sky/fog_volumes.glsl"
+#include "mesh/cloud_shadow.glsl"
+#include "mesh/varyings.glsl"
 #include "mesh/frame.glsl"
 #include "mesh/material.glsl"
 #include "mesh/brdf.glsl"
@@ -23,30 +27,52 @@ const float kDisplayGamma = 2.2;
 // light normalises a direction rather than dividing by zero.
 const float kMinLightDistanceSq = 1e-8;
 
+// Fog thinner than this moves a pixel a fifth of a percent of the way to the
+// fog's colour, which does not show, so its colour is not worked out.
+const float kMinVisibleFog = 1.0 / 512.0;
+
 // The narrowest penumbra a spot's cone is given, in cosine, so one authored
 // with inner == outer blends over a sliver rather than dividing by zero.
 const float kMinConeBlend = 1e-4;
 
+// The Smoothing debug view. Must match Geometry::kMaxSmoothingBendDegrees: the
+// import check warns about the same corners this paints red.
+const float kMaxSmoothingBendDegrees = 40.0;
+// The sharpest a normal can bend from its triangle and still face the same way.
+const float kSquareBendDegrees       = 90.0;
+// Grey for smoothing within the limit, lit by how squarely it faces the viewer
+// so the model's shape reads; blue-grey for a material the check skips.
+const vec3  kSmoothingFine           = vec3(0.5);
+const vec3  kSmoothingSkipped        = vec3(0.35, 0.4, 0.55);
+const float kSmoothingFineAmbient    = 0.35;
+// Red from just past the limit to a right angle and beyond.
+const vec3  kSmoothingBentLeast      = vec3(0.35, 0.0, 0.0);
+const vec3  kSmoothingBentMost       = vec3(1.0, 0.0, 0.0);
+
+// What the Smoothing debug view paints this pixel. @p followSmoothing is the
+// material's ShadowsFollowSmoothing.
+vec3 SmoothingDebugColor(bool followSmoothing)
+{
+    vec3  N      = GeometricNormal();
+    vec3  V      = normalize(uFrame.cameraPosition.xyz - vWorldPos);
+    float facing = kSmoothingFineAmbient + (1.0 - kSmoothingFineAmbient) * max(dot(N, V), 0.0);
+    if (!followSmoothing)
+    {
+        return kSmoothingSkipped * facing;
+    }
+    float bend = SmoothingBendDegrees(N, V);
+    if (bend <= kMaxSmoothingBendDegrees)
+    {
+        return kSmoothingFine * facing;
+    }
+    float past = (bend - kMaxSmoothingBendDegrees) / (kSquareBendDegrees - kMaxSmoothingBendDegrees);
+    return mix(kSmoothingBentLeast, kSmoothingBentMost, clamp(past, 0.0, 1.0));
+}
+
 void main()
 {
-    // Derivatives while control flow is still uniform, before the masked build's
-    // discard; the shadow lookups that read them run inside per-light branches.
-    if (uFrame.shadowPcss.x > 0.0 || uFrame.localShadowCounts.z == 1u)
-    {
-        gWorldPosDx = dFdx(vWorldPos);
-        gWorldPosDy = dFdy(vWorldPos);
-    }
-
+    CaptureSurfacePlane();
     Surface surf = SampleMaterial();
-
-#ifdef ASSISI_ALPHA_MASK
-    // Only this build can discard, because a shader that can loses early depth
-    // rejection for every draw through its pipeline.
-    if (surf.alpha < surf.alphaCutoff)
-    {
-        discard;
-    }
-#endif
 
     // Material debug views write one channel straight out; the tone map passes
     // them through untouched. Colour channels are gamma-encoded for display.
@@ -81,6 +107,10 @@ void main()
         {
             outColor = vec4(vec3(uFrame.indirectSpecular.z != 0.0 ? ScreenOcclusion() : 1.0), 1.0);
         }
+        else if (debugMode == kDebugSmoothing)
+        {
+            outColor = vec4(SmoothingDebugColor(surf.followSmoothing), 1.0);
+        }
         else
         {
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -98,37 +128,50 @@ void main()
     vec3 Lo = vec3(0.0);
 
     BrdfContext brdf = MakeBrdfContext(N, V, surf, F0);
+#ifdef ASSISI_ALPHA_BLEND
+    // A see-through surface's alpha fades its body, the diffuse light and the
+    // glow, and not its reflections: those at full strength are what make a
+    // clear pane read as glass.
+    brdf.diffuseBase *= surf.alpha;
+    brdf.eonSingle   *= surf.alpha;
+    brdf.eonMulti    *= surf.alpha;
+    surf.emissive    *= surf.alpha;
+#endif
+
+    // Shadows are looked up with the geometric normal: the depth map holds
+    // rasterized geometry, not the normal-mapped surface, and has nothing to
+    // say where that geometry faces away from the light. A normal-mapped
+    // surface's light fades to nothing on the way there (BumpShadowing), so no
+    // light needs a lookup past it.
+    vec3           Ng       = GeometricNormal();
+    ShadowReceiver receiver = ShadowReceiverAt(Ng, surf.followSmoothing);
 
     // Only the sun casts among directional lights; shadowCounts.y is its index.
     uint shadowCascadeCount = uFrame.shadowCounts.x;
     uint shadowLightIndex   = uFrame.shadowCounts.y;
     uint shadowCascade      = 0u;
 
+    // Clouds come only with a sky, and a sky only with exactly one directional
+    // light, so whatever the clouds let through is that light's.
+    float cloudLight = CloudShadow(uFrame.cloudShadow, vWorldPos - uFrame.cameraPosition.xyz, uClampSampler);
+
     uint dirLightCount = uFrame.lightCounts.x;
     for (uint i = 0u; i < dirLightCount; i++)
     {
         vec3 L        = -dirLights[i].directionIntensity.xyz;
-        vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
+        vec3 radiance = dirLights[i].colorPad.xyz * (dirLights[i].directionIntensity.w * cloudLight);
         if (shadowCascadeCount > 0u && i == shadowLightIndex)
         {
             shadowCascade = SelectCascade(abs(vViewZ));
 
-            // Shadows are looked up with the geometric normal: the depth map holds
-            // rasterized geometry, not the normal-mapped surface. A surface facing
-            // away by either normal is skipped; one lit only by its normal map is
-            // unlit, since the map knows nothing about it.
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SunVisibility(Ng, L, shadowCascade, NgdotL);
-            }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
+                radiance *= SunVisibility(shadowCascade, ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
         }
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -164,19 +207,16 @@ void main()
         // The same two-normal rule as the sun.
         if (localShadows == 1u)
         {
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= PointVisibility(pointLights[li].shadowView.x, lPos, vWorldPos, Ng, NgdotL);
-            }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
+                radiance *= PointVisibility(pointLights[li].shadowView.x, lPos,
+                                            ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
         }
 
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -208,19 +248,16 @@ void main()
 
         if (localShadows == 1u)
         {
-            vec3  Ng     = GeometricNormal();
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);
             if (NdotL > 0.0 && NgdotL > 0.0)
             {
-                radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos, vWorldPos, Ng, NgdotL);
-            }
-            else if (NdotL > 0.0)
-            {
-                radiance = vec3(0.0);
+                radiance *= SpotVisibility(spotLights[li].shadowView, lDir, lPos,
+                                           ShadowSurfaceToward(Ng, receiver, L, NgdotL));
             }
         }
 
+        radiance *= surf.normalMapped ? BumpShadowing(Ng, N, L) : 1.0;
         Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
@@ -229,8 +266,13 @@ void main()
     vec3 indirect = IndirectRadiance(N, vWorldPos);
 
     // Screen-space occlusion takes the darker of itself and the material's map:
-    // both see the asset's own creases.
+    // both see the asset's own creases. Not on a see-through surface, which it
+    // never saw: it holds the solid surface behind.
+#ifdef ASSISI_ALPHA_BLEND
+    bool  screenOccluded  = false;
+#else
     bool  screenOccluded  = uFrame.indirectSpecular.z != 0.0;
+#endif
     float screenOcclusion = 1.0;
     float occlusion       = surf.occlusion;
     if (screenOccluded)
@@ -239,37 +281,70 @@ void main()
         occlusion = min(occlusion, screenOcclusion);
     }
 
+    // The split sum: the table gives how much of the environment the lobe
+    // reflects, and the diffuse layer gets the rest. With no environment bound
+    // the lobe reflects the ambient along the reflection, so a metal reflects
+    // the flat light it stands in rather than taking it as diffuse.
+    vec3 R              = reflect(-V, N);
+    vec2 ab             = brdf.envBrdf;
+    vec3 specularAlbedo = F0 * ab.x + ab.y;
+    // Multi-scatter compensation from this lobe's own albedo, A + B.
+    vec3 compensation   = vec3(1.0) + F0 * (1.0 / max(ab.x + ab.y, kEps) - 1.0);
+    vec3 environment    = uFrame.indirectSpecular.x != 0.0 ? IndirectSpecular(R, surf.roughness, vWorldPos)
+                                                           : IndirectRadiance(R, vWorldPos);
+    vec3 specular       = environment * specularAlbedo * compensation;
+    vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
+#ifdef ASSISI_ALPHA_BLEND
+    diffuse *= surf.alpha;
+#endif
     vec3 color;
-    if (uFrame.indirectSpecular.x == 0.0)
+    if (screenOccluded)
     {
-        // No environment to reflect.
-        color = indirect * albedo * occlusion + Lo + surf.emissive;
+        // A narrow reflection pointing out of a crease is occluded less than
+        // the diffuse term, so it takes its own share of the occlusion.
+        float alpha = surf.roughness * surf.roughness;
+        float specularOcclusion =
+            min(surf.occlusion, SpecularOcclusion(brdf.NdotV, screenOcclusion, alpha));
+        color = diffuse * occlusion + specular * specularOcclusion + Lo + surf.emissive;
     }
     else
     {
-        // The split sum: the table gives how much of the environment the lobe
-        // reflects, and the diffuse layer gets the rest.
-        vec2 ab             = brdf.envBrdf;
-        vec3 specularAlbedo = F0 * ab.x + ab.y;
-        // Multi-scatter compensation from this lobe's own albedo, A + B.
-        vec3 compensation   = vec3(1.0) + F0 * (1.0 / max(ab.x + ab.y, kEps) - 1.0);
-        vec3 specular       = IndirectSpecular(reflect(-V, N), surf.roughness, vWorldPos) * specularAlbedo *
-                              compensation;
-        vec3 diffuse        = indirect * albedo * (1.0 - metallic) * (vec3(1.0) - specularAlbedo);
-        if (screenOccluded)
+        color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+    }
+
+    // The level's fog, over everything the surface sends toward the eye. Its
+    // colour is a sky evaluation, so it is only worked out where enough fog
+    // lies in front of the surface to show.
+    //
+    // Over a see-through surface the fog's own colour is added only as far as
+    // alpha covers what is behind: what shows through already carries the fog
+    // in front of it, and adding it twice would grey a clear pane in the haze.
+    vec3  toSurface = vWorldPos - uFrame.cameraPosition.xyz;
+    float distance  = length(toSurface);
+    vec3  viewRay   = toSurface / max(distance, kEps);
+    if (uFrame.fog.view.x != 0.0)
+    {
+        float opacity = FogOpacity(uFrame.fog, distance, uFrame.fog.view.y + toSurface.y);
+        if (opacity > kMinVisibleFog)
         {
-            // A narrow reflection pointing out of a crease is occluded less than
-            // the diffuse term, so it takes its own share of the occlusion.
-            float alpha = surf.roughness * surf.roughness;
-            float specularOcclusion =
-                min(surf.occlusion, SpecularOcclusion(brdf.NdotV, screenOcclusion, alpha));
-            color = diffuse * occlusion + specular * specularOcclusion + Lo + surf.emissive;
-        }
-        else
-        {
-            color = (diffuse + specular) * surf.occlusion + Lo + surf.emissive;
+#ifdef ASSISI_ALPHA_BLEND
+            color = color * (1.0 - opacity) + FogRadiance(uFrame.fog, viewRay) * (opacity * surf.alpha);
+#else
+            color = mix(color, FogRadiance(uFrame.fog, viewRay), opacity);
+#endif
         }
     }
+
+    // Placed fog volumes over that, each taking the haze in front of it into
+    // its own colour.
+#ifdef ASSISI_ALPHA_BLEND
+    FogVolumesEffect volumes =
+        FogVolumesAlong(uFrame.fogVolumes, uFrame.fog, uFrame.cameraPosition.xyz, viewRay, distance, gl_FragCoord.xy);
+    color = color * volumes.through + volumes.added * surf.alpha;
+#else
+    color = ApplyFogVolumes(color, uFrame.fogVolumes, uFrame.fog, uFrame.cameraPosition.xyz, viewRay, distance,
+                            gl_FragCoord.xy);
+#endif
 
     // ---- Shadow debug views ----
 
@@ -286,9 +361,8 @@ void main()
     //   black  within a millimetre: ambiguous
     if (uFrame.shadowCounts.w == kShadowDebugMargin && shadowCascadeCount > 0u)
     {
-        vec3        Ng    = GeometricNormal();
         vec3        sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
-        ShadowProbe probe = ProbeCascade(shadowCascade, vWorldPos, Ng, dot(Ng, sunL));
+        ShadowProbe probe = ProbeCascade(shadowCascade, ShadowSurfaceToward(Ng, receiver, sunL, dot(Ng, sunL)));
 
         const float kFullScaleMetres = 0.25;
         float margin = (probe.stored - probe.reference) * uFrame.shadowCascade[shadowCascade].w;
@@ -306,7 +380,6 @@ void main()
     // yellow the kernel finding light its centre did not.
     if (uFrame.shadowCounts.w == kShadowDebugTaps && shadowCascadeCount > 0u)
     {
-        vec3  Ng    = GeometricNormal();
         vec3  sunL  = -dirLights[uFrame.shadowCounts.y].directionIntensity.xyz;
         float NdotL = dot(Ng, sunL);
 
@@ -317,17 +390,21 @@ void main()
             return;
         }
 
-        ShadowProbe probe    = ProbeCascade(shadowCascade, vWorldPos, Ng, NdotL);
-        float       blended  = SunVisibility(Ng, sunL, shadowCascade, NdotL);
-        float       filtered = SampleCascade(shadowCascade, vWorldPos, Ng, NdotL);
-        float       centre   = ShadowTap(ShadowCoord(shadowCascade,
-                                                     vWorldPos + Ng * (uFrame.shadowCascade[shadowCascade].z *
-                                                                       sqrt(max(0.0, 1.0 - NdotL * NdotL)))).xy,
-                                         shadowCascade, probe.reference);
+        ShadowSurface sunSurface = ShadowSurfaceToward(Ng, receiver, sunL, NdotL);
+        ShadowProbe   probe      = ProbeCascade(shadowCascade, sunSurface);
+        float         blended    = SunVisibility(shadowCascade, sunSurface);
+        float         filtered   = SampleCascade(shadowCascade, sunSurface);
+        vec2          slope      = CascadeReceiverSlope(shadowCascade, sunSurface.plane);
+        float         centre     = CascadeTap(shadowCascade, probe.uv, Receiver(probe.uv, slope, probe.reference));
 
         color = vec3(blended, filtered, centre);
     }
 
     // Linear, unbounded radiance; tonemap.frag decides how it looks.
+#ifdef ASSISI_ALPHA_BLEND
+    // Premultiplied: alpha is how much of what is behind this surface hides.
+    outColor = vec4(color, surf.alpha);
+#else
     outColor = vec4(color, 1.0);
+#endif
 }

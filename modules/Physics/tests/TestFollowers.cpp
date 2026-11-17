@@ -67,12 +67,12 @@ Physics::CollisionFilter ShotAt(Physics::CollisionChannel channel)
 std::optional<Physics::QueryHit> RayDown(const Physics::PhysicsWorld &world, glm::vec3 above,
                                          Physics::CollisionFilter filter, ECS::Entity ignore)
 {
-    return world.CastRay(glm::vec3(above.x, kRayHeight, above.z), glm::vec3(0.f, -kRayLength, 0.f), filter, ignore);
+    return world.CastRay(glm::dvec3(above.x, kRayHeight, above.z), glm::vec3(0.f, -kRayLength, 0.f), filter, ignore);
 }
 
 glm::vec3 PositionOf(const ECS::Scene &scene, ECS::Entity entity)
 {
-    return scene.Get<ECS::Transform>(entity)->position;
+    return glm::vec3(scene.Get<ECS::Transform>(entity)->position);
 }
 
 } // namespace
@@ -81,9 +81,9 @@ TEST_CASE("A character's hitbox follows it without pushing it, and shots find it
 {
     TestScene test;
     (void)AddFloor(test.scene);
-    const ECS::Entity hit = AddCharacter(test.scene, glm::vec3(0.f));
-    const ECS::Entity bare = AddCharacter(test.scene, glm::vec3(0.f, 0.f, 5.f));
-    const ECS::Entity head = AddChildCollider(test.scene, hit, glm::vec3(0.f, kHeadHeight, 0.f), Head());
+    const ECS::Entity hit = AddCharacter(test.scene, glm::dvec3(0.f));
+    const ECS::Entity bare = AddCharacter(test.scene, glm::dvec3(0.f, 0.f, 5.f));
+    const ECS::Entity head = AddChildCollider(test.scene, hit, glm::dvec3(0.f, kHeadHeight, 0.f), Head());
 
     constexpr int32_t kWalkSteps = 60;
     const glm::vec3 walk(2.f, 0.f, 0.f);
@@ -132,7 +132,7 @@ TEST_CASE("A follower's own mask decides whether it stops a falling crate")
 {
     TestScene test;
     (void)AddFloor(test.scene);
-    const ECS::Entity character = AddCharacter(test.scene, glm::vec3(0.f));
+    const ECS::Entity character = AddCharacter(test.scene, glm::dvec3(0.f));
 
     constexpr float kShelfHeight = 3.f;
     Physics::Collider shelf;
@@ -149,10 +149,10 @@ TEST_CASE("A follower's own mask decides whether it stops a falling crate")
         shelf.collidesWith = Physics::AllChannels.Without(Physics::CollisionChannel::World);
         stops = false;
     }
-    (void)AddChildCollider(test.scene, character, glm::vec3(0.f, kShelfHeight, 0.f), shelf);
+    (void)AddChildCollider(test.scene, character, glm::dvec3(0.f, kShelfHeight, 0.f), shelf);
 
     const ECS::Entity crate =
-        AddBody(test.scene, glm::vec3(0.f, kShelfHeight + 2.f, 0.f), Box(glm::vec3(0.25f), /*isStatic=*/ false));
+        AddBody(test.scene, glm::dvec3(0.f, kShelfHeight + 2.f, 0.f), Box(glm::vec3(0.25f), /*isStatic=*/ false));
     constexpr int32_t kFallSteps = 120;
     Step(test.world, kFallSteps);
 
@@ -171,17 +171,17 @@ TEST_CASE("A trigger riding a ball reports what enters it for the ball, and neve
 {
     TestScene test;
     (void)AddFloor(test.scene);
-    const ECS::Entity ball = AddBody(test.scene, glm::vec3(0.f, 0.5f, 0.f), Ball(0.5f, /*isStatic=*/ false));
+    const ECS::Entity ball = AddBody(test.scene, glm::dvec3(0.f, 0.5f, 0.f), Ball(0.5f, /*isStatic=*/ false));
 
     constexpr float kReach = 1.5f;
     Physics::Collider pickup;
     pickup.shape = Physics::ColliderShape::Sphere;
     pickup.radius = kReach;
     pickup.channel = Physics::CollisionChannel::Trigger;
-    const ECS::Entity trigger = AddChildCollider(test.scene, ball, glm::vec3(0.f), pickup);
+    const ECS::Entity trigger = AddChildCollider(test.scene, ball, glm::dvec3(0.f), pickup);
 
     const ECS::Entity visitor =
-        AddBody(test.scene, glm::vec3(1.f, 4.f, 0.f), Box(glm::vec3(0.2f), /*isStatic=*/ false));
+        AddBody(test.scene, glm::dvec3(1.f, 4.f, 0.f), Box(glm::vec3(0.2f), /*isStatic=*/ false));
 
     bool visitorEntered = false;
     bool sawItself = false;
@@ -213,7 +213,7 @@ TEST_CASE("A trigger riding a ball reports what enters it for the ball, and neve
     CHECK(test.world.BodyOf(trigger) == ball);
 
     // It goes where the ball goes.
-    test.world.Teleport(ball, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(20.f, 0.5f, 0.f)});
+    test.world.Teleport(ball, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(20.f, 0.5f, 0.f)});
     Step(test.world);
     const std::optional<Physics::QueryHit> found =
         RayDown(test.world, PositionOf(test.scene, ball), ShotAt(Physics::CollisionChannel::Trigger), ECS::NullEntity);
@@ -225,7 +225,7 @@ TEST_CASE("A trigger riding a ball reports what enters it for the ball, and neve
 TEST_CASE("A collider set to ride along is its own body that adds no mass and never pushes its owner")
 {
     TestScene test;
-    const ECS::Entity crate = AddBody(test.scene, glm::vec3(0.f), Box(glm::vec3(0.5f), /*isStatic=*/ false));
+    const ECS::Entity crate = AddBody(test.scene, glm::dvec3(0.f), Box(glm::vec3(0.5f), /*isStatic=*/ false));
     test.scene.GetMut<Physics::RigidBody>(crate)->gravityScale = 0.f;
 
     Physics::Collider rider;
@@ -233,8 +233,8 @@ TEST_CASE("A collider set to ride along is its own body that adds no mass and ne
     rider.halfExtents = glm::vec3(0.5f);
     rider.attach = Physics::ColliderAttach::Body;
     // Overlapping its owner: anything but the owner rule would shove the crate.
-    const ECS::Entity overlap = AddChildCollider(test.scene, crate, glm::vec3(0.f, 0.5f, 0.f), rider);
-    const ECS::Entity above = AddChildCollider(test.scene, crate, glm::vec3(0.f, 3.f, 0.f), rider);
+    const ECS::Entity overlap = AddChildCollider(test.scene, crate, glm::dvec3(0.f, 0.5f, 0.f), rider);
+    const ECS::Entity above = AddChildCollider(test.scene, crate, glm::dvec3(0.f, 3.f, 0.f), rider);
 
     test.world.Reconcile();
     CHECK_FALSE(test.world.HasBody(overlap));
@@ -245,7 +245,7 @@ TEST_CASE("A collider set to ride along is its own body that adds no mass and ne
     Step(test.world, kSteps);
     CHECK(glm::length(PositionOf(test.scene, crate)) < 1e-3f);
 
-    test.world.Teleport(crate, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(5.f, 0.f, 0.f)});
+    test.world.Teleport(crate, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(5.f, 0.f, 0.f)});
     Step(test.world);
     const std::optional<Physics::QueryHit> found =
         RayDown(test.world, glm::vec3(5.f, 0.f, 0.f), Physics::CollisionFilter{}, ECS::NullEntity);

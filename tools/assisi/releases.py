@@ -22,6 +22,9 @@ RECORD = "release.json"
 # Steam's runtime library as the build copies it beside the game, per platform.
 STEAM_LIBRARIES = ("libsteam_api.so", "steam_api64.dll")
 
+# What a Linux game starts from beside itself when it crashes, to write the dump.
+CRASH_DUMP_HANDLER = "crashpad_handler"
+
 # Suffix of the folder a release is assembled in before it takes its name, so a
 # copy that fails part-way never looks like a release.
 PARTIAL_SUFFIX = ".partial"
@@ -83,6 +86,9 @@ def keep(project: Project, version: str, spec: BuildSpec, tree: str, argv: List[
         library = project.game_dir(tree) / name
         if library.is_file():
             shutil.copy2(library, partial / name)
+    handler = project.game_dir(tree) / CRASH_DUMP_HANDLER
+    if handler.is_file():
+        shutil.copy2(handler, partial / CRASH_DUMP_HANDLER)
     record = {"version": version, "level": spec.level, "compiler": spec.compiler,
               "steam_runtime": spec.steam_runtime, "created": time.time(), "command": argv}
     (partial / RECORD).write_text(json.dumps(record, indent=2) + "\n")

@@ -23,6 +23,9 @@ constexpr std::array<NamedEnum<Direction>, 2> kDirections{{{"row", Direction::Ro
 constexpr std::array<NamedEnum<CornerStyle>, 3> kCornerStyles{
     {{"square", CornerStyle::Square}, {"rounded", CornerStyle::Rounded}, {"cut", CornerStyle::Cut}}};
 
+constexpr std::array<NamedEnum<ImageFit>, 3> kImageFits{
+    {{"stretch", ImageFit::Stretch}, {"contain", ImageFit::Contain}, {"cover", ImageFit::Cover}}};
+
 constexpr std::array<NamedEnum<TextAlign>, 3> kTextAligns{
     {{"left", TextAlign::Left}, {"center", TextAlign::Center}, {"right", TextAlign::Right}}};
 
@@ -608,6 +611,11 @@ std::optional<Direction> ParseDirection(std::string_view text)
 std::optional<CornerStyle> ParseCornerStyle(std::string_view text)
 {
     return LookUpEnum(text, kCornerStyles);
+}
+
+std::optional<ImageFit> ParseImageFit(std::string_view text)
+{
+    return LookUpEnum(text, kImageFits);
 }
 
 std::optional<TextAlign> ParseTextAlign(std::string_view text)

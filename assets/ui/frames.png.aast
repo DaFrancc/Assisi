@@ -1,0 +1,10 @@
+{
+  "guid": "c63387af-1cfd-485d-99f0-19f0a25f166f",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "texture"
+    }
+  ],
+  "version": 1
+}

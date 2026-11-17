@@ -32,6 +32,7 @@ add_executable(Assisi-NetSync-Tests
   TestMessages.cpp
   TestRelevancy.cpp
   TestReplication.cpp
+  TestWorldPosition.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-NetSync-Tests)

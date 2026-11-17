@@ -24,16 +24,14 @@
 namespace Assisi::Physics
 {
 
-std::optional<glm::mat4> SimulationParentMatrix(const ECS::Scene &scene, ECS::Entity entity)
+std::optional<ECS::Transform> SimulationParentPose(const ECS::Scene &scene, ECS::Entity entity)
 {
     const ECS::Parent *parent = scene.Get<ECS::Parent>(entity);
     if (parent == nullptr || parent->parent == ECS::NullEntity || !scene.Has<ECS::Transform>(parent->parent))
     {
         return std::nullopt;
     }
-    const ECS::Transform world = ECS::WorldTransformOf(scene, parent->parent);
-    return glm::translate(glm::mat4(1.f), world.position) * glm::mat4_cast(world.rotation) *
-           glm::scale(glm::mat4(1.f), world.scale);
+    return ECS::WorldTransformOf(scene, parent->parent);
 }
 
 void PhysicsWorld::Impl::WriteBack()
@@ -69,9 +67,9 @@ void PhysicsWorld::Impl::WriteBack()
         const JPH::Vec3 linear = bodies.GetLinearVelocity(slot.body);
         const JPH::Vec3 angular = bodies.GetAngularVelocity(slot.body);
         const Pose pose{glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-                        glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
-        const BodyState state{.linearVelocity = glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-                              .angularVelocity = glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+                        ToGlm(position)};
+        const BodyState state{.linearVelocity = ToGlm(linear),
+                              .angularVelocity = ToGlm(angular),
                               .asleep = !bodies.IsActive(slot.body)};
         if (!IsFinite(pose) || !IsFinite(state.linearVelocity) || !IsFinite(state.angularVelocity))
         {
@@ -103,13 +101,13 @@ void PhysicsWorld::Impl::WriteBack()
         CharacterRecord &record = entry.second;
         const JPH::RVec3 position = record.character->GetPosition();
         const JPH::Vec3 velocity = record.character->GetLinearVelocity();
-        if (!IsFinite(glm::vec3(position.GetX(), position.GetY(), position.GetZ())) ||
-            !IsFinite(glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ())))
+        if (!IsFinite(ToGlm(position)) ||
+            !IsFinite(ToGlm(velocity)))
         {
             RestoreCharacter(record);
             continue;
         }
-        const Pose pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::vec3(position.GetX(), position.GetY(), position.GetZ())};
+        const Pose pose{glm::quat(1.f, 0.f, 0.f, 0.f), ToGlm(position)};
         WritePose(record.entity, pose, /*writeRotation=*/ false);
         WriteCharacterState(record.entity, BuildCharacterState(record));
     }
@@ -118,7 +116,7 @@ void PhysicsWorld::Impl::WriteBack()
 Pose PhysicsWorld::Impl::TransformPose(ECS::Entity entity) const
 {
     const ECS::Transform &transform = *scene.Get<ECS::Transform>(entity);
-    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    if (const std::optional<ECS::Transform> parent = SimulationParentPose(scene, entity); parent.has_value())
     {
         const ECS::Transform world = ECS::PoseUnderParent(transform, *parent);
         return Pose{world.rotation, world.position};
@@ -147,8 +145,7 @@ void PhysicsWorld::Impl::RestoreCharacter(CharacterRecord &record)
     Core::Log::Error("PhysicsWorld: character {} (gen {}) came out of the step with a position or velocity that is "
                      "not a number; it is put back where it last was, at rest.",
                      record.entity.index, record.entity.generation);
-    const glm::vec3 feet = TransformPose(record.entity).position;
-    const JPH::RVec3 position(feet.x, feet.y, feet.z);
+    const JPH::RVec3 position = ToJolt(TransformPose(record.entity).position);
     record.character->SetPosition(position);
     record.character->SetLinearVelocity(JPH::Vec3::sZero());
     physicsSystem.GetBodyInterfaceNoLock().SetPosition(SlotFor(record.entity)->body, position,
@@ -205,10 +202,11 @@ void PhysicsWorld::Impl::WritePose(ECS::Entity entity, Pose pose, bool writeRota
 
     // Jolt reports world space; a Transform under a parent is an offset *from*
     // that parent. Writing one into the other would apply the parent twice.
-    if (const std::optional<glm::mat4> parent = SimulationParentMatrix(scene, entity); parent.has_value())
+    if (const std::optional<ECS::Transform> parent = SimulationParentPose(scene, entity); parent.has_value())
     {
-        pose.position = glm::vec3(glm::inverse(*parent) * glm::vec4(pose.position, 1.f));
-        pose.rotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * pose.rotation);
+        const ECS::Transform local = ECS::PoseInParent(ECS::Transform{pose.position, pose.rotation}, *parent);
+        pose.position = local.position;
+        pose.rotation = local.rotation;
     }
 
     // Nothing moved: skip the write rather than stamp a change tick for a pose

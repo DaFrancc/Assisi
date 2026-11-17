@@ -13,9 +13,11 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/App/WorldFrame.hpp>
+#include <Assisi/Audio/Clip.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/TrivialString.hpp>
@@ -24,6 +26,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
 #include <Assisi/Editor/EditorChiaraPanel.hpp>
+#include <Assisi/Editor/GoldenImage.hpp>
 #include <Assisi/Editor/TextureFile.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
@@ -38,9 +41,11 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/NetworkConfig.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 #include <Assisi/Window/InputBindings.hpp>
 #include <Assisi/Window/Key.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <imgui.h>
 #include <imgui_internal.h> // ImGui input watchdog: ActiveId/HoveredWindow introspection
@@ -49,20 +54,122 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <filesystem>
+#include <format>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 namespace Assisi::Editor
 {
 
+namespace
+{
+/// Where F2 screenshots go: a folder beside the executable, with the options.
+constexpr std::string_view kScreenshotFolder = "screenshots";
+/// Screenshots taken in the same second are told apart by a count after the
+/// time. Pressing F2 more often than this in one second is not humanly done.
+constexpr uint32_t kMaxScreenshotsPerSecond = 100;
+/// F2's shutter. Read by path: editor content is outside the asset database, so
+/// it has no id to load by and is never cooked into a game.
+constexpr std::string_view kScreenshotSoundPath = "editor/sounds/camera_shutter.wav";
+/// The bus editor feedback plays on, so the UI volume governs it.
+constexpr std::string_view kScreenshotSoundBus = "UI";
+/// The most shutters that play at once. A press past it fades the oldest out,
+/// so every screenshot is still heard.
+constexpr std::size_t kMaxScreenshotSounds = 5;
+
+/// The shutter, decoded, or null with the reason logged.
+std::shared_ptr<const Assisi::Audio::PcmClip> LoadScreenshotSound()
+{
+    const std::expected<std::filesystem::path, Assisi::Core::AssetError> resolved =
+        Assisi::Core::AssetSystem::Resolve(kScreenshotSoundPath);
+    if (!resolved)
+    {
+        Assisi::Core::Log::Warn("Screenshot: '{}' not found; F2 is silent.", kScreenshotSoundPath);
+        return nullptr;
+    }
+    std::ifstream file(*resolved, std::ios::binary | std::ios::ate);
+    const std::streamsize size = file ? static_cast<std::streamsize>(file.tellg()) : -1;
+    std::vector<std::byte> bytes(size > 0 ? static_cast<std::size_t>(size) : 0u);
+    file.seekg(0);
+    if (size <= 0 || !file.read(reinterpret_cast<char *>(bytes.data()), size))
+    {
+        Assisi::Core::Log::Warn("Screenshot: could not read '{}'; F2 is silent.", resolved->string());
+        return nullptr;
+    }
+    std::expected<Assisi::Audio::PcmClip, Assisi::Audio::AudioError> clip = Assisi::Audio::DecodeClip(bytes);
+    if (!clip)
+    {
+        Assisi::Core::Log::Warn("Screenshot: could not decode '{}' ({}); F2 is silent.", resolved->string(),
+                                Assisi::Audio::ToString(clip.error()));
+        return nullptr;
+    }
+    return std::make_shared<const Assisi::Audio::PcmClip>(std::move(*clip));
+}
+
+/// Now, to the second, as YYYY-MM-DD-HH-MM-SS: local time, or UTC on a system
+/// without time zone data. Ordered fields, so the names sort in the order taken,
+/// and no colons, which Windows refuses in a file name.
+std::string ScreenshotStamp()
+{
+    const std::chrono::sys_seconds now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (const std::chrono::time_zone *zone = Assisi::Core::LocalZone(); zone != nullptr)
+    {
+        return Core::Format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::zoned_time{zone, now});
+    }
+    return Core::Format("{:%Y-%m-%d-%H-%M-%S}", now);
+}
+
+/// A screenshot path named for now and not yet taken, or empty when the folder
+/// cannot be made or this second is full; either says why in the log. @p stamp
+/// and @p taken are the second the last name was for and how many were named in
+/// it, updated here.
+std::string NextScreenshotPath(std::string &stamp, uint32_t &taken)
+{
+    const std::filesystem::path folder = Assisi::Core::AssetSystem::GetUserRoot() / kScreenshotFolder;
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    if (error)
+    {
+        Assisi::Core::Log::Error("Screenshot: could not make '{}' ({}).", folder.string(), error.message());
+        return {};
+    }
+    if (const std::string now = ScreenshotStamp(); now != stamp)
+    {
+        stamp = now;
+        taken = 0;
+    }
+    // Past the ones already named this second, and past any file already there.
+    for (uint32_t shot = taken + 1; shot <= kMaxScreenshotsPerSecond; ++shot)
+    {
+        const std::string name =
+            shot == 1 ? Core::Format("screenshot-{}.png", stamp) : Core::Format("screenshot-{}-{}.png", stamp, shot);
+        const std::filesystem::path candidate = folder / name;
+        if (!std::filesystem::exists(candidate, error))
+        {
+            taken = shot;
+            return candidate.string();
+        }
+    }
+    Assisi::Core::Log::Error("Screenshot: more than {} taken this second; this one is skipped.",
+                             kMaxScreenshotsPerSecond);
+    return {};
+}
+} // namespace
+
 EditorApp::EditorApp(EditorConfig config)
-    : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
+    : _editorConfig(std::move(config)), _sceneRenderer(std::make_unique<Assisi::Runtime::SceneRenderer>()),
+    _options(std::make_unique<EditorOptionsPanel>())
 {
     DeclareEditorEvents();
     // Before Initialize, which loads the post-process shaders through it.
@@ -72,6 +179,10 @@ EditorApp::EditorApp(EditorConfig config)
     // Application reads these during Initialize(), which runs before OnStart, so
     // they cannot wait for a hook — hence the constructor body.
     SetRestrictedViewer(_editorConfig.restrictedViewer);
+    if (_editorConfig.vulkanValidation)
+    {
+        RequireVulkanValidation();
+    }
     if (_editorConfig.perfCapture.frames > 0)
     {
         SetPerfCapture(_editorConfig.perfCapture);
@@ -95,11 +206,12 @@ void EditorApp::DrawOptionsWindow()
 {
     const FrameStatsView stats = GetFrameStats();
     const bool applyDisplay = _options->Draw({.input = GetInput(),
-                                              .renderer = _sceneRenderer,
+                                              .renderer = *_sceneRenderer,
                                               .options = GetOptions(),
                                               .config = GetConfig(),
                                               .showEditorOverlays = _showEditorOverlays,
                                               .showSkeletons = _showSkeletons,
+                                              .preferences = _preferences,
                                               .fps = GetFps(),
                                               .cpuFrameMs = GetCpuFrameMs(),
                                               .gpuFrameMs = GetGpuFrameMs(),
@@ -113,11 +225,20 @@ void EditorApp::DrawOptionsWindow()
         ApplyDisplayOptions();
     }
 
+    // Saved once an edit settles rather than on every frame of a drag. Never by a
+    // restricted viewer, which shares this folder with the editor that started
+    // it.
+    if (_preferences != _savedPreferences && !ImGui::IsAnyItemActive() && !IsRestrictedViewer())
+    {
+        Assisi::Editor::SaveEditorPreferences(_preferences);
+        _savedPreferences = _preferences;
+    }
+
     // The per-light shadow report is gathered for two readers and nobody else:
     // this overlay, and the inspector line on a selected light. Asked for here,
     // once, so the renderer has a single answer rather than two writers racing
     // to turn it off — and so a game, which has neither reader, never pays it.
-    _sceneRenderer.SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
+    _sceneRenderer->SetShadowDiagnosticsEnabled(_options->IsOpen() || SelectedEntityCastsLocalShadows());
 }
 
 bool EditorApp::SelectedEntityCastsLocalShadows() const
@@ -226,7 +347,7 @@ void EditorApp::EndCursorLoan()
     _cursorLoan = {};
 }
 
-void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const
+void EditorApp::ViewCamera(Assisi::ECS::WorldMatrix &world, Assisi::Runtime::Camera &camera) const
 {
     // The one answer to "where is the viewport looking from". Everything that
     // projects or unprojects has to agree with what was drawn — a pick ray or a
@@ -239,6 +360,14 @@ void EditorApp::ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) co
     }
     world = _cameraWorld;
     camera = _camera;
+}
+
+glm::dvec3 EditorApp::ViewOrigin() const
+{
+    Assisi::ECS::WorldMatrix world;
+    Assisi::Runtime::Camera camera;
+    ViewCamera(world, camera);
+    return Assisi::ECS::WorldPositionOf(world);
 }
 
 std::optional<Assisi::App::SceneView> EditorApp::PlayView() const
@@ -302,7 +431,7 @@ void EditorApp::OnStart()
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
     _worlds.SetServices({.cache = &_assetCache,
-                         .renderer = &_sceneRenderer,
+                         .renderer = _sceneRenderer.get(),
                          .jobs = &Jobs(),
                          .universalEvents = &GetUniversalEvents(),
                          .input = &GetInput(),
@@ -404,8 +533,8 @@ void EditorApp::OnStart()
         const Assisi::App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
         if (capture.hasCameraPose)
         {
-            AimCamera(glm::vec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
-                      glm::vec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
+            AimCamera(glm::dvec3(capture.cameraEye[0], capture.cameraEye[1], capture.cameraEye[2]),
+                      glm::dvec3(capture.cameraTarget[0], capture.cameraTarget[1], capture.cameraTarget[2]));
         }
     }
 
@@ -861,14 +990,14 @@ void EditorApp::SetupScene()
     // The engine's default scene-render path: lighting plus the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo, so it is already correct if options.json saved an MSAA mode.
-    if (!_sceneRenderer.Initialize({.device = device,
-                                    .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .width = fbSize.Width,
-                                    .height = fbSize.Height,
-                                    .camera = _camera,
-                                    .bindlessLayout = _assetCache.BindlessLayout(),
-                                    .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer()}))
+    if (!_sceneRenderer->Initialize({.device = device,
+                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                     .width = fbSize.Width,
+                                     .height = fbSize.Height,
+                                     .camera = _camera,
+                                     .bindlessLayout = _assetCache.BindlessLayout(),
+                                     .bindlessTable = _assetCache.BindlessTable(),
+                                     .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         RequestClose();
         return;
@@ -892,14 +1021,31 @@ void EditorApp::SetupScene()
                                        /*persistLayout=*/ !IsRestrictedViewer());
     _debugUiBrought = true;
 
-    _sceneRenderer.SetGpuCulling(_editorConfig.gpuCulling);
+    _sceneRenderer->SetGpuCulling(_editorConfig.gpuCulling);
     // The saved shadow knobs, applied once here; the options panel pushes every
     // later edit. Nothing is allocated until a level with a sun in it loads.
-    _sceneRenderer.SetShadowSettings(GetOptions().shadows);
+    _sceneRenderer->SetShadowSettings(GetOptions().shadows);
     // The same for the sky probe, which holds nothing until a sky does.
-    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
+    _sceneRenderer->SetEnvironmentSettings(GetOptions().environment);
     // And for screen-space occlusion, which holds nothing while it is off.
-    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer->SetSsaoSettings(GetOptions().ambientOcclusion);
+    // The author's own choice whatever the game allows its players: the editor
+    // is where fog is compared on and off.
+    _sceneRenderer->SetFogEnabled(GetOptions().fogEnabled.value_or(true));
+    // The same for clouds.
+    _sceneRenderer->SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer->SetCloudsEnabled(GetOptions().cloudsEnabled.value_or(true));
+    // And for water.
+    _sceneRenderer->SetWaterEnabled(GetOptions().waterEnabled.value_or(true));
+
+    _preferences = Assisi::Editor::LoadEditorPreferences();
+    _savedPreferences = _preferences;
+
+    // Only a process with audio has anything to play it on.
+    if (GetMixer() != nullptr)
+    {
+        _screenshotClip = LoadScreenshotSound();
+    }
 
     // Linear, not sRGB: thumbnails are drawn straight through ImGui, and sampling
     // them as sRGB would gamma-decode them and show them too dark.
@@ -913,14 +1059,9 @@ void EditorApp::SetupScene()
     }
 }
 
-void EditorApp::OnResize(int32_t width, int32_t height)
-{
-    _sceneRenderer.Resize(width, height, _camera);
-}
-
 void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    if (!_sceneRenderer->OnRenderTargetsChanged(framebufferInfo))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -935,7 +1076,7 @@ void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebuffer
 
 void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || !_scene)
+    if (!_sceneRenderer->IsValid() || !_scene)
     {
         return;
     }
@@ -992,9 +1133,18 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // actually covers.
         SubmitLightGizmos();
 
+        // A fog volume's soft edges hide where its shape ends.
+        SubmitFogVolumeGizmos();
+
+        // Nor does a post-process volume show where its look applies.
+        SubmitPostProcessVolumeGizmos();
+
         // Where the benchmark camera will fly, which nothing else in the
         // viewport shows.
         SubmitCameraPathGizmos();
+
+        // Splines have no mesh of their own, so a Path is invisible otherwise.
+        SubmitSplineGizmos();
 
         // A billboard where each instance was placed. An instance's root is a table
         // row rather than an entity, so nothing in the scene marks it otherwise —
@@ -1004,7 +1154,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // A material debug view puts channel values in the scene target instead of
     // radiance, and the tone map must not rescale numbers meant to be read off
     // the screen.
-    SetTonemapPassthrough(_sceneRenderer.DebugView() != Assisi::Render::MaterialDebugView::None);
+    SetTonemapPassthrough(_sceneRenderer->DebugView() != Assisi::Render::MaterialDebugView::None);
 
     // The propagation bookmark comes from the world, not the renderer: one renderer
     // serves several worlds once more than one is resident.
@@ -1018,30 +1168,43 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // the tick by value, so the world's copy never advanced and every frame
     // recomputed every matrix. With this, that pass becomes the cheap no-op it was
     // always meant to be.
-    // Poses first, in edit mode too: what follows a joint is placed from where the
-    // joint is this frame.
-    Assisi::Runtime::EvaluateScenePoses(*_scene, _assetCache);
+    //
+    // Posed first when no Update did it this frame, in edit mode, paused or
+    // frozen, so what follows a joint is placed from where the joint is now.
+    Assisi::App::EnsurePosed(*_world, &_assetCache);
     _world->propagationTick = Assisi::ECS::PropagateTransforms(*_scene, _world->propagationTick);
 
     // A play session looks through the scene's active camera when it has one, so
     // the viewport shows what the game shows. The editor's camera stays where the
     // author left it and is what Stop returns to.
-    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer->SetSimulationSeconds(SimulatedSeconds());
+    if (IsCapturing())
+    {
+        // A sixtieth of a second a frame, whatever the frames took.
+        constexpr double kCaptureFrameSeconds = 1.0 / 60.0;
+        _sceneRenderer->SetWaterSeconds(static_cast<double>(_capturedFrames++) * kCaptureFrameSeconds);
+    }
+    else
+    {
+        _sceneRenderer->SetWaterSeconds(PresentedSimulatedSeconds());
+    }
     if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _sceneRenderer.SetViewingCamera(view->entity);
-        _sceneRenderer.Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
+        _sceneRenderer->SetViewingCamera(view->entity);
+        _sceneRenderer->Render(frame, *_scene, view->world, view->camera, _world->propagationTick);
+        SetScenePostProcess(_sceneRenderer->ScenePostProcess());
         return;
     }
 
     // The editor's camera is nobody's eyes, so it sees every body.
-    _sceneRenderer.SetViewingCamera(Assisi::ECS::NullEntity);
-    _sceneRenderer.Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
+    _sceneRenderer->SetViewingCamera(Assisi::ECS::NullEntity);
+    _sceneRenderer->Render(frame, *_scene, _cameraWorld, _camera, _world->propagationTick);
+    SetScenePostProcess(_sceneRenderer->ScenePostProcess());
 }
 
 void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
 {
-    if (!_overlaysBuilt || !_sceneRenderer.IsValid() || !_scene)
+    if (!_overlaysBuilt || !_sceneRenderer->IsValid() || !_scene || _editorHidden)
     {
         return;
     }
@@ -1049,11 +1212,11 @@ void EditorApp::OnRenderOverlays(Assisi::Render::RenderFrame &frame)
     // projected from somewhere the viewport is not looking from.
     if (const std::optional<Assisi::App::SceneView> view = PlayView(); view.has_value())
     {
-        _overlays.Render(frame, *_scene, view->world, view->camera, _sceneRenderer);
+        _overlays.Render(frame, *_scene, view->world, view->camera, *_sceneRenderer);
         return;
     }
 
-    _overlays.Render(frame, *_scene, _cameraWorld, _camera, _sceneRenderer);
+    _overlays.Render(frame, *_scene, _cameraWorld, _camera, *_sceneRenderer);
 }
 
 void EditorApp::OnPreUpdate(float dt)
@@ -1208,7 +1371,15 @@ void EditorApp::OnUpdate(float dt)
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
         _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
-        DeleteSelection();
+        // A spline node being shaped is what Delete means while there is one.
+        if (_splineTarget)
+        {
+            DeleteSplineNode();
+        }
+        else
+        {
+            DeleteSelection();
+        }
     }
 
     // --- The frame's safe point ---------------------------------------------
@@ -1267,9 +1438,9 @@ void EditorApp::OnUpdate(float dt)
     // the default is what hands a level back its own indirect lighting — a pinned
     // ambient overrides the sky, and a level's sky is most of what lights it.
     if (InBlueprintMode())
-        _sceneRenderer.SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
+        _sceneRenderer->SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
     else
-        _sceneRenderer.ClearAmbient();
+        _sceneRenderer->ClearAmbient();
 
     // A travel a game system asked for last frame. Systems run inside the walk over
     // the resident worlds, and travelling from there would invalidate that walk and
@@ -1391,6 +1562,8 @@ void EditorApp::OnUpdate(float dt)
 
                 const Assisi::App::SystemContext ctx = WorldContext(world, dt, _stepTick);
                 Assisi::App::UpdateWorld(ctx);
+                // The viewed world keeps its characters' posed vertices in the same pass.
+                Assisi::App::PoseWorld(world, &world == _world ? &_assetCache : nullptr);
                 Assisi::App::PresentWorld(ctx);
             });
     }
@@ -1428,7 +1601,13 @@ void EditorApp::InstallQueuedSystems()
     // Loading worlds included, harmlessly: their scene belongs to a worker until
     // promotion, but the system registry is main-thread only, and promotion runs
     // ApplySystems, which clears the queue anyway.
-    _worlds.ForEach([this](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
+    //
+    // A name this build does not declare is not fatal here, as it is in a game:
+    // the author has to be able to look at what asked for it. It is logged, the
+    // Systems panel shows it in red, and save and Play refuse while the file
+    // needs it.
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    { (void)Assisi::App::DrainSystemInstalls(WorldStartContext(world)); });
 }
 
 void EditorApp::FlushDeferred()
@@ -1468,6 +1647,17 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
            { ApplyEditRebind(entity, id, present); };
+}
+
+bool EditorApp::CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName)
+{
+    const App::PerfCaptureConfig &capture = _editorConfig.perfCapture;
+    if (capture.goldenDirectory.empty())
+    {
+        return true;
+    }
+    return CheckGoldenImage(image, GoldenImagePath(capture.goldenDirectory, deviceName, capture.levelPath),
+                            DiffImagePath(capture.imagePath), capture.acceptGolden);
 }
 
 void EditorApp::OnShutdown()
@@ -1518,9 +1708,9 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
                                                    ? (*definition)->members[tag->memberIndex].name
-                                                   : std::format("#{}", tag->memberIndex);
+                                                   : Core::Format("#{}", tag->memberIndex);
 
-                return std::format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
+                return Core::Format("{} > {}", row->name.empty() ? row->source : row->name, memberPath);
             }
         }
     }
@@ -1528,7 +1718,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
     if (const auto *name = _scene->Get<Assisi::Runtime::Name>(entity); name != nullptr && !name->value.Empty())
         return std::string{name->value.View()};
 
-    return std::format("Entity [{}:{}]", entity.index, entity.generation);
+    return Core::Format("Entity [{}:{}]", entity.index, entity.generation);
 }
 
 bool EditorApp::IsEditable() const
@@ -1705,7 +1895,7 @@ void EditorApp::DrawDiagnosticsWindow()
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
-    ImGui::TextDisabled("F11: graphics settings  |  F9: performance capture");
+    ImGui::TextDisabled("F1: hide editor  |  F2: screenshot  |  F11: graphics settings  |  F9: performance capture");
     ImGui::End();
 }
 
@@ -1807,10 +1997,18 @@ void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
     // `ui-panels` is the editor's own panel code, and `ui-render` is building and
     // recording the draw data, which scales with how much got drawn rather than
     // with how much code ran.
+    HandleViewKeys();
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-begin");
         Assisi::Debug::DebugUI::BeginFrame(frame);
     }
+    if (_editorHidden)
+    {
+        // Nothing is being edited while nothing can be: the capture sweep reads
+        // this, and DrawPanels is what would have reset it.
+        _captureEditingActive = false;
+    }
+    else
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-panels");
         DrawPanels();
@@ -1819,6 +2017,69 @@ void EditorApp::OnRenderUi(Assisi::Render::RenderFrame &frame)
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "ui-render");
         Assisi::Debug::DebugUI::EndFrame(frame);
     }
+}
+
+void EditorApp::HandleViewKeys()
+{
+    // Including consumed input, like the editor's other keys: a game screen
+    // holding the keyboard must not be able to keep the editor hidden. Not while
+    // a text field is being typed in.
+    if (Assisi::Audio::SoundOutput *mixer = GetMixer(); mixer != nullptr)
+    {
+        std::erase_if(_screenshotSounds,
+                      [mixer](Assisi::Audio::SoundHandle sound) { return mixer->IsFinished(sound); });
+        for (const Assisi::Audio::SoundHandle sound : _screenshotSounds)
+        {
+            mixer->Hold(sound);
+        }
+    }
+
+    Assisi::Window::InputContext &input = GetInput();
+    if (ImGuiWantsTextInput())
+    {
+        return;
+    }
+    if (input.IsKeyPressed(Assisi::Window::Key::F1, Assisi::Window::ConsumedInput::Include))
+    {
+        _editorHidden = !_editorHidden;
+    }
+    if (input.IsKeyPressed(Assisi::Window::Key::F2, Assisi::Window::ConsumedInput::Include))
+    {
+        if (std::string path = NextScreenshotPath(_screenshotCount.stamp, _screenshotCount.taken); !path.empty())
+        {
+            ScreenshotNextFrame(std::move(path));
+            PlayScreenshotSound();
+        }
+    }
+}
+
+void EditorApp::PlayScreenshotSound()
+{
+    Assisi::Audio::SoundOutput *mixer = GetMixer();
+    if (mixer == nullptr || _screenshotClip == nullptr)
+    {
+        return;
+    }
+    const std::optional<Assisi::Audio::BusId> bus = mixer->FindBus(kScreenshotSoundBus);
+    if (!bus)
+    {
+        return;
+    }
+    if (_screenshotSounds.size() >= kMaxScreenshotSounds)
+    {
+        mixer->Stop(_screenshotSounds.front());
+        _screenshotSounds.erase(_screenshotSounds.begin());
+    }
+    const std::expected<Assisi::Audio::SoundHandle, Assisi::Audio::AudioError> claimed =
+        mixer->Claim(_screenshotClip, *bus);
+    if (!claimed)
+    {
+        Assisi::Core::Log::Warn("Screenshot: the shutter sound could not play ({}).",
+                                Assisi::Audio::ToString(claimed.error()));
+        return;
+    }
+    mixer->Play(*claimed);
+    _screenshotSounds.push_back(*claimed);
 }
 
 void EditorApp::DrawPanels()
@@ -1928,12 +2189,14 @@ void EditorApp::DrawPanels()
         ASSISI_PROFILE_SCOPE("panel/save-confirm-modal");
         DrawSaveConfirmModal();
     }
+    {
+        ASSISI_PROFILE_SCOPE("panel/undeclared-modal");
+        DrawUndeclaredSystemsModal();
+    }
     if (!blueprintMode)
     {
-        {
-            ASSISI_PROFILE_SCOPE("panel/host-modal");
-            DrawHostUnsavedModal();
-        }
+        ASSISI_PROFILE_SCOPE("panel/host-modal");
+        DrawHostUnsavedModal();
     }
 
     // One gesture up from the capture sweep below. The gizmo and the Inspector both move an

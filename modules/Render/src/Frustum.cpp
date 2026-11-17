@@ -30,10 +30,13 @@ Frustum Frustum::FromViewProjection(const glm::mat4 &viewProjection)
     frustum._planes[1] = NormalizePlane(rowW - rowX); // right
     frustum._planes[2] = NormalizePlane(rowW + rowY); // bottom
     frustum._planes[3] = NormalizePlane(rowW - rowY); // top
-    // Near uses rowZ alone (not rowW + rowZ): with GLM_FORCE_DEPTH_ZERO_TO_ONE the
-    // near-clip condition is clip.z >= 0 rather than OpenGL's clip.z >= -clip.w.
-    frustum._planes[4] = NormalizePlane(rowZ);        // near
-    frustum._planes[5] = NormalizePlane(rowW - rowZ); // far
+    // Depth is zero to one, so the depth planes are clip.z >= 0 (rowZ alone, not
+    // OpenGL's rowW + rowZ) and clip.z <= clip.w. For a conventional projection,
+    // as every shadow view has, those are the near and far planes in that order;
+    // the camera's reversed one stores its far plane at zero, so for it they are
+    // far and near. Culling tests all six alike either way.
+    frustum._planes[4] = NormalizePlane(rowZ);        // near, or far when reversed
+    frustum._planes[5] = NormalizePlane(rowW - rowZ); // far, or near when reversed
     return frustum;
 }
 

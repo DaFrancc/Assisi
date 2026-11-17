@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,9 +30,12 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/EventScope.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Mondrian/Screen.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
@@ -183,7 +187,10 @@ TEST_CASE("Resident worlds share one physics thread pool")
     {
         worlds.Create("More");
     }
-    CHECK(ThreadCount() == afterFirst);
+    // No more, rather than exactly as many: a thread an earlier test case in this
+    // process started can still be finishing, and its exit lowers the count. A
+    // pool per world would raise it by a machine's worth of threads.
+    CHECK(ThreadCount() <= afterFirst);
 }
 #endif
 
@@ -266,7 +273,7 @@ TEST_CASE("BuildSceneBodies starts every body over, as leaving play needs")
     (void)BuildSceneBodies(world.scene, world.physics);
 
     CHECK(world.physics.GetBodyState(entity).linearVelocity == glm::vec3(0.f));
-    CHECK(world.physics.GetBodyPose(entity).position == spawn);
+    CHECK(glm::vec3(world.physics.GetBodyPose(entity).position) == spawn);
 }
 
 TEST_CASE("Resident worlds simulate independently and outlive each other")
@@ -301,8 +308,8 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
         });
     }
 
-    const float fell = falling.scene.Get<Assisi::ECS::Transform>(a)->position.y;
-    const float landed = caught.scene.Get<Assisi::ECS::Transform>(b)->position.y;
+    const float fell = static_cast<float>(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y);
+    const float landed = static_cast<float>(caught.scene.Get<Assisi::ECS::Transform>(b)->position.y);
     CHECK(fell < -5.f);  // nothing to stop it
     CHECK(landed > 0.f); // the other world's floor did stop it
     CHECK(landed < 5.f); // ...but it did fall
@@ -317,6 +324,45 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
         falling.physics.Update(kStep);
     }
     CHECK(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y < fell);
+}
+
+TEST_CASE("Travel takes down the screens of the edited world it leaves dormant")
+{
+    // A HUD left up in the level being edited would draw over the one it
+    // travelled to, and a menu left up would keep the keys and pause it.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi-world-travel-screens-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+    Assisi::ECS::Scene empty;
+    REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(empty, root / "levels" / "B.alvl"));
+
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    // Before the worlds, so it outlives the screens they own.
+    Assisi::Mondrian::Ui ui{universal};
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &authored = worlds.Create("Main");
+    worlds.SetActive(authored);
+    worlds.SetEdited(authored);
+    authored.state = WorldState::Active;
+
+    const Assisi::Mondrian::ScreenTraits traits{.input = Assisi::Mondrian::ScreenInput::ConsumeInput,
+                                                .pause = Assisi::Mondrian::ScreenPause::Pause};
+    Assisi::Mondrian::Screen &hud = AddScreen(authored,
+                                              std::make_unique<Assisi::Mondrian::Screen>(
+                                                  ui, authored.screenWorld, traits, Assisi::Mondrian::kSortHud,
+                                                  std::string{"hud"}),
+                                              {});
+    hud.Show();
+    REQUIRE(ui.TakesInput());
+
+    REQUIRE(worlds.LoadLevel("levels/B.alvl") != nullptr);
+    REQUIRE(authored.state == WorldState::Dormant);
+    CHECK_FALSE(hud.IsShown());
+    CHECK_FALSE(ui.TakesInput());
+    CHECK_FALSE(ui.PausesWorld());
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
@@ -643,6 +689,27 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Worlds are streaming while any is loading or still has assets arriving")
+{
+    // What a capture's warm-up waits on, so its picture is of the loaded level.
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    CHECK_FALSE(worlds.AnyStreaming());
+
+    World &first = worlds.Create();
+    CHECK(worlds.AnyStreaming()); // still Loading
+
+    first.state = WorldState::Active;
+    CHECK_FALSE(worlds.AnyStreaming());
+
+    World &second = worlds.Create();
+    second.state = WorldState::Active;
+    second.streamingPending = true;
+    CHECK(worlds.AnyStreaming());
+
+    second.streamingPending = false;
+    CHECK_FALSE(worlds.AnyStreaming());
+}
+
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 {
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
@@ -833,7 +900,7 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
 
     // The survivor is still owed exactly its own install, and draining it is not
     // a walk over anything the dead world could still be in.
-    DrainSystemInstalls(StartContext(survivor));
+    REQUIRE(DrainSystemInstalls(StartContext(survivor)).has_value());
     CHECK(survivor.systems.Has("Follower"));
     CHECK_FALSE(survivor.systems.Has("Counter"));
     CHECK(survivor.pendingSystems.names.empty());
@@ -858,7 +925,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
     CHECK(world.pendingSystems.names.empty());
 
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
     CHECK_FALSE(world.systems.Has("Counter"));
     CHECK_FALSE(world.systems.Has("Follower"));
     TickUpdate(world, universal);
@@ -880,7 +947,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
 
     CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
 
     CHECK(world.systems.Has("Counter"));
     CHECK(world.systems.Has("Follower"));
@@ -905,9 +972,9 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     // The first spawn to open the queue owns the diagnostic.
     CHECK(world.pendingSystems.context == "car.abp");
 
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
     CHECK(world.pendingSystems.names.empty());
-    DrainSystemInstalls(StartContext(world));
+    REQUIRE(DrainSystemInstalls(StartContext(world)).has_value());
 
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     TickUpdate(world, universal);

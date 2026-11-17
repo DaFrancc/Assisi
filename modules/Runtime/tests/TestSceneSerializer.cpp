@@ -26,8 +26,11 @@
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Path.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WindComponents.hpp>
 
 // Private to the serializer's own translation units: the nesting tests at the
 // bottom engage a context directly, which is the one thing the public API cannot
@@ -88,7 +91,7 @@ TEST_CASE("SceneSerializer: a loaded Transform brings a WorldMatrix, which is ne
     {
         (void)entity;
         (void)meshRenderer;
-        CHECK(Math::TranslationOf(world.matrix) == glm::vec3(1.f, 2.f, 3.f));
+        CHECK(ECS::WorldPositionOf(world) == glm::dvec3(1.0, 2.0, 3.0));
         ++yielded;
     }
     CHECK(yielded == 1);
@@ -494,6 +497,44 @@ TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")
     CHECK(t->position.x == doctest::Approx(1.f));
     CHECK(c->fovDegrees == doctest::Approx(42.f));
     CHECK(c->isActive == true);
+}
+
+TEST_CASE("SceneSerializer: a Path's spline survives a round-trip exactly")
+{
+    using Assisi::Geometry::SplineNode;
+    using Assisi::Geometry::SplineNodeMode;
+
+    Assisi::Runtime::Path path;
+    path.spline.closed = true;
+    path.spline.nodes = {
+        SplineNode{.position = {0.1f, -2.f, 3.3f}, .mode = SplineNodeMode::Corner},
+        SplineNode{.position = {4.f, 0.f, 1.f},
+                   .handleIn = {-0.7f, 0.2f, 0.f},
+                   .handleOut = {1.25f, -0.3f, 0.5f},
+                   .mode = SplineNodeMode::Bezier},
+        SplineNode{.position = {7.f, 1.f, -2.f}, .handleIn = {-1.f, 0.f, 0.f}, .handleOut = {1.f, 0.f, 0.f}},
+    };
+
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, path) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+
+    const auto *back = loaded.Get<Assisi::Runtime::Path>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(back != nullptr);
+    CHECK(back->spline.closed);
+    REQUIRE(back->spline.nodes.size() == path.spline.nodes.size());
+    for (std::size_t i = 0; i < path.spline.nodes.size(); ++i)
+    {
+        const SplineNode &want = path.spline.nodes[i];
+        const SplineNode &got = back->spline.nodes[i];
+        CHECK(got.position == want.position);
+        CHECK(got.handleIn == want.handleIn);
+        CHECK(got.handleOut == want.handleOut);
+        CHECK(got.mode == want.mode);
+    }
 }
 
 TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
@@ -1171,4 +1212,55 @@ TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level 
     CHECK(loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);
 
     fs::remove_all(root, ec);
+}
+
+TEST_CASE("SceneSerializer: clouds round-trip, preset and fields both")
+{
+    using Assisi::Runtime::CloudPreset;
+    using Assisi::Runtime::Clouds;
+
+    // Every value off its default, so a field that never serialized reads back as
+    // the default and fails rather than passing by coincidence.
+    const Clouds clouds{.preset = CloudPreset::Custom,
+                        .coverage = 0.8f,
+                        .height = 2200.f,
+                        .thickness = 900.f,
+                        .density = 0.11f,
+                        .puffiness = 0.35f,
+                        .changeRate = 2.5f,
+                        .seed = 4000000123u};
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, clouds) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+    const Clouds *read = loaded.Get<Clouds>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(read != nullptr);
+    CHECK(read->preset == CloudPreset::Custom);
+    CHECK(read->coverage == doctest::Approx(0.8f));
+    CHECK(read->height == doctest::Approx(2200.f));
+    CHECK(read->thickness == doctest::Approx(900.f));
+    CHECK(read->density == doctest::Approx(0.11f));
+    CHECK(read->puffiness == doctest::Approx(0.35f));
+    CHECK(read->changeRate == doctest::Approx(2.5f));
+    // Past 2^31, so a seed read back through a signed or float type fails.
+    CHECK(read->seed == 4000000123u);
+}
+
+TEST_CASE("SceneSerializer: the wind round-trips")
+{
+    using Assisi::Runtime::Wind;
+
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Wind{.speed = 17.f, .bearingDegrees = 215.f, .gustFactor = 1.8f}) != nullptr);
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
+    const Wind *read = loaded.Get<Wind>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(read != nullptr);
+    CHECK(read->speed == doctest::Approx(17.f));
+    CHECK(read->bearingDegrees == doctest::Approx(215.f));
+    CHECK(read->gustFactor == doctest::Approx(1.8f));
 }

@@ -13,10 +13,12 @@ add_executable(Assisi-Geometry-Tests
   TestSkinImport.cpp
   TestPose.cpp
   TestMeshValidate.cpp
+  TestSmoothingCheck.cpp
   TestMaterialChannels.cpp
   TestMaterialFile.cpp
   TestMaterialAuthoring.cpp
   TestAssetImport.cpp
+  TestSpline.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Geometry-Tests)

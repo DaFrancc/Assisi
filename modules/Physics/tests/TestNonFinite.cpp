@@ -33,7 +33,7 @@ const glm::vec3 kNaNVector{kNaN, kNaN, kNaN};
 /// Long enough for a refused value to have spread, had it not been refused.
 constexpr int32_t kSteps = 30;
 
-bool Finite(glm::vec3 value)
+template <typename Vector> bool Finite(const Vector &value)
 {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
@@ -54,7 +54,7 @@ TEST_CASE("A Transform that is not a number is put back, and the body stays wher
 {
     TestScene test;
     const ECS::Entity box = RestingBox(test);
-    const glm::vec3 before = test.world.GetBodyPose(box).position;
+    const glm::dvec3 before = test.world.GetBodyPose(box).position;
 
     test.scene.GetMut<ECS::Transform>(box)->position = kNaNVector;
     PhysicsTests::Step(test.world, kSteps);
@@ -83,8 +83,8 @@ TEST_CASE("A push, a teleport or a correction that is not a number is ignored")
     const ECS::Entity box = RestingBox(test);
 
     test.world.AddImpulse(box, kNaNVector);
-    test.world.AddForceAt(box, {0.f, 1.f, 0.f}, kNaNVector);
-    test.world.Teleport(box, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), kNaNVector});
+    test.world.AddForceAt(box, {0.f, 1.f, 0.f}, glm::dvec3(kNaNVector));
+    test.world.Teleport(box, Physics::Pose{glm::quat(1.f, 0.f, 0.f, 0.f), glm::dvec3(kNaNVector)});
     test.world.ApplyCorrection(box, Physics::Pose{}, Physics::BodyState{.linearVelocity = kNaNVector});
     PhysicsTests::Step(test.world, kSteps);
 

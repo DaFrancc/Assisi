@@ -28,7 +28,12 @@ bool Near(const glm::vec3 &a, const glm::vec3 &b)
     return glm::length(a - b) < kTolerance;
 }
 
-CameraLinePath Line(const glm::vec3 &from, const glm::vec3 &to, float seconds, int32_t order)
+bool Near(const glm::dvec3 &a, const glm::dvec3 &b)
+{
+    return glm::length(a - b) < static_cast<double>(kTolerance);
+}
+
+CameraLinePath Line(const glm::dvec3 &from, const glm::dvec3 &to, float seconds, int32_t order)
 {
     CameraLinePath line;
     line.from = from;
@@ -63,7 +68,7 @@ TEST_CASE("A line path looks along its travel, or at its target")
     CameraRouteLeg leg = LineLeg(Line({0.f, 0.f, 0.f}, {0.f, 0.f, -10.f}, 1.f, 0));
 
     const CameraAim along = EvaluateCameraLeg(leg, 0.5f);
-    CHECK(glm::normalize(along.target - along.eye).z == doctest::Approx(-1.f));
+    CHECK(glm::normalize(along.target - along.eye).z == doctest::Approx(-1.0));
 
     leg.line.lookAlongPath = false;
     leg.line.lookAt = {3.f, 4.f, 5.f};
@@ -146,20 +151,31 @@ TEST_CASE("A route hands over from one path to the next at the boundary")
 
 TEST_CASE("The camera world matrix sits at the eye and faces the target")
 {
-    const CameraAim aim{.eye = {1.f, 2.f, 3.f}, .target = {1.f, 2.f, -7.f}};
-    const glm::mat4 world = CameraWorldFor(aim);
+    const CameraAim aim{.eye = {1.0, 2.0, 3.0}, .target = {1.0, 2.0, -7.0}};
+    const ECS::WorldMatrix world = CameraWorldFor(aim);
 
-    CHECK(Near(Math::TranslationOf(world), aim.eye));
-    CHECK(Near(ForwardDirection(world), {0.f, 0.f, -1.f}));
+    CHECK(Near(ECS::WorldPositionOf(world), aim.eye));
+    CHECK(Near(ForwardDirection(world.inCell), glm::vec3{0.f, 0.f, -1.f}));
+}
+
+TEST_CASE("A camera hundreds of kilometres out sits exactly at its eye")
+{
+    // A whole number of 2^-9 m steps, so the eye is exact as a float offset in
+    // its cell and the position comes back to the bit.
+    const CameraAim aim{.eye = {300000.25, 12.5, -456789.75}, .target = {300000.25, 12.5, -456799.75}};
+    const ECS::WorldMatrix world = CameraWorldFor(aim);
+
+    CHECK(ECS::WorldPositionOf(world) == aim.eye);
+    CHECK(Near(ForwardDirection(world.inCell), glm::vec3{0.f, 0.f, -1.f}));
 }
 
 TEST_CASE("Looking straight down still gives a usable camera")
 {
-    const CameraAim aim{.eye = {0.f, 10.f, 0.f}, .target = {0.f, 0.f, 0.f}};
-    const glm::mat4 world = CameraWorldFor(aim);
+    const CameraAim aim{.eye = {0.0, 10.0, 0.0}, .target = {0.0, 0.0, 0.0}};
+    const ECS::WorldMatrix world = CameraWorldFor(aim);
 
-    CHECK(Near(ForwardDirection(world), {0.f, -1.f, 0.f}));
-    const glm::mat4 view = ViewMatrix(world);
+    CHECK(Near(ForwardDirection(world.inCell), glm::vec3{0.f, -1.f, 0.f}));
+    const glm::mat4 view = ViewMatrix(world.inCell);
     for (int32_t column = 0; column < 4; ++column)
     {
         for (int32_t row = 0; row < 4; ++row)

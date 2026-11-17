@@ -69,6 +69,46 @@ std::uint32_t AllFaces(LocalLightKind kind)
 {
     return (1u << LocalShadowFaceCount(kind)) - 1u;
 }
+
+/// @brief Records @p mover in the plan of each light it reaches: the faces it
+/// is drawn into, and its signature added to each of theirs.
+void NoteMover(const ShadowMover &mover, std::span<const LocalShadowRequest> requests,
+               std::span<LocalShadowTilePlan> plans)
+{
+    // Once per mover rather than per light it reaches: the hash is the dearest
+    // part of the test, and it is the same for every light.
+    const std::uint64_t signature = ShadowMoverSignature(mover);
+    for (std::size_t index = 0; index < requests.size(); ++index)
+    {
+        const std::uint32_t mask = LocalShadowFaceMask(requests[index].pose, requests[index].kind, mover.worldSphere);
+        if (mask == 0u)
+        {
+            continue;
+        }
+        LocalShadowTilePlan &plan = plans[index];
+        plan.moverFaces |= mask;
+        plan.hasMovers = true;
+        for (std::uint32_t face = 0; face < kMaxLocalShadowFaces; ++face)
+        {
+            if ((mask & (1u << face)) != 0u)
+            {
+                plan.moverSignature[face] += signature;
+            }
+        }
+    }
+}
+
+/// @brief Marks dirty, in the plan of each light @p invalidation reaches, the
+/// faces it reaches.
+void NoteInvalidation(const ShadowMover &invalidation, std::span<const LocalShadowRequest> requests,
+                      std::span<LocalShadowTilePlan> plans)
+{
+    for (std::size_t index = 0; index < requests.size(); ++index)
+    {
+        plans[index].dirtyFaces |=
+            LocalShadowFaceMask(requests[index].pose, requests[index].kind, invalidation.worldSphere);
+    }
+}
 } // namespace
 
 std::uint32_t LocalShadowFaceMask(const LocalShadowLightPose &pose, LocalLightKind kind,
@@ -265,44 +305,19 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
     // Invalidation, and the only place a caster meets a light. Movers times
     // lights — never casters times lights — because the set walked here is what
     // changed rather than what exists, and on a still frame it is empty.
-    const auto dirty = [&](std::span<const ShadowMover> casters, bool countsAsMotion)
-                       {
-                           for (const ShadowMover &caster : casters)
-                           {
-                               for (std::size_t index = 0; index < requests.size(); ++index)
-                               {
-                                   const std::uint32_t mask =
-                                       LocalShadowFaceMask(requests[index].pose, requests[index].kind, caster.worldSphere);
-                                   if (mask == 0u)
-                                   {
-                                       continue;
-                                   }
-                                   if (countsAsMotion)
-                                   {
-                                       out[index].moverFaces |= mask;
-                                       out[index].hasMovers = true;
-                                       const std::uint64_t signature = ShadowMoverSignature(caster);
-                                       for (std::uint32_t face = 0; face < kMaxLocalShadowFaces; ++face)
-                                       {
-                                           if ((mask & (1u << face)) != 0u)
-                                           {
-                                               out[index].moverSignature[face] += signature;
-                                           }
-                                       }
-                                   }
-                                   else
-                                   {
-                                       out[index].dirtyFaces |= mask;
-                                   }
-                               }
-                           }
-                       };
+    //
     // A caster that is merely moving does not invalidate anything: it is not in
     // the still layer at all, and its depth is in the moving layer beside it.
     // Only changing sides invalidates, which is what makes a motion episode two
     // re-bakes rather than one per frame.
-    dirty(frame.movers, true);
-    dirty(frame.invalidations, false);
+    for (const ShadowMover &mover : frame.movers)
+    {
+        NoteMover(mover, requests, out);
+    }
+    for (const ShadowMover &invalidation : frame.invalidations)
+    {
+        NoteInvalidation(invalidation, requests, out);
+    }
 
     // The throttle. A light near the top of the ordering always redraws; the
     // divisor is spent further down, where a frame of lag is not what anyone is
@@ -355,8 +370,11 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
     // The budget, spent in request order — which is importance order, so what it
     // runs out on is by construction the least important light asking. A light
     // it refuses holds no tile and lights unshadowed, rather than lighting from
-    // a tile whose depth no longer describes the scene.
+    // a tile whose depth no longer describes the scene. The first light asking
+    // is drawn whole whatever the budget, so a budget smaller than a point
+    // light's six faces still lets one through each frame.
     std::uint32_t remaining = std::max(frame.settings.updateBudgetFaces, 1u);
+    bool admittedAny = false;
     for (std::size_t index = 0; index < requests.size(); ++index)
     {
         LocalShadowTilePlan &plan = out[index];
@@ -369,14 +387,15 @@ void LocalShadowCache::Plan(const LocalShadowCacheFrame &frame, std::vector<Loca
             }
             continue;
         }
-        if (wanted > remaining)
+        if (wanted > remaining && admittedAny)
         {
             plan.deferred = true;
             _stats.deferredFaces += wanted;
             ++_stats.deferredLights;
             continue;
         }
-        remaining -= wanted;
+        remaining -= std::min(wanted, remaining);
+        admittedAny = true;
         _stats.bakedFaces += wanted;
     }
 }
@@ -404,7 +423,11 @@ void LocalShadowCache::Commit(std::uint32_t frameIndex, std::span<const LocalSha
         }
 
         Entry &entry = _entries[KeyOf(request.kind, request.lightIndex)];
-        entry.sizeClass = request.sizeClass;
+        // The class asked for, so a demoted light the atlas cannot grow keeps
+        // its smaller tile rather than being cut afresh every frame. One that
+        // can grow is remembered at the class it got, which the next Plan does
+        // not retain.
+        entry.sizeClass = tile.canGrow ? ShadowSizeClassOf(tile.resolution) : request.sizeClass;
         entry.faces = faces;
         for (std::uint32_t face = 0; face < faces; ++face)
         {

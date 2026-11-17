@@ -151,7 +151,7 @@ std::expected<void, MarkupError> CollectTemplates(TemplateFile &into, const Mark
                                                   "', which is how an instance qualifies the names inside it."));
         }
         if (FindElement(name) != nullptr || name == kScreenElement || name == kTemplateElement ||
-            name == kTemplatesElement || name == kImportElement)
+            name == kTemplatesElement || name == kImportElement || name == kContextElement)
         {
             return std::unexpected(At(*named, "'" + name +
                                                   "' is already an element this markup has, so a template "
@@ -201,7 +201,7 @@ std::expected<void, MarkupError> CollectTemplates(TemplateFile &into, const Mark
 }
 
 std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const MarkupElement &root,
-                                                const Core::EventCatalog &catalog, const TextRules &rules,
+                                                const Core::EventCatalog &catalog, const ScreenRules &rules,
                                                 bool debugOnly)
 {
     for (const MarkupElement &declaration : root.children)
@@ -229,7 +229,9 @@ std::expected<void, MarkupError> CheckTemplates(const TemplateFile &file, const 
                    .targets = {},
                    .scopes = {},
                    .space = &file.visible,
-                   .file = file.file};
+                   .file = file.file,
+                   .focusClaimed = false,
+                   .checkingAlone = true};
         MarkupElement standIn;
         standIn.name = checked.name;
         standIn.line = declaration.line;

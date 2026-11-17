@@ -19,7 +19,9 @@
 
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
+#include <Assisi/NetSync/WorldPosition.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
@@ -40,19 +42,16 @@ namespace Assisi::NetSync
 /// builds quantizing the same position over different ranges corrupt each other
 /// *silently*, which is the one failure mode a handshake exists to prevent.
 ///
-/// The defaults are the published state-synchronization shape fitted to a
-/// level-sized world: ~2 mm of position resolution over a ±256 m box, a
-/// smallest-three quaternion at 2+9+9+9 bits, and linear velocity at ~62 mm/s.
-/// The usual caution applies — state-sync extrapolation wants *finer* position
-/// quantization than snapshot interpolation does — so these are a starting point
-/// to be moved against measured divergence, not a settled answer.
+/// The defaults are the published state-synchronization shape: ~2 mm of
+/// position resolution anywhere in the world, a smallest-three quaternion at
+/// 2+9+9+9 bits, and linear velocity at ~62 mm/s. The usual caution applies —
+/// state-sync extrapolation wants *finer* position quantization than snapshot
+/// interpolation does — so these are a starting point to be moved against
+/// measured divergence, not a settled answer.
 struct BodyQuantization
 {
-    /// Symmetric world half-extent, in metres. A body outside it is clamped to
-    /// the boundary rather than wrapped: a clamped correction is visibly wrong
-    /// in the right direction, where a wrapped one teleports across the map.
-    float positionExtent = 256.f;
-    /// Bits per position component. 18 over a 512 m span is ~1.95 mm.
+    /// Bits per position component inside its world cell (WorldPosition.hpp).
+    /// 18 over a 512 m cell is 2^-9 m, ~1.95 mm.
     std::uint32_t positionBits = 18;
 
     /// Symmetric bound on a linear velocity component, m/s.
@@ -71,14 +70,18 @@ struct BodyQuantization
     /// same reasoning as the linear one applies.
     std::uint32_t angularVelocityBits = 11;
 
+    /// Bits per horizontal component of the way a character is asked to move,
+    /// over ±1. 10 is steps of about 2 mm/s per m/s of its speed: 1.2 cm/s
+    /// sprinting at 6 m/s, under the velocity's own step.
+    std::uint32_t moveBits = 10;
+
     bool operator==(const BodyQuantization &) const = default;
 
     /// @brief The distance between two positions the wire can tell apart, per
     /// component (m): a received position is the true one to within half of it.
     [[nodiscard]] float PositionStep() const
     {
-        const std::uint64_t levels = (std::uint64_t{1} << positionBits) - 1u;
-        return 2.f * positionExtent / static_cast<float>(levels);
+        return static_cast<float>(Math::kWorldCellSize / static_cast<double>(std::uint64_t{1} << positionBits));
     }
 };
 
@@ -181,31 +184,67 @@ void SetSmoothing(const ViewSmoothing &smoothing);
 /// no longer describe either of them.
 void SetQuantization(const BodyQuantization &quantization);
 
+/// @brief Bits of a character's jump and landing counts on the wire. A count
+/// that changed means a jump or a landing, even one between two records; 16
+/// in one gap would read as none, and a jump takes about half a second.
+inline constexpr std::uint32_t kCharacterCountBits = 4;
+
+/// @brief The bits of a count that cross, as a mask.
+inline constexpr std::uint32_t kCharacterCountMask = (1u << kCharacterCountBits) - 1u;
+
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
+    glm::dvec3 position{};
     NetId netId = InvalidNetId;
-    glm::vec3 position{};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.
+
+    /// A character's CharacterIntent::move, horizontal only. With @ref
+    /// speedScale, @ref sprint and @ref wantedStance, what the character is
+    /// asked to do: a client steps a character it does not control on them, so
+    /// it moves on between records as it does on the host. A component past ±1
+    /// is sent as ±1.
+    glm::vec3 move{0.f};
+    /// A character's CharacterIntent::speedScale. Sent in full, and only when
+    /// it is not 1.
+    float speedScale = 1.f;
+
+    /// A character's CharacterState::jumps and landings. Only the low
+    /// kCharacterCountBits cross, so a received one holds only those.
+    std::uint32_t jumps = 0;
+    std::uint32_t landings = 0;
+
     bool asleep = false;
     /// A character's record, which also says how it stands and on what: a
     /// client predicting it compares both, since a wrong one moves it only
-    /// ticks later. Neither is on the wire for any other body.
+    /// ticks later. Neither is on the wire for any other body, nor is what it
+    /// is asked to do.
     bool character = false;
     Physics::Stance stance = Physics::Stance::Standing;
     Physics::GroundState ground = Physics::GroundState::InAir;
+    /// A character's CharacterIntent::stance: the stance asked for, where
+    /// @ref stance is the one it managed.
+    Physics::Stance wantedStance = Physics::Stance::Standing;
+    /// A character's CharacterIntent::sprint.
+    bool sprint = false;
+    /// Whether a character has jumped since it last stood, which keeps it
+    /// from jumping again however recently it left the ground.
+    bool jumpedSinceGrounded = false;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when
 /// awake — the velocities, all at the resolutions Quantization() names; then,
-/// for a character, its stance and ground state.
-void WriteBodyState(const BodyState &state, Core::BitWriter &writer);
+/// for a character, its stance and ground state, what it is asked to do, and
+/// its jumps and landings.
+/// The position is written against @p reference, which every record in the
+/// same run shares.
+void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer);
 
 /// @brief Inverse of WriteBodyState. Returns false on a truncated or malformed
 /// record, having invalidated the reader.
-bool ReadBodyState(Core::BitReader &reader, BodyState &outState);
+bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState &outState);
 
 /// @brief "quantity: mine vs host's" for the first way a predicted body @p mine
 /// is further from @p host than @p smoothing tolerates, or empty when it is

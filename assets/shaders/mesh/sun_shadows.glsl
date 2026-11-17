@@ -1,12 +1,16 @@
 // The sun's cascaded shadow: one array slice per cascade, each an orthographic
 // map fitted to a slice of the camera's view distance.
 //
-// Three biases keep a surface from shadowing itself:
+// Each texel the filter reads is compared against the receiver's own plane at
+// that texel (see shadow_filters.glsl), which is what keeps a surface the sun
+// grazes from shadowing itself across the kernel. Three biases cover what the
+// plane cannot:
 //   * The rasterizer pushes each caster back by its own depth slope as the map
-//     is drawn (slope-scaled bias).
+//     is drawn (slope-scaled bias), against the caster's depth being rounded
+//     where it is rasterized.
 //   * The lookup moves the receiver along its geometric normal by the cascade's
-//     texel size times sin(incidence), which clears a texel of surface at any
-//     angle and stays bounded as the light goes edge-on, where tan would not.
+//     texel size times sin(incidence), against curved surfaces, whose plane is
+//     only right at the point it was taken.
 //   * A small constant depth bias covers the depth format's quantisation.
 // Every bias also pulls the shadow off its caster by its own size, so each is
 // kept to about a texel.
@@ -23,26 +27,6 @@ vec3 ShadowCoord(uint cascade, vec3 worldPos)
     return vec3(ndc.xy * vec2(0.5, -0.5) + 0.5, ndc.z);
 }
 
-float ShadowTap(vec2 uv, uint cascade, float reference)
-{
-    return texture(sampler2DArrayShadow(uShadowCascades, uShadowSampler), vec4(uv, float(cascade), reference));
-}
-
-float VogelTap(uint i, vec2 uv, uint cascade, float reference, float stepUv, float phi)
-{
-    return ShadowTap(uv + VogelOffset(i, phi, kVogelRadiusSteps) * stepUv, cascade, reference);
-}
-
-// The depth of the nearest occluder the map recorded in front of @p reference at
-// @p uv's own texel, or @p reference where there is none. Only the fragment's own
-// texel: its neighbours on a grazing receiver are the receiver itself.
-float NearestBlockerDepth(vec2 uv, uint cascade, float reference)
-{
-    ivec3 size = textureSize(uShadowCascades, 0);
-    ivec2 texel = clamp(ivec2(clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size.xy)), ivec2(0), size.xy - 1);
-    return min(reference, texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r);
-}
-
 // How (u, v, depth) in @p cascade's map change over a world-space step.
 vec3 ShadowCoordDelta(uint cascade, vec3 dWorld)
 {
@@ -50,71 +34,143 @@ vec3 ShadowCoordDelta(uint cascade, vec3 dWorld)
     return vec3(d.xy * vec2(0.5, -0.5), d.z);
 }
 
-// Mean depth gap to the blockers around @p uv, measured against the receiver's
-// plane at each texel; zero where nothing is in front.
-float CascadeBlockerGap(uint cascade, vec2 uv, float reference, vec2 slope)
+// dz/du and dz/dv of the plane facing @p N in @p cascade's map. The projection
+// is affine, so the plane's gradient is the same everywhere in the map. Must
+// match Render::ReceiverPlaneSlope.
+vec2 CascadeReceiverSlope(uint cascade, vec3 N)
 {
-    float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, reference, uFrame.shadowPcss.y);
+    vec3 first = ReceiverTangent(N);
+    // A texel of depth is a texel of UV in an orthographic cascade.
+    return ReceiverPlaneSlope(ShadowCoordDelta(cascade, first), ShadowCoordDelta(cascade, cross(N, first)), 1.0);
+}
+
+// How lit a tap at @p tapUv is for @p receiver.
+float CascadeTap(uint cascade, vec2 tapUv, Receiver receiver)
+{
+    vec2      texels = vec2(textureSize(uShadowCascades, 0).xy);
+    TexelQuad quad   = QuadAt(tapUv, texels);
+    vec4      stored =
+        textureGather(sampler2DArray(uShadowCascades, uShadowSampler), vec3(quad.gatherUv, float(cascade)), 0);
+    return CompareTexels(stored, quad, texels, tapUv, receiver);
+}
+
+// How far in front of the receiver the map records an occluder at its own
+// texel; zero where there is none. Only the fragment's own texel, which is what
+// the kernel is narrowed for.
+float OwnTexelBlockerGap(uint cascade, Receiver receiver)
+{
+    ivec3 size   = textureSize(uShadowCascades, 0);
+    ivec2 texel  = clamp(ivec2(clamp(receiver.uv, vec2(0.0), vec2(1.0)) * vec2(size.xy)), ivec2(0), size.xy - 1);
+    vec2  centre = (vec2(texel) + 0.5) / vec2(size.xy);
+    float stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
+    return max(ComparedDepth(receiver, centre - receiver.uv) - stored, 0.0);
+}
+
+// One blocker-search tap at @p tapUv: the depth gap to what the map stores
+// there, added to @p gapSum and counted in @p blockers where it is a blocker.
+void CascadeBlockerTap(uint cascade, Receiver receiver, vec2 tapUv, float threshold, inout float gapSum,
+                       inout float blockers)
+{
+    if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
+    {
+        return;
+    }
+    vec2  size   = vec2(textureSize(uShadowCascades, 0).xy);
+    ivec2 texel  = ivec2(tapUv * size);
+    vec2  centre = (vec2(texel) + 0.5) / size;
+    float stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
+    float gap    = ComparedDepth(receiver, centre - receiver.uv) - stored;
+    if (gap > threshold)
+    {
+        gapSum += gap;
+        blockers += 1.0;
+    }
+}
+
+// Mean depth gap to the blockers around @p receiver, each texel measured
+// against the depth ComparedDepth gives it; zero where nothing is in front.
+// Probed first, as the Vogel filter is: most receivers have nothing in front
+// of them, and there the four well-spread probe taps find nothing either.
+float CascadeBlockerGap(uint cascade, Receiver receiver)
+{
+    float searchUv  = PcssPenumbraUv(uFrame.shadowPcss.x, receiver.reference, uFrame.shadowPcss.y);
     float threshold = kPcssBlockerMinDepthTexels * uFrame.shadowPcss.z;
-    vec2  size      = vec2(textureSize(uShadowCascades, 0).xy);
-    float phi       = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
+    vec2  turn      = VogelTurn();
 
     float gapSum   = 0.0;
     float blockers = 0.0;
-    for (uint i = 0u; i < kVogelTaps; ++i)
-    {
-        vec2 tapUv = uv + VogelOffset(i, phi, searchUv);
-        if (any(lessThan(tapUv, vec2(0.0))) || any(greaterThanEqual(tapUv, vec2(1.0))))
-        {
-            continue;
-        }
-        ivec2 texel  = ivec2(tapUv * size);
-        vec2  centre = (vec2(texel) + 0.5) / size;
-        float stored = texelFetch(uShadowCascades, ivec3(texel, int(cascade)), 0).r;
-        float gap    = reference + dot(centre - uv, slope) - stored;
-        if (gap > threshold)
-        {
-            gapSum += gap;
-            blockers += 1.0;
-        }
-    }
-    return blockers > 0.0 ? gapSum / blockers : 0.0;
-}
-
-// The Vogel kernel at @p stepUv, each tap compared against the receiver's plane.
-float FilterCascadePcss(uint cascade, vec2 uv, float reference, vec2 slope, float stepUv)
-{
-    float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-    float sum = 0.0;
     for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        vec2 offset = VogelOffset(kVogelProbe[i], phi, kVogelRadiusSteps) * stepUv;
-        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
+        CascadeBlockerTap(cascade, receiver, receiver.uv + VogelOffset(kVogelProbe[i], turn, searchUv), threshold,
+                          gapSum, blockers);
     }
-    if (sum == 0.0)
+    if (blockers == 0.0)
     {
         return 0.0;
     }
-    if (sum == float(kVogelProbeTaps))
+    for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
     {
-        return 1.0;
+        CascadeBlockerTap(cascade, receiver, receiver.uv + VogelOffset(kVogelRest[i], turn, searchUv), threshold,
+                          gapSum, blockers);
     }
-    for (uint i = 0u; i < 12u; ++i)
+    return gapSum / blockers;
+}
+
+// The Vogel disk at @p stepUv, with the probe early-out: most receivers are
+// wholly lit or wholly shadowed, and there four well-spread taps agree and the
+// other twelve would only agree with them. The rest of the disk runs where the
+// probe straddles an edge.
+float FilterCascadeVogel(uint cascade, Receiver receiver, float stepUv)
+{
+    vec2  turn = VogelTurn();
+    float sum  = 0.0;
+    for (uint i = 0u; i < kVogelProbeTaps; ++i)
     {
-        vec2 offset = VogelOffset(kVogelRest[i], phi, kVogelRadiusSteps) * stepUv;
-        sum += ShadowTap(uv + offset, cascade, reference + dot(offset, slope));
+        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelProbe[i], turn, kVogelRadiusSteps * stepUv),
+                          receiver);
+    }
+    if (ProbeAgrees(sum, kVogelProbeTaps))
+    {
+        return sum / float(kVogelProbeTaps);
+    }
+    for (uint i = 0u; i < kVogelTaps - kVogelProbeTaps; ++i)
+    {
+        sum += CascadeTap(cascade, receiver.uv + VogelOffset(kVogelRest[i], turn, kVogelRadiusSteps * stepUv),
+                          receiver);
     }
     return sum / float(kVogelTaps);
 }
 
-// The sun through @p cascade, contact-hardened. @p uv and @p reference are
-// already biased.
-float SampleCascadePcss(uint cascade, vec2 uv, float reference, float NdotL)
+// The 3x3 or 5x5 grid of @p radius at @p step, probed first at its centre and
+// corners.
+float FilterCascadeGrid(uint cascade, Receiver receiver, float step, int radius)
 {
-    // A texel of depth is a texel of UV in an orthographic cascade.
-    vec2  slope = ReceiverPlaneSlope(ShadowCoordDelta(cascade, gWorldPosDx), ShadowCoordDelta(cascade, gWorldPosDy),
-                                     1.0);
-    float gap   = CascadeBlockerGap(cascade, uv, reference, slope);
+    float sum = CascadeTap(cascade, receiver.uv, receiver);
+    for (uint i = 0u; i < kGridProbeTaps - 1u; ++i)
+    {
+        sum += CascadeTap(cascade, receiver.uv + kGridCorners[i] * (float(radius) * step), receiver);
+    }
+    if (ProbeAgrees(sum, kGridProbeTaps))
+    {
+        return sum / float(kGridProbeTaps);
+    }
+    for (int y = -radius; y <= radius; ++y)
+    {
+        for (int x = -radius; x <= radius; ++x)
+        {
+            if (!IsGridProbe(x, y, radius))
+            {
+                sum += CascadeTap(cascade, receiver.uv + vec2(float(x), float(y)) * step, receiver);
+            }
+        }
+    }
+    return sum / PcfTapCount(radius);
+}
+
+// The sun through @p cascade, contact-hardened.
+float SampleCascadePcss(uint cascade, Receiver receiver, float NdotL)
+{
+    float gap = CascadeBlockerGap(cascade, receiver);
     if (gap == 0.0)
     {
         return 1.0;
@@ -124,15 +180,15 @@ float SampleCascadePcss(uint cascade, vec2 uv, float reference, float NdotL)
                        (kVogelRadiusSteps * uFrame.shadowCascade[cascade].w);
     float stepUv     = min(PcssPenumbraUv(uFrame.shadowPcss.x, gap, uFrame.shadowPcss.y) / kVogelRadiusSteps,
                            worldCapUv);
-    return FilterCascadePcss(cascade, uv, reference, slope, stepUv);
+    return FilterCascadeVogel(cascade, receiver, stepUv);
 }
 
-// Fraction of the sun reaching @p worldPos through @p cascade: 1 lit, 0 shadowed.
-// @p N is the geometric normal.
-float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+// Fraction of the sun reaching @p surface through @p cascade: 1 lit, 0 shadowed.
+float SampleCascade(uint cascade, ShadowSurface surface)
 {
+    float NdotL     = surface.NdotL;
     float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+    vec3  biasedPos = surface.position + surface.normal * (uFrame.shadowCascade[cascade].z * sinTheta);
 
     vec3 coord = ShadowCoord(cascade, biasedPos);
     vec2 uv    = coord.xy;
@@ -143,17 +199,18 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
         return 1.0;
     }
 
-    float reference = coord.z - uFrame.shadowCascade[cascade].y;
+    Receiver receiver =
+        Receiver(uv, CascadeReceiverSlope(cascade, surface.plane), coord.z - uFrame.shadowCascade[cascade].y);
 
     if (uFrame.shadowPcss.x > 0.0)
     {
-        return SampleCascadePcss(cascade, uv, reference, NdotL);
+        return SampleCascadePcss(cascade, receiver, NdotL);
     }
 
     uint filterMode = uFrame.shadowCounts.z;
     if (filterMode == kShadowFilterPoint)
     {
-        return ShadowTap(uv, cascade, reference);
+        return CascadeTap(cascade, uv, receiver);
     }
 
     // The sun subtends about half a degree, so a blocker d away throws a penumbra
@@ -162,63 +219,34 @@ float SampleCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
     // nearby occluder's edge; with nothing in front it stays at the cap.
     float texelStep  = uFrame.shadowParams.x;
     float capStep    = min(texelStep, uFrame.shadowParams.z * max(NdotL, kEps) / uFrame.shadowCascade[cascade].w);
-    float blockerNdc = reference - NearestBlockerDepth(uv, cascade, reference);
+    float blockerNdc = OwnTexelBlockerGap(cascade, receiver);
     float step       = blockerNdc > 0.0 ? min(capStep, uFrame.shadowParams.w * blockerNdc) : capStep;
 
     if (filterMode == kShadowFilterVogel)
     {
-        float phi = InterleavedGradientNoise(gl_FragCoord.xy) * kTwoPi;
-
-        // A tap returns exactly 0 or 1 unless it straddles an edge, so four
-        // probe taps that agree almost always mean the whole kernel would too.
-        float sum = 0.0;
-        for (uint i = 0u; i < kVogelProbeTaps; ++i)
-        {
-            sum += VogelTap(kVogelProbe[i], uv, cascade, reference, step, phi);
-        }
-        if (sum == 0.0)
-        {
-            return 0.0;
-        }
-        if (sum == float(kVogelProbeTaps))
-        {
-            return 1.0;
-        }
-        for (uint i = 0u; i < 12u; ++i)
-        {
-            sum += VogelTap(kVogelRest[i], uv, cascade, reference, step, phi);
-        }
-        return sum / float(kVogelTaps);
+        return FilterCascadeVogel(cascade, receiver, step);
     }
-
-    int   radius = filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius;
-    float sum    = 0.0;
-    for (int y = -radius; y <= radius; ++y)
-    {
-        for (int x = -radius; x <= radius; ++x)
-        {
-            sum += ShadowTap(uv + vec2(float(x), float(y)) * step, cascade, reference);
-        }
-    }
-    return sum / PcfTapCount(radius);
+    return FilterCascadeGrid(cascade, receiver, step, filterMode == kShadowFilterPcf5 ? kPcf5Radius : kPcf3Radius);
 }
 
 // What the map holds at this fragment's own lookup and what the fragment
 // compares against it, for the debug views. Both in [0, 1] depth.
 struct ShadowProbe
 {
+    vec2  uv;
     float stored;
     float reference;
     bool  outside;
 };
 
-ShadowProbe ProbeCascade(uint cascade, vec3 worldPos, vec3 N, float NdotL)
+ShadowProbe ProbeCascade(uint cascade, ShadowSurface surface)
 {
     ShadowProbe probe;
-    float sinTheta  = sqrt(max(0.0, 1.0 - NdotL * NdotL));
-    vec3  biasedPos = worldPos + N * (uFrame.shadowCascade[cascade].z * sinTheta);
+    float sinTheta  = sqrt(max(0.0, 1.0 - surface.NdotL * surface.NdotL));
+    vec3  biasedPos = surface.position + surface.normal * (uFrame.shadowCascade[cascade].z * sinTheta);
 
     vec3 coord     = ShadowCoord(cascade, biasedPos);
+    probe.uv       = coord.xy;
     probe.outside  = any(lessThan(coord.xy, vec2(0.0))) || any(greaterThan(coord.xy, vec2(1.0))) || coord.z > 1.0;
     probe.reference = coord.z - uFrame.shadowCascade[cascade].y;
 
@@ -243,7 +271,7 @@ uint SelectCascade(float viewDepth)
 }
 
 // The sun's visibility, blended over the end of each cascade into the next.
-float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
+float SunVisibility(uint cascade, ShadowSurface surface)
 {
     uint  cascadeCount = uFrame.shadowCounts.x;
     float viewDepth    = abs(vViewZ);
@@ -254,7 +282,7 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
         return 1.0;
     }
 
-    float visibility = SampleCascade(cascade, vWorldPos, N, NdotL);
+    float visibility = SampleCascade(cascade, surface);
 
     float splitFar  = uFrame.shadowCascade[cascade].x;
     float splitNear = cascade == 0u ? 0.0 : uFrame.shadowCascade[cascade - 1u].x;
@@ -268,7 +296,7 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
             // miss occluders, never add them. Nothing to blend below zero.
             if (visibility > 0.0)
             {
-                float next = SampleCascade(cascade + 1u, vWorldPos, N, NdotL);
+                float next = SampleCascade(cascade + 1u, surface);
                 visibility = mix(visibility, min(visibility, next), t);
             }
         }
@@ -281,11 +309,13 @@ float SunVisibility(vec3 N, vec3 L, uint cascade, float NdotL)
     return visibility;
 }
 
-// Flat tints for the cascade debug view, one per slice.
+// Flat tints for the cascade debug view, one per slice, as many as the frame
+// constants hold cascades: red, green, blue, yellow, magenta, cyan, orange, grey.
+const vec3 kCascadeTints[8] = vec3[8](vec3(1.0, 0.45, 0.45), vec3(0.45, 1.0, 0.45), vec3(0.45, 0.6, 1.0),
+                                      vec3(1.0, 0.95, 0.45), vec3(1.0, 0.45, 1.0), vec3(0.45, 1.0, 1.0),
+                                      vec3(1.0, 0.7, 0.3), vec3(0.75, 0.75, 0.75));
+
 vec3 CascadeTint(uint cascade)
 {
-    if (cascade == 0u) return vec3(1.0, 0.45, 0.45);
-    if (cascade == 1u) return vec3(0.45, 1.0, 0.45);
-    if (cascade == 2u) return vec3(0.45, 0.6, 1.0);
-    return vec3(1.0, 0.95, 0.45);
+    return kCascadeTints[min(cascade, uint(kCascadeTints.length()) - 1u)];
 }

@@ -2,6 +2,7 @@
 #include <Assisi/Runtime/Import/AnimatorCompiler.hpp>
 
 #include <Assisi/Core/CookedBlob.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Geometry/BlendSpace.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -78,7 +79,7 @@ std::expected<void, std::string> NotEmpty(std::string_view value, std::string_vi
 {
     if (value.empty())
     {
-        return std::unexpected(std::format("an empty name can't be a {}", what));
+        return std::unexpected(Core::Format("an empty name can't be a {}", what));
     }
     return {};
 }
@@ -122,11 +123,11 @@ class TreeAssets final : public AnimationAssets
         const std::optional<std::string> kind = KindOf(vpath);
         if (!kind.has_value())
         {
-            return std::unexpected(std::format("there is no \"{}\" in the asset tree", vpath));
+            return std::unexpected(Core::Format("there is no \"{}\" in the asset tree", vpath));
         }
         if (*kind != Geometry::kAnimationKindName && *kind != Geometry::kBlendSpaceKindName)
         {
-            return std::unexpected(std::format("\"{}\" is {}, not a clip or blend space", vpath, Article(*kind)));
+            return std::unexpected(Core::Format("\"{}\" is {}, not a clip or blend space", vpath, Article(*kind)));
         }
         return {};
     }
@@ -136,11 +137,11 @@ class TreeAssets final : public AnimationAssets
         const std::optional<std::string> kind = KindOf(vpath);
         if (!kind.has_value())
         {
-            return std::unexpected(std::format("there is no \"{}\" in the asset tree", vpath));
+            return std::unexpected(Core::Format("there is no \"{}\" in the asset tree", vpath));
         }
         if (!IsModel(vpath))
         {
-            return std::unexpected(std::format("\"{}\" is {}, not a model", vpath, Article(*kind)));
+            return std::unexpected(Core::Format("\"{}\" is {}, not a model", vpath, Article(*kind)));
         }
         if (vpath == _skeleton && !_modelError.empty())
         {
@@ -148,7 +149,7 @@ class TreeAssets final : public AnimationAssets
         }
         if (vpath == _skeleton && _joints.empty())
         {
-            return std::unexpected(std::format("\"{}\" has no skeleton", vpath));
+            return std::unexpected(Core::Format("\"{}\" has no skeleton", vpath));
         }
         return {};
     }
@@ -162,7 +163,7 @@ class TreeAssets final : public AnimationAssets
         }
         std::vector<std::string_view> joints{_joints.begin(), _joints.end()};
         return std::unexpected(
-            std::format("\"{}\" has no joint \"{}\"{}", _skeleton, name, DidYouMean(joints, name)));
+            Core::Format("\"{}\" has no joint \"{}\"{}", _skeleton, name, DidYouMean(joints, name)));
     }
 
   private:
@@ -180,16 +181,22 @@ class TreeAssets final : public AnimationAssets
     [[nodiscard]] static std::string Article(std::string_view kind)
     {
         const bool vowel = !kind.empty() && std::string_view{"aeiou"}.find(kind.front()) != std::string_view::npos;
-        return std::format("{} {}", vowel ? "an" : "a", kind);
+        return Core::Format("{} {}", vowel ? "an" : "a", kind);
     }
 
     void ReadJoints()
     {
+        // A model the context holds in memory answers for itself.
+        if (std::optional<std::vector<std::string>> joints = _context->SkeletonJoints(_skeleton); joints.has_value())
+        {
+            _joints = std::move(*joints);
+            return;
+        }
         std::expected<Geometry::MeshData, Geometry::MeshImportError> mesh = Geometry::ImportMesh(_skeleton);
         if (!mesh)
         {
-            _modelError = std::format("\"{}\" can't be read as a model: {}", _skeleton,
-                                      Geometry::ToString(mesh.error()));
+            _modelError = Core::Format("\"{}\" can't be read as a model: {}", _skeleton,
+                                       Geometry::ToString(mesh.error()));
             return;
         }
         _joints = std::move(mesh->Skeleton.Names);
@@ -245,7 +252,7 @@ uint32_t LowerValue(Lowering &lowering, const Clause &clause, const Expr &expr)
     std::expected<uint32_t, std::string> entry = LowerExpression(lowering.graph.layout, expr, lowering.graph.code);
     if (!entry)
     {
-        FailClause(lowering, clause, std::format("this value can't be worked out: {}", entry.error()),
+        FailClause(lowering, clause, Core::Format("this value can't be worked out: {}", entry.error()),
                    "in this clause");
         return kNotWritten;
     }
@@ -290,7 +297,7 @@ void LowerPlayed(Lowering &lowering, const Block &block, const Clause &clause, A
     const bool pose = ClauseOf(clause) == AnimationClause::Pose;
     if (state.clip.asset != Core::AssetId{} || state.clip.param != kNotWritten)
     {
-        Diagnostic &error = FailClause(lowering, clause, std::format("state \"{}\" plays two things", block.name),
+        Diagnostic &error = FailClause(lowering, clause, Core::Format("state \"{}\" plays two things", block.name),
                                        "a second clip here");
         error.help = "a state plays one clip, blend space or pose; give the other one a state of its own";
         return;
@@ -314,7 +321,7 @@ void LowerState(Lowering &lowering, const Block &block, AnimatorState &state)
         if (!block.children.empty())
         {
             Diagnostic &error =
-                FailClause(lowering, clause, std::format("state \"{}\" holds states, so it plays nothing", block.name),
+                FailClause(lowering, clause, Core::Format("state \"{}\" holds states, so it plays nothing", block.name),
                            "not allowed here");
             error.help = "write it in the states inside it";
             continue;
@@ -347,7 +354,7 @@ void LowerState(Lowering &lowering, const Block &block, AnimatorState &state)
     {
         Diagnostic &error =
             Fail(lowering, block.where, static_cast<uint32_t>(std::max<std::size_t>(block.name.size(), 1)),
-                 std::format("state \"{}\" plays nothing", block.name), "no play or pose");
+                 Core::Format("state \"{}\" plays nothing", block.name), "no play or pose");
         error.help = "give it \"play\" with a clip or blend space, or \"pose\" with a clip";
     }
     if (then != nullptr && state.pose)
@@ -362,7 +369,7 @@ void LowerState(Lowering &lowering, const Block &block, AnimatorState &state)
 void RefuseOnBase(Lowering &lowering, const Clause &clause)
 {
     const std::string &word = lowering.vocabulary.clauses[clause.spec].word;
-    Diagnostic &error = FailClause(lowering, clause, std::format("the first layer can't have \"{}\"", word),
+    Diagnostic &error = FailClause(lowering, clause, Core::Format("the first layer can't have \"{}\"", word),
                                    "on the first layer");
     error.help = "the first layer plays on the whole body under every other; write a layer after it for this";
 }
@@ -418,7 +425,7 @@ void LowerLayer(Lowering &lowering, const Block &block, bool base)
     if (!graph)
     {
         Fail(lowering, block.where, static_cast<uint32_t>(block.name.size()),
-             std::format("layer \"{}\" can't be worked out: {}", block.name, graph.error()), "in this layer");
+             Core::Format("layer \"{}\" can't be worked out: {}", block.name, graph.error()), "in this layer");
         return;
     }
     AnimatorLayer layer;
@@ -470,7 +477,7 @@ void LowerFile(Lowering &lowering)
         LowerLets(lowering.program, lowering.graph.layout, lowering.graph.code);
     if (!lets)
     {
-        Fail(lowering, SourceLocation{}, 1, std::format("a let can't be worked out: {}", lets.error()), "");
+        Fail(lowering, SourceLocation{}, 1, Core::Format("a let can't be worked out: {}", lets.error()), "");
         return;
     }
     lowering.graph.letEntries = std::move(*lets);

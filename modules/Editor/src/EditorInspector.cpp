@@ -19,6 +19,7 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/DisplayedString.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -29,6 +30,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Editor/InspectorFieldChrome.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
+#include <Assisi/Editor/SplineFields.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -38,7 +40,10 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
+#include <Assisi/Runtime/SkyComponents.hpp>
 #include <Assisi/Runtime/TimeOfDay.hpp>
+#include <Assisi/Runtime/WaterComponents.hpp>
 
 #include <imgui.h>
 
@@ -605,6 +610,11 @@ bool EditorApp::EditFieldValue(void *fp, const Assisi::Core::Reflect::FieldMeta 
     case FieldType::Vec3:
         edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
         break;
+    // Dragged and typed as doubles, so a position far from the origin keeps the
+    // precision the field holds it at.
+    case FieldType::DVec3:
+        edited = ImGui::DragScalarN(field.name.c_str(), ImGuiDataType_Double, fp, 3, 0.01f, nullptr, nullptr, "%.3f");
+        break;
     case FieldType::Vec4:
         edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
         break;
@@ -761,6 +771,59 @@ bool SettleAfterEdit(BoundBaseline &baseline, std::span<const Assisi::Core::Refl
     // undo puts both back.
     const bool restored = RestoreBoundBaseline(baseline, fields, object, editedField);
     return Assisi::Core::Reflect::SettleDependentBounds(fields, object) || restored;
+}
+
+/// @brief @p component's preset as its raw value if it is one of the components
+/// with presets, read before an edit so SettlePresetFields can tell whether it
+/// moved.
+std::optional<std::uint8_t> PresetBeforeEdit(const void *component, Assisi::Core::Reflect::ComponentId id)
+{
+    using Assisi::Core::Reflect::ComponentIdOf;
+    if (id == ComponentIdOf<Assisi::Physics::CharacterLocomotion>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Physics::CharacterLocomotion *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Lake>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Lake *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Skybox>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Skybox *>(component)->preset);
+    }
+    if (id == ComponentIdOf<Assisi::Runtime::Clouds>())
+    {
+        return static_cast<std::uint8_t>(static_cast<const Assisi::Runtime::Clouds *>(component)->preset);
+    }
+    return std::nullopt;
+}
+
+/// @brief Fills a component's greyed fields from its preset if an edit moved
+/// the preset off @p before, in the edit's own gesture so one undo takes back
+/// both.
+void SettlePresetFields(void *component, Assisi::Core::Reflect::ComponentId id, std::uint8_t before)
+{
+    using Assisi::Core::Reflect::ComponentIdOf;
+    if (id == ComponentIdOf<Assisi::Physics::CharacterLocomotion>())
+    {
+        Assisi::Physics::SettleLocomotionPreset(*static_cast<Assisi::Physics::CharacterLocomotion *>(component),
+                                                static_cast<Assisi::Physics::LocomotionPreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Lake>())
+    {
+        Assisi::Runtime::SettleLakePreset(*static_cast<Assisi::Runtime::Lake *>(component),
+                                          static_cast<Assisi::Runtime::LakePreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Skybox>())
+    {
+        Assisi::Runtime::SettleSkyPreset(*static_cast<Assisi::Runtime::Skybox *>(component),
+                                         static_cast<Assisi::Runtime::SkyPreset>(before));
+    }
+    else if (id == ComponentIdOf<Assisi::Runtime::Clouds>())
+    {
+        Assisi::Runtime::SettleCloudPreset(*static_cast<Assisi::Runtime::Clouds *>(component),
+                                           static_cast<Assisi::Runtime::CloudPreset>(before));
+    }
 }
 
 } // namespace
@@ -928,7 +991,7 @@ bool EditorApp::EditListField(void *fp, const Assisi::Core::Reflect::FieldMeta &
     std::byte *list = static_cast<std::byte *>(fp);
     const std::size_t count = ops.size(list);
     // The count is shown but kept out of the ID, so the node stays open as rows come and go.
-    const std::string label = std::format("{} ({})###{}", field.name, count, field.name);
+    const std::string label = Core::Format("{} ({})###{}", field.name, count, field.name);
     if (!ImGui::TreeNode(label.c_str()))
     {
         return false;
@@ -1109,7 +1172,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             if (empty)
                 preview = "(none)";
             else if (!_scene->IsAlive(*ref))
-                preview = std::format("[{}:{}] (dangling)", ref->index, ref->generation);
+                preview = Core::Format("[{}:{}] (dangling)", ref->index, ref->generation);
             else
                 preview = DescribeEntity(*ref);
 
@@ -1185,11 +1248,11 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                                       if (!id.IsValid())
                                           return "(none)";
                                       if (_world == nullptr)
-                                          return std::format("instance {}", id.value);
+                                          return Core::Format("instance {}", id.value);
                                       const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
                                       if (row == nullptr)
-                                          return std::format("instance {} (missing)", id.value);
-                                      return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+                                          return Core::Format("instance {} (missing)", id.value);
+                                      return Core::Format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
                                   };
 
             if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
@@ -1474,7 +1537,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
             RefreshCameraMatrix();
             const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
             constexpr float kSpawnDistance = 5.f;
-            tc->position = _cameraTransform.position + forward * kSpawnDistance;
+            tc->position = _cameraTransform.position + glm::dvec3(forward * kSpawnDistance);
         }
     }
     else if (IsComponent<Assisi::Runtime::MeshRenderer>(meta))
@@ -1840,12 +1903,12 @@ void EditorApp::DrawInstanceInspector()
 
     // Re-read from the row every frame, never cached: the gizmo writes the same
     // fields, and a cached copy would fight it for a frame on every drag.
-    glm::vec3 position = row->transform.position;
+    glm::dvec3 position = row->transform.position;
     glm::vec3 euler = glm::degrees(glm::eulerAngles(row->transform.rotation));
     float scale = row->transform.scale.x;
 
     bool edited = false;
-    edited |= ImGui::DragFloat3("position", &position.x, 0.01f);
+    edited |= ImGui::DragScalarN("position", ImGuiDataType_Double, &position.x, 3, 0.01f, nullptr, nullptr, "%.3f");
     edited |= ImGui::DragFloat3("rotation", &euler.x, 0.5f);
     // One number, because uniform scale is all an instance may have. Three would
     // let a non-uniform scale be typed and then silently averaged, which reads as
@@ -1903,7 +1966,7 @@ void EditorApp::DrawLightShadowVerdict()
         return;
     }
 
-    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer.ShadowReportFor(_selectedEntity);
+    const Assisi::Render::LocalShadowLightReport *report = _sceneRenderer->ShadowReportFor(_selectedEntity);
     if (report == nullptr)
     {
         // The gather runs a frame behind the selection, and a scene with local
@@ -1981,7 +2044,7 @@ void EditorApp::DrawLodVerdict()
     }
 
     const Assisi::Runtime::LodReport lod =
-        _sceneRenderer.LodReportFor(_selectedEntity, *renderer->meshBuffer, world->matrix);
+        _sceneRenderer->LodReportFor(_selectedEntity, *renderer->meshBuffer, *world);
 
     if (lod.levelCount <= 1)
     {
@@ -1991,7 +2054,7 @@ void EditorApp::DrawLodVerdict()
         return;
     }
 
-    const int32_t pinned = _sceneRenderer.PinnedLod(_selectedEntity);
+    const int32_t pinned = _sceneRenderer->PinnedLod(_selectedEntity);
 
     // "pinned" and "forced" are worth telling apart: one of them is about this
     // entity and the other is about every entity, and only one of them is
@@ -2009,7 +2072,7 @@ void EditorApp::DrawLodVerdict()
     // produces can pass 1 and would read as impossible on its own.
     // Within the slider's display precision of 1, or a drag that lands at
     // 1.0000001 would print "x 1.00 bias".
-    const float bias = _sceneRenderer.LodSettings().bias;
+    const float bias = _sceneRenderer->LodSettings().bias;
     if (std::abs(bias - 1.f) < 0.005f)
     {
         ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));
@@ -2025,7 +2088,7 @@ void EditorApp::DrawLodVerdict()
     // The switch points on either side, each named only where there is one: a
     // threshold is tuned by watching the size approach the number beside it.
     std::string switches;
-    if (!_sceneRenderer.LodSettings().enabled)
+    if (!_sceneRenderer->LodSettings().enabled)
     {
         switches = "selection is off - every instance draws LOD0";
     }
@@ -2037,7 +2100,7 @@ void EditorApp::DrawLodVerdict()
     {
         if (lod.regainAt > 0.f)
         {
-            switches = std::format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
+            switches = Core::Format("back to LOD{} at {:.4f}", lod.level - 1u, lod.regainAt);
         }
         if (lod.dropBelow > 0.f)
         {
@@ -2045,7 +2108,7 @@ void EditorApp::DrawLodVerdict()
             {
                 switches += "    ";
             }
-            switches += std::format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
+            switches += Core::Format("down to LOD{} below {:.4f}", lod.level + 1u, lod.dropBelow);
         }
         else
         {
@@ -2061,20 +2124,20 @@ void EditorApp::DrawLodPin(int32_t pinned, uint32_t levelCount)
 {
     // Only the levels this chain actually has, unlike the viewport-wide force,
     // which stands over meshes of every depth and can only offer a range.
-    const std::string preview = pinned < 0 ? "Auto" : std::format("LOD{}", pinned);
+    const std::string preview = pinned < 0 ? "Auto" : Core::Format("LOD{}", pinned);
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
     if (ImGui::BeginCombo("Pin this instance", preview.c_str()))
     {
         if (ImGui::Selectable("Auto", pinned < 0))
         {
-            _sceneRenderer.PinLod(_selectedEntity, -1);
+            _sceneRenderer->PinLod(_selectedEntity, -1);
         }
         for (uint32_t level = 0; level < levelCount; ++level)
         {
-            const std::string label = std::format("LOD{}", level);
+            const std::string label = Core::Format("LOD{}", level);
             if (ImGui::Selectable(label.c_str(), pinned == static_cast<int32_t>(level)))
             {
-                _sceneRenderer.PinLod(_selectedEntity, static_cast<int32_t>(level));
+                _sceneRenderer->PinLod(_selectedEntity, static_cast<int32_t>(level));
             }
         }
         ImGui::EndCombo();
@@ -2173,7 +2236,7 @@ void EditorApp::DrawTimeOfDayControls()
     {
         return;
     }
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
     bool edited = false;
 
     // Scrubbing goes through Jump rather than writing the field, so a scrub
@@ -2301,7 +2364,7 @@ void EditorApp::DrawMoonReadout()
         return;
     }
 
-    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer.LastSky();
+    const Assisi::Runtime::SkyResolution &sky = _sceneRenderer->LastSky();
 
     bool waxing = true;
     if (const Assisi::Runtime::TimeOfDay *clock = _scene->Get<Assisi::Runtime::TimeOfDay>(_selectedEntity))
@@ -2315,7 +2378,7 @@ void EditorApp::DrawMoonReadout()
 
     // The fallback is a flat white disk, which looks like a perfectly plausible
     // moon — which is exactly why it needs a line saying it is the fallback.
-    switch (_sceneRenderer.MoonTextureState())
+    switch (_sceneRenderer->MoonTextureState())
     {
     case Assisi::Render::SkyPass::MoonTexture::Loaded:
         ImGui::TextDisabled("texture: loaded");
@@ -2392,7 +2455,7 @@ void EditorApp::DrawInspector()
             const Assisi::Runtime::BlueprintResult definition = Assisi::Runtime::GetBlueprintDefinition(row->source);
             const std::string memberPath = definition && tag->memberIndex < (*definition)->members.size()
                                                ? (*definition)->members[tag->memberIndex].name
-                                               : std::format("#{}", tag->memberIndex);
+                                               : Core::Format("#{}", tag->memberIndex);
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});
             ImGui::Text("%s of %s", memberPath.c_str(), row->source.c_str());
@@ -2694,13 +2757,23 @@ void EditorApp::DrawInspector()
                 DrawClockedAimNotice();
             }
 
+            const std::optional<std::uint8_t> presetBefore = PresetBeforeEdit(compPtr, meta->id);
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // The field widgets write component memory by offset, bypassing
             // Scene::GetMut's change stamping, so the change is reported by hand.
             // A no-op for untracked components; for a tracked one (Transform) this
             // is what re-propagates the edit.
             if (edited)
+            {
+                if (presetBefore.has_value())
+                {
+                    SettlePresetFields(const_cast<void *>(compPtr), meta->id, *presetBefore);
+                }
+                // In the same gesture as the edit, so one undo takes back both:
+                // a moved node changes the handles its neighbours draw with.
+                Assisi::Editor::SettleSplines(const_cast<void *>(compPtr), meta->fields);
                 _scene->MarkChanged(_selectedEntity, meta->id);
+            }
             anyFieldEdited |= edited;
         }
         ImGui::PopID();

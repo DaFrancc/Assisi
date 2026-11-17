@@ -32,6 +32,28 @@ glm::vec3 SafeLightDirection(const glm::vec3 &direction)
     const float lengthSq = glm::dot(direction, direction);
     return lengthSq > 0.f && Math::IsFinite(lengthSq) ? direction / std::sqrt(lengthSq) : kFallbackLightDirection;
 }
+
+/// CasterReachesShadowedVolume for a @p light direction already of unit length,
+/// so a caller testing one caster against several volumes normalises it once.
+bool SweepReachesVolume(const Geometry::BoundingSphere &caster, const Geometry::BoundingSphere &volume,
+                        const glm::vec3 &light)
+{
+    // Nothing is fitted, so there is nothing to cast into.
+    if (!(volume.radius > 0.f))
+    {
+        return false;
+    }
+
+    const glm::vec3 toVolume = volume.center - caster.center;
+
+    // Where the sweep comes closest. Clamped at zero because the sweep starts at
+    // the caster and runs down-light forever: a caster past the volume in the
+    // light's own direction casts away from it, not into it.
+    const float along = std::max(glm::dot(toVolume, light), 0.f);
+    const glm::vec3 offset = toVolume - light * along;
+    const float reach = caster.radius + volume.radius;
+    return glm::dot(offset, offset) <= reach * reach;
+}
 } // namespace
 
 std::uint64_t ShadowMoverSignature(const ShadowMover &mover)
@@ -288,10 +310,11 @@ std::uint32_t ShadowCasterViewMask(const Geometry::BoundingSphere &caster,
                                    const glm::vec3 &lightDirection)
 {
     const auto count = static_cast<std::uint32_t>(std::min<std::size_t>(volumes.size(), kShadowViewMaskBits));
+    const glm::vec3 light = SafeLightDirection(lightDirection);
     std::uint32_t mask = 0;
     for (std::uint32_t i = 0; i < count; ++i)
     {
-        mask |= CasterReachesShadowedVolume(caster, volumes[i], lightDirection) ? (1u << i) : 0u;
+        mask |= SweepReachesVolume(caster, volumes[i], light) ? (1u << i) : 0u;
     }
     return mask;
 }
@@ -299,22 +322,7 @@ std::uint32_t ShadowCasterViewMask(const Geometry::BoundingSphere &caster,
 bool CasterReachesShadowedVolume(const Geometry::BoundingSphere &caster, const Geometry::BoundingSphere &volume,
                                  const glm::vec3 &lightDirection)
 {
-    // Nothing is fitted, so there is nothing to cast into.
-    if (!(volume.radius > 0.f))
-    {
-        return false;
-    }
-
-    const glm::vec3 light = SafeLightDirection(lightDirection);
-    const glm::vec3 toVolume = volume.center - caster.center;
-
-    // Where the sweep comes closest. Clamped at zero because the sweep starts at
-    // the caster and runs down-light forever: a caster past the volume in the
-    // light's own direction casts away from it, not into it.
-    const float along = std::max(glm::dot(toVolume, light), 0.f);
-    const glm::vec3 offset = toVolume - light * along;
-    const float reach = caster.radius + volume.radius;
-    return glm::dot(offset, offset) <= reach * reach;
+    return SweepReachesVolume(caster, volume, SafeLightDirection(lightDirection));
 }
 
 float CascadeDepthBiasNdc(const ShadowCascade &cascade, const SunShadowSettings &settings)
@@ -347,8 +355,8 @@ float FilterRadiusTaps(ShadowFilter filter)
     switch (filter)
     {
     case ShadowFilter::Point:
-        // No taps of its own — the hardware's bilinear comparison is the whole
-        // of the footprint, and CascadePenumbraWorld adds that separately.
+        // No taps of its own — the bilinear tap's four texels are the whole of
+        // the footprint, and CascadePenumbraWorld adds that separately.
         return kPointFilterRadiusTaps;
     case ShadowFilter::Pcf5x5:
         return kPcf5FilterRadiusTaps;
@@ -409,9 +417,9 @@ float CascadePenumbraWorld(const ShadowCascade &cascade, const SunShadowSettings
     const SunShadowSettings safe = Sanitized(settings);
     const float boxWidth = 2.f * cascade.extent;
     const float kernelUv = FilterRadiusTaps(safe.filter) * CascadeFilterTapStepUv(cascade, safe);
-    // The hardware compares against four texels and blends, so every filter —
-    // the one-tap one included — is soft to half a texel before its own kernel
-    // adds anything.
+    // Every tap compares four texels and blends them, so every filter — the
+    // one-tap one included — is soft to half a texel before its own kernel adds
+    // anything.
     const float bilinearUv = 0.5f / static_cast<float>(std::max(safe.resolution, 1u));
     return (kernelUv + bilinearUv) * boxWidth;
 }

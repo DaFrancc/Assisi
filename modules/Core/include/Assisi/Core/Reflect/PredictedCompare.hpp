@@ -11,6 +11,7 @@
 /// builds — so a float agrees within a tolerance, and a vector, quaternion or
 /// matrix component by component. Everything else agrees exactly.
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
@@ -33,6 +34,10 @@ inline constexpr double kPredictedAbsoluteTolerance = 1e-4;
 /// Above it, two floats agree within this fraction of the larger: a few dozen
 /// float steps, more than two simulations' rounding drifts apart in a tick.
 inline constexpr double kPredictedRelativeTolerance = 1e-5;
+
+/// The same few dozen steps for a double. Not the float fraction: a double
+/// position 100 km from the origin would agree with one a metre away.
+inline constexpr double kPredictedRelativeToleranceDouble = 1e-14;
 
 /// @brief A glm vector, quaternion or matrix: a fixed number of components,
 /// each read with [].
@@ -60,7 +65,9 @@ template <typename T> [[nodiscard]] bool PredictedFieldEqual(const T &lhs, const
         const double difference = std::abs(static_cast<double>(lhs) - static_cast<double>(rhs));
         const double larger =
             std::max(std::abs(static_cast<double>(lhs)), std::abs(static_cast<double>(rhs)));
-        return difference <= std::max(kPredictedAbsoluteTolerance, kPredictedRelativeTolerance * larger);
+        const double relative =
+            std::is_same_v<T, float> ? kPredictedRelativeTolerance : kPredictedRelativeToleranceDouble;
+        return difference <= std::max(kPredictedAbsoluteTolerance, relative * larger);
     }
     else if constexpr (ComponentWise<T>)
     {
@@ -100,11 +107,11 @@ template <typename T> [[nodiscard]] std::string PredictedFieldText(const T &valu
     }
     else if constexpr (std::is_enum_v<T>)
     {
-        return std::format("{}", std::to_underlying(value));
+        return Core::Format("{}", std::to_underlying(value));
     }
     else if constexpr (std::formattable<T, char>)
     {
-        return std::format("{}", value);
+        return Core::Format("{}", value);
     }
     else
     {
@@ -121,7 +128,7 @@ template <typename T>
     {
         return {};
     }
-    return std::format("{}: {} vs {}", name, PredictedFieldText(lhs), PredictedFieldText(rhs));
+    return Core::Format("{}: {} vs {}", name, PredictedFieldText(lhs), PredictedFieldText(rhs));
 }
 
 } // namespace Assisi::Core::Reflect

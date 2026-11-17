@@ -11,7 +11,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <optional>
 #include <vector>
 
 using namespace Assisi::Render;
@@ -129,11 +128,11 @@ TEST_CASE("Both halves of the seam agree: the CPU query and the shader's constan
     }
 }
 
-TEST_CASE("A provider without an environment leaves the shader on the diffuse-only term")
+TEST_CASE("A provider without an environment reflects its own radiance along the reflection")
 {
-    // What makes switching the probe off a baseline rather than an
-    // approximation of one: these providers write zero into the specular lane,
-    // and mesh.frag takes the expression it had before the lane existed.
+    // These providers write zero into the specular lane, and mesh.frag then
+    // reflects the hemisphere along the reflection: a metal under a flat
+    // ambient reflects it, rather than taking it as diffuse or going dark.
     const UniformIndirect uniform(Color3<ColorSpace::Linear>(1.0f, 0.9f, 0.8f), 0.03f);
     const HemisphereIndirect hemisphere(Color3<ColorSpace::Linear>(0.2f, 0.35f, 0.7f), Color3<ColorSpace::Linear>(0.09f, 0.08f, 0.06f));
     const IndirectLighting *const providers[] = {&uniform, &hemisphere};
@@ -143,7 +142,14 @@ TEST_CASE("A provider without an environment leaves the shader on the diffuse-on
         const IndirectConstants constants = provider->ShaderConstants();
         CHECK(constants.specularEnvironment == 0.0f);
         CHECK(constants.specularMaxLod == 0.0f);
-        CHECK_FALSE(provider->SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.5f).has_value());
+        for (const glm::vec3 &reflection : Normals())
+        {
+            const Color3<ColorSpace::Linear> reflected = provider->SpecularRadiance(glm::vec3(0.0f), reflection, 0.5f);
+            const Color3<ColorSpace::Linear> expected = EvaluateIndirect(constants, reflection);
+            CHECK(reflected.r == doctest::Approx(expected.r));
+            CHECK(reflected.g == doctest::Approx(expected.g));
+            CHECK(reflected.b == doctest::Approx(expected.b));
+        }
     }
 }
 
@@ -164,12 +170,11 @@ TEST_CASE("The sky probe keeps the hemisphere's diffuse and reflects the sky its
 
         // A mirror reflects exactly the direction it faces, and a direction
         // of this sky, not an average of it.
-        const std::optional<Color3<ColorSpace::Linear>> mirror = probe.SpecularRadiance(glm::vec3(0.0f), normal, 0.0f);
-        REQUIRE(mirror.has_value());
+        const Color3<ColorSpace::Linear> mirror = probe.SpecularRadiance(glm::vec3(0.0f), normal, 0.0f);
         const glm::vec3 direct =
             SkyRadiance(normal, environment.sun, environment.moon, environment.settings);
-        CHECK(mirror->r == doctest::Approx(direct.r).epsilon(kMirrorTolerance));
-        CHECK(mirror->b == doctest::Approx(direct.b).epsilon(kMirrorTolerance));
+        CHECK(mirror.r == doctest::Approx(direct.r).epsilon(kMirrorTolerance));
+        CHECK(mirror.b == doctest::Approx(direct.b).epsilon(kMirrorTolerance));
     }
 
     const IndirectConstants constants = probe.ShaderConstants();
@@ -187,8 +192,8 @@ TEST_CASE("The sky probe reflects the zenith and the horizon differently")
     const SkyProbeInputs environment = MakeSkyProbeInputs(SunAt(40.0f), SkyMoon{}, SkySettings{});
     const SkyProbeIndirect probe(Color3<ColorSpace::Linear>(0.2f), Color3<ColorSpace::Linear>(0.1f), environment, 4.0f);
 
-    const Color3<ColorSpace::Linear> zenith = *probe.SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.3f);
-    const Color3<ColorSpace::Linear> horizon = *probe.SpecularRadiance(glm::vec3(0.0f), Dir(3.0f, 180.0f), 0.3f);
+    const Color3<ColorSpace::Linear> zenith = probe.SpecularRadiance(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 0.3f);
+    const Color3<ColorSpace::Linear> horizon = probe.SpecularRadiance(glm::vec3(0.0f), Dir(3.0f, 180.0f), 0.3f);
     CHECK(Luminance(horizon) > Luminance(zenith));
     CHECK(zenith.b > zenith.r);
 }

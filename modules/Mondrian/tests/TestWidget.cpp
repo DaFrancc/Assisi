@@ -1,4 +1,5 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include <Assisi/Mondrian/TestWorld.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
@@ -61,6 +62,7 @@ struct Probe
 {
     Record record;
     Assisi::Core::EventQueue events;
+    TestWorld world{events};
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     /// After the queues, so they outlive it.
     Ui ui{universal};
@@ -72,7 +74,7 @@ struct Probe
 
     Probe()
     {
-        held = std::make_unique<Screen>(ui, events,
+        held = std::make_unique<Screen>(ui, world,
                                         ScreenTraits{.input = ScreenInput::ConsumeInput,
                                                      .beneath = ScreenBeneath::HidesBeneath,
                                                      .pause = ScreenPause::Pause},

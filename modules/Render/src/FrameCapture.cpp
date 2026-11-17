@@ -8,6 +8,8 @@
 #include <stb_image_write.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace Assisi::Render
@@ -58,35 +60,54 @@ bool FrameCapture::Record(nvrhi::IDevice *device, nvrhi::ICommandList *commandLi
     return true;
 }
 
-bool FrameCapture::Write(nvrhi::IDevice *device, const std::string &path)
+bool FrameCapture::MarkSubmitted(nvrhi::IDevice *device)
 {
-    if (device == nullptr || _staging == nullptr || path.empty())
+    if (device == nullptr || _staging == nullptr)
     {
-        Core::Log::Error("FrameCapture: nothing was recorded to write to '{}'.", path);
         return false;
     }
+    _submitted = device->createEventQuery();
+    if (_submitted == nullptr)
+    {
+        return false;
+    }
+    device->setEventQuery(_submitted, nvrhi::CommandQueue::Graphics);
+    return true;
+}
 
-    device->waitForIdle();
+bool FrameCapture::Ready(nvrhi::IDevice *device) const
+{
+    return device != nullptr && _submitted != nullptr && device->pollEventQuery(_submitted);
+}
+
+std::optional<CapturedImage> FrameCapture::Read(nvrhi::IDevice *device)
+{
+    if (device == nullptr || _staging == nullptr)
+    {
+        Core::Log::Error("FrameCapture: nothing was recorded to read.");
+        return std::nullopt;
+    }
 
     std::size_t rowPitch = 0;
-    const auto *const mapped = static_cast<const std::uint8_t *>(
+    const std::uint8_t *const mapped = static_cast<const std::uint8_t *>(
         device->mapStagingTexture(_staging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch));
     if (mapped == nullptr)
     {
         Core::Log::Error("FrameCapture: could not map the staging texture.");
-        return false;
+        return std::nullopt;
     }
 
     // Repacked row by row: the driver's row pitch is routinely wider than the image.
-    const auto width = static_cast<std::size_t>(_width);
-    const auto height = static_cast<std::size_t>(_height);
+    const std::size_t width = static_cast<std::size_t>(_width);
+    const std::size_t height = static_cast<std::size_t>(_height);
     const std::size_t red = IsBlueFirst(_format) ? 2u : 0u;
     const std::size_t blue = 2u - red;
-    std::vector<std::uint8_t> pixels(width * height * kChannels);
+    CapturedImage image{.rgba = std::vector<std::uint8_t>(width * height * kChannels), .width = _width,
+                        .height = _height};
     for (std::size_t y = 0; y < height; ++y)
     {
         const std::uint8_t *const row = mapped + y * rowPitch;
-        std::uint8_t *const out = pixels.data() + y * width * kChannels;
+        std::uint8_t *const out = image.rgba.data() + y * width * kChannels;
         for (std::size_t x = 0; x < width; ++x)
         {
             out[x * kChannels + 0u] = row[x * kChannels + red];
@@ -97,17 +118,37 @@ bool FrameCapture::Write(nvrhi::IDevice *device, const std::string &path)
     }
     device->unmapStagingTexture(_staging);
     _staging = nullptr;
+    _submitted = nullptr;
+    return image;
+}
 
-    const int written = stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height),
-                                       static_cast<int>(kChannels), pixels.data(), static_cast<int>(width * kChannels));
+bool FrameCapture::WritePng(const CapturedImage &image, const std::string &path)
+{
+    const int32_t written =
+        stbi_write_png(path.c_str(), static_cast<int32_t>(image.width), static_cast<int32_t>(image.height),
+                       static_cast<int32_t>(kChannels), image.rgba.data(),
+                       static_cast<int32_t>(static_cast<std::size_t>(image.width) * kChannels));
     if (written == 0)
     {
         Core::Log::Error("FrameCapture: could not write '{}'.", path);
         return false;
     }
 
-    Core::Log::Info("FrameCapture: wrote {} ({}x{}).", path, width, height);
+    Core::Log::Info("FrameCapture: wrote {} ({}x{}).", path, image.width, image.height);
     return true;
+}
+
+bool FrameCapture::Write(nvrhi::IDevice *device, const std::string &path)
+{
+    if (device == nullptr || _staging == nullptr || path.empty())
+    {
+        Core::Log::Error("FrameCapture: nothing was recorded to write to '{}'.", path);
+        return false;
+    }
+
+    device->waitForIdle();
+    const std::optional<CapturedImage> image = Read(device);
+    return image.has_value() && WritePng(*image, path);
 }
 
 } // namespace Assisi::Render

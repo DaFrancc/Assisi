@@ -23,9 +23,112 @@ constructor instead.
 Systems can't keep pointers between frames, so calling `FindScreen` every frame
 is normal. A world has only a few screens, so the lookup is cheap.
 
+`FindScreen` is for a screen a world has one of, such as its pause menu. With
+two screens loaded from one file, it finds the first.
+
+## Screens an entity owns
+
+A screen that belongs to an entity, such as a player's HUD or an enemy's health
+bar, is kept by the entity: a component on it holds the screen's `ScreenId`.
+There can be one of these screens per entity, all loaded from one file.
+
+```cpp
+ACOMP(transient)
+struct PlayerHud
+{
+    Assisi::App::ScreenId screen;
+};
+```
+
+| Call | What it does |
+|---|---|
+| `Assisi::App::IdOf(world, screen)` | The id the world holds a screen by, to keep in the component. |
+| `Assisi::App::FindScreen(world, id)` | The screen again, or `nullptr` once it has been removed. |
+
+A world never gives an id out twice, so an id kept after its screen was removed
+finds nothing rather than another screen. [Showing values from the
+world](ui-bindings.md#a-hud) has the sandbox's HUD as an example.
+
+Destroying the entity destroys the component too, so nothing can read the id
+from it afterwards. Have the screen send the id itself, in an event pushed when
+its context is [lost](#contexts):
+
+```cpp
+hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, Game::HudOrphaned{.screen = id});
+```
+
+Remove the screen in a `PreUpdate` system that reads the event. A paused world
+runs `PreUpdate` but not `Update`, and its events end with the frame, so an
+`Update` system would miss one pushed during a pause.
+
 `Screen::Find` returns a node by its name. It searches every node on the
 screen, so call it once while setting up and keep the result rather than
 calling it every frame.
+
+## Contexts
+
+A screen can be about an entity: a boss bar is about the boss, a HUD is about
+the player. That entity is the screen's **context**. Code sets it:
+
+```cpp
+Assisi::Mondrian::Screen *const bar = Assisi::App::FindScreen(ctx.world, "ui/BossBar.amdn");
+bar->SetContext("boss", Assisi::App::ScreenEntity(boss));
+```
+
+| Call | What it does |
+|---|---|
+| `SetContext("boss", id)` | Makes the entity `id` the context called `boss`. |
+| `SetContext(id)` | The same for the screen's unnamed context. |
+| `SetContext("boss", {})` | Clears it. |
+| `GetContext("boss")` | The entity it holds, or an empty id once it was cleared or its entity destroyed. |
+
+`Assisi::App::ScreenEntity` turns an `ECS::Entity` into the id a screen holds.
+The entity must belong to the screen's world. A level's screens are destroyed
+with it, so a screen never reads a world that has gone.
+
+### Reacting to the context
+
+A screen file declares its contexts with `<context>`, directly inside
+`<screen>`, and says what happens at each moment:
+
+```xml
+<screen>
+  <context name="boss" on_set="Game::BossAppeared" on_lost="hide()" />
+  <column name="boss_bar">
+    <text>Boss</text>
+  </column>
+</screen>
+```
+
+| Attribute | Runs when |
+|---|---|
+| `on_set` | the context is given an entity when it had none |
+| `on_switch` | it is given a different entity |
+| `on_clear` | code clears it |
+| `on_lost` | its entity is destroyed |
+
+Each takes what a button's `on_click` takes (see
+[Button actions](ui-actions.md)): `hide()`, or an event a system reads.
+`step(...)` isn't allowed, since no button was pressed. Leave the `name` off
+to declare the screen's unnamed context.
+
+How the moments behave:
+
+- The screen notices a change at the start of the next frame, and systems read
+  its event in that frame, as they would a click. A context set and cleared
+  again within one frame does nothing.
+- Lost means the entity no longer exists, not that its health reached 0.
+- A lost context counts as empty, so the next entity it is given runs `on_set`
+  again: the second boss is announced the way the first was.
+- A hidden screen's contexts still react, so a hidden boss bar hears a boss
+  arrive and a system can show it.
+
+A screen built in C++ sets the same with `OnContext`, as `OnActivate` does
+for a button:
+
+```cpp
+bar->OnContext("boss", Assisi::Mondrian::ContextMoment::Lost, Game::BossDefeated{});
+```
 
 ## Screens stacked on each other
 

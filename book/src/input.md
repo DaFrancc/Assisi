@@ -63,7 +63,7 @@ float     scroll = ctx.input->ScrollDelta();   // positive = scrolled up
 For first-person controls, hide the cursor and lock it to the window:
 
 ```cpp
-ctx.input->SetMouseCaptured(true);
+ctx.input->SetInputMode(Assisi::Window::InputMode::Game);
 ```
 
 While captured, `MouseDelta()` keeps reporting movement even at the edge of the

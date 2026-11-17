@@ -28,14 +28,55 @@
 
 #include <Assisi/Core/EventRoute.hpp>
 
+#include <concepts>
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace Assisi::Core
 {
+
+/// @brief What a file's control hands the event it pushes: whether it is on,
+/// where it rests, or which step it is on.
+using EventValue = std::variant<bool, float, int32_t>;
+
+/// @brief What an event's field called `value` can take.
+enum class EventValueKind : uint8_t
+{
+    None,  ///< it has no such field, so it is pushed as it is
+    Bool,
+    Float,
+    Int32,
+    Other, ///< it has one, of a type no control carries
+    Count_
+};
+
+/// @brief The kind a `value` field of type @p T is.
+template <typename T> [[nodiscard]] consteval EventValueKind EventValueKindOf()
+{
+    if constexpr (std::same_as<T, bool>)
+    {
+        return EventValueKind::Bool;
+    }
+    else if constexpr (std::same_as<T, float>)
+    {
+        return EventValueKind::Float;
+    }
+    else if constexpr (std::same_as<T, int32_t>)
+    {
+        return EventValueKind::Int32;
+    }
+    else
+    {
+        return EventValueKind::Other;
+    }
+}
 
 /// @brief One event type, as its declaration described it.
 struct EventDefinition
@@ -46,7 +87,40 @@ struct EventDefinition
     /// Pushes a default-constructed event of that type into the queue its
     /// scope names. Generated code holds the type; nothing here does.
     std::function<void(const EventRoute &)> push;
+
+    /// The same with its `value` field set. Null unless valueKind is one a
+    /// control carries.
+    std::function<void(const EventRoute &, const EventValue &)> pushValue;
+
+    EventValueKind valueKind = EventValueKind::None;
 };
+
+/// @brief The definition of the event type @p E, called @p name.
+template <typename E> [[nodiscard]] EventDefinition DefineEvent(std::string name)
+{
+    EventDefinition definition{.name = std::move(name),
+                               .push = [](const EventRoute &events) { events.Push(E{}); },
+                               .pushValue = {},
+                               .valueKind = EventValueKind::None};
+    if constexpr (requires { E::value; })
+    {
+        using Value = std::remove_cv_t<decltype(E::value)>;
+        definition.valueKind = EventValueKindOf<Value>();
+        if constexpr (EventValueKindOf<Value>() != EventValueKind::Other)
+        {
+            definition.pushValue = [](const EventRoute &events, const EventValue &value)
+                                   {
+                                       E event{};
+                                       if (const Value *const carried = std::get_if<Value>(&value))
+                                       {
+                                           event.value = *carried;
+                                       }
+                                       events.Push(event);
+                                   };
+        }
+    }
+    return definition;
+}
 
 /// @brief The table of declared event types.
 ///

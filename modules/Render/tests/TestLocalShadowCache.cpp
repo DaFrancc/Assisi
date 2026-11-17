@@ -362,6 +362,51 @@ TEST_CASE("A face the budget refused stays owed")
     CHECK(plans[1].dirtyFaces == 0b1u);
 }
 
+TEST_CASE("A budget smaller than a point light's cube still lets one light through each frame")
+{
+    LocalShadowCache cache;
+    LocalShadowCacheSettings settings;
+    settings.updateBudgetFaces = 1;
+
+    const std::vector<LocalShadowRequest> requests{PointAt(0, glm::vec3(0.f)), PointAt(1, glm::vec3(50.f))};
+
+    std::vector<LocalShadowTilePlan> plans;
+    RunFrame(cache, FrameAt(1, settings, requests), plans);
+    CHECK_FALSE(plans[0].deferred); // all six faces, over the budget
+    CHECK(plans[1].deferred);
+    CHECK(cache.Stats().bakedFaces == 6);
+
+    RunFrame(cache, FrameAt(2, settings, requests), plans);
+    CHECK(plans[0].dirtyFaces == 0);
+    CHECK_FALSE(plans[1].deferred);
+    CHECK(cache.Stats().bakedFaces == 6);
+}
+
+TEST_CASE("A demoted light keeps its small tile only while the atlas has no room for the one it asked for")
+{
+    LocalShadowCache cache;
+    const LocalShadowCacheSettings settings;
+    const std::vector<LocalShadowRequest> requests{SpotAt(0, glm::vec3(0.f))};
+    const std::vector<ShadowViewRect> rects{ShadowViewRect{.x = 0, .y = 0, .width = 256, .height = 256}};
+    std::vector<LocalShadowTilePlan> plans;
+
+    // Served at 256 for a request of 512, with nothing free at 512: kept, so it
+    // is not redrawn every frame it cannot grow.
+    cache.Plan(FrameAt(1, settings, requests), plans);
+    cache.Commit(1, requests, plans, std::vector<LocalShadowServedTile>{{.requestIndex = 0, .resolution = 256}}, rects);
+    cache.Plan(FrameAt(2, settings, requests), plans);
+    CHECK(plans[0].retained);
+    CHECK(plans[0].dirtyFaces == 0);
+
+    // The same, with room at 512 left over: given up, so the next frame cuts
+    // it at the size it asked for.
+    cache.Commit(2, requests, plans,
+                 std::vector<LocalShadowServedTile>{{.requestIndex = 0, .resolution = 256, .canGrow = true}}, rects);
+    cache.Plan(FrameAt(3, settings, requests), plans);
+    CHECK_FALSE(plans[0].retained);
+    CHECK(plans[0].dirtyFaces == 0b1u);
+}
+
 TEST_CASE("A light that loses its tile forgets the depth in it")
 {
     LocalShadowCache cache;
@@ -711,6 +756,31 @@ TEST_CASE("Mobility: a caster that is gone leaves the layer that drew it")
     // Owed once, not every frame after.
     mobility.Update(3, 30, {}, dynamic, invalidate);
     CHECK(invalidate.empty());
+}
+
+TEST_CASE("Mobility: an edited caster is redrawn where it was kept and where it now is")
+{
+    // What the scene renderer does with a still caster whose MeshRenderer
+    // changed: forget it, then report it moved, at a larger size since a mesh
+    // swap can grow it.
+    ShadowCasterMobility mobility;
+    std::vector<ShadowMover> dynamic;
+    std::vector<ShadowMover> invalidate;
+    const ShadowMover baked = CasterAt(3, glm::vec3(5.f, 0.f, 0.f), 1.f);
+    mobility.NoteBaked(baked);
+
+    mobility.Drop(3);
+    const ShadowMover edited = CasterAt(3, glm::vec3(5.f, 0.f, 0.f), 4.f);
+    mobility.Update(1, 30, std::vector<ShadowMover>{edited}, dynamic, invalidate);
+
+    // The kept layer loses the old silhouette, and the new one is drawn with
+    // the movers until it settles.
+    REQUIRE(invalidate.size() == 2);
+    CHECK(invalidate[0].worldSphere.radius == doctest::Approx(baked.worldSphere.radius));
+    CHECK(invalidate[1].worldSphere.radius == doctest::Approx(edited.worldSphere.radius));
+    CHECK(mobility.IsDynamic(3));
+    REQUIRE(dynamic.size() == 1);
+    CHECK(dynamic[0].worldSphere.radius == doctest::Approx(edited.worldSphere.radius));
 }
 
 TEST_CASE("Mobility: DropIf keeps what is still there")

@@ -9,6 +9,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -75,7 +76,7 @@ void ServerApp::OnStart()
                            : _options.role == ServerRole::Client ? "client"
                                                                  : "offline";
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
-              _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
+              _options.tickLimit > 0 ? Assisi::Core::Format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
@@ -237,7 +238,7 @@ void ServerApp::SpawnDemoMovers()
     for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
     {
         const ECS::Entity entity = _world.scene.Create();
-        const glm::vec3 origin{static_cast<float>(i) * kDemoMoverSpacing, 0.f, 0.f};
+        const glm::dvec3 origin{static_cast<double>(i) * static_cast<double>(kDemoMoverSpacing), 0.0, 0.0};
         (void)_world.scene.Add<ECS::Transform>(entity, ECS::Transform{.position = origin});
         (void)_world.scene.Add<Assisi::Runtime::Oscillator>(
             entity, Assisi::Runtime::Oscillator{.origin = origin,
@@ -324,6 +325,9 @@ void ServerApp::OnUpdate(float dt)
     // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
     // sounds would have nowhere to go.
     Assisi::App::UpdateWorld(WorldContext(dt, _stepTick));
+    // As every program: no mesh loads here, so it poses nothing, but entities
+    // are placed as on a host somebody plays at.
+    Assisi::App::PoseWorld(_world);
     ReportStatus();
 }
 
@@ -377,7 +381,7 @@ void ServerApp::InstallQueuedSystems()
     // from the wire asks for the systems its file names, and they have to be
     // registered at the safe point rather than mid-walk. A headless process runs
     // that behaviour — it just does not draw it.
-    Assisi::App::DrainSystemInstalls(WorldStartContext());
+    Assisi::App::DrainSystemInstallsOrAbort(WorldStartContext());
 }
 
 Assisi::App::SystemContext ServerApp::WorldStartContext()
@@ -388,7 +392,9 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
 
 Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 {
-    // No window, so no input, no action map and no UI, in every phase.
+    // No window, so no input, no action map and no UI, in every phase. Assets,
+    // so what runs here can load clips and animator files, but no animation: a
+    // headless host evaluates none.
     return {.world         = _world,
             .dt            = dt,
             .simTick       = tick,
@@ -398,7 +404,9 @@ Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
             .isActiveWorld = true,
             .worldManager  = nullptr,
             .ui            = nullptr,
-            .steam         = &GetSteam()};
+            .assets        = &GetAssets(),
+            .steam         = &GetSteam(),
+            .animates      = false};
 }
 
 void ServerApp::OnShutdown()

@@ -19,9 +19,9 @@ namespace
 {
 
 /// Rebuilds the pool from what the nodes point at, in node order: text, then
-/// placeholder, then pattern. The walk adds text as it settles it, and a text
-/// resolved twice leaves its first spelling behind; this drops those, so a
-/// screen cooks to the same bytes however the walk got there.
+/// placeholder, then pattern, then visible's binding. The walk adds text as it
+/// settles it, and a text resolved twice leaves its first spelling behind; this
+/// drops those, so a screen cooks to the same bytes however the walk got there.
 void PackText(ScreenDocument &document)
 {
     Core::StringPool packed;
@@ -30,6 +30,8 @@ void PackText(ScreenDocument &document)
         node.text = packed.Add(document.Text(node.text));
         node.placeholder = packed.Add(document.Text(node.placeholder));
         node.pattern = packed.Add(document.Text(node.pattern));
+        node.visibleBinding = packed.Add(document.Text(node.visibleBinding));
+        node.valueBinding = packed.Add(document.Text(node.valueBinding));
     }
     document.pool = std::move(packed);
 }
@@ -37,7 +39,7 @@ void PackText(ScreenDocument &document)
 } // namespace
 
 std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &root, const Core::EventCatalog &catalog,
-                                                         const SourceReader &read, const TextRules &rules)
+                                                         const SourceReader &read, const ScreenRules &rules)
 {
     if (root.name == kTemplatesElement)
     {
@@ -93,10 +95,23 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
     {
         return std::unexpected(checked.error());
     }
+    // Before any node, so a binding can name a context declared below it.
     for (const MarkupElement &child : root.children)
     {
-        // Declarations and imports make nothing themselves; instances do.
-        if (child.name == kTemplateElement || child.name == kImportElement)
+        if (child.name != kContextElement)
+        {
+            continue;
+        }
+        if (const std::expected<void, MarkupError> context = ApplyContext(walk, child); !context)
+        {
+            return std::unexpected(context.error());
+        }
+    }
+    for (const MarkupElement &child : root.children)
+    {
+        // Declarations, imports and contexts make no node themselves;
+        // instances do.
+        if (child.name == kTemplateElement || child.name == kImportElement || child.name == kContextElement)
         {
             continue;
         }
@@ -121,7 +136,7 @@ std::expected<ScreenDocument, MarkupError> CompileScreen(const MarkupElement &ro
 
 std::expected<std::vector<std::byte>, MarkupError> CompileScreenText(std::string_view text,
                                                                      const Core::EventCatalog &catalog,
-                                                                     const SourceReader &read, const TextRules &rules)
+                                                                     const SourceReader &read, const ScreenRules &rules)
 {
     const std::expected<MarkupElement, MarkupError> parsed = ParseMarkup(text);
     if (!parsed)

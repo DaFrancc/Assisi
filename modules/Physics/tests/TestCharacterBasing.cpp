@@ -78,7 +78,7 @@ Deck AddDeck(TestScene &test, glm::vec3 velocity, float yawRate, const std::opti
     deck.start = glm::vec3(0.f, -kDeckHalfThickness, 0.f);
     deck.velocity = velocity;
     deck.yawRate = yawRate;
-    deck.entity = AddBody(test.scene, deck.start, spec);
+    deck.entity = AddBody(test.scene, glm::dvec3(deck.start), spec);
     if (carrier.has_value())
     {
         REQUIRE(test.scene.Add(deck.entity, *carrier) != nullptr);
@@ -111,21 +111,21 @@ float Ride(TestScene &test, const Deck &deck, int32_t steps, float elapsed)
 /// A character dropped onto the deck at @p local in its frame, and left to land.
 ECS::Entity AddRider(TestScene &test, glm::vec3 local, const Physics::Character &character = Physics::Character{})
 {
-    const ECS::Entity rider = AddCharacter(test.scene, local, character);
+    const ECS::Entity rider = AddCharacter(test.scene, glm::dvec3(local), character);
     Step(test.world, kSettleSteps);
     return rider;
 }
 
 glm::vec3 FeetOf(const TestScene &test, ECS::Entity rider)
 {
-    return test.scene.Get<ECS::Transform>(rider)->position;
+    return glm::vec3(test.scene.Get<ECS::Transform>(rider)->position);
 }
 
 /// @p point in the deck's frame, from the deck's body as the last step left it.
 glm::vec3 OnDeck(const TestScene &test, const Deck &deck, glm::vec3 point)
 {
     const Physics::Pose pose = test.world.GetBodyPose(deck.entity);
-    return glm::inverse(pose.rotation) * (point - pose.position);
+    return glm::inverse(pose.rotation) * glm::vec3(glm::dvec3(point) - pose.position);
 }
 
 /// The way @p rider faces, flattened onto the ground.
@@ -175,7 +175,7 @@ TEST_CASE("Walking on a turning carrier goes straight across the deck, and the r
     TestScene test;
     const Deck deck = AddDeck(test, deckVelocity, kYawRate, Physics::Carrier{});
     const ECS::Entity rider = AddRider(test, {0.f, 0.f, 3.f});
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 before = OnDeck(test, deck, FeetOf(test, rider));
 
     // Forward along the rider's own facing every step, as the input system does.
@@ -319,7 +319,7 @@ TEST_CASE("Walking off a carrier onto other ground lets go of it without a jump 
     const ECS::Entity rider = AddRider(test, {kDeckHalfWidth - 1.f, 0.f, 0.f});
     REQUIRE(StateOf(test.scene, rider).baseEntity == deck.entity);
 
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 east{1.f, 0.f, 0.f};
     float largestStep = 0.f;
     for (int32_t i = 0; i < kWalkSteps; ++i)
@@ -466,7 +466,7 @@ TEST_CASE("Walking from a dock onto a passing carrier keeps the walk, relative t
     const ECS::Entity rider = AddRider(test, {kStartX, 0.f, 0.f});
     REQUIRE(StateOf(test.scene, rider).baseEntity == ECS::NullEntity);
 
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 west{-walkSpeed, 0.f, 0.f};
     float elapsed = 0.f;
     for (int32_t i = 0; i < kMaxFallSteps && StateOf(test.scene, rider).baseEntity != deck.entity; ++i)
@@ -562,7 +562,7 @@ ECS::Entity AddVolume(TestScene &test, const Deck &deck, glm::vec3 local, glm::v
     trigger.shape = Physics::ColliderShape::Box;
     trigger.halfExtents = halfExtents;
     trigger.channel = Physics::CollisionChannel::Trigger;
-    const ECS::Entity volume = AddChildCollider(test.scene, deck.entity, local, trigger);
+    const ECS::Entity volume = AddChildCollider(test.scene, deck.entity, glm::dvec3(local), trigger);
     REQUIRE(test.scene.Add(volume, Physics::CarrierVolume{}) != nullptr);
     return volume;
 }
@@ -647,12 +647,12 @@ TEST_CASE("A carrier volume takes a rider falling through it, carries it while i
             {
                 // Each step inside moves the rider sideways with the carrier.
                 const float riderMoved = FeetOf(test, rider).z - riderZ;
-                const float deckMoved = test.world.GetBodyPose(deck.entity).position.z - deckZ;
+                const float deckMoved = static_cast<float>(test.world.GetBodyPose(deck.entity).position.z) - deckZ;
                 CHECK(std::abs(riderMoved - deckMoved) < kFollowTolerance);
             }
             judgedInside = true;
             riderZ = FeetOf(test, rider).z;
-            deckZ = test.world.GetBodyPose(deck.entity).position.z;
+            deckZ = static_cast<float>(test.world.GetBodyPose(deck.entity).position.z);
         }
         if (height < kBelow)
         {
@@ -732,7 +732,7 @@ bool TakenByOverflight(uint8_t priority)
     spec.rigidBody->motion = Physics::MotionType::Kinematic;
     Deck b;
     b.start = glm::vec3(kStartX, kFlightHeight, 0.f);
-    b.entity = AddBody(test.scene, b.start, spec);
+    b.entity = AddBody(test.scene, glm::dvec3(b.start), spec);
     Physics::Carrier carrier = CarrierOf(Physics::CarrierContact::Volume, Physics::CarrierContact::Volume);
     carrier.priority = priority;
     REQUIRE(test.scene.Add(b.entity, carrier) != nullptr);
@@ -782,7 +782,7 @@ TEST_CASE("A base gameplay sets holds through a jump and a fall, on a body with 
     elapsed += kStep;
 
     // Off the deck's far edge, along -Z, which the deck does not travel.
-    const float walkSpeed = test.scene.Get<Physics::Character>(rider)->walkSpeed;
+    const float walkSpeed = WalkSpeedOf(test.scene, rider);
     const glm::vec3 off{0.f, 0.f, -walkSpeed};
     for (int32_t i = 0; i < kWalkOffSteps && FeetOf(test, rider).y > -1.f; ++i)
     {

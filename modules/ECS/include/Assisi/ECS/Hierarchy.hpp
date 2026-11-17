@@ -9,14 +9,17 @@
 ///
 /// Transform stores local-space TRS. PropagateTransforms() walks the
 /// parent chain and writes each entity's WorldMatrix component.
-/// For root entities (no parent), the world matrix is the local TRS matrix.
+/// For root entities (no parent), the world matrix is the local TRS, measured
+/// from the world cell the entity is in.
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Prelude.hpp>
 
@@ -105,7 +108,8 @@ void SnapTransform(Scene &scene, Entity entity);
 /// (App::MigrateEntity) and mirrors the editor's delete-subtree gather.
 std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 
-/// @brief @p entity's pose in world space, resolved by walking its Parent chain.
+/// @brief @p entity's pose in world space, resolved by walking its Parent chain
+/// and the ParentFrame of each entity on it.
 ///
 /// Composes local TRS up the chain rather than reading the world matrix,
 /// so it answers without a propagation pass having run and returns a TRS the
@@ -121,12 +125,12 @@ std::vector<Entity> GatherSubtree(Scene &scene, Entity root);
 [[nodiscard]] Transform WorldTransformOf(const Scene &scene, Entity entity);
 
 /// @brief The world matrix @p entity's Transform is relative to: its parent's
-/// propagated world matrix, or null when it has no Parent, its Parent names no
-/// entity, or that entity has no Transform.
+/// propagated world matrix, then its ParentFrame when it has one; nothing when
+/// it has no Parent, its Parent names no entity, or that entity has no
+/// WorldMatrix.
 ///
 /// Reads the parent's WorldMatrix, so it is only as current as the last
-/// PropagateTransforms. A null answer means @p entity's local pose is its world
-/// pose.
-[[nodiscard]] const glm::mat4 *ParentWorldMatrix(const Scene &scene, Entity entity);
+/// PropagateTransforms. Nothing means @p entity's local pose is its world pose.
+[[nodiscard]] std::optional<WorldMatrix> ParentWorldMatrix(const Scene &scene, Entity entity);
 
 } // namespace Assisi::ECS

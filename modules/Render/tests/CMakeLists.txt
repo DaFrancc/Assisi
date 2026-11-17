@@ -1,6 +1,12 @@
 add_executable(Assisi-Render-Tests
   main.cpp
+  TestBloom.cpp
   TestCelestial.cpp
+  TestClouds.cpp
+  TestExposure.cpp
+  TestFog.cpp
+  TestFogVolume.cpp
+  TestGusts.cpp
   TestIndirectLighting.cpp
   TestLocalShadowCache.cpp
   TestLocalShadowViews.cpp
@@ -11,13 +17,20 @@ add_executable(Assisi-Render-Tests
   TestShadowCascades.cpp
   TestShadowDiagnostics.cpp
   TestShadowImportance.cpp
+  TestShadowReceiverPlane.cpp
   TestShadowSettings.cpp
+  TestShadowTerminator.cpp
   TestShadowViews.cpp
   TestSkinScratch.cpp
   TestSky.cpp
   TestSpecularIbl.cpp
+  TestSceneDepth.cpp
   TestSsao.cpp
   TestTonemap.cpp
+  TestWater.cpp
+  TestWaterGrid.cpp
+  TestWaterRenderer.cpp
+  TestWhiteBalance.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Render-Tests)

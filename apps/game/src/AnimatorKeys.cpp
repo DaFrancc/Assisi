@@ -1,15 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "AnimatorKeys.hpp"
 
+#include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/Runtime/AnimatorStep.hpp>
+#include <Assisi/Runtime/AnimatorParams.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
-
-#include <algorithm>
-#include <optional>
 
 namespace Game
 {
@@ -22,18 +21,12 @@ namespace
 constexpr float kWalkSpeed = 1.5f;
 constexpr float kRunSpeed = 6.f;
 
-/// How fast speed eases towards the one the keys ask for, in its units a
-/// second, so the blend moves through jog rather than jumping to it.
-constexpr float kSpeedRate = 8.f;
+/// How long speed takes to close about two thirds of the way to the one the
+/// keys ask for (s), so the blend moves through jog rather than jumping to it.
+constexpr float kSpeedEase = 0.15f;
 
-/// How fast aiming eases between 0 and 1, in units a second.
-constexpr float kAimRate = 5.f;
-
-/// @p current moved towards @p target by at most @p step.
-float Towards(float current, float target, float step)
-{
-    return current < target ? std::min(current + step, target) : std::max(current - step, target);
-}
+/// ...and aiming, between 0 and 1 (s).
+constexpr float kAimEase = 0.1f;
 
 } // namespace
 
@@ -52,16 +45,27 @@ void AnimatorKeysSystem(Assisi::App::SystemContext &ctx)
     // air for as long as it stays held.
     const bool grounded = !input.IsKeyDown(Key::Space) || input.IsKeyPressed(Key::Space);
 
-    for (auto [entity, animator] : ctx.world.scene.Query<Mut<Assisi::Runtime::Animator>>())
+    static Assisi::Runtime::AnimatorParam<float> speed{"speed"};
+    static Assisi::Runtime::AnimatorParam<float> aiming{"aiming"};
+    static Assisi::Runtime::AnimatorParam<bool> groundedParam{"grounded"};
+    static Assisi::Runtime::AnimatorTrigger jump{"jump"};
+
+    // The params live in each Animator's run, which is never sent. A player's
+    // body is PlayerAnimation's, which follows what the character does.
+    Assisi::ECS::Scene &scene = ctx.world.scene;
+    for (auto [entity, run] : scene.Query<Mut<Assisi::Runtime::AnimatorRun>>())
     {
-        const float speed = Assisi::Runtime::AnimatorFloat(animator, "speed").value_or(0.f);
-        const float aiming = Assisi::Runtime::AnimatorFloat(animator, "aiming").value_or(0.f);
-        (void)Assisi::Runtime::SetAnimatorFloat(animator, "speed", Towards(speed, targetSpeed, kSpeedRate * ctx.dt));
-        (void)Assisi::Runtime::SetAnimatorFloat(animator, "aiming", Towards(aiming, targetAim, kAimRate * ctx.dt));
-        (void)Assisi::Runtime::SetAnimatorBool(animator, "grounded", grounded);
+        if (const Assisi::ECS::Parent *parent = scene.Get<Assisi::ECS::Parent>(entity);
+            parent != nullptr && scene.Has<Assisi::App::Player>(parent->parent))
+        {
+            continue;
+        }
+        (void)speed.SetDamped(entity, run, targetSpeed, kSpeedEase, ctx.dt);
+        (void)aiming.SetDamped(entity, run, targetAim, kAimEase, ctx.dt);
+        (void)groundedParam.Set(entity, run, grounded);
         if (input.IsKeyPressed(Key::Space))
         {
-            (void)Assisi::Runtime::FireAnimatorTrigger(animator, "jump");
+            (void)jump.Fire(entity, run);
         }
     }
 }

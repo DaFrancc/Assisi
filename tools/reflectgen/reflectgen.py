@@ -68,6 +68,7 @@ from blueprint_views import (  # noqa: F401
 )
 import reflect_codegen  # noqa: F401
 import reflect_events  # noqa: F401
+import reflect_passes  # noqa: F401
 from reflect_codegen import (  # noqa: F401
     gen_message_forward,
     gen_message_traits,
@@ -442,6 +443,15 @@ def main():
                         help='A directory an #include in a reflected header is resolved '
                              'against, so a field may name an AENUM declared in a header it '
                              'includes. Repeatable.')
+    parser.add_argument('--passes', dest='passes_out', type=Path, default=None,
+                        help='Instead of generating registrations, read the one header given as a '
+                             'graph of APASS render passes, check it, and write its generated '
+                             'header and source into this directory.')
+    parser.add_argument('--graph', dest='graph', default=None,
+                        help='With --passes: the graph\'s name, the prefix of its frame, init and '
+                             'generated types (Scene for SceneFrame, ScenePassGraph, ...).')
+    parser.add_argument('--base-list', dest='base_list', type=Path, default=None,
+                        help='With --passes: write the base passes\' names here, comma-separated.')
     parser.add_argument('--allow-c-arrays', dest='allow_c_arrays', action='store_true',
                         help='Reflect C array fields. Without it a reflected C array fails '
                              'generation with a request to write std::array instead; the build '
@@ -476,6 +486,25 @@ def main():
 
     if not args.headers:
         parser.error('at least one header is required')
+
+    if args.passes_out is not None:
+        if len(args.headers) != 1 or args.graph is None or args.include_path is None:
+            parser.error('--passes takes one header, with --graph and --include')
+        try:
+            graph = reflect_passes.build_graph(args.headers[0].resolve(), args.graph)
+        except ValueError as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+        stem = Path(args.include_path).stem
+        generated_include = str(Path(args.include_path).with_name(f'{stem}.generated.hpp'))
+        reflect_passes.write_if_changed(args.passes_out / f'{stem}.generated.hpp',
+                                        reflect_passes.render_header(graph, args.include_path))
+        reflect_passes.write_if_changed(args.passes_out / f'{stem}.generated.cpp',
+                                        reflect_passes.render_source(graph, generated_include))
+        if args.base_list is not None:
+            reflect_passes.write_if_changed(args.base_list, ','.join(p.name for p in graph.passes if p.base))
+        print(f'reflectgen: {len(graph.passes)} {args.graph} pass(es): {" -> ".join(p.name for p in graph.passes)}')
+        sys.exit(0)
 
     if args.traits_out is not None:
         args.traits_out.parent.mkdir(parents=True, exist_ok=True)

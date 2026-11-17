@@ -233,6 +233,12 @@ class ReleaseTest(ToolTest):
         self.assertTrue((kept / "libsteam_api.so").exists())
         self.assertFalse((kept / "steam_appid.txt").exists())
 
+    def test_a_linux_game_is_kept_with_the_handler_that_writes_its_crash_dumps(self):
+        game_dir = self.sandbox.build_dir("gcc-ship") / "apps" / "game"
+        (game_dir / "crashpad_handler").write_text("handler\n")
+        self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
+        self.assertTrue((self.release_dir("1.0") / "crashpad_handler").exists())
+
     def test_later_packages_lay_out_against_the_newest_release_of_their_level(self):
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.0")[0], 0)
         self.assertEqual(self.sandbox.run("release", "ship", "--version", "1.1")[0], 0)
@@ -327,6 +333,23 @@ class BuildTest(ToolTest):
         self.assertEqual(self.sandbox.run("build", "dev", "--game")[0], 0)
         self.assertEqual(self.sandbox.calls(), [
             "cmake --build --preset gcc-dev",
+            "cmake --build --preset gcc-dev --target Assisi-Game",
+        ])
+
+    def test_a_target_is_built_alone_in_every_level(self):
+        self.sandbox.configured("gcc-dev", "gcc-ship")
+        code, _, err = self.sandbox.run("build", "dev", "ship", "--target", "Assisi-Runtime-Tests")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-dev --target Assisi-Runtime-Tests",
+            "cmake --build --preset gcc-ship --target Assisi-Runtime-Tests",
+        ])
+
+    def test_game_flag_builds_the_game_after_a_target(self):
+        self.sandbox.configured("gcc-dev")
+        self.assertEqual(self.sandbox.run("build", "dev", "--target", "Assisi-Render", "--game")[0], 0)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-dev --target Assisi-Render",
             "cmake --build --preset gcc-dev --target Assisi-Game",
         ])
 
@@ -438,7 +461,25 @@ class SteamRuntimeTest(ToolTest):
         self.assertEqual(self.sandbox.calls(), [
             self.sandbox.configure_call("gcc-ship-steamrt"),
             "cmake --build --preset gcc-ship-steamrt",
-            f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -L game|container",
+            f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -LE gpu -L game|container",
+        ])
+
+    def test_inside_the_container_a_target_runs_its_own_suite_instead_of_the_game_tests(self):
+        self.sandbox.configured("gcc-ship-steamrt")
+        code, _, err = self.sandbox.run("test", "ship", "--steam-runtime", "--target", "Assisi-Core-Tests",
+                                        ASSISI_STEAMRT_SDK="1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-ship-steamrt --target Assisi-Core-Tests",
+            f"ctest --preset gcc-ship-steamrt -j{test_command.parallel_jobs()} -LE gpu -L ^Assisi-Core-Tests$ "
+            "--no-tests=error",
+        ])
+
+    def test_on_the_host_a_target_alone_boots_no_game(self):
+        self.assertEqual(self.sandbox.run("test", "ship", "--steam-runtime", "--target", "Assisi-Core-Tests")[0], 0)
+        self.assertEqual(self.sandbox.calls(), [
+            f"steamrt run -- python3 {self.sandbox.path('assisi')} test ship --compiler gcc --steam-runtime "
+            "--target Assisi-Core-Tests",
         ])
 
     def test_fetch_and_remove(self):
@@ -462,13 +503,49 @@ class TestCommandTest(ToolTest):
         code, _, err = self.sandbox.run("test", "debug", "--", "-R", "Audio")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.sandbox.calls(), ["cmake --build --preset gcc-debug",
-                                                "ctest --preset gcc-debug -j7 -R Audio"])
+                                                "ctest --preset gcc-debug -j7 -LE gpu -R Audio"])
 
     def test_ctest_runs_a_test_per_cpu_at_once(self):
         self.sandbox.configured("gcc-debug")
         code, _, err = self.sandbox.run("test", "debug")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.sandbox.calls()[-1], "ctest --preset gcc-debug -j7")
+        self.assertEqual(self.sandbox.calls()[-1], "ctest --preset gcc-debug -j7 -LE gpu")
+
+    def test_a_target_is_built_alone_and_only_its_suite_runs(self):
+        self.sandbox.configured("gcc-debug")
+        code, _, err = self.sandbox.run("test", "debug", "--target", "Assisi-Runtime-Tests", "--", "-R", "Post")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), [
+            "cmake --build --preset gcc-debug --target Assisi-Runtime-Tests",
+            "ctest --preset gcc-debug -j7 -LE gpu -L ^Assisi-Runtime-Tests$ --no-tests=error -R Post",
+        ])
+
+    def test_gpu_runs_the_gpu_tests_alone(self):
+        self.sandbox.configured("gcc-dev")
+        code, _, err = self.sandbox.run("test", "dev", "--gpu", "--", "-R", "Bloom")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls(), ["cmake --build --preset gcc-dev",
+                                                "ctest --preset gcc-dev -j7 -L gpu -R Bloom"])
+
+    def test_accept_hands_the_gpu_tests_the_word_to_accept_their_pictures(self):
+        self.sandbox.configured("gcc-dev")
+        code, _, err = self.sandbox.run("test", "dev", "--gpu", "--accept")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.sandbox.calls()[-1],
+                         "cmake -E env ASSISI_ACCEPT_GOLDEN=1 ctest --preset gcc-dev -j7 -L gpu")
+
+    def test_gpu_refuses_what_it_cannot_run_with(self):
+        for argv in (["test", "dev", "--accept"], ["test", "dev", "--gpu", "--target", "Assisi-Core-Tests"],
+                     ["test", "ship", "--steam-runtime", "--gpu"]):
+            with self.subTest(argv=argv):
+                self.sandbox.log.write_text("")
+                code, _, _ = self.sandbox.run(*argv)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(self.sandbox.calls(), [])
+
+    def test_a_target_name_is_matched_literally(self):
+        self.assertEqual(test_command.suite_filter("Lib.Tests+1"),
+                         ["-L", "^Lib\\.Tests\\+1$", "--no-tests=error"])
 
     def test_a_jobs_count_passed_through_is_the_only_one(self):
         self.sandbox.configured("gcc-debug")
@@ -477,7 +554,7 @@ class TestCommandTest(ToolTest):
                 self.sandbox.log.write_text("")
                 code, _, err = self.sandbox.run("test", "debug", "--", *jobs)
                 self.assertEqual(code, 0, err)
-                self.assertEqual(self.sandbox.calls()[-1], " ".join(["ctest --preset gcc-debug", *jobs]))
+                self.assertEqual(self.sandbox.calls()[-1], " ".join(["ctest --preset gcc-debug -LE gpu", *jobs]))
 
 
 class CleanTest(ToolTest):
@@ -604,6 +681,9 @@ class RequestTest(ToolTest):
         ["release", "ship", "--version", "1.2"],
         ["cook", "debug"],
         ["test", "debug", "--", "-R", "Audio"],
+        ["build", "dev", "--target", "Assisi-Runtime-Tests"],
+        ["test", "debug", "--target", "Assisi-Render-Tests", "--", "-R", "Bloom"],
+        ["test", "dev", "--gpu", "--accept", "--", "-R", "Bloom"],
         ["run", "editor", "dev", "--no-build", "--", "-l", "x.alvl"],
         ["clean", "debug", "dev"],
         ["clean", "--all", "--deps"],

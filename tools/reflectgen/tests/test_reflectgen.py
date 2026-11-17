@@ -916,8 +916,14 @@ class PredictedComponentTest(unittest.TestCase):
         # What only the compiler can check: no member the table does not list,
         # and nothing a byte copy would break.
         self.assertIn("std::is_trivially_copyable_v<N::Cooldown>", cpp)
-        self.assertIn("sizeof(N::Cooldown) == sizeof(decltype(N::Cooldown::remaining)) + "
+        # Each field where the one before ends, padding allowed, and the type
+        # ending where its alignment puts the last field.
+        self.assertIn("offsetof(N::Cooldown, remaining) == 0", cpp)
+        self.assertIn("offsetof(N::Cooldown, charges) == (offsetof(N::Cooldown, remaining) + "
+                      "sizeof(decltype(N::Cooldown::remaining))", cpp)
+        self.assertIn("sizeof(N::Cooldown) == (offsetof(N::Cooldown, charges) + "
                       "sizeof(decltype(N::Cooldown::charges))", cpp)
+        self.assertIn("#include <cstddef>", cpp)
 
     def test_an_accepted_component_names_its_first_differing_field(self):
         src = ("namespace N {\nASTRUCT()\nstruct Timer { AFIELD() float left = 0.f; };\n"
@@ -1879,6 +1885,22 @@ class SystemTest(unittest.TestCase):
                                   "void TickSystem(SystemContext &ctx);\n" % key)
                 self.assertIn('%s = "Bounce"' % key, str(caught.exception))
 
+    def test_a_system_in_a_shape_the_pattern_misses_is_refused_not_skipped(self):
+        # A declaration the pattern does not take used to yield no system and no
+        # error: a system that silently never ran.
+        for declaration in ("inline void TickSystem(SystemContext &ctx) {}\n",
+                            "[[maybe_unused]] void TickSystem(SystemContext &ctx);\n",
+                            "void TickSystem(SystemContext &ctx, float dt);\n"):
+            with self.subTest(declaration=declaration):
+                with self.assertRaises(ValueError) as caught:
+                    self._systems("namespace Game {\n"
+                                  "ASYSTEM(Update, name = \"Tick\") " + declaration + "}\n")
+                self.assertIn("T.hpp:2", str(caught.exception))
+                self.assertIn("never be registered", str(caught.exception))
+
+    def test_the_macro_definition_is_not_a_system(self):
+        self.assertEqual(self._systems("#define ASYSTEM(...)\n"), [])
+
     def test_a_system_without_a_name_is_refused(self):
         # The name is what a level file says, so deriving it from the function
         # would make a C++ rename silently rename content — every level asking
@@ -2360,6 +2382,15 @@ class StructFieldTest(unittest.TestCase):
         # A struct is not a component and not an asset.
         self.assertNotIn("ComponentRegistry", cpp)
         self.assertNotIn("AssetTypeRegistry", cpp)
+
+    def test_a_struct_can_be_found_by_the_name_a_file_writes(self):
+        cpp = self._generate(self._INNER + "}\n")
+        self.assertIn("Assisi/Core/Reflect/StructRegistry.hpp", cpp)
+        self.assertIn('"Inner", &Assisi::Core::Reflect::StructTraits<::N::Inner>::Spec', cpp)
+
+    def test_a_component_is_not_found_as_a_struct(self):
+        cpp = self._generate("namespace N {\nACOMP()\nstruct C { AFIELD() float weight = 0.f; };\n}\n")
+        self.assertNotIn("StructRegistry", cpp)
 
     def test_the_trait_is_declared_before_anything_uses_it(self):
         cpp = self._generate(self._INNER + "ACOMP()\nstruct C { AFIELD() Inner inner; };\n}\n")

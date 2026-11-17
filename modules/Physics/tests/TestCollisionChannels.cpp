@@ -52,7 +52,7 @@ ECS::Entity SpawnBox(ECS::Scene &scene, glm::vec3 at, glm::vec3 halfExtents, boo
 {
     const PhysicsTests::BodySpec descriptor =
         PhysicsTests::WithFilter(PhysicsTests::Box(halfExtents, isStatic), filter);
-    return PhysicsTests::AddBody(scene, at, descriptor);
+    return PhysicsTests::AddBody(scene, glm::dvec3(at), descriptor);
 }
 
 /// A wide static floor whose top is at y = 0.
@@ -64,7 +64,7 @@ ECS::Entity SpawnFloor(ECS::Scene &scene, Physics::CollisionFilter filter = Phys
 float HeightOf(const Physics::PhysicsWorld &world, ECS::Entity entity)
 {
     REQUIRE(world.HasBody(entity));
-    return world.GetBodyPose(entity).position.y;
+    return static_cast<float>(world.GetBodyPose(entity).position.y);
 }
 
 void Step(Physics::PhysicsWorld &world, int32_t steps = kSettleSteps)

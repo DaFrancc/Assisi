@@ -78,6 +78,12 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
         document["sourceHash"] = ToHex64(*sidecar.sourceHash);
     }
 
+    // Written only when on, so every sidecar that never asked stays as it was.
+    if (sidecar.splitSharpSmoothing)
+    {
+        document["splitSharpSmoothing"] = true;
+    }
+
     return document.dump(2);
 }
 
@@ -183,6 +189,12 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
     if (const auto found = document.find("sourceHash"); found != document.end() && found->is_string())
     {
         sidecar.sourceHash = FromHex64(found->get<std::string>());
+    }
+
+    // Import setting (optional): anything but true leaves it off.
+    if (const auto found = document.find("splitSharpSmoothing"); found != document.end() && found->is_boolean())
+    {
+        sidecar.splitSharpSmoothing = found->get<bool>();
     }
 
     return sidecar;

@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/Reflect/JsonRead.hpp>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <format>
@@ -272,8 +273,11 @@ bool ReadString(const nlohmann::json &j, const char *component, const char *fiel
     return true;
 }
 
-bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
-                    float *out)
+namespace
+{
+
+template <typename T>
+bool ReadNumberArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count, T *out)
 {
     const nlohmann::json *value = Present(j, field);
     if (value == nullptr)
@@ -281,14 +285,14 @@ bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *
 
     if (!value->is_array())
     {
-        Reject(component, field, std::format("an array of {} numbers", count), *value);
+        Reject(component, field, Core::Format("an array of {} numbers", count), *value);
         return false;
     }
     // Before a single element is read, so a hand-edited "scale": [1, 1] is
     // refused rather than indexed past the end.
     if (value->size() != count)
     {
-        Reject(component, field, std::format("an array of {} numbers, not {}", count, value->size()),
+        Reject(component, field, Core::Format("an array of {} numbers, not {}", count, value->size()),
                *value);
         return false;
     }
@@ -298,12 +302,26 @@ bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *
         const nlohmann::json &element = (*value)[i];
         if (!element.is_number())
         {
-            Reject(component, field, std::format("a number in every slot (slot {} is not one)", i), *value);
+            Reject(component, field, Core::Format("a number in every slot (slot {} is not one)", i), *value);
             return false;
         }
-        out[i] = element.get<float>();
+        out[i] = element.get<T>();
     }
     return true;
+}
+
+} // namespace
+
+bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
+                    float *out)
+{
+    return ReadNumberArray(j, component, field, count, out);
+}
+
+bool ReadDoubleArray(const nlohmann::json &j, const char *component, const char *field, std::size_t count,
+                     double *out)
+{
+    return ReadNumberArray(j, component, field, count, out);
 }
 
 bool FindArray(const nlohmann::json &j, const char *component, const char *field, const nlohmann::json *&out)

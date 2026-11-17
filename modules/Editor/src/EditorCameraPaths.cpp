@@ -98,18 +98,24 @@ void AddDashedSegment(std::vector<LineVertex> &out, const glm::vec4 &color, cons
     }
 }
 
-void AddLeg(std::vector<LineVertex> &out, const glm::vec4 &color, const Rt::CameraRouteLeg &leg)
+/// Where @p leg puts the camera at @p progress, measured from @p origin.
+glm::vec3 EyeAt(const Rt::CameraRouteLeg &leg, float progress, const glm::dvec3 &origin)
+{
+    return glm::vec3(Rt::EvaluateCameraLeg(leg, progress).eye - origin);
+}
+
+void AddLeg(std::vector<LineVertex> &out, const glm::vec4 &color, const Rt::CameraRouteLeg &leg,
+            const glm::dvec3 &origin)
 {
     const glm::mat4 identity(1.f);
 
     // The course, as a polyline through the evaluator.
     const std::int32_t segments = SegmentsFor(leg);
     float pathLength = 0.f;
-    glm::vec3 previous = Rt::EvaluateCameraLeg(leg, 0.f).eye;
+    glm::vec3 previous = EyeAt(leg, 0.f, origin);
     for (std::int32_t i = 1; i <= segments; ++i)
     {
-        const glm::vec3 point =
-            Rt::EvaluateCameraLeg(leg, static_cast<float>(i) / static_cast<float>(segments)).eye;
+        const glm::vec3 point = EyeAt(leg, static_cast<float>(i) / static_cast<float>(segments), origin);
         AddSegment(out, identity, color, previous, point);
         pathLength += glm::length(point - previous);
         previous = point;
@@ -119,8 +125,8 @@ void AddLeg(std::vector<LineVertex> &out, const glm::vec4 &color, const Rt::Came
     const float arrowLength = std::clamp(pathLength * kArrowFraction, kMinArrowLength, kMaxArrowLength);
     for (const float progress : kArrowProgress)
     {
-        const glm::vec3 behind = Rt::EvaluateCameraLeg(leg, progress - kDirectionStep).eye;
-        const glm::vec3 tip = Rt::EvaluateCameraLeg(leg, progress).eye;
+        const glm::vec3 behind = EyeAt(leg, progress - kDirectionStep, origin);
+        const glm::vec3 tip = EyeAt(leg, progress, origin);
         const glm::vec3 travel = tip - behind;
         if (glm::length(travel) < kMinDrawLength)
         {
@@ -134,15 +140,15 @@ void AddLeg(std::vector<LineVertex> &out, const glm::vec4 &color, const Rt::Came
     }
 
     // Where it starts, and what it looks at from there.
-    const Rt::CameraAim start = Rt::EvaluateCameraLeg(leg, 0.f);
-    AddBoxWireframe(out, glm::translate(glm::mat4(1.f), start.eye), color, glm::vec3(kMarkerHalfExtent));
+    const glm::vec3 start = EyeAt(leg, 0.f, origin);
+    AddBoxWireframe(out, glm::translate(glm::mat4(1.f), start), color, glm::vec3(kMarkerHalfExtent));
 
     const bool looksAtPoint = leg.isCircle || !leg.line.lookAlongPath;
     if (looksAtPoint)
     {
-        const glm::vec3 target = leg.isCircle ? leg.circle.lookAt : leg.line.lookAt;
+        const glm::vec3 target((leg.isCircle ? leg.circle.lookAt : leg.line.lookAt) - origin);
         AddBoxWireframe(out, glm::translate(glm::mat4(1.f), target), Faded(color), glm::vec3(kMarkerHalfExtent));
-        AddSegment(out, identity, Faded(color), start.eye, target);
+        AddSegment(out, identity, Faded(color), start, target);
     }
 }
 } // namespace
@@ -156,6 +162,8 @@ void EditorApp::SubmitCameraPathGizmos()
 
     _cameraPathLines.clear();
 
+    // Measured from the camera, as the overlay draws them.
+    const glm::dvec3 origin = ViewOrigin();
     const std::vector<Rt::CameraRouteLeg> route = Rt::BuildCameraRoute(*_scene);
     for (std::size_t i = 0; i < route.size(); ++i)
     {
@@ -168,10 +176,10 @@ void EditorApp::SubmitCameraPathGizmos()
 
         if (i > 0)
         {
-            AddDashedSegment(_cameraPathLines, Faded(kPathColor), Rt::EvaluateCameraLeg(route[i - 1], 1.f).eye,
-                             Rt::EvaluateCameraLeg(leg, 0.f).eye);
+            AddDashedSegment(_cameraPathLines, Faded(kPathColor), EyeAt(route[i - 1], 1.f, origin),
+                             EyeAt(leg, 0.f, origin));
         }
-        AddLeg(_cameraPathLines, color, leg);
+        AddLeg(_cameraPathLines, color, leg, origin);
     }
 
     // On top: a fly-through passes inside the geometry it flies through, and the

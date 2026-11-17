@@ -1,0 +1,184 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <doctest/doctest.h>
+
+#include <Assisi/Render/Water.hpp>
+#include <Assisi/Render/WaterFrame.hpp>
+#include <Assisi/Render/WaterRenderer.hpp>
+
+#include <cmath>
+
+using namespace Assisi::Render;
+
+namespace
+{
+
+WaterBody Sea()
+{
+    WaterBody body;
+    body.region.origin = glm::dvec3(0.0, -1.5, 0.0);
+    body.waves = WaterWaves{.wind = WindSea{.windSpeed = 9.0f, .bearingDegrees = 45.0f, .spread = 0.3f},
+                            .swell = Swell{.height = 1.2f, .period = 12.0f, .bearingDegrees = 200.0f},
+                            .choppiness = 0.8f,
+                            .seed = 42u};
+    body.cascades = LayoutCascades(body.waves);
+    body.significantHeight = 1.7f;
+    body.look = WaterLook{.color = glm::vec3(0.01f, 0.02f, 0.03f), .crestColor = glm::vec3(0.1f, 0.2f, 0.2f), .clarity = 9.0f};
+    return body;
+}
+
+/// @p body's surface constants, its cascade shares worked out as the renderer
+/// caches them.
+WaterDrawConstants DrawConstants(const WaterBody &body, const Gusts &gusts, glm::dvec3 camera, double seconds)
+{
+    return MakeWaterDrawConstants(body, ShareCascades(body.waves, body.cascades), gusts, camera, seconds);
+}
+
+} // namespace
+
+TEST_CASE("The spectrum's constants carry each cascade's band and both spectra")
+{
+    const WaterBody body = Sea();
+    const WaterSpectrumConstants constants = MakeWaterSpectrumConstants(body);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(constants.tileLength[static_cast<glm::length_t>(c)] == body.cascades.tileLength[c]);
+        CHECK(constants.minWavenumber[static_cast<glm::length_t>(c)] == body.cascades.minWavenumber[c]);
+        CHECK(constants.maxWavenumber[static_cast<glm::length_t>(c)] == body.cascades.maxWavenumber[c]);
+    }
+    const WaveSpectrum wind = SpectrumOf(body.waves.wind);
+    const WaveSpectrum swell = SpectrumOf(body.waves.swell);
+    CHECK(constants.wind.x == wind.peakFrequency);
+    CHECK(constants.wind.y == wind.alpha);
+    CHECK(constants.wind.w == doctest::Approx(glm::radians(45.0f)));
+    CHECK(constants.swell.x == swell.peakFrequency);
+    CHECK(constants.spreads.x == doctest::Approx(0.3f));
+    CHECK(constants.spreads.w == doctest::Approx(1.0f));
+    CHECK(constants.seed.x == 42u);
+}
+
+TEST_CASE("The surface's constants place the waves and the body as the camera sees them")
+{
+    const WaterBody sea = Sea();
+    const glm::dvec3 camera(123456.25, 4.0, -98765.5);
+    const Gusts gusts{.toward = glm::vec2(0.6f, -0.8f), .speed = 7.0f, .gustFactor = 1.4f};
+    const WaterDrawConstants constants = DrawConstants(sea, gusts, camera, 1234.5);
+
+    // Each cascade's offset is the camera's place in its tile.
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        const glm::vec2 expected = CascadeOffset(glm::dvec2(camera.x, camera.z), static_cast<double>(sea.cascades.tileLength[c]));
+        const glm::vec4 pair = constants.cascadeOffsets[c / 2u];
+        const glm::vec2 offset = (c & 1u) == 0u ? glm::vec2(pair.x, pair.y) : glm::vec2(pair.z, pair.w);
+        CHECK(offset.x == doctest::Approx(expected.x));
+        CHECK(offset.y == doctest::Approx(expected.y));
+    }
+    // The still water is 5.5 m below the camera.
+    CHECK(constants.surface.x == doctest::Approx(-5.5f));
+    CHECK(constants.surface.y == doctest::Approx(1.7f));
+    CHECK(constants.color.w == doctest::Approx(9.0f));
+    // An ocean reaches past anything drawn, and its waves grow from no shore.
+    CHECK(constants.bounds.x < -1.0e8f);
+    CHECK(constants.bounds.w > 1.0e8f);
+    CHECK(constants.wind.z == 0.0f);
+    // All the wind reaches it, and its ripples are as the wind raises them.
+    CHECK(constants.wind.w == doctest::Approx(1.0f));
+    CHECK(constants.ripples.x == doctest::Approx(1.0f));
+    // The gusts are found around the camera.
+    const GustConstants expected = MakeGustConstants(gusts, camera, 1234.5);
+    CHECK(constants.gusts.cell == expected.cell);
+    CHECK(constants.gusts.wind == expected.wind);
+
+    // A lake's rectangle is measured from the camera in its own frame.
+    WaterBody lake = Sea();
+    lake.region = WaterRegion{.origin = glm::dvec3(100.0, 20.0, -50.0), .axisX = glm::vec2(1.0f, 0.0f),
+                              .halfExtent = glm::vec2(15.0f, 10.0f)};
+    lake.waves.wind.fetch = 500.0f;
+    lake.crossing = 30.0f;
+    lake.windInBody = glm::vec2(1.0f, 0.0f);
+    lake.windShare = 0.3f;
+    lake.look.ripples = 0.5f;
+    const WaterDrawConstants lakeConstants = DrawConstants(lake, gusts, glm::dvec3(110.0, 25.0, -45.0), 0.0);
+    CHECK(lakeConstants.wind.x == doctest::Approx(1.0f));
+    CHECK(lakeConstants.wind.z == doctest::Approx(30.0f));
+    CHECK(lakeConstants.wind.w == doctest::Approx(0.3f));
+    CHECK(lakeConstants.ripples.x == doctest::Approx(0.5f));
+    CHECK(lakeConstants.bounds.x == doctest::Approx(-25.0f));
+    CHECK(lakeConstants.bounds.y == doctest::Approx(-15.0f));
+    CHECK(lakeConstants.bounds.z == doctest::Approx(5.0f));
+    CHECK(lakeConstants.bounds.w == doctest::Approx(5.0f));
+    CHECK(lakeConstants.surface.x == doctest::Approx(-5.0f));
+}
+
+TEST_CASE("A lake's tiles that would repeat across it are broken up, and the ocean's never are")
+{
+    const Gusts gusts{.speed = 4.0f, .gustFactor = 1.5f};
+    const glm::dvec3 camera(10.0, 2.0, 5.0);
+    const WaterDrawConstants sea = DrawConstants(Sea(), gusts, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(sea.breakup[static_cast<glm::length_t>(c)] == 0.0f);
+    }
+
+    // A pond 30 by 20 m, rocked by a swell about 3 m long: its largest tiles
+    // are wider than it, its smallest fit many times across it.
+    WaterBody pond = Sea();
+    pond.region = WaterRegion{.axisX = glm::vec2(1.0f, 0.0f), .halfExtent = glm::vec2(15.0f, 10.0f)};
+    pond.waves = WaterWaves{.wind = WindSea{.windSpeed = 2.0f, .fetch = 30.0f},
+                            .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants pondConstants = DrawConstants(pond, gusts, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        const bool repeats = pond.cascades.tileLength[c] * kWaterRepeatsHidden < 20.0f;
+        CHECK((pondConstants.breakup[static_cast<glm::length_t>(c)] == 1.0f) == repeats);
+    }
+    CHECK(pondConstants.breakup[0] == 0.0f);
+    CHECK(pondConstants.breakup[kWaterCascadeCount - 1u] == 1.0f);
+}
+
+TEST_CASE("A calm pond's ripple tiles are not drawn, and a windy pond's are")
+{
+    // The pond preset's waters: a faint swell, most of the wind kept off.
+    WaterBody pond = Sea();
+    pond.region = WaterRegion{.axisX = glm::vec2(1.0f, 0.0f), .halfExtent = glm::vec2(15.0f, 10.0f)};
+    pond.windShare = 0.3f;
+    pond.look.ripples = 0.7f;
+    const glm::dvec3 camera(0.0, 2.0, 12.0);
+
+    // Even its strongest gust stays under the wind ripples need, so its
+    // finest tile, which holds nothing but ripples, shows nothing; its swell
+    // still rocks it.
+    const Gusts breeze{.speed = 6.0f, .gustFactor = 1.5f};
+    pond.waves = WaterWaves{.wind = WindSea{.windSpeed = breeze.speed * pond.windShare, .fetch = 20.0f},
+                            .swell = Swell{.height = 0.015f, .period = 1.4f, .spread = kLakeSwellSpread}};
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants calm = DrawConstants(pond, breeze, camera, 0.0);
+    // The tiles holding the swell stay drawn, however gentle their slopes.
+    CHECK(calm.shown[0] == 1.0f);
+    CHECK(calm.shown[1] == 1.0f);
+    CHECK(calm.shown[kWaterCascadeCount - 1u] == 0.0f);
+
+    // A long, slow swell barely tilts the surface but still lifts it a
+    // centimetre, so its tile is drawn.
+    WaterBody rolling = pond;
+    rolling.waves.swell.period = 4.0f;
+    rolling.cascades = LayoutCascades(rolling.waves);
+    CHECK(ShareCascades(rolling.waves, rolling.cascades).slopeVariance[0] < kMinShownWaterSlopeVariance);
+    CHECK(DrawConstants(rolling, breeze, camera, 0.0).shown[0] == 1.0f);
+
+    // A gale reaches it, and every tile shows.
+    const Gusts gale{.speed = 30.0f, .gustFactor = 1.5f};
+    pond.waves.wind.windSpeed = gale.speed * pond.windShare;
+    pond.cascades = LayoutCascades(pond.waves);
+    const WaterDrawConstants windy = DrawConstants(pond, gale, camera, 0.0);
+    for (uint32_t c = 0; c < kWaterCascadeCount; ++c)
+    {
+        CAPTURE(c);
+        CHECK(windy.shown[static_cast<glm::length_t>(c)] == 1.0f);
+    }
+}

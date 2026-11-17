@@ -10,6 +10,7 @@
 #include <cstdint>
 
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Editor/EditorPreferences.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
 #include <span>
@@ -47,6 +48,8 @@ public:
         const App::AppConfig &config;
         bool &showEditorOverlays;
         bool &showSkeletons;
+        /// The editor's own settings, which the panel edits and the editor saves.
+        EditorPreferences &preferences;
 
         int32_t fps;
         double cpuFrameMs;
@@ -95,6 +98,13 @@ private:
     /// @brief The screen-space occlusion section: the switch, the sample count,
     /// the radius and the strength.
     static void DrawAmbientOcclusionSettings(const Frame &frame);
+    static void DrawFogSettings(const Frame &frame);
+    /// @brief The clouds section: the switch, the tier buttons, the sky map's
+    /// size and the steps along each ray.
+    static void DrawCloudSettings(const Frame &frame);
+    static void DrawWaterSettings(const Frame &frame);
+    /// @brief The bloom section: the switch, the intensity and the scatter.
+    static void DrawBloomSettings(const Frame &frame);
 
     bool _showOptions = false;
 

@@ -11,19 +11,16 @@
 #include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
-#include <Assisi/Mondrian/FontReader.hpp>
-#include <Assisi/Mondrian/ScreenReader.hpp>
-#include <Assisi/Mondrian/StringTableReader.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
-#include <Assisi/Runtime/CookedScene.hpp>
-#include <Assisi/Runtime/SceneSerializer.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
+#include <Assisi/Runtime/SkyResolve.hpp>
 #include <Assisi/Window/Key.hpp>
+#include <Assisi/Core/Format.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +32,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -67,7 +63,8 @@ constexpr std::int16_t kUnlimitedFps = -1;
 }
 } // namespace
 
-GameApp::GameApp(GameLaunch launch) : _launch(std::move(launch))
+GameApp::GameApp(GameLaunch launch)
+    : _sceneRenderer(std::make_unique<Runtime::SceneRenderer>()), _launch(std::move(launch))
 {
     if (_launch.benchmark)
     {
@@ -84,11 +81,7 @@ GameApp::~GameApp()
     }
     if (_pak)
     {
-        (void)Runtime::SceneSerializer::SetDocumentReader({});
-        (void)Core::SetConfigReader({});
-        (void)Mondrian::SetFontReader({});
-        (void)Mondrian::SetScreenReader({});
-        (void)Mondrian::SetStringTableReader({});
+        RemoveCookedReaders();
     }
 }
 
@@ -114,21 +107,9 @@ bool GameApp::MountContent()
     _assetSource.emplace(*_pak);
     _collisionSource.Read(*_pak);
 
-    const Core::PakProvider &provider = *_pak;
     (void)Render::SetAssetSource(&*_assetSource);
-    LoadAssetsFrom(provider);
-    (void)Runtime::SceneSerializer::SetDocumentReader([&provider](std::string_view vpath)
-                                                      { return Runtime::ReadCookedDocument(provider, vpath); });
-    (void)Core::SetConfigReader([&provider](std::string_view vpath, std::type_index type, void *instance)
-                                { return Core::ReadCookedConfig(provider, vpath, type, instance); });
-    (void)Mondrian::SetFontReader([&provider](std::string_view vpath)
-                                  { return Mondrian::ReadCookedFont(provider, vpath); });
-    // The cooked blob and nothing else. A game has no parser to fall back to,
-    // which is the point: the markup never reaches the shipped binary.
-    (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
-                                    { return Mondrian::ReadCookedScreen(provider, vpath); });
-    (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
-                                         { return Mondrian::ReadCookedStringTable(provider, vpath); });
+    LoadAssetsFrom(*_pak);
+    InstallCookedReaders(*_pak);
     return true;
 }
 
@@ -138,7 +119,7 @@ void GameApp::OnStart()
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
     _worlds.SetServices({.cache = &_assetCache,
-                         .renderer = HasPresentation() ? &_sceneRenderer : nullptr,
+                         .renderer = HasPresentation() ? _sceneRenderer.get() : nullptr,
                          .jobs = &Jobs(),
                          .universalEvents = &GetUniversalEvents(),
                          .input = HasPresentation() ? &GetInput() : nullptr,
@@ -192,7 +173,9 @@ void GameApp::OnStart()
     // game that started and plays like one that did not.
     if (!LevelSystemsAreDeclared(*scene))
     {
-        Core::Log::Error("Game: cannot start - '{}' names a system this build does not declare.", *scene);
+        // Why is logged above: a name this build does not declare, or a file
+        // that could not be read at all.
+        Core::Log::Error("Game: cannot start - '{}' was refused.", *scene);
         RefuseStart();
         return;
     }
@@ -237,9 +220,14 @@ void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
     options.shadows = Render::TierSettings(Render::ShadowTier::Ultra);
     options.environment = Render::EnvironmentSettings{};
     options.ambientOcclusion = Render::SsaoSettings{};
-    _sceneRenderer.SetShadowSettings(options.shadows);
-    _sceneRenderer.SetEnvironmentSettings(options.environment);
-    _sceneRenderer.SetSsaoSettings(options.ambientOcclusion);
+    options.clouds = Render::CloudTierSettings(Render::CloudTier::Ultra);
+    _sceneRenderer->SetShadowSettings(options.shadows);
+    _sceneRenderer->SetEnvironmentSettings(options.environment);
+    _sceneRenderer->SetSsaoSettings(options.ambientOcclusion);
+    _sceneRenderer->SetFogEnabled(true);
+    _sceneRenderer->SetCloudQuality(options.clouds);
+    _sceneRenderer->SetCloudsEnabled(true);
+    _sceneRenderer->SetWaterEnabled(true);
 
     if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -255,7 +243,7 @@ void GameApp::AdvanceBenchmark()
 
     if (const std::int32_t shot = _benchmark->ShotThisFrame(); shot >= 0)
     {
-        CaptureNextFrame(std::format("{}/shot-{:02}.png", shotsDirectory, shot));
+        CaptureNextFrame(Core::Format("{}/shot-{:02}.png", shotsDirectory, shot));
     }
     if (phase == before)
     {
@@ -271,6 +259,7 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StartChiaraSession();
+            _world->systems.SetTiming(true);
         }
         else
         {
@@ -283,8 +272,10 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StopChiaraSession();
+            _world->systems.SetTiming(false);
             Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
                             LastChiaraDump().path);
+            ReportAnimationCost();
         }
         else
         {
@@ -296,6 +287,69 @@ void GameApp::AdvanceBenchmark()
     case BenchmarkPhase::Count_:
         break;
     }
+}
+
+bool GameApp::MeasuringBenchmark() const
+{
+    return _benchmark && _benchmark->Phase() == BenchmarkPhase::Running && _launch.benchmark->shotsDirectory.empty();
+}
+
+void GameApp::ReportAnimationCost() const
+{
+    constexpr double kMillisecondsPerSecond = 1000.0;
+    if (_benchmarkFrames == 0)
+    {
+        return;
+    }
+    const double frames = static_cast<double>(_benchmarkFrames);
+    double animators = 0.0;
+    double players = 0.0;
+    for (const SystemTime &system : _world->systems.Timings())
+    {
+        if (system.name == "Animators")
+        {
+            animators = system.seconds;
+        }
+        else if (system.name == "AnimationPlayers")
+        {
+            players = system.seconds;
+        }
+    }
+    // What was measured, so the times can be scaled to other content: the cost
+    // grows with characters, their joints and the layers each one plays.
+    uint32_t characters = 0;
+    std::size_t joints = 0;
+    std::size_t layers = 0;
+    for (auto [entity, playback, skinned] : _world->scene.Query<Runtime::AnimationPlayback, Runtime::SkinnedPose>())
+    {
+        if (skinned.boundMeshId == Runtime::kUnboundMesh)
+        {
+            continue;
+        }
+        ++characters;
+        joints += skinned.pose.size();
+        layers += 1 + playback.request.layers.size();
+    }
+    const PoseTimes &stage = _benchmarkPoseTimes;
+    const double total = animators + players + stage.placing + stage.posing + stage.placingAgain;
+    Core::Log::Info("Benchmark: animation, milliseconds per frame over {} frames:", _benchmarkFrames);
+    Core::Log::Info("Benchmark:   animators               {:.3f}", animators * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   playback                {:.3f}", players * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms              {:.3f}", stage.placing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   poses                   {:.3f}", stage.posing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms after poses  {:.3f}",
+                    stage.placingAgain * kMillisecondsPerSecond / frames);
+    if (characters == 0)
+    {
+        return;
+    }
+    constexpr double kMicrosecondsPerSecond = 1e6;
+    const double perCharacter = total * kMicrosecondsPerSecond / frames / static_cast<double>(characters);
+    Core::Log::Info("Benchmark:   {} animated characters, {:.1f} joints and {:.1f} layers each on average",
+                    characters, static_cast<double>(joints) / static_cast<double>(characters),
+                    static_cast<double>(layers) / static_cast<double>(characters));
+    Core::Log::Info("Benchmark:   {:.2f} us per character, {:.3f} us per joint", perCharacter,
+                    total * kMicrosecondsPerSecond / frames / static_cast<double>(joints));
 }
 
 bool GameApp::SetupRenderer()
@@ -316,14 +370,14 @@ bool GameApp::SetupRenderer()
     // feature is invalid, so the cache is told before it loads anything.
     _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
 
-    if (!_sceneRenderer.Initialize({.device = device,
-                                    .framebufferInfo = GetSceneFramebufferInfo(),
-                                    .width = fbSize.Width,
-                                    .height = fbSize.Height,
-                                    .camera = _fallbackCamera,
-                                    .bindlessLayout = _assetCache.BindlessLayout(),
-                                    .bindlessTable = _assetCache.BindlessTable(),
-                                    .materialTable = _assetCache.MaterialTableBuffer()}))
+    if (!_sceneRenderer->Initialize({.device = device,
+                                     .framebufferInfo = GetSceneFramebufferInfo(),
+                                     .width = fbSize.Width,
+                                     .height = fbSize.Height,
+                                     .camera = _fallbackCamera,
+                                     .bindlessLayout = _assetCache.BindlessLayout(),
+                                     .bindlessTable = _assetCache.BindlessTable(),
+                                     .materialTable = _assetCache.MaterialTableBuffer()}))
     {
         Core::Log::Error("Game: the scene render path failed to build; there is nothing to draw with.");
         return false;
@@ -331,9 +385,13 @@ bool GameApp::SetupRenderer()
 
     // The player's saved knobs. Nothing is allocated until content needs it — no
     // shadow map until a sun loads, no probe until a sky does.
-    _sceneRenderer.SetShadowSettings(GetOptions().shadows);
-    _sceneRenderer.SetEnvironmentSettings(GetOptions().environment);
-    _sceneRenderer.SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer->SetShadowSettings(GetOptions().shadows);
+    _sceneRenderer->SetEnvironmentSettings(GetOptions().environment);
+    _sceneRenderer->SetSsaoSettings(GetOptions().ambientOcclusion);
+    _sceneRenderer->SetFogEnabled(GetOptions().FogEnabled(GetConfig()));
+    _sceneRenderer->SetCloudQuality(GetOptions().clouds);
+    _sceneRenderer->SetCloudsEnabled(GetOptions().CloudsEnabled(GetConfig()));
+    _sceneRenderer->SetWaterEnabled(GetOptions().WaterEnabled(GetConfig()));
     return true;
 }
 
@@ -351,7 +409,9 @@ SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTic
             .mixer = GetMixer(),
             .settings = GetPlayerSettings(),
             .assets = &GetAssets(),
-            .steam = &GetSteam()};
+            .steam = &GetSteam(),
+            // A headless run is a host with nobody watching: it evaluates no animation.
+            .animates = HasPresentation()};
 }
 
 SystemContext GameApp::WorldStartContext(World &world)
@@ -519,6 +579,10 @@ void GameApp::OnUpdate(float dt)
 
             const SystemContext ctx = WorldContext(world, dt, GetSimTick());
             UpdateWorld(ctx);
+            // The drawn world keeps its characters' posed vertices in the same pass.
+            const bool drawn = &world == _world;
+            PoseWorld(world, drawn ? &_assetCache : nullptr,
+                      drawn && MeasuringBenchmark() ? &_benchmarkPoseTimes : nullptr);
             PresentWorld(ctx);
         });
 
@@ -530,26 +594,34 @@ void GameApp::OnUpdate(float dt)
 
 void GameApp::OnRender(Render::RenderFrame &frame)
 {
-    if (!_sceneRenderer.IsValid() || _world == nullptr)
+    if (!_sceneRenderer->IsValid() || _world == nullptr)
     {
         return;
     }
 
+    // A world that ran no Update this frame, paused, is posed here instead.
+    EnsurePosed(*_world, &_assetCache);
+
     // Before the camera is chosen, not only inside Render(): a camera is placed
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
-    // behind whatever it is attached to.
-    // Poses first: what follows a joint is placed from where the joint is this frame.
-    Runtime::EvaluateScenePoses(_world->scene, _assetCache);
+    // behind whatever it is attached to. After the pose stage it places only
+    // what the Ui systems moved.
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
+    if (MeasuringBenchmark())
+    {
+        ++_benchmarkFrames;
+    }
     ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
 
     // A benchmark flies its route from the scene camera's lens: the route says
     // where the camera is, the level's Camera still says what it sees.
     const std::optional<SceneView> view = ActiveSceneCamera(_world->scene);
-    const glm::mat4 benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : glm::mat4(1.f);
-    const glm::mat4 &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
-    const Runtime::Camera &camera = view ? view->camera : _fallbackCamera;
+    const ECS::WorldMatrix benchmarkWorld = _benchmark ? Runtime::CameraWorldFor(_benchmark->Aim()) : ECS::WorldMatrix{};
+    const ECS::WorldMatrix &cameraWorld = _benchmark ? benchmarkWorld : view ? view->world : _fallbackWorld;
+    // The fallback is held to the level's haze as the scene's own camera is.
+    Runtime::Camera camera = view ? view->camera : _fallbackCamera;
+    camera.farZ = Runtime::SceneDrawDistance(_world->scene, camera.farZ);
 
     // The game's own render systems, through the world's registry. After
     // propagation and before the scene draw, so the matrices they are handed are
@@ -558,24 +630,23 @@ void GameApp::OnRender(Render::RenderFrame &frame)
     {
         const float aspectRatio =
             Runtime::AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
-        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(), Runtime::ViewMatrix(cameraWorld),
-                                Runtime::ProjectionMatrix(camera, aspectRatio)};
+        const glm::dvec3 origin = ECS::WorldPositionOf(cameraWorld);
+        RenderContext renderCtx{_world->scene, GetInterpolationAlpha(),
+                                Runtime::ViewMatrix(ECS::MatrixFrom(cameraWorld, origin)),
+                                Runtime::ProjectionMatrix(camera, aspectRatio), origin};
         _world->systems.RunRender(renderCtx);
     }
 
-    _sceneRenderer.SetSimulationSeconds(SimulatedSeconds());
-    _sceneRenderer.SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
-    _sceneRenderer.Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
-}
-
-void GameApp::OnResize(int32_t width, int32_t height)
-{
-    _sceneRenderer.Resize(width, height, _fallbackCamera);
+    _sceneRenderer->SetSimulationSeconds(SimulatedSeconds());
+    _sceneRenderer->SetWaterSeconds(PresentedSimulatedSeconds());
+    _sceneRenderer->SetViewingCamera(view && !_benchmark ? view->entity : ECS::NullEntity);
+    _sceneRenderer->Render(frame, _world->scene, cameraWorld, camera, _world->propagationTick);
+    SetScenePostProcess(_sceneRenderer->ScenePostProcess());
 }
 
 void GameApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
+    if (!_sceneRenderer->OnRenderTargetsChanged(framebufferInfo))
     {
         Core::Log::Error("Game: failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -606,7 +677,7 @@ void GameApp::InstallQueuedSystems()
     // Every resident world: a blueprint can be spawned into a background one, and
     // a queue nobody drains leaves an entity holding its components and running
     // none of the code.
-    _worlds.ForEach([this](World &world) { DrainSystemInstalls(WorldStartContext(world)); });
+    _worlds.ForEach([this](World &world) { DrainSystemInstallsOrAbort(WorldStartContext(world)); });
 }
 
 } // namespace Assisi::App

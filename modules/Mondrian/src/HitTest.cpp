@@ -16,12 +16,20 @@ bool Contains(const Rect &rect, Point point)
     return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
 }
 
+/// Which nodes a hit can land on.
+enum class Lands : uint8_t
+{
+    OnStopping, ///< only those that stop the pointer
+    OnAny,      ///< any node, whether it stops the pointer or not
+    Count_
+};
+
 /// Hits one laid-out tree. A class only so the recursion shares what every node reads.
 class HitTester
 {
   public:
-    HitTester(const NodeTree &tree, const LayoutResult &layout, Point point)
-        : _tree(tree), _slots(tree.Slots()), _layout(layout), _point(point)
+    HitTester(const NodeTree &tree, const LayoutResult &layout, Point point, Lands lands)
+        : _tree(tree), _slots(tree.Slots()), _layout(layout), _point(point), _lands(lands)
     {
     }
 
@@ -72,7 +80,7 @@ class HitTester
             }
         }
 
-        const bool stops = node.focusable || node.blocksPointer;
+        const bool stops = _lands == Lands::OnAny || node.focusable || node.blocksPointer;
         if (stops && Contains(placed.rect, _point) && Contains(placed.clip, _point))
         {
             return _tree.IdOf(index);
@@ -85,13 +93,19 @@ class HitTester
     std::span<const Node> _slots;
     const LayoutResult &_layout;
     Point _point;
+    Lands _lands;
 };
 
 } // namespace
 
 NodeId HitTest(const NodeTree &tree, const LayoutResult &layout, Point point)
 {
-    return HitTester(tree, layout, point).Hit(tree.Root().index);
+    return HitTester(tree, layout, point, Lands::OnStopping).Hit(tree.Root().index);
+}
+
+NodeId PointedAt(const NodeTree &tree, const LayoutResult &layout, Point point)
+{
+    return HitTester(tree, layout, point, Lands::OnAny).Hit(tree.Root().index);
 }
 
 } // namespace Assisi::Mondrian

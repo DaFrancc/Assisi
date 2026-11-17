@@ -665,6 +665,12 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     // on the far side of that.
     ApplyControllerOnly(connection, merged);
 
+    // What is attached goes where its parent goes, and nowhere else. That
+    // widens too, re-adding a private entity attached to a public one, so
+    // ControllerOnly runs again after it.
+    FollowParents(merged);
+    ApplyControllerOnly(connection, merged);
+
     // A provider may name whatever it likes; only live entities exist.
     std::vector<NetId> &effective = connection.effectiveScratch;
     effective.clear();
@@ -816,6 +822,36 @@ void ReplicationServer::ApplyControllerOnly(const Connection &connection, std::v
             // Uncontrolled (client 0) means nobody may see it.
             return entry->second != connection.clientId.value;
         });
+}
+
+void ReplicationServer::FollowParents(std::vector<NetId> &ids)
+{
+    if (_attachedTo.empty())
+        return;
+
+    // Decided before anything is dropped, which is sound because a root has no
+    // replicated parent and so is never one of the entities dropped.
+    std::vector<NetId> &following = _followScratch;
+    following.clear();
+    for (const std::pair<NetId, NetId> &attached : _attachedTo)
+    {
+        if (std::binary_search(ids.begin(), ids.end(), attached.second))
+            following.push_back(attached.first);
+    }
+
+    std::erase_if(ids,
+                  [this](NetId netId)
+        {
+            const std::vector<std::pair<NetId, NetId>>::const_iterator entry =
+                std::lower_bound(_attachedTo.begin(), _attachedTo.end(), netId,
+                                 [](const std::pair<NetId, NetId> &pair, NetId value) { return pair.first < value; });
+            return entry != _attachedTo.end() && entry->first == netId;
+        });
+
+    // Two sorted runs with nothing in common.
+    const std::vector<NetId>::difference_type kept = std::ssize(ids);
+    ids.insert(ids.end(), following.begin(), following.end());
+    std::inplace_merge(ids.begin(), ids.begin() + kept, ids.end());
 }
 
 void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)

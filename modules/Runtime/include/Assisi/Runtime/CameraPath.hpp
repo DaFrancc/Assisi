@@ -21,6 +21,7 @@
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -32,12 +33,12 @@ namespace Assisi::Runtime
 ACOMP()
 struct CameraLinePath
 {
-    AFIELD() glm::vec3 from{0.f, 2.f, 10.f}; ///< Where the camera starts.
-    AFIELD() glm::vec3 to{0.f, 2.f, -10.f};  ///< Where the camera ends.
+    AFIELD() glm::dvec3 from{0.0, 2.0, 10.0}; ///< Where the camera starts.
+    AFIELD() glm::dvec3 to{0.0, 2.0, -10.0};  ///< Where the camera ends.
 
     /// What the camera faces, unless it looks along the path.
     AFIELD(radioListen = {source = lookAlongPath, value = false, behavior = vanish})
-    glm::vec3 lookAt{0.f, 0.f, 0.f};
+    glm::dvec3 lookAt{0.0, 0.0, 0.0};
 
     /// Seconds this path takes when the route runs at its authored length. A run
     /// of a fixed total length scales every path by the same factor.
@@ -56,8 +57,8 @@ struct CameraLinePath
 ACOMP()
 struct CameraCirclePath
 {
-    AFIELD() glm::vec3 center{0.f, 0.f, 0.f};
-    AFIELD() glm::vec3 lookAt{0.f, 0.f, 0.f};
+    AFIELD() glm::dvec3 center{0.0, 0.0, 0.0};
+    AFIELD() glm::dvec3 lookAt{0.0, 0.0, 0.0};
     AFIELD(min = 0) float radius = 10.f;
 
     /// Height of the circle above `center`, so an orbit can look down on the
@@ -81,8 +82,8 @@ struct CameraCirclePath
 /// @brief Where the camera is and what it looks at.
 struct CameraAim
 {
-    glm::vec3 eye{0.f};
-    glm::vec3 target{0.f, 0.f, -1.f};
+    glm::dvec3 eye{0.0};
+    glm::dvec3 target{0.0, 0.0, -1.0};
 };
 
 /// @brief One path in a route: whichever component it came from, and which
@@ -118,6 +119,6 @@ struct CameraRouteLeg
 ///
 /// Up is world +Y, except when looking straight up or down, where +Y is
 /// parallel to the view and gives no roll, so +Z stands in for it.
-[[nodiscard]] glm::mat4 CameraWorldFor(const CameraAim &aim);
+[[nodiscard]] ECS::WorldMatrix CameraWorldFor(const CameraAim &aim);
 
 } // namespace Assisi::Runtime

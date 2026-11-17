@@ -4,6 +4,7 @@
 #include <Assisi/Core/Assert.hpp>
 
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -184,20 +185,66 @@ void NodeTree::SetVisible(NodeId id, bool visible)
     }
 }
 
+void NodeTree::Relook(Node &node) const
+{
+    ResolvedLook resolved = ResolveLook(node.look, _theme);
+    node.resting = std::move(resolved.resting);
+    node.states = std::move(resolved.states);
+    node.style = node.resting.values;
+}
+
 void NodeTree::SetStyle(NodeId id, const Style &style)
 {
     if (Node *node = GetMutable(id))
     {
-        node->style = style;
+        node->look.style = style;
+        node->look.written = kEveryProperty;
+        node->look.tokens.clear();
+        Relook(*node);
     }
 }
 
-void NodeTree::SetImage(NodeId id, TextureId texture, const Rect &uv)
+void NodeTree::SetStateStyle(NodeId id, const StylePatch &look)
+{
+    Node *node = GetMutable(id);
+    if (node == nullptr)
+    {
+        return;
+    }
+    std::erase_if(node->look.states, [&look](const ThemedPatch &held) { return held.patch.state == look.state; });
+    if (look.written != 0)
+    {
+        node->look.states.push_back(ThemedPatch{.patch = look, .tokens = {}});
+    }
+    Relook(*node);
+}
+
+void NodeTree::SetLook(NodeId id, NodeLook look)
 {
     if (Node *node = GetMutable(id))
     {
-        node->image = texture;
-        node->imageUv = uv;
+        node->look = std::move(look);
+        Relook(*node);
+    }
+}
+
+void NodeTree::SetTheme(const ThemeView &theme)
+{
+    _theme = theme;
+    for (Node &node : _slots)
+    {
+        if (node.alive)
+        {
+            Relook(node);
+        }
+    }
+}
+
+void NodeTree::SetImage(NodeId id, const Sprite &sprite)
+{
+    if (Node *node = GetMutable(id))
+    {
+        node->image = sprite;
         node->hasImage = true;
     }
 }

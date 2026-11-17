@@ -10,9 +10,11 @@
 /// id names a slot in one screen's tree and means nothing in another's — which
 /// is why no call takes a node from one screen and a tree from another.
 
+#include <Assisi/Mondrian/Binding.hpp>
 #include <Assisi/Mondrian/Layout.hpp>
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Pattern.hpp>
+#include <Assisi/Mondrian/ScreenWorld.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
@@ -20,6 +22,7 @@
 
 #include <array>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -28,6 +31,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -103,9 +107,26 @@ inline constexpr int32_t kSortMenu = kSortLayerSpacing;
 inline constexpr int32_t kSortPopup = 2 * kSortLayerSpacing;
 inline constexpr int32_t kSortOverlay = 3 * kSortLayerSpacing;
 
+/// @brief What happened to a screen's context since the UI last looked: the
+/// moments a screen can answer, as a button answers a click.
+enum class ContextMoment : uint8_t
+{
+    Set,    ///< it was given an entity when it had none
+    Switch, ///< it was given a different entity
+    Clear,  ///< code took its entity away
+    Lost,   ///< its entity was destroyed
+    Count_
+};
+
+inline constexpr std::size_t kContextMomentCount = static_cast<std::size_t>(ContextMoment::Count_);
+
 class Screen
 {
   public:
+    /// @brief What a screen does at one of its contexts' moments: pushes into
+    /// the route it is handed, or works the screen and ignores it.
+    using Reaction = std::function<void(const Core::EventRoute &)>;
+
     /// @brief An empty screen behaving as @p traits say, drawn at @p sortKey,
     /// called @p name, hidden until it is shown.
     ///
@@ -114,10 +135,12 @@ class Screen
     /// @p ui must outlive it, which a world's screens get for nothing: worlds
     /// are destroyed before the UI they were drawn in.
     ///
-    /// Its controls push into @p events, the queue of the world it belongs to,
-    /// except for a universal event, which goes to the UI's. Taken here for the
-    /// reason the UI takes its own: there is no moment it has nowhere to push.
-    Screen(Ui &ui, Core::EventQueue &events, ScreenTraits traits, int32_t sortKey, std::string name);
+    /// @p world is the world it belongs to, which must outlive it too. Its
+    /// controls push into that world's queue, except for a universal event,
+    /// which goes to the UI's, and its contexts are entities of that world.
+    /// Taken here for the reason the UI takes its queue: there is no moment it
+    /// has nowhere to push.
+    Screen(Ui &ui, ScreenWorld &world, ScreenTraits traits, int32_t sortKey, std::string name);
 
     Screen(const Screen &) = delete;
     Screen &operator=(const Screen &) = delete;
@@ -137,7 +160,65 @@ class Screen
     [[nodiscard]] bool IsShown() const { return _shown; }
 
     /// @brief The queue this screen's controls push every world event into.
-    [[nodiscard]] Core::EventQueue &Events() const { return _events; }
+    [[nodiscard]] Core::EventQueue &Events() const { return _world.Events(); }
+
+    /// @brief Makes @p entity what the context called @p name is about, or
+    /// takes its entity away with a null id. An empty name is the screen's
+    /// unnamed context.
+    ///
+    /// The UI answers what changed at its next input step, by comparing the
+    /// context with what it saw there last: a context given an entity and
+    /// cleared again in between answers nothing.
+    void SetContext(std::string_view name, EntityId entity);
+    void SetContext(EntityId entity) { SetContext({}, entity); }
+
+    /// @brief The entity the context called @p name is about: null when it
+    /// was never given one, was cleared, or was lost.
+    [[nodiscard]] EntityId GetContext(std::string_view name = {}) const;
+
+    /// @brief Makes the context called @p name push a copy of @p event at
+    /// @p moment, replacing whatever it did there before.
+    template <typename E>
+        requires(!std::invocable<E, Screen &>)
+    void OnContext(std::string_view name, ContextMoment moment, E event)
+    {
+        SetOnContext(name, moment, [event](const Core::EventRoute &events) { events.Push(event); });
+    }
+
+    /// @brief Makes the context called @p name run @p act on this screen at
+    /// @p moment, replacing whatever it did there before. Showing and hiding
+    /// from @p act are safe; destroying a screen is not, and asserts.
+    void OnContext(std::string_view name, ContextMoment moment, std::function<void(Screen &)> act);
+
+    /// @brief Makes the context called @p name answer @p moment with
+    /// @p reaction as it is: what a screen loaded from a file binds an event
+    /// it knows only by name with.
+    void SetOnContext(std::string_view name, ContextMoment moment, Reaction reaction);
+
+    /// @brief Makes @p node show @p text with each binding in it, such as
+    /// `{CharacterState.groundSpeed:.1f}`, filled from this screen's contexts
+    /// at every sync, replacing whatever it showed.
+    ///
+    /// A binding whose context has no entity, or whose entity has gone, keeps
+    /// what it last showed, and shows nothing until it has read once. Refused,
+    /// with the node left alone, when the text does not read or names a field
+    /// this screen's world does not have.
+    std::expected<void, BindingError> BindText(NodeId node, std::string_view text);
+
+    /// @brief Makes @p node visible while the bool @p binding names holds,
+    /// such as `{CharacterState.sprinting}`. Hidden until it has read once, and
+    /// as it last was while there is nothing to read.
+    std::expected<void, BindingError> BindVisible(NodeId node, std::string_view binding);
+
+    /// @brief Makes the toggle or slider @p node show the field @p binding
+    /// names at every sync, and, written `{=Component.field}`, write it each
+    /// time the player moves the control, before the control's OnChange fires.
+    ///
+    /// While the player has hold of it the control shows what they are doing,
+    /// and shows the field again once they let go. With nothing to read it
+    /// stays as it is, and with nothing to write to the move is dropped. A
+    /// stepped slider bound to an enum takes one step per enumerator.
+    std::expected<void, BindingError> BindControl(NodeId node, std::string_view binding);
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -383,6 +464,83 @@ class Screen
   private:
     friend class Ui;
 
+    /// One context: the entity code gave it, what the UI last saw it hold, and
+    /// what it does at each moment.
+    struct Context
+    {
+        std::array<Reaction, kContextMomentCount> reactions;
+        std::string name;
+        EntityId entity;
+        /// What the UI's last look saw: null after a clear or a loss, so the
+        /// next entity given is a set rather than a switch.
+        EntityId seen;
+    };
+
+    /// A binding, and what it remembers so that a read that keeps failing says
+    /// so once.
+    struct BoundField
+    {
+        FieldBinding binding;
+        /// The entity whose missing component was last logged.
+        EntityId warned;
+        /// Whether a source's binding has looked for it yet: one found since,
+        /// and gone, was unregistered rather than forgotten.
+        bool looked = false;
+    };
+
+    /// One stretch of a bound text: its words, then its binding and what that
+    /// last showed.
+    struct BoundRun
+    {
+        BoundField field;
+        std::string words;
+        std::string shown;
+        bool bound = false;
+    };
+
+    struct BoundText
+    {
+        std::vector<BoundRun> runs;
+        NodeId node;
+    };
+
+    struct BoundVisible
+    {
+        BoundField field;
+        NodeId node;
+    };
+
+    struct BoundControl
+    {
+        BoundField field;
+        NodeId node;
+    };
+
+    /// The context called @p name, made empty the first time it is asked for.
+    Context &ContextNamed(std::string_view name);
+
+    /// What @p field reads: the registered source it names, or the component on
+    /// the entity its context holds. Null when there is nothing to read.
+    [[nodiscard]] const void *ReadBound(BoundField &field);
+
+    /// Makes the control @p id show @p value, as code setting it would.
+    void ShowValue(NodeId id, const WidgetValue &value);
+
+    /// Fills every binding on this screen from what its contexts hold now.
+    /// Called by the UI before it lays the screen out.
+    void RefreshBindings();
+
+    /// Puts what the control @p id holds into the field it is bound to, when it
+    /// writes one and there is something to write to. Called by the UI when the
+    /// player has moved it, before the move is announced.
+    void WriteBound(NodeId id);
+
+    /// Compares every context with what the UI last saw it hold, and returns
+    /// what each change answers with, in the order the contexts were made.
+    /// Returned rather than run here, so a reaction that sets a context does
+    /// not change the list being walked.
+    [[nodiscard]] std::vector<Reaction> TakeMoments();
+
     /// What a control of type @p T holds, from the value it carries. A control
     /// only ever carries its own kind, so anything else is this UI's own bug.
     template <typename T> static T Held(const WidgetValue &value)
@@ -422,10 +580,15 @@ class Screen
     [[nodiscard]] const TextLayout *TextOf(const LayoutNode &placed) const;
 
     Ui &_ui;
-    Core::EventQueue &_events;
+    ScreenWorld &_world;
     NodeTree _tree;
     LayoutResult _layout;
     std::string _name;
+    /// Few to a screen, so a scan finds one by name.
+    std::vector<Context> _contexts;
+    std::vector<BoundText> _boundTexts;
+    std::vector<BoundVisible> _boundVisibles;
+    std::vector<BoundControl> _boundControls;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;

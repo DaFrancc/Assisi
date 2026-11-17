@@ -1,0 +1,81 @@
+#version 450
+
+// Meters the frame's histogram and moves the automatic exposure toward its aim.
+// One invocation: the histogram is small, and a frame meters once. A
+// transcription of Render::MeteredLog2Luminance, TargetExposureStops and
+// AdaptExposureStops in Exposure.hpp, which the tests hold; the two must agree.
+
+const uint kBins = 128u; // Render::kExposureHistogramBins
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// UAV bindings are offset by +384 (VulkanBindingOffsets::unorderedAccess).
+layout(std430, binding = 384) readonly buffer Histogram { uint bins[]; };
+// Render::ExposureState.
+layout(std430, binding = 385) buffer ExposureState
+{
+    float autoStops;
+    uint  seeded;
+} state;
+
+// Render::ExposureConstants.
+layout(push_constant) uniform PushConstants
+{
+    uvec2 sampleGrid;
+    vec2  texelSize;
+    float minStops;
+    float maxStops;
+    float compensationStops;
+    float adaptationRate;
+    float seconds;
+} pc;
+
+const float kMinLog2     = -14.0; // Render::kExposureHistogramMinLog2
+const float kMaxLog2     = 10.0;  // Render::kExposureHistogramMaxLog2
+const float kBinStops    = (kMaxLog2 - kMinLog2) / float(kBins - 1u);
+const float kLowShare    = 0.5;   // Render::kExposureMeterLowShare
+const float kHighShare   = 0.95;  // Render::kExposureMeterHighShare
+const float kTargetLuminance = 0.8;   // Render::kExposureTargetLuminance
+
+// Render::ExposureHistogramBinLog2.
+float BinLog2(uint bin)
+{
+    return kMinLog2 + (float(bin) - 0.5) * kBinStops;
+}
+
+// Render::MeteredLog2Luminance.
+float Metered()
+{
+    float counted = 0.0;
+    for (uint bin = 1u; bin < kBins; ++bin)
+    {
+        counted += float(bins[bin]);
+    }
+    float low  = counted * kLowShare;
+    float high = counted * kHighShare;
+
+    float below = 0.0;
+    float sum   = 0.0;
+    float kept  = 0.0;
+    for (uint bin = 1u; bin < kBins; ++bin)
+    {
+        float count  = float(bins[bin]);
+        float inside = max(min(below + count, high) - max(below, low), 0.0);
+        sum   += inside * BinLog2(bin);
+        kept  += inside;
+        below += count;
+    }
+    return kept > 0.0 ? sum / kept : log2(kTargetLuminance);
+}
+
+void main()
+{
+    // Render::TargetExposureStops.
+    float target = clamp(log2(kTargetLuminance) - Metered() + pc.compensationStops, pc.minStops, pc.maxStops);
+
+    // Render::AdaptExposureStops; the first frame takes its aim at once.
+    float covered = 1.0 - exp(-max(pc.adaptationRate, 0.0) * max(pc.seconds, 0.0));
+    float current = state.seeded != 0u ? state.autoStops : target;
+    state.autoStops = current + (target - current) * covered;
+    state.seeded = 1u;
+}

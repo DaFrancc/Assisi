@@ -1,0 +1,41 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+// One mip of a body's displacement and slope textures from the one above it:
+// each texel the average of four. Averages of the slopes and their squares are
+// what the shading turns into roughness, so the detail a distant pixel cannot
+// show becomes how rough it looks.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Mirrors Render::WaterMipConstants.
+layout(push_constant) uniform MipConstants
+{
+    uvec2 size; // the mip written, in texels
+} pc;
+
+layout(binding = 0) uniform texture2DArray uDisplacementAbove;
+layout(binding = 1) uniform texture2DArray uSlopesAbove;
+layout(binding = 384, rgba16f) uniform writeonly image2DArray uDisplacement;
+layout(binding = 385, rgba16f) uniform writeonly image2DArray uSlopes;
+
+void main()
+{
+    uvec3 texel = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(texel.xy, pc.size)))
+    {
+        return;
+    }
+    ivec2 above = ivec2(texel.xy) * 2;
+    int   layer = int(texel.z);
+    vec4  displacement = vec4(0.0);
+    vec4  slopes       = vec4(0.0);
+    for (int i = 0; i < 4; ++i)
+    {
+        ivec3 source = ivec3(above + ivec2(i & 1, i >> 1), layer);
+        displacement += texelFetch(uDisplacementAbove, source, 0);
+        slopes += texelFetch(uSlopesAbove, source, 0);
+    }
+    imageStore(uDisplacement, ivec3(texel), displacement * 0.25);
+    imageStore(uSlopes, ivec3(texel), slopes * 0.25);
+}

@@ -23,6 +23,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Geometry/CollisionData.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/CookedMesh.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -90,7 +91,7 @@ TestNode FlatCube(std::string name, glm::vec3 half)
 
 std::string Vec(glm::vec3 v)
 {
-    return std::format("[{}, {}, {}]", v.x, v.y, v.z);
+    return Core::Format("[{}, {}, {}]", v.x, v.y, v.z);
 }
 
 /// Writes @p nodes as `model.gltf` and `model.bin` in a fresh asset root, and
@@ -128,23 +129,23 @@ fs::path WriteModel(std::string_view directory, std::span<const TestNode> nodes)
         bin.resize(indexOffset + indexBytes);
         std::memcpy(bin.data() + indexOffset, node.indices.data(), indexBytes);
 
-        sceneNodes += std::format("{}{}", separator, i);
-        nodeJson += std::format(R"({}{{ "mesh": {}, "name": "{}", "translation": {}, "rotation": [{}, {}, {}, {}],
+        sceneNodes += Core::Format("{}{}", separator, i);
+        nodeJson += Core::Format(R"({}{{ "mesh": {}, "name": "{}", "translation": {}, "rotation": [{}, {}, {}, {}],
                                 "scale": {} }})",
-                                separator, i, node.name, Vec(node.translation), node.rotation.x, node.rotation.y,
-                                node.rotation.z, node.rotation.w, Vec(node.scale));
-        meshJson += std::format(R"({}{{ "primitives": [ {{ "attributes": {{ "POSITION": {} }}, "indices": {} }} ] }})",
-                                separator, 2 * i, 2 * i + 1);
-        viewJson += std::format(R"({}{{ "buffer": 0, "byteOffset": {}, "byteLength": {} }},
+                                 separator, i, node.name, Vec(node.translation), node.rotation.x, node.rotation.y,
+                                 node.rotation.z, node.rotation.w, Vec(node.scale));
+        meshJson += Core::Format(R"({}{{ "primitives": [ {{ "attributes": {{ "POSITION": {} }}, "indices": {} }} ] }})",
+                                 separator, 2 * i, 2 * i + 1);
+        viewJson += Core::Format(R"({}{{ "buffer": 0, "byteOffset": {}, "byteLength": {} }},
                                 {{ "buffer": 0, "byteOffset": {}, "byteLength": {} }})",
-                                separator, positionOffset, positionBytes, indexOffset, indexBytes);
-        accessorJson += std::format(
+                                 separator, positionOffset, positionBytes, indexOffset, indexBytes);
+        accessorJson += Core::Format(
             R"({}{{ "bufferView": {}, "componentType": 5126, "count": {}, "type": "VEC3", "min": {}, "max": {} }},
             {{ "bufferView": {}, "componentType": 5125, "count": {}, "type": "SCALAR" }})",
             separator, 2 * i, node.positions.size(), Vec(min), Vec(max), 2 * i + 1, node.indices.size());
     }
 
-    const std::string gltf = std::format(
+    const std::string gltf = Core::Format(
         R"({{ "asset": {{ "version": "2.0" }}, "scene": 0, "scenes": [ {{ "nodes": [ {} ] }} ],
            "nodes": [ {} ], "meshes": [ {} ],
            "buffers": [ {{ "uri": "model.bin", "byteLength": {} }} ],

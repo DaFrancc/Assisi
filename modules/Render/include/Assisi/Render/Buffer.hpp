@@ -34,12 +34,14 @@ public:
     void Create(nvrhi::IDevice *device, uint32_t elementStride, uint32_t capacityElements,
                 bool allowUnorderedAccess, const char *debugName);
 
-    /// @brief Writes `elementCount` elements of `data` starting at element 0.
-    /// Elements beyond `CapacityElements()` are dropped; the first time that
-    /// happens for this buffer a warning is logged (once per buffer) naming it
-    /// and the counts, so a too-small capacity surfaces instead of silently
-    /// truncating (e.g. lights past the clustered-lighting worst case).
-    void Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount) const;
+    /// @brief Writes `elementCount` elements of `data` starting at element
+    /// `firstElement`. Elements beyond `CapacityElements()` are dropped; the
+    /// first time that happens for this buffer a warning is logged (once per
+    /// buffer) naming it and the counts, so a too-small capacity surfaces
+    /// instead of silently truncating (e.g. lights past the clustered-lighting
+    /// worst case).
+    void Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount,
+                uint32_t firstElement = 0) const;
 
     /// @brief Fills the entire buffer with zero bytes (e.g. resetting atomic counters).
     void ClearToZero(nvrhi::ICommandList *commandList) const;

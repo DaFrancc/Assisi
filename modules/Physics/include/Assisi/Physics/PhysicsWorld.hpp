@@ -52,7 +52,7 @@ enum class BodyMotion : std::uint8_t
 struct Pose
 {
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
-    glm::vec3 position{0.f};
+    glm::dvec3 position{0.0};
 };
 
 /// @brief Everything one step of a character reads and leaves behind: enough
@@ -72,10 +72,10 @@ struct CharacterFrame
     /// while `position` and `velocity` are the ones it was taken with: a frame
     /// given others, such as the host's word, is placed there and asks again.
     std::vector<std::byte> physicsState;
+    glm::dvec3 position{0.0}; ///< The feet, in world space.
     CharacterIntent intent;
     /// While riding, its base's rotation when `localFeet` was taken.
     glm::quat baseRotation{1.f, 0.f, 0.f, 0.f};
-    glm::vec3 position{0.f}; ///< The feet, in world space.
     /// Its own velocity: relative to its base while it rides one.
     glm::vec3 velocity{0.f};
     /// Its velocity in the world, its base's included. Read back, never put
@@ -95,16 +95,32 @@ struct CharacterFrame
     float eyeHeight = 0.f;
     /// While riding, seconds before a carrier that stopped holding it lets go.
     float graceRemaining = 0.f;
+    /// CharacterState's counts, put back so a step stepped again does not count
+    /// a jump or a landing the live step already did.
+    std::uint32_t jumps = 0;
+    std::uint32_t landings = 0;
     Stance stance = Stance::Standing;
     /// What it stood on after the step. Read back, never put back: a rewind
     /// finds the ground again where it places the character.
     GroundState ground = GroundState::InAir;
     bool jumpedSinceGrounded = false;
+    bool sprinting = false;
     /// Riding: let go after its next carry; seated by gameplay; moving with
     /// other ground it stands on rather than with its base.
     bool leavingBase = false;
     bool basedByIntent = false;
     bool withGround = false;
+};
+
+/// @brief A character's jumps and landings, as another machine counts them for
+/// a character whose motion that machine decides.
+struct CharacterCounts
+{
+    std::uint32_t jumps = 0;    ///< CharacterState::jumps.
+    std::uint32_t landings = 0; ///< CharacterState::landings.
+    /// Whether it has jumped since it last stood: a character that has may not
+    /// jump again, coyote time or not, so CharacterState::canJump follows it.
+    bool jumpedSinceGrounded = false;
 };
 
 /// @brief Where a kinematic body, a dynamic body or a character is and how it
@@ -161,7 +177,7 @@ struct CollisionFilter
 /// fields whether a ray, a swept volume or a held one found it.
 struct QueryHit
 {
-    glm::vec3 position{0.f}; ///< World-space point on the struck surface.
+    glm::dvec3 position{0.0}; ///< World-space point on the struck surface.
 
     /// Unit surface normal at @ref position, pointing out of the surface and so
     /// back towards the caster. Reflecting a direction about it, or comparing it
@@ -204,13 +220,13 @@ enum class ContactPhase : std::uint8_t
 /// collapse into one.
 struct ContactEvent
 {
+    /// Where the two touch, in world space: the middle of the contact the step
+    /// last saw. On an Exit, where they last touched.
+    glm::dvec3 point{0.0};
+
     /// Unit world-space normal pointing away from @ref other's surface — so a
     /// body arriving at a floor sees +Y here, whichever way the pair was ordered.
     glm::vec3 normal{0.f};
-
-    /// Where the two touch, in world space: the middle of the contact the step
-    /// last saw. On an Exit, where they last touched.
-    glm::vec3 point{0.f};
 
     /// @ref entity's linear velocity when the contact was observed, which is
     /// **before the solver ran**. This is the field that makes the record worth
@@ -355,13 +371,13 @@ public:
 
     /// @brief Pushes @p entity by @p force (N) at a world-space @p point for the
     /// next step, which spins it as well when the point is off its centre.
-    void AddForceAt(ECS::Entity entity, glm::vec3 force, glm::vec3 point);
+    void AddForceAt(ECS::Entity entity, glm::vec3 force, const glm::dvec3 &point);
 
     /// @brief Kicks @p entity through its centre of mass by @p impulse (N·s).
     void AddImpulse(ECS::Entity entity, glm::vec3 impulse);
 
     /// @brief Kicks @p entity by @p impulse (N·s) at a world-space @p point.
-    void AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, glm::vec3 point);
+    void AddImpulseAt(ECS::Entity entity, glm::vec3 impulse, const glm::dvec3 &point);
 
     /// @brief Twists @p entity by @p torque (N·m), about world axes, for the
     /// next step.
@@ -506,11 +522,11 @@ public:
     /// @param sweep   Direction and length together; a zero sweep finds nothing.
     /// @param filter  What is asking, and what it may find.
     /// @param ignore  An entity to skip, or NullEntity to skip nothing.
-    [[nodiscard]] std::optional<QueryHit> CastRay(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter,
+    [[nodiscard]] std::optional<QueryHit> CastRay(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter,
                                                   ECS::Entity ignore) const;
 
     /// @brief Every body a ray meets. See CastRay and the All form above.
-    void CastRayAll(glm::vec3 origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
+    void CastRayAll(const glm::dvec3 &origin, glm::vec3 sweep, CollisionFilter filter, ECS::Entity ignore,
                     std::vector<QueryHit> &out) const;
 
     /// @brief The first body a swept collider meets, or nothing if it meets none.
@@ -689,6 +705,24 @@ public:
     /// would only be put back where it was by the next word from there.
     /// Kept until set again or the character is destroyed.
     void SetCharacterPushable(ECS::Entity entity, bool pushable);
+
+    /// @brief Whether @p entity's character counts its own jumps and landings.
+    /// On until turned off.
+    ///
+    /// Off for a character whose motion another machine decides: it is moved
+    /// into the air by that machine's word rather than jumping, so it would
+    /// miss jumps and count landings at its own moments. SetCharacterCounts
+    /// gives it that machine's counts instead. It still jumps and lands as
+    /// before. Kept until set again or the character is destroyed.
+    void SetCharacterCountsItself(ECS::Entity entity, bool countsItself);
+
+    /// @brief Gives @p entity's character @p counts, shown in its
+    /// CharacterState at once. Not while the world is stepping.
+    void SetCharacterCounts(ECS::Entity entity, const CharacterCounts &counts);
+
+    /// @brief @p entity's character's counts, for another machine to give its
+    /// copy. Default counts for an entity with no character.
+    [[nodiscard]] CharacterCounts CharacterCountsOf(ECS::Entity entity) const;
 
     /// @brief Where @p entity's character is now and what its last step
     /// consumed. A default frame for an entity with no character.

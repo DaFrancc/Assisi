@@ -81,7 +81,7 @@ nlohmann::json WalkerFile()
                  {"components",
                   {{"Transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                      {"Character", {{"walkSpeed", 5.f}}}}}},
+                      {"Character", nlohmann::json::object()}}}},
                  {{"name", "eye"},
                      {"components",
                       {{"Transform",

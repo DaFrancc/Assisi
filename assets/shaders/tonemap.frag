@@ -5,9 +5,10 @@
 // and any effect added later) operates on radiance, and everything downstream
 // (FXAA, editor chrome) operates on perceptual values.
 //
-// The look is four stages: exposure, a tone curve, a grade, and the display
-// encode. Every stage is a runtime knob — see Tonemap.hpp, which owns the
-// operator's wire values and the ranges these constants are allowed to take.
+// The look is six stages: the bloom's glow, white balance, exposure, a tone
+// curve, a grade, and the display encode. Every stage is a runtime knob — see
+// Tonemap.hpp, which owns the operator's wire values and the ranges these
+// constants are allowed to take.
 //
 // The swapchain is a UNORM format by deliberate choice (VulkanContext picks it
 // over the _SRGB one), so this shader owns the encode. AgX therefore ends at its
@@ -22,10 +23,24 @@ layout(location = 0) out vec4 outColor;
 // by VulkanBindingOffsets: shaderResource at +0, sampler at +128 (see fxaa.frag).
 layout(binding = 0)   uniform texture2D uScene;
 layout(binding = 128) uniform sampler   uSceneSampler;
+// The bloom's glow, at half the screen's size; read only while bloomIntensity
+// is above zero, and the scene itself bound here otherwise.
+layout(binding = 1)   uniform texture2D uBloom;
+
+// Render::ExposureState: the automatic exposure exposure_adapt.comp keeps.
+layout(std430, binding = 2) readonly buffer ExposureState
+{
+    float autoStops;
+    uint  seeded;
+} exposure;
 
 layout(push_constant) uniform PushConstants
 {
-    float exposureScale; // linear multiplier on radiance: exp2(stops)
+    vec4  whiteBalance[3]; // the white balance matrix's columns, in xyz
+    // Drawn at mix(manualStops, the automatic stops, automatic) + brightnessStops.
+    float manualStops;
+    float automatic;
+    float brightnessStops;
     float contrast;      // exponent on the curve's output
     float saturation;    // scale on each channel's distance from luma
     uint  op;            // TonemapOperator
@@ -33,7 +48,42 @@ layout(push_constant) uniform PushConstants
     // material debug views, whose scene target holds channel values rather than
     // radiance, and the final copy of an already-mapped image to the swapchain.
     uint  passthrough;
+    float ditherScale; // one display step while dithering, else 0
+    float bloomIntensity; // share of the glow mixed into the radiance, 0 for none
 } pc;
+
+// --- Dither ------------------------------------------------------------------
+//
+// Up to one display step of noise before the 8-bit write, so a slow fade spreads
+// over the two steps it falls between instead of holding one and jumping to the
+// next in a band. Render::DisplayDither says why it is triangular; these must
+// give the same values.
+
+const uint  kHalfBits  = 16u;
+const uint  kHalfMask  = 0xffffu;
+const float kHalfRange = 65536.0;
+const float kMidStep   = 0.5;
+
+// The lowbias32 integer hash; its constants are the function. Must match
+// Render::DitherHash.
+uint DitherHash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+// In (-1, 1) display steps. Must match Render::DisplayDither.
+float DisplayDither(uvec2 pixel)
+{
+    uint  hash   = DitherHash(pixel.x ^ DitherHash(pixel.y));
+    float first  = (float(hash & kHalfMask) + kMidStep) / kHalfRange;
+    float second = (float(hash >> kHalfBits) + kMidStep) / kHalfRange;
+    return first + second - 1.0;
+}
 
 const uint kAgx      = 0u;
 const uint kAces     = 1u;
@@ -120,7 +170,22 @@ void main()
         return;
     }
 
-    vec3 color = scene.rgb * pc.exposureScale;
+    // The glow replaces its share of the radiance rather than adding to it, so
+    // an even picture comes out as bright as it went in.
+    vec3 radiance = scene.rgb;
+    if (pc.bloomIntensity > 0.0)
+    {
+        radiance = mix(radiance, texture(sampler2D(uBloom, uSceneSampler), vTexCoords).rgb, pc.bloomIntensity);
+    }
+    radiance = mat3(pc.whiteBalance[0].xyz, pc.whiteBalance[1].xyz, pc.whiteBalance[2].xyz) * radiance;
+    // The automatic stops are only read while some of the exposure is
+    // automatic; until the first frame has metered they hold nothing.
+    float stops = pc.manualStops;
+    if (pc.automatic > 0.0)
+    {
+        stops = mix(stops, exposure.autoStops, pc.automatic);
+    }
+    vec3 color = radiance * exp2(stops + pc.brightnessStops);
 
     if (pc.op == kAgx)
     {
@@ -141,6 +206,9 @@ void main()
         color = (pc.op == kAces) ? AcesFit(color) : Reinhard(color);
         color = Grade(EncodeGamma(color));
     }
+
+    // The same noise in every channel, so it reads as grain rather than colour.
+    color += DisplayDither(uvec2(gl_FragCoord.xy)) * pc.ditherScale;
 
     outColor = vec4(clamp(color, vec3(0.0), vec3(1.0)), scene.a);
 }

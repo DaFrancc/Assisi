@@ -8,12 +8,16 @@
 
 #include "AnimatorTesting.hpp"
 
+#include <Assisi/Core/Format.hpp>
+
 #include <doctest/doctest.h>
 
 #include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -46,7 +50,7 @@ bool Refuses(std::string_view source, uint32_t line, std::string_view says)
         MESSAGE("compiled, but should have been refused");
         return false;
     }
-    const std::string where = std::format("characters/hero.sgl:{}:", line);
+    const std::string where = Core::Format("characters/hero.sgl:{}:", line);
     const bool found =
         compiled.error().find(says) != std::string::npos && compiled.error().find(where) != std::string::npos;
     if (!found)
@@ -94,6 +98,18 @@ TEST_CASE("Animator compile: the book's character compiles into its layers, stat
     CHECK(upper.weight != Runtime::kNotWritten);
     CHECK(upper.states[1].pose);
     CHECK(upper.states[1].clip.asset == Core::DerivedAssetId(Clip("Pistol_Aim_Neutral")));
+}
+
+TEST_CASE("Animator compile: the sample game's player compiles against the model and clips it names" * NeedsUal1())
+{
+    std::ifstream file(std::filesystem::path{ASSISI_SOURCE_ASSET_ROOT} / "animation/Player.sgl", std::ios::binary);
+    REQUIRE(file.good());
+    const std::string source{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    const std::expected<Runtime::AnimatorGraph, std::string> compiled = Compile(source);
+    REQUIRE_MESSAGE(compiled.has_value(), compiled.error());
+    REQUIRE(compiled->layers.size() == 1);
+    // A jump and a landing, from counts, and a gesture, from the bell.
+    CHECK(compiled->triggerSlots.size() == 3);
 }
 
 TEST_CASE("Animator compile: a cooked graph reads back, and a damaged or empty one is refused" * NeedsUal1())

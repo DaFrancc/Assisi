@@ -19,11 +19,13 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include <Assisi/Cook/CookTree.hpp>
+#include <Assisi/Cook/Cooker.hpp>
 #include <Assisi/Core/AssetKind.hpp>
 #include <Assisi/Core/AssetSidecar.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -592,6 +594,33 @@ TEST_CASE("Changing the texture tier re-cooks the textures and nothing else")
     CHECK(fast->skipped == best->cooked - kFixtureTextures);
 }
 
+TEST_CASE("A texture a material rebinds to a channel stored differently is re-cooked")
+{
+    // The channel decides the texture's format, and the image file does not
+    // change when a material rebinds it. Left out of the cache key, the colour
+    // map's blob would be kept and read as a normal map.
+    const ScratchDir source("rebind-source");
+    const ScratchDir out("rebind-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    const std::expected<CookReport, Assisi::Cook::CookError> asColour = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asColour.has_value(), Explain(asColour));
+
+    {
+        std::ofstream material(source.Path() / "materials/checker.amat", std::ios::trunc);
+        material << R"({"version": 1, "type": "MaterialData", "NormalTexture": )"
+                 << R"({"guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d", "path": "textures/checker.png"}})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> asNormal = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(asNormal.has_value(), Explain(asNormal));
+
+    // The material, whose file changed, and the texture, whose did not.
+    constexpr std::size_t kRebound = 2;
+    CHECK(asNormal->cooked == kRebound);
+}
+
 namespace
 {
 
@@ -823,6 +852,123 @@ TEST_CASE("A listed string table cooks, and changing it re-cooks every screen")
     CHECK(second->cooked == 3);
 }
 
+namespace
+{
+
+/// A copy of the fixture tree with UI settings listing one theme, the theme,
+/// and a screen whose button names @p style in it.
+void AddTheme(const std::filesystem::path &root, std::string_view style)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "config/ui.json", R"({ "version": 1, "type": "UiConfig", "themes": ["ui/Look.amth"] })",
+               "6a8c0e2f-4b1d-4e3a-9c5b-7d9f1b3d5a7c");
+    WriteAsset(root, "ui/Look.amth",
+               "<theme>\n  <palette mode=\"dark\" accent=\"#e63319\" />\n"
+               "  <style name=\"button\" background=\"$accent\" />\n</theme>\n",
+               "1c3e5a7b-9d0f-4b2c-8e4a-6f8b0d2c4e6a");
+    WriteAsset(root, "ui/Menu.amdn",
+               "<screen>\n  <button style=\"" + std::string{style} + "\">Play</button>\n</screen>\n",
+               "3e5a7c9b-1d2f-4c4e-a6b8-0d2f4b6d8f1a");
+}
+
+} // namespace
+
+TEST_CASE("A listed theme cooks, and changing it re-cooks every screen")
+{
+    const ScratchDir source("theme-src");
+    const ScratchDir out("theme-out");
+    AddTheme(source.Path(), "button");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    REQUIRE(EntryFor(*first, "ui/Look.amth") != nullptr);
+
+    std::ofstream(source.Path() / "ui" / "Look.amth", std::ios::app) << "<!-- edited -->\n";
+
+    // The theme, and both screens: each is checked against every theme.
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 3);
+}
+
+TEST_CASE("A style the listed theme does not have fails the screen's cook")
+{
+    const ScratchDir source("theme-style-src");
+    const ScratchDir out("theme-style-out");
+    AddTheme(source.Path(), "missing");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Menu.amdn");
+    CHECK(report.error().reason.starts_with("2:"));
+    CHECK(report.error().reason.find("no style 'missing'") != std::string::npos);
+}
+
+namespace
+{
+
+/// A copy of the fixture tree with UI settings listing one sprite sheet, cut
+/// from the fixture's 256-pixel checker, and a screen showing @p sprite from it.
+/// @p rect is the sheet's one sprite's rectangle.
+void AddSpriteSheet(const std::filesystem::path &root, std::string_view sprite, std::string_view rect)
+{
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, root, std::filesystem::copy_options::recursive, code);
+    WriteAsset(root, "config/ui.json", R"({ "version": 1, "type": "UiConfig", "spriteSheets": ["ui/frames.amsp"] })",
+               "8e0a2c4d-6f1b-4d3e-a5c7-9b1d3f5a7c9e");
+    WriteAsset(root, "ui/frames.amsp",
+               "<sheet texture=\"textures/checker.png\">\n  <sprite name=\"panel\" rect=\"" + std::string{rect} +
+               "\" borders=\"8\" />\n</sheet>\n",
+               "5b7d9f1a-3c2e-4f4a-8b6d-0e2a4c6e8a0b");
+    WriteAsset(root, "ui/Menu.amdn",
+               "<screen>\n  <image sprite=\"" + std::string{sprite} + "\" />\n</screen>\n",
+               "9c1e3a5b-7d4f-4a6c-b8e0-2f4a6c8e0b2d");
+}
+
+} // namespace
+
+TEST_CASE("A listed sprite sheet cooks, and changing it re-cooks every screen")
+{
+    const ScratchDir source("sheet-src");
+    const ScratchDir out("sheet-out");
+    AddSpriteSheet(source.Path(), "frames:panel", "0 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> first = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(first.has_value(), Explain(first));
+    REQUIRE(EntryFor(*first, "ui/frames.amsp") != nullptr);
+
+    std::ofstream(source.Path() / "ui" / "frames.amsp", std::ios::app) << "<!-- edited -->\n";
+
+    // The sheet, and both screens: each is checked against every sheet.
+    const std::expected<CookReport, Assisi::Cook::CookError> second = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(second.has_value(), Explain(second));
+    CHECK(second->cooked == 3);
+}
+
+TEST_CASE("A sprite the listed sheet does not have fails the screen's cook")
+{
+    const ScratchDir source("sheet-sprite-src");
+    const ScratchDir out("sheet-sprite-out");
+    AddSpriteSheet(source.Path(), "frames:missing", "0 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().vpath == "ui/Menu.amdn");
+    CHECK(report.error().reason.find("has no sprite 'missing'") != std::string::npos);
+}
+
+TEST_CASE("A sprite reaching past its texture fails the sheet's cook")
+{
+    const ScratchDir source("sheet-rect-src");
+    const ScratchDir out("sheet-rect-out");
+    AddSpriteSheet(source.Path(), "frames:panel", "240 0 32 32");
+
+    const std::expected<CookReport, Assisi::Cook::CookError> report = CookTree(source.Path(), out.Path());
+    REQUIRE_FALSE(report.has_value());
+    CHECK(report.error().reason.find("reaches past the texture") != std::string::npos);
+}
+
 TEST_CASE("A key its table does not have fails the screen's cook")
 {
     const ScratchDir source("table-key-src");
@@ -833,4 +979,93 @@ TEST_CASE("A key its table does not have fails the screen's cook")
     REQUIRE_FALSE(report.has_value());
     CHECK(report.error().vpath == "ui/Menu.amdn");
     CHECK(report.error().reason.starts_with("2:"));
+}
+
+TEST_CASE("A texture two channels store alike is cooked once, and one stored differently is refused")
+{
+    using Assisi::Geometry::MaterialChannel;
+    // glTF's usual packing: occlusion in the red channel of the metal-roughness
+    // image, so one file is bound by both.
+    const std::optional<Assisi::Core::AssetId> packed =
+        Assisi::Core::AssetId::Parse("6f1c2a4e-0b3d-4e5f-8a9b-1c2d3e4f5a6b");
+    REQUIRE(packed.has_value());
+
+    Assisi::Cook::TextureRoles roles;
+    CHECK(roles.Bind(*packed, MaterialChannel::MetallicRoughness, "materials/Rock.amat", std::nullopt));
+    CHECK(roles.Bind(*packed, MaterialChannel::Occlusion, "materials/Rock.amat", std::nullopt));
+    CHECK(roles.ChannelOf(*packed).has_value());
+    CHECK(roles.Conflict(*packed).first.empty());
+
+    // A normal map is a different format, so the same file cannot also be one.
+    CHECK_FALSE(roles.Bind(*packed, MaterialChannel::Normal, "materials/Moss.amat", std::nullopt));
+    CHECK_FALSE(roles.ChannelOf(*packed).has_value());
+    CHECK(roles.Conflict(*packed).second == "materials/Moss.amat");
+    CHECK_FALSE(roles.ConflictIsOverAlpha(*packed));
+}
+
+TEST_CASE("A colour map keeps its coverage at the cutoff of the materials that cut out with it")
+{
+    using Assisi::Geometry::MaterialChannel;
+    constexpr float kCutoff = 0.5f;
+    const std::optional<Assisi::Core::AssetId> leaves =
+        Assisi::Core::AssetId::Parse("7a2d3b5f-1c4e-4f60-9bac-2d3e4f5a6b7c");
+    REQUIRE(leaves.has_value());
+
+    // A material that reads no alpha, here an opaque one, is served by any
+    // mips, before or after the one that cuts.
+    Assisi::Cook::TextureRoles roles;
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Bark.amat", std::nullopt));
+    CHECK(roles.AlphaCutoffOf(*leaves) == 0.f);
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", kCutoff));
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Hedge.amat", kCutoff));
+    CHECK(roles.Bind(*leaves, MaterialChannel::BaseColor, "materials/Trunk.amat", std::nullopt));
+    CHECK(roles.AlphaCutoffOf(*leaves) == kCutoff);
+    CHECK(roles.Conflict(*leaves).first.empty());
+}
+
+TEST_CASE("A colour map cut at two cutoffs, or cut by one material and blended by another, is refused")
+{
+    using Assisi::Geometry::MaterialChannel;
+    const std::optional<Assisi::Core::AssetId> leaves =
+        Assisi::Core::AssetId::Parse("8b3e4c6a-2d5f-4071-8cbd-3e4f5a6b7c8d");
+    REQUIRE(leaves.has_value());
+
+    Assisi::Cook::TextureRoles twoCutoffs;
+    CHECK(twoCutoffs.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", 0.5f));
+    CHECK_FALSE(twoCutoffs.Bind(*leaves, MaterialChannel::BaseColor, "materials/Fern.amat", 0.3f));
+    CHECK_FALSE(twoCutoffs.ChannelOf(*leaves).has_value());
+    CHECK(twoCutoffs.ConflictIsOverAlpha(*leaves));
+    CHECK(twoCutoffs.Conflict(*leaves).second == "materials/Fern.amat");
+
+    // Blending wants alpha's plain average, which coverage-kept mips are not.
+    Assisi::Cook::TextureRoles cutAndBlended;
+    CHECK(cutAndBlended.Bind(*leaves, MaterialChannel::BaseColor, "materials/Leaves.amat", 0.5f));
+    CHECK_FALSE(cutAndBlended.Bind(*leaves, MaterialChannel::BaseColor, "materials/Ghost.amat", 0.f));
+    CHECK(cutAndBlended.ConflictIsOverAlpha(*leaves));
+}
+
+TEST_CASE("A colour map whose material starts cutting with it is re-cooked")
+{
+    // The cutoff decides the mips, and the image file does not change when a
+    // material starts cutting with it.
+    const ScratchDir source("cutout-source");
+    const ScratchDir out("cutout-out");
+    std::error_code code;
+    std::filesystem::copy(ASSISI_COOK_FIXTURE_ROOT, source.Path(), std::filesystem::copy_options::recursive, code);
+    REQUIRE_FALSE(code);
+
+    const std::expected<CookReport, Assisi::Cook::CookError> opaque = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(opaque.has_value(), Explain(opaque));
+
+    {
+        std::ofstream material(source.Path() / "materials/checker.amat", std::ios::trunc);
+        material << R"({"version": 1, "type": "MaterialData", "Alpha": 1, "AlphaCutoff": 0.5, "BaseColorTexture": )"
+                 << R"({"guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d", "path": "textures/checker.png"}})";
+    }
+    const std::expected<CookReport, Assisi::Cook::CookError> cutout = CookTree(source.Path(), out.Path());
+    REQUIRE_MESSAGE(cutout.has_value(), Explain(cutout));
+
+    // The material, whose file changed, and the texture, whose did not.
+    constexpr std::size_t kRecooked = 2;
+    CHECK(cutout->cooked == kRecooked);
 }

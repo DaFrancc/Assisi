@@ -29,12 +29,12 @@ constexpr float kParallelDot = 0.999f;
 [[nodiscard]] CameraAim EvaluateLine(const CameraLinePath &line, float progress)
 {
     CameraAim aim;
-    aim.eye = glm::mix(line.from, line.to, progress);
+    aim.eye = glm::mix(line.from, line.to, static_cast<double>(progress));
 
-    const glm::vec3 travel = line.to - line.from;
+    const glm::dvec3 travel = line.to - line.from;
     // A zero-length line has no direction to look along, so it falls back to
     // the authored target rather than aiming at its own eye.
-    const bool alongPath = line.lookAlongPath && glm::length(travel) > kDegenerateLength;
+    const bool alongPath = line.lookAlongPath && glm::length(travel) > static_cast<double>(kDegenerateLength);
     aim.target = alongPath ? aim.eye + travel : line.lookAt;
     return aim;
 }
@@ -45,7 +45,7 @@ constexpr float kParallelDot = 0.999f;
 
     CameraAim aim;
     aim.eye = circle.center +
-              glm::vec3(std::cos(angle) * circle.radius, circle.height, std::sin(angle) * circle.radius);
+              glm::dvec3(glm::vec3(std::cos(angle) * circle.radius, circle.height, std::sin(angle) * circle.radius));
     aim.target = circle.lookAt;
     return aim;
 }
@@ -119,9 +119,9 @@ CameraAim EvaluateCameraRoute(const std::vector<CameraRouteLeg> &route, float se
     return EvaluateCameraLeg(route.back(), 1.f);
 }
 
-glm::mat4 CameraWorldFor(const CameraAim &aim)
+ECS::WorldMatrix CameraWorldFor(const CameraAim &aim)
 {
-    glm::vec3 forward = aim.target - aim.eye;
+    glm::vec3 forward(aim.target - aim.eye);
     if (glm::length(forward) <= kDegenerateLength)
     {
         forward = glm::vec3(0.f, 0.f, -1.f);
@@ -131,7 +131,10 @@ glm::mat4 CameraWorldFor(const CameraAim &aim)
     const bool vertical = std::abs(glm::dot(forward, glm::vec3(0.f, 1.f, 0.f))) > kParallelDot;
     const glm::vec3 up = vertical ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
 
-    return glm::inverse(glm::lookAt(aim.eye, aim.eye + forward, up));
+    // Turned at the origin and then placed, so the eye's position never passes
+    // through a float.
+    const glm::mat4 turned = glm::inverse(glm::lookAt(glm::vec3(0.f), forward, up));
+    return ECS::WorldMatrixAt(turned, aim.eye);
 }
 
 } // namespace Assisi::Runtime

@@ -67,7 +67,7 @@ void AddStaticBox(Session &session, glm::vec3 centre, glm::vec3 half)
     for (const std::unique_ptr<Machine> &machine : session.machines)
     {
         const ECS::Entity box = machine->world.scene.Create();
-        (void)machine->world.scene.Add<ECS::Transform>(box, ECS::Transform{.position = centre});
+        (void)machine->world.scene.Add<ECS::Transform>(box, ECS::Transform{.position = glm::dvec3(centre)});
         Physics::Collider collider;
         collider.shape = Physics::ColliderShape::Box;
         collider.halfExtents = half;
@@ -80,7 +80,7 @@ void AddStaticBox(Session &session, glm::vec3 centre, glm::vec3 half)
 ECS::Entity AddCrate(ECS::Scene &host, glm::vec3 at)
 {
     const ECS::Entity crate = host.Create();
-    (void)host.Add<ECS::Transform>(crate, ECS::Transform{.position = at});
+    (void)host.Add<ECS::Transform>(crate, ECS::Transform{.position = glm::dvec3(at)});
     Physics::Collider collider;
     collider.shape = Physics::ColliderShape::Box;
     collider.halfExtents = glm::vec3{kCrateHalf};
@@ -119,11 +119,11 @@ struct Walker
         JoinOnFloor(session, *host, *client);
         player = LocalPlayerOf(client->world.scene);
         REQUIRE(player != ECS::NullEntity);
-        start = client->world.scene.Get<ECS::Transform>(player)->position;
+        start = glm::vec3(client->world.scene.Get<ECS::Transform>(player)->position);
     }
 
     [[nodiscard]] NetSync::ReplicationClient &Replication() { return *client->play.Session().Client(); }
-    [[nodiscard]] glm::vec3 Position() { return client->world.scene.Get<ECS::Transform>(player)->position; }
+    [[nodiscard]] glm::vec3 Position() { return glm::vec3(client->world.scene.Get<ECS::Transform>(player)->position); }
 };
 
 } // namespace
@@ -184,7 +184,7 @@ TEST_CASE("With the sync test on, a client walking into a crate at an angle step
 
     walker.session.Run(kWalkFrames, [&] { Walk(walker.client->world.scene, walker.player, kSideways); });
 
-    REQUIRE(glm::length(hostScene.Get<ECS::Transform>(crate)->position - crateAt) > kCrateHalf);
+    REQUIRE(glm::length(glm::vec3(hostScene.Get<ECS::Transform>(crate)->position) - crateAt) > kCrateHalf);
     CHECK(walker.Replication().SyncTestResults().replays > 0u);
     CHECK(walker.Replication().SyncTestResults().differences == 0u);
 }
@@ -236,7 +236,7 @@ TEST_CASE("A client walking into a heavy crate at an angle slides past it, and t
     const glm::vec3 crateAt = walker.start + glm::vec3{0.f, kHeavyHalf, -kHeavyAhead};
     ECS::Scene &hostScene = walker.host->world.scene;
     const ECS::Entity crate = hostScene.Create();
-    (void)hostScene.Add<ECS::Transform>(crate, ECS::Transform{.position = crateAt});
+    (void)hostScene.Add<ECS::Transform>(crate, ECS::Transform{.position = glm::dvec3(crateAt)});
     Physics::Collider collider;
     collider.shape = Physics::ColliderShape::Box;
     collider.halfExtents = glm::vec3{kHeavyHalf};

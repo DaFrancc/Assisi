@@ -1,0 +1,42 @@
+#version 450
+// texelFetch on a texture read without a sampler.
+#extension GL_EXT_samplerless_texture_functions : require
+
+/// cloud_noise_downsample.comp
+/// One mip of a cloud noise texture: each texel is the mean of the eight beneath
+/// it in the mip above. Distant clouds read the coarser mips, so a texel of the
+/// clouds' sky map that spans kilometres of cloud averages the noise there rather
+/// than picking one point of it, which would shimmer as the wind moves them.
+///
+/// Dispatch: ceil(destinationSize / 4)^3 workgroups, one mip per dispatch.
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(binding = 0) uniform texture3D uSource;
+
+// NVRHI's Vulkan backend offsets UAV bindings by +384.
+layout(binding = 384, rgba8) uniform writeonly image3D uDestination;
+
+layout(push_constant) uniform PushConstants
+{
+    uint destinationSize; // texels along each edge of the mip being written
+    uint padding0;
+    uint padding1;
+    uint padding2;
+} uPush;
+
+void main()
+{
+    ivec3 texel = ivec3(gl_GlobalInvocationID);
+    if (any(greaterThanEqual(gl_GlobalInvocationID, uvec3(uPush.destinationSize))))
+    {
+        return;
+    }
+    ivec3 source = texel * 2;
+    vec4  sum    = vec4(0.0);
+    for (int i = 0; i < 8; ++i)
+    {
+        sum += texelFetch(uSource, source + ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1), 0);
+    }
+    imageStore(uDestination, texel, sum * 0.125);
+}

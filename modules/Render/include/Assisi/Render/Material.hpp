@@ -29,6 +29,14 @@ enum MaterialFlagBits : uint32_t
     kMaterialFlagHasNormalTexture = 1u << 0,
     kMaterialFlagEnergyPreservingDiffuse = 1u << 1, ///< EON diffuse; set when BaseDiffuseRoughness > 0.
     kMaterialFlagSpecularAntiAliasing = 1u << 2,    ///< Geometric specular AA; set when the enable is on and the clamp > 0.
+    kMaterialFlagShadowsFollowSmoothing = 1u << 3,  ///< Shadow lookups lift onto the smooth-shaded curve.
+    /// The emissive factor is not zero. Without it the emissive texture is not
+    /// read: anything times a zero factor is no light.
+    kMaterialFlagHasEmissive = 1u << 4,
+    /// An occlusion texture is bound and its strength is not zero. Without it
+    /// the texture is not read: the default texture and a zero strength both
+    /// leave the surface unoccluded.
+    kMaterialFlagHasOcclusion = 1u << 5,
 };
 
 /// @brief Per-material constants — one row of the shared material table.
@@ -69,6 +77,7 @@ struct MaterialTextures
     uint32_t occlusion = 0;
     uint32_t emissive = 0;
     bool hasNormalTexture = false;     ///< False when the normal channel is the flat default.
+    bool hasOcclusionTexture = false;  ///< False when the occlusion channel is the white default.
 };
 
 class Material
@@ -100,12 +109,17 @@ public:
     /// @brief Whether this material's fragments are alpha-tested.
     bool IsAlphaMasked() const { return _source.Alpha == Geometry::AlphaMode::Mask; }
 
+    /// @brief Whether this material is see-through, drawn by the blended pass
+    /// after everything solid rather than through any MeshPipeline.
+    bool IsBlended() const { return _source.Alpha == Geometry::AlphaMode::Blend; }
+
     /// @brief Whether this material rasterizes its back faces.
     bool IsDoubleSided() const { return _source.DoubleSided; }
 
     /// @brief Which mesh-pass pipeline this material's draws belong in. The one
     /// place the mapping lives, so the CPU draw list and the GPU cull tables
-    /// cannot disagree about where a material draws.
+    /// cannot disagree about where a material draws. Meaningless for a blended
+    /// material, which no opaque pipeline draws.
     MeshPipeline Pipeline() const { return MeshPipelineFor(IsAlphaMasked(), IsDoubleSided()); }
 
     bool IsValid() const { return _created; }

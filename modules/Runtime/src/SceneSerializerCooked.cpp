@@ -118,9 +118,9 @@ void WriteBlock(Core::BitWriter &writer, const Core::BitWriter &block)
 void WriteTransform(Core::BitWriter &writer, const ECS::Transform &transform)
 {
     // The three reflected fields, in declaration order.
-    writer.WriteFloat(transform.position.x);
-    writer.WriteFloat(transform.position.y);
-    writer.WriteFloat(transform.position.z);
+    writer.WriteDouble(transform.position.x);
+    writer.WriteDouble(transform.position.y);
+    writer.WriteDouble(transform.position.z);
     writer.WriteFloat(transform.rotation.w);
     writer.WriteFloat(transform.rotation.x);
     writer.WriteFloat(transform.rotation.y);
@@ -490,9 +490,9 @@ bool ReadStringList(Core::BitReader &reader, std::vector<std::string> &out)
 ECS::Transform ReadTransform(Core::BitReader &reader)
 {
     ECS::Transform transform;
-    transform.position.x = reader.ReadFloat();
-    transform.position.y = reader.ReadFloat();
-    transform.position.z = reader.ReadFloat();
+    transform.position.x = reader.ReadDouble();
+    transform.position.y = reader.ReadDouble();
+    transform.position.z = reader.ReadDouble();
     transform.rotation.w = reader.ReadFloat();
     transform.rotation.x = reader.ReadFloat();
     transform.rotation.y = reader.ReadFloat();

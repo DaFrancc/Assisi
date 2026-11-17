@@ -51,23 +51,23 @@ constexpr float kArm = 1.f;
 
 glm::vec3 PositionOf(const ECS::Scene &scene, ECS::Entity entity)
 {
-    return scene.Get<ECS::Transform>(entity)->position;
+    return glm::vec3(scene.Get<ECS::Transform>(entity)->position);
 }
 
 /// A small dynamic box at @p position with no damping, so a spin is kept
 /// unless something takes it.
-ECS::Entity AddCrate(ECS::Scene &scene, glm::vec3 position)
+ECS::Entity AddCrate(ECS::Scene &scene, const glm::dvec3 &position)
 {
     BodySpec spec = Box(glm::vec3(kHalf), /*isStatic=*/ false);
     spec.rigidBody->linearDamping = 0.f;
     spec.rigidBody->angularDamping = 0.f;
-    return AddBody(scene, position, spec);
+    return AddBody(scene, glm::dvec3(position), spec);
 }
 
 /// A crate one arm's length from kPivot along +Z, the arm level.
 ECS::Entity AddLevelArm(ECS::Scene &scene)
 {
-    return AddCrate(scene, kPivot + glm::vec3(0.f, 0.f, kArm));
+    return AddCrate(scene, glm::dvec3(kPivot + glm::vec3(0.f, 0.f, kArm)));
 }
 
 /// Degrees the arm from kPivot to @p entity hangs below level.
@@ -172,7 +172,7 @@ Drop DropWithLimit(float limit)
 float SpinAfterASecond(float friction)
 {
     Weightless test;
-    const ECS::Entity door = AddCrate(test.scene, kPivot);
+    const ECS::Entity door = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(door, Physics::HingeJoint{.friction = friction}) != nullptr);
     SetVelocity(test.scene, door, glm::vec3(0.f), glm::vec3(0.f, 3.f, 0.f));
     Step(test.world, kSettleSteps / 2);
@@ -185,9 +185,9 @@ float SpinAfterASecond(float friction)
 int32_t ContactsWhenJoined(bool collideConnected, int32_t &withThird)
 {
     Weightless test;
-    const ECS::Entity a = AddCrate(test.scene, glm::vec3(0.f));
-    const ECS::Entity b = AddCrate(test.scene, glm::vec3(kHalf, 0.f, 0.f));
-    const ECS::Entity c = AddCrate(test.scene, glm::vec3(0.f, kHalf, 0.f));
+    const ECS::Entity a = AddCrate(test.scene, glm::dvec3(0.f));
+    const ECS::Entity b = AddCrate(test.scene, glm::dvec3(kHalf, 0.f, 0.f));
+    const ECS::Entity c = AddCrate(test.scene, glm::dvec3(0.f, kHalf, 0.f));
     REQUIRE(test.scene.Add(b, Physics::PointJoint{.other = a, .collideConnected = collideConnected}) != nullptr);
     Step(test.world);
     withThird = ContactsBetween(test.world, a, c) + ContactsBetween(test.world, b, c);
@@ -203,7 +203,7 @@ int32_t ContactsWhenJoined(bool collideConnected, int32_t &withThird)
 TEST_CASE("A FixedJoint to the world holds a body where it was built")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{}) != nullptr);
 
     Step(test.world, kSettleSteps);
@@ -214,9 +214,9 @@ TEST_CASE("A FixedJoint to the world holds a body where it was built")
 TEST_CASE("A FixedJoint holds two bodies apart that do not touch")
 {
     TestScene test;
-    const ECS::Entity post = AddBody(test.scene, kPivot, Box(glm::vec3(kHalf), /*isStatic=*/ true));
+    const ECS::Entity post = AddBody(test.scene, glm::dvec3(kPivot), Box(glm::vec3(kHalf), /*isStatic=*/ true));
     const glm::vec3 start = kPivot + glm::vec3(2.f, 0.f, 0.f);
-    const ECS::Entity crate = AddCrate(test.scene, start);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(start));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{.other = post}) != nullptr);
 
     Step(test.world, kSettleSteps);
@@ -255,7 +255,7 @@ TEST_CASE("A HingeJoint turns only about its axis")
 TEST_CASE("A SliderJoint lets a body fall only along its axis, to its limit")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::SliderJoint{.minDistance = -1.f, .maxDistance = 1.f}) != nullptr);
     SetVelocity(test.scene, crate, glm::vec3(3.f, 0.f, 3.f), glm::vec3(0.f));
 
@@ -270,7 +270,7 @@ TEST_CASE("A SliderJoint lets a body fall only along its axis, to its limit")
 TEST_CASE("A DistanceJoint lets a body fall until its anchors are maxDistance apart")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     constexpr float kRope = 3.f;
     // The far end is the world, 2 m above and 1 m aside: about 2.2 m away.
     const glm::vec3 hook{1.f, 2.f, 0.f};
@@ -329,7 +329,7 @@ TEST_CASE("Hinge friction stops a spinning door; without it the door keeps spinn
 TEST_CASE("A HingeMotor turns its hinge at its target speed")
 {
     Weightless test;
-    const ECS::Entity wheel = AddCrate(test.scene, kPivot);
+    const ECS::Entity wheel = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(wheel, Physics::HingeJoint{}) != nullptr);
     REQUIRE(test.scene.Add(wheel, Physics::HingeMotor{.target = 90.f}) != nullptr);
 
@@ -341,7 +341,7 @@ TEST_CASE("A HingeMotor turns its hinge at its target speed")
 TEST_CASE("A HingeMotor in Position mode turns its hinge to the target angle and holds it")
 {
     Weightless test;
-    const ECS::Entity door = AddCrate(test.scene, kPivot);
+    const ECS::Entity door = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(door, Physics::HingeJoint{}) != nullptr);
     REQUIRE(test.scene.Add(door, Physics::HingeMotor{.target = 45.f, .mode = Physics::MotorMode::Position}) !=
             nullptr);
@@ -354,7 +354,7 @@ TEST_CASE("A HingeMotor in Position mode turns its hinge to the target angle and
 TEST_CASE("A SliderMotor slides its body at its target speed")
 {
     Weightless test;
-    const ECS::Entity lift = AddCrate(test.scene, kPivot);
+    const ECS::Entity lift = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(lift, Physics::SliderJoint{.minDistance = -10.f, .maxDistance = 10.f}) != nullptr);
     REQUIRE(test.scene.Add(lift, Physics::SliderMotor{.target = 2.f}) != nullptr);
 
@@ -367,7 +367,7 @@ TEST_CASE("A SliderMotor slides its body at its target speed")
 TEST_CASE("Editing a DistanceJoint's range takes effect on the live joint")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     const glm::vec3 hook{0.f, 1.f, 0.f};
     REQUIRE(test.scene.Add(crate, Physics::DistanceJoint{.otherAnchor = hook, .maxDistance = 3.f}) != nullptr);
     Step(test.world, kSettleSteps);
@@ -386,7 +386,7 @@ TEST_CASE("Editing a DistanceJoint's range takes effect on the live joint")
 TEST_CASE("A joint pulled harder than its breakForce breaks once, loses its component, and lets go")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{.breakForce = 1.f}) != nullptr);
     // Its weight alone pulls on the joint far harder than 1 N.
     test.world.Reconcile();
@@ -414,7 +414,7 @@ TEST_CASE("A joint pulled harder than its breakForce breaks once, loses its comp
 TEST_CASE("A joint with no breakForce never breaks")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{}) != nullptr);
 
     for (int32_t i = 0; i < kSettleSteps; ++i)
@@ -444,7 +444,7 @@ TEST_CASE("A world that does not break joints keeps them however hard they are p
 {
     TestScene test;
     test.world.SetBreaksJoints(false);
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{.breakForce = 1.f}) != nullptr);
 
     Step(test.world, kSettleSteps / 4);
@@ -462,8 +462,8 @@ TEST_CASE("A joint waits for its other body, and goes when either body goes")
     TestScene test;
     const glm::vec3 postAt = kPivot + glm::vec3(2.f, 0.f, 0.f);
     const ECS::Entity post = test.scene.Create();
-    REQUIRE(test.scene.Add(post, ECS::Transform{.position = postAt}) != nullptr);
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    REQUIRE(test.scene.Add(post, ECS::Transform{.position = glm::dvec3(postAt)}) != nullptr);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{.other = post}) != nullptr);
 
     SUBCASE("no body yet: the crate falls")
@@ -515,7 +515,7 @@ TEST_CASE("A joint waits for its other body, and goes when either body goes")
 TEST_CASE("Removing a joint from a body it held asleep lets the body fall")
 {
     TestScene test;
-    const ECS::Entity crate = AddCrate(test.scene, kPivot);
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(kPivot));
     REQUIRE(test.scene.Add(crate, Physics::FixedJoint{}) != nullptr);
     Step(test.world, kSettleSteps);
     REQUIRE_FALSE(test.world.IsBodyActive(crate));
@@ -530,8 +530,8 @@ TEST_CASE("Destroying the body that carries a joint leaves the other body alone"
 {
     TestScene test;
     (void)AddFloor(test.scene);
-    const ECS::Entity resting = AddCrate(test.scene, glm::vec3(0.f, kHalf, 0.f));
-    const ECS::Entity crate = AddCrate(test.scene, glm::vec3(0.f, kHalf, 2.f));
+    const ECS::Entity resting = AddCrate(test.scene, glm::dvec3(0.f, kHalf, 0.f));
+    const ECS::Entity crate = AddCrate(test.scene, glm::dvec3(0.f, kHalf, 2.f));
     REQUIRE(test.scene.Add(crate, Physics::PointJoint{.other = resting}) != nullptr);
     Step(test.world, kSettleSteps / 4);
     const glm::vec3 before = PositionOf(test.scene, resting);
@@ -547,7 +547,7 @@ TEST_CASE("Destroying the body that carries a joint leaves the other body alone"
 TEST_CASE("A joint's other body rebuilt from static to moving keeps the joint's angles")
 {
     TestScene test;
-    const ECS::Entity post = AddBody(test.scene, kPivot, Box(glm::vec3(kHalf), /*isStatic=*/ true));
+    const ECS::Entity post = AddBody(test.scene, glm::dvec3(kPivot), Box(glm::vec3(kHalf), /*isStatic=*/ true));
     const ECS::Entity crate = AddLevelArm(test.scene);
     Physics::HingeJoint hinge = LevelHinge(30.f);
     hinge.other = post;
@@ -572,7 +572,7 @@ TEST_CASE("A chain follows its last link")
     ECS::Entity links[kLinks];
     for (int32_t i = 0; i < kLinks; ++i)
     {
-        links[i] = AddCrate(test.scene, glm::vec3(static_cast<float>(i) * kSpacing, 0.f, 0.f));
+        links[i] = AddCrate(test.scene, glm::dvec3(static_cast<float>(i) * kSpacing, 0.f, 0.f));
         if (i > 0)
         {
             REQUIRE(test.scene.Add(links[i], Physics::PointJoint{.anchor = glm::vec3(-kSpacing * 0.5f, 0.f, 0.f),
@@ -605,20 +605,21 @@ TEST_CASE("A long chain swinging a heavy body barely stretches")
     // chain and pulls hardest at the bottom.
     BodySpec cube = Box(glm::vec3(0.5f), /*isStatic=*/ true);
     cube.collider.density = kSteel;
-    const ECS::Entity fixed = AddBody(test.scene, kPivot, cube);
+    const ECS::Entity fixed = AddBody(test.scene, glm::dvec3(kPivot), cube);
     const glm::vec3 face = kPivot + kAlong * 0.5f;
     ECS::Entity previous = fixed;
     for (int32_t i = 0; i < kLinks; ++i)
     {
         BodySpec ball = Ball(kLinkRadius, /*isStatic=*/ false);
         ball.collider.density = kSteel;
-        const ECS::Entity link = AddBody(test.scene, face + kAlong * (kSpacing * (static_cast<float>(i) + 0.5f)), ball);
+        const ECS::Entity link =
+            AddBody(test.scene, glm::dvec3(face + kAlong * (kSpacing * (static_cast<float>(i) + 0.5f))), ball);
         REQUIRE(test.scene.Add(link, Physics::PointJoint{.anchor = -kAlong * (kSpacing * 0.5f), .other = previous}) !=
                 nullptr);
         previous = link;
     }
     cube.rigidBody = Physics::RigidBody{};
-    const ECS::Entity swinging = AddBody(test.scene, face + kAlong * (kGap + 0.5f), cube);
+    const ECS::Entity swinging = AddBody(test.scene, glm::dvec3(face + kAlong * (kGap + 0.5f)), cube);
     REQUIRE(test.scene.Add(swinging, Physics::PointJoint{.anchor = -kAlong * 0.5f, .other = previous}) != nullptr);
 
     const float built = glm::length(PositionOf(test.scene, swinging) - kPivot);

@@ -10,12 +10,31 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Fog.hpp>
+#include <Assisi/Render/FogVolumeBuffers.hpp>
+#include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Sky.hpp>
 #include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Render
 {
+
+/// @brief What the sky pass needs to draw placed fog volumes in front of the
+/// sky. Mirrors sky.frag's SkyFogVolumes block.
+struct SkyFogConstants
+{
+    /// The level's fog, whose haze colours a lit volume and covers the stretch
+    /// of sky between a volume and the eye.
+    FogConstants fog;
+    /// FogVolumeFrame::Lanes. Zero in a capture, which draws none.
+    glm::uvec4 volumes{0u};
+};
+
+ASSISI_GPU_LAYOUT(SkyFogConstants);
+ASSISI_GPU_FIRST_FIELD(SkyFogConstants, fog);
+ASSISI_GPU_FIELD_AFTER(SkyFogConstants, volumes, fog);
+ASSISI_GPU_NO_TAIL_PADDING(SkyFogConstants, volumes);
 
 /// @brief Draws the analytic sky behind the opaque scene.
 ///
@@ -61,6 +80,9 @@ public:
         /// The moon's albedo, opened on the first frame a moon is actually drawn
         /// rather than here. A level without a moon never opens it.
         std::string moonTexturePath;
+        /// The placed fog volumes. Must outlive the pass — its buffers bind into
+        /// the pass's binding set.
+        const FogVolumeBuffers *fogVolumes = nullptr;
     };
 
     [[nodiscard]] bool Initialize(const InitParams &params);
@@ -86,6 +108,27 @@ public:
     /// No-op if not initialised.
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraPosition,
               const SkySun &sun, const SkyMoon &moon, const SkySettings &settings);
+
+    /// @brief What the next Draw does for the level's fog. @p color is read only
+    /// by SkyFogMode::Flat, where it is the whole of what is drawn. A capture
+    /// through DrawInto never takes it.
+    void SetFog(SkyFogMode mode, const glm::vec3 &color)
+    {
+        _fog = glm::vec4(color, static_cast<float>(mode));
+    }
+
+    /// @brief The placed fog volumes the next Draw shows in front of the sky,
+    /// and the level's fog they are seen through. A capture through DrawInto
+    /// never takes them.
+    void SetFogVolumes(const FogConstants &fog, const glm::uvec4 &lanes)
+    {
+        _fogVolumes = SkyFogConstants{.fog = fog, .volumes = lanes};
+    }
+
+    /// @brief The clouds' sky map every later Draw and DrawInto composites over
+    /// the sky (CloudPass owns it), or null for a sky with none. A capture
+    /// takes the clouds too, so reflections show them.
+    void SetClouds(nvrhi::ITexture *cloudMap);
 
     /// @brief Fill every texel of @p target with the sky @p constants describe.
     ///
@@ -113,7 +156,7 @@ private:
     /// @brief Upload @p constants and draw the fullscreen triangle into
     /// @p target through @p pipeline.
     void Submit(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *target, nvrhi::IGraphicsPipeline *pipeline,
-                const nvrhi::Viewport &viewport, const SkyConstants &constants);
+                const nvrhi::Viewport &viewport, const SkyConstants &constants, const SkyFogConstants &fog);
 
     /// @brief Read the moon's albedo, once, on the first frame a moon is drawn.
     ///
@@ -129,12 +172,27 @@ private:
     nvrhi::ShaderHandle _vertexShader;
     nvrhi::ShaderHandle _pixelShader;
     nvrhi::BufferHandle _constantsBuffer;
+    nvrhi::BufferHandle _fogConstantsBuffer;
+    const FogVolumeBuffers *_fogVolumeBuffers = nullptr;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::BindingSetHandle _bindingSet;
     nvrhi::GraphicsPipelineHandle _pipeline;
     // DrawInto's: colour only, no depth test. Independent of the scene target,
     // so a render-target change leaves it alone.
     nvrhi::GraphicsPipelineHandle _capturePipeline;
+
+    /// SkyConstants::fog for the next Draw.
+    glm::vec4 _fog{0.0f};
+
+    /// The clouds' sky map, or null. The binding set names it, so a change of
+    /// map rebuilds the set.
+    nvrhi::ITexture *_cloudMap = nullptr;
+    /// Bound in the map's place while there are no clouds. Never sampled: the
+    /// shader reads the map only while SkyConstants says there are clouds.
+    Texture _noClouds;
+    nvrhi::SamplerHandle _cloudMapSampler;
+    /// The placed fog volumes for the next Draw.
+    SkyFogConstants _fogVolumes;
 
     std::string _moonTexturePath;
     /// A white 1x1 until a moon is first drawn, so a binding set always has a

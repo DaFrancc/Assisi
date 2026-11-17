@@ -185,6 +185,7 @@ Install the equivalents of the package groups below — they are the whole list.
 | Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
 | Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
 | Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+| Vulkan validation layers | **Optional.** Debug builds check every Vulkan call with them when they are installed, and the GPU tests (`./assisi test --gpu`) require them. Fedora's `vulkan-validation-layers`, Arch's `vulkan-validation-layers`, Debian's `vulkan-validationlayers`, or the Vulkan SDK on Windows. |
 | mold | **Optional.** A linker several times faster than the default one; every edit relinks a few large executables, so it saves seconds on each build. The build uses it whenever it is installed. |
 | podman or docker | **Optional**, only for the Steam Runtime build (`./assisi package ship --steam-runtime`), which builds release games that run on any distro with glibc 2.31+. Nothing else uses it. |
 
@@ -430,6 +431,7 @@ nothing in it is a package to install, pin, or vendor, on any platform:
 | [Steamworks SDK](https://partner.steamgames.com/) | **Optional, never in this repository.** Steam for a game: the player, overlay, achievements, stats, rich presence. Valve's agreement allows only a local copy, so each developer downloads their own and installs it with `./assisi steam-sdk <download>`; without it Steam reports itself unavailable. See the book's Steam page |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [libsodium](https://github.com/jedisct1/libsodium) | GameNetworkingSockets' encryption on Linux (Windows uses the OS's own) |
+| [Crashpad](https://github.com/getsentry/crashpad) | Writes a crash's minidump on Linux, from a helper program that reads the crashed game from outside. Sentry's fork, for its CMake build of Google's Crashpad; it brings mini_chromium, zlib, MPack and linux-syscall-support with it |
 | [LZ4](https://github.com/lz4/lz4) | Fast pak compression |
 | [Zstandard](https://github.com/facebook/zstd) | Smaller pak compression |
 | [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |
@@ -705,16 +707,9 @@ appreciated.
 
 ### Third-party assets
 
-Assets in `assets/` that were not made for this engine, with their source and
-the credit their terms ask for. Add a line here for every asset brought in from
-outside; a file with no entry is a file nobody has checked.
-
-- `assets/textures/moon.jpg` — Moon albedo — NASA's Scientific Visualization
-  Studio (Ernie Wright), Moon Phase and Libration, 2026:
-  https://svs.gsfc.nasa.gov/5587/
-  LROC WAC colour mosaic: NASA/GSFC/Arizona State University.
-  Not subject to copyright in the US; credit given as requested. Nothing here
-  implies NASA endorsement, and the NASA insignia and worm are not used.
+Assets in `assets/` that were not made for this engine, with their source and the
+credit their licences ask for, are listed in the book's
+[Attributions](book/src/attributions.md) page.
 
 ### AI notice
 

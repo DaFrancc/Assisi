@@ -8,14 +8,17 @@ it describe each part of the system in reference form:
 |---|---|
 | [Tutorial: a pause menu](ui-tutorial.md) | A working menu, from screen file to level. |
 | [Screen settings](ui-screen-settings.md) | Input, pausing, hiding what's beneath and draw order. |
-| [Elements and names](ui-elements.md) | The nine elements, and how nodes are named. |
-| [Layout and appearance](ui-layout.md) | Lengths and units, sizes, colours, text, floating and scrolling. |
+| [Elements and names](ui-elements.md) | The ten elements, and how nodes are named. |
+| [Layout and appearance](ui-layout.md) | Lengths and units, sizes, colours, text, floating, scrolling, and how an element looks while hovered, pressed, focused or disabled. |
 | [Controls](ui-controls.md) | Toggles, sliders, scroll areas and text fields. |
 | [Button actions](ui-actions.md) | What a button does when clicked: an action or an event. |
 | [Templates](ui-templates.md) | Declaring an element once and reusing it. |
 | [Template libraries](ui-template-libraries.md) | Sharing templates between screens. |
 | [String tables](ui-string-tables.md) | Keeping a screen's words in `.csv` tables, ready to translate. |
-| [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, and sharing screens between levels. |
+| [Themes](ui-themes.md) | Keeping colours and sizes in named styles and tokens, and switching them while the game runs. |
+| [Images](ui-images.md) | Icons and pictures from sprite sheets, background images, and frames that fit any size. |
+| [Screens at run time](ui-run-time.md) | Lifetime, finding screens and nodes, the entity a screen is about, and sharing screens between levels. |
+| [Showing values from the world](ui-bindings.md) | `{Component.field}` in a screen's text, a bound `visible`, and controls that write back, kept up to date with no code. |
 | [What the cook checks](ui-cook-checks.md) | Every mistake that fails the cook. |
 
 ## Overview
@@ -28,6 +31,7 @@ These are the terms the rest of the chapter uses:
 | **Node** | One box in a screen. A node can hold text, children, or be a control such as a button. |
 | **Screen file** | A `.amdn` file describing one screen, written in an XML-style markup. |
 | **Element** | One tag in a screen file, such as `<button>`. Each element becomes one node. |
+| **Context** | The entity a screen is about, such as the player or a boss, in the screen's own world. |
 | **Attribute** | A setting on an element, such as `width="grow"`. |
 | **Cooking** | The build step that compiles every screen file into a binary form. |
 

@@ -19,6 +19,7 @@
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Geometry/MeshValidate.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -92,8 +93,8 @@ Triangle AddTriangle(GltfBuffer &buffer)
 
 std::string SkinnedPrimitive(const Triangle &triangle, uint32_t joints, uint32_t weights)
 {
-    return std::format(R"({{"attributes":{{"POSITION":{},"JOINTS_0":{},"WEIGHTS_0":{}}},"indices":{}}})",
-                       triangle.positions, joints, weights, triangle.indices);
+    return Assisi::Core::Format(R"({{"attributes":{{"POSITION":{},"JOINTS_0":{},"WEIGHTS_0":{}}},"indices":{}}})",
+                                triangle.positions, joints, weights, triangle.indices);
 }
 
 /// The fixture most cases share: an "Armature" node, translated, over a root
@@ -128,7 +129,7 @@ fs::path WriteArmature(const ArmatureFixture &fixture)
     const uint32_t inverseBindAccessor = buffer.Add(inverseBinds, kFloat, "MAT4");
 
     const std::string skinJoints = fixture.childListedFirst ? "[2,1]" : "[1,2]";
-    return buffer.Write(std::format(
+    return buffer.Write(Assisi::Core::Format(
                             R"("scenes":[{{"nodes":[0]}}],)"
                             R"("nodes":[{{"name":"Armature","translation":[0,0,5],"children":[1,3]}},)"
                             R"({{"name":"root","rotation":[-{},0,0,{}],"children":[2]}},)"
@@ -179,7 +180,7 @@ fs::path WriteInfluences(const InfluenceFixture &fixture)
     {
         const uint32_t joints1  = buffer.Add(fixture.joints1, kUnsignedShort, "VEC4");
         const uint32_t weights1 = buffer.Add(fixture.weights1, kFloat, "VEC4");
-        secondSet = std::format(R"(,"JOINTS_1":{},"WEIGHTS_1":{})", joints1, weights1);
+        secondSet = Assisi::Core::Format(R"(,"JOINTS_1":{},"WEIGHTS_1":{})", joints1, weights1);
     }
 
     std::string jointNodes;
@@ -188,13 +189,13 @@ fs::path WriteInfluences(const InfluenceFixture &fixture)
     for (uint32_t joint = 0; joint < fixture.jointCount; ++joint)
     {
         const char *separator = joint == 0 ? "" : ",";
-        jointNodes += std::format(R"({}{{"name":"joint{}"}})", separator, joint);
-        jointList += std::format("{}{}", separator, joint + 1);
-        children += std::format("{}{}", separator, joint + 1);
+        jointNodes += Assisi::Core::Format(R"({}{{"name":"joint{}"}})", separator, joint);
+        jointList += Assisi::Core::Format("{}{}", separator, joint + 1);
+        children += Assisi::Core::Format("{}{}", separator, joint + 1);
     }
     const uint32_t meshNode = fixture.jointCount + 1;
 
-    return buffer.Write(std::format(
+    return buffer.Write(Assisi::Core::Format(
                             R"("scenes":[{{"nodes":[0]}}],)"
                             R"("nodes":[{{"name":"Armature","children":[{},{}]}},{},{{"name":"Body","mesh":0,"skin":0}}],)"
                             R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{},"JOINTS_0":{},"WEIGHTS_0":{}{}}},"indices":{}}}]}}],)"
@@ -335,7 +336,7 @@ TEST_CASE("ImportMesh: a static mesh imports with no skin and no skeleton")
 {
     GltfBuffer buffer;
     const Triangle triangle = AddTriangle(buffer);
-    const fs::path root     = buffer.Write(std::format(
+    const fs::path root     = buffer.Write(Assisi::Core::Format(
                                                R"("scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0,"translation":[10,0,0]}}],)"
                                                R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{}}},"indices":{}}}]}}])",
                                                triangle.positions, triangle.indices));
@@ -356,7 +357,7 @@ TEST_CASE("ImportMesh: skinned and unskinned mesh nodes in one file are refused"
     const Triangle triangle = AddTriangle(buffer);
     const uint32_t joints   = buffer.Add(std::vector<uint8_t>(12, 0), kUnsignedByte, "VEC4");
     const uint32_t weights  = buffer.Add(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, kFloat, "VEC4");
-    const fs::path root     = buffer.Write(std::format(
+    const fs::path root     = buffer.Write(Assisi::Core::Format(
                                                R"("scenes":[{{"nodes":[0]}}],)"
                                                R"("nodes":[{{"name":"Armature","children":[1,2,3]}},{{"name":"root"}},{{"mesh":0,"skin":0}},{{"mesh":1}}],)"
                                                R"("meshes":[{{"primitives":[{}]}},{{"primitives":[{{"attributes":{{"POSITION":{}}},"indices":{}}}]}}],)"
@@ -376,7 +377,7 @@ TEST_CASE("ImportMesh: mesh nodes bound to two different skins are refused")
     const Triangle triangle = AddTriangle(buffer);
     const uint32_t joints   = buffer.Add(std::vector<uint8_t>(12, 0), kUnsignedByte, "VEC4");
     const uint32_t weights  = buffer.Add(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, kFloat, "VEC4");
-    const fs::path root     = buffer.Write(std::format(
+    const fs::path root     = buffer.Write(Assisi::Core::Format(
                                                R"("scenes":[{{"nodes":[0]}}],)"
                                                R"("nodes":[{{"name":"Armature","children":[1,2,3]}},{{"name":"root"}},{{"mesh":0,"skin":0}},)"
                                                R"({{"mesh":0,"skin":1}}],)"
@@ -398,7 +399,7 @@ TEST_CASE("ImportMesh: a vertex naming a joint its skin does not have is refused
     // The skin has one joint, so joint 1 does not exist.
     const uint32_t joints  = buffer.Add(std::vector<uint8_t>{0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0}, kUnsignedByte, "VEC4");
     const uint32_t weights = buffer.Add(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, kFloat, "VEC4");
-    const fs::path root    = buffer.Write(std::format(
+    const fs::path root    = buffer.Write(Assisi::Core::Format(
                                               R"("scenes":[{{"nodes":[0]}}],)"
                                               R"("nodes":[{{"name":"Armature","children":[1,2]}},{{"name":"root"}},{{"mesh":0,"skin":0}}],)"
                                               R"("meshes":[{{"primitives":[{}]}}],)"
@@ -418,7 +419,7 @@ TEST_CASE("ImportMesh: two joints with the same name are refused")
     const Triangle triangle = AddTriangle(buffer);
     const uint32_t joints   = buffer.Add(std::vector<uint8_t>(12, 0), kUnsignedByte, "VEC4");
     const uint32_t weights  = buffer.Add(std::vector<float>{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, kFloat, "VEC4");
-    const fs::path root     = buffer.Write(std::format(
+    const fs::path root     = buffer.Write(Assisi::Core::Format(
                                                R"("scenes":[{{"nodes":[0]}}],)"
                                                R"("nodes":[{{"name":"Armature","children":[1,3]}},{{"name":"spine","children":[2]}},{{"name":"spine"}},)"
                                                R"({{"mesh":0,"skin":0}}],)"
@@ -438,7 +439,7 @@ TEST_CASE("ImportMesh: a skinned primitive without weights is refused")
     GltfBuffer buffer;
     const Triangle triangle = AddTriangle(buffer);
     const uint32_t joints   = buffer.Add(std::vector<uint8_t>(12, 0), kUnsignedByte, "VEC4");
-    const fs::path root     = buffer.Write(std::format(
+    const fs::path root     = buffer.Write(Assisi::Core::Format(
                                                R"("scenes":[{{"nodes":[0]}}],)"
                                                R"("nodes":[{{"name":"Armature","children":[1,2]}},{{"name":"root"}},{{"mesh":0,"skin":0}}],)"
                                                R"("meshes":[{{"primitives":[{{"attributes":{{"POSITION":{},"JOINTS_0":{}}},"indices":{}}}]}}],)"

@@ -93,8 +93,8 @@ void WalkAt(ECS::Scene &scene, ECS::Entity walker, float yaw, bool &turned)
 /// Whether the client draws its own character and the host's pressed together.
 bool Pressing(ECS::Scene &scene, const Players &players)
 {
-    const glm::vec3 a = scene.Get<ECS::Transform>(players.hostOnClient)->position;
-    const glm::vec3 b = scene.Get<ECS::Transform>(players.clientOwn)->position;
+    const glm::vec3 a = glm::vec3(scene.Get<ECS::Transform>(players.hostOnClient)->position);
+    const glm::vec3 b = glm::vec3(scene.Get<ECS::Transform>(players.clientOwn)->position);
     return glm::length(glm::vec2(a.x - b.x, a.z - b.z)) < kPressing;
 }
 
@@ -103,7 +103,7 @@ bool Pressing(ECS::Scene &scene, const Players &players)
 glm::vec3 Drawn(ECS::Scene &scene, ECS::Entity entity)
 {
     const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
-    return scene.Get<ECS::Transform>(entity)->position + (offset != nullptr ? offset->position : glm::vec3(0.f));
+    return glm::vec3(scene.Get<ECS::Transform>(entity)->position) + (offset != nullptr ? offset->position : glm::vec3(0.f));
 }
 
 } // namespace
@@ -195,7 +195,7 @@ TEST_CASE("The host's player walking into a client's character does not move it,
     REQUIRE(clientOnHost != ECS::NullEntity);
 
     const glm::vec3 startOnClient = Drawn(client.world.scene, players.clientOwn);
-    const glm::vec3 startOnHost = host.world.scene.Get<ECS::Transform>(clientOnHost)->position;
+    const glm::vec3 startOnHost = glm::vec3(host.world.scene.Get<ECS::Transform>(clientOnHost)->position);
     bool turned = false;
     std::int32_t framesPressing = 0;
     session.Run(kWatchedFrames,
@@ -211,6 +211,6 @@ TEST_CASE("The host's player walking into a client's character does not move it,
     MESSAGE("corrections " << counts->physics.corrections << ", rollbacks "
                            << replication.Corrections().predictionsReplayed);
     CHECK(glm::length(Drawn(client.world.scene, players.clientOwn) - startOnClient) < kNotMoved);
-    CHECK(glm::length(host.world.scene.Get<ECS::Transform>(clientOnHost)->position - startOnHost) < kNotMoved);
+    CHECK(glm::length(glm::vec3(host.world.scene.Get<ECS::Transform>(clientOnHost)->position) - startOnHost) < kNotMoved);
     CHECK(counts->physics.corrections == 0u);
 }

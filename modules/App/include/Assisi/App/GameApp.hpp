@@ -29,17 +29,23 @@
 #include <Assisi/App/CameraBenchmark.hpp>
 #include <Assisi/App/CookedAssets.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+} // namespace Assisi::Runtime
 
 namespace Assisi::App
 {
@@ -121,7 +127,7 @@ class GameApp : public Application
     [[nodiscard]] double SimulationSeconds(double frameSeconds) override;
     void OnUpdate(float dt) override;
     void OnRender(Render::RenderFrame &frame) override;
-    void OnResize(int32_t width, int32_t height) override;
+    [[nodiscard]] bool AssetsStreaming() const override { return _worlds.AnyStreaming(); }
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
@@ -165,6 +171,12 @@ class GameApp : public Application
     /// the run starts and ending it, and the game, when the run ends.
     void AdvanceBenchmark();
 
+    /// Whether this frame is part of a benchmark's measured run.
+    [[nodiscard]] bool MeasuringBenchmark() const;
+
+    /// Logs what each animation step cost per frame over the measured run.
+    void ReportAnimationCost() const;
+
     // Largest first, so the object carries no interior padding.
 
     /// GPU-side meshes, materials and textures, and the bindless table the mesh
@@ -178,7 +190,8 @@ class GameApp : public Application
     /// MountContent, before the post-process shaders load.
     std::optional<CookedAssetSource> _assetSource;
 
-    Runtime::SceneRenderer _sceneRenderer;
+    /// Held by pointer so a game's own files need not include the renderer.
+    std::unique_ptr<Runtime::SceneRenderer> _sceneRenderer;
 
     /// What every world's physics reads collision models through, over the
     /// package above. Declared before the worlds, which hold it.
@@ -190,7 +203,7 @@ class GameApp : public Application
     /// that has not composed one renders from the origin rather than not at all,
     /// which is the difference between a scene that looks wrong and a window
     /// that looks broken.
-    glm::mat4 _fallbackWorld{1.f};
+    ECS::WorldMatrix _fallbackWorld;
     Runtime::Camera _fallbackCamera;
 
     GameLaunch _launch;
@@ -201,9 +214,16 @@ class GameApp : public Application
     /// The benchmark run clock the simulation has been advanced to.
     double _simulatedRunSeconds = 0.0;
 
+    /// Where a measured run's pose stage spent its time: steps the game calls
+    /// itself rather than through a system.
+    PoseTimes _benchmarkPoseTimes;
+
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.
     World *_world = nullptr;
+
+    /// Frames drawn in a measured run, which the benchmark times are divided by.
+    uint32_t _benchmarkFrames = 0;
 };
 
 } // namespace Assisi::App

@@ -16,4 +16,22 @@ std::optional<uint32_t> FindSlot(const Layout &layout, std::string_view name)
     return std::nullopt;
 }
 
+std::expected<uint32_t, ParamMiss> FindParam(const Layout &layout, std::string_view name, SlotType type)
+{
+    const std::optional<uint32_t> slot = FindSlot(layout, name);
+    if (!slot.has_value())
+    {
+        return std::unexpected(ParamMiss::Missing);
+    }
+    if (layout.slots[*slot].kind != SlotKind::Param)
+    {
+        return std::unexpected(ParamMiss::NotParam);
+    }
+    if (layout.slots[*slot].type != type)
+    {
+        return std::unexpected(ParamMiss::OtherType);
+    }
+    return *slot;
+}
+
 } // namespace Assisi::Sigil

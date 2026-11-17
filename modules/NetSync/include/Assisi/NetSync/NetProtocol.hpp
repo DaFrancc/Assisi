@@ -220,7 +220,17 @@ enum class RejectReason : std::uint8_t
 ///  - 12 → 13: a quantized float's range is cut into an even number of steps,
 ///    so zero is a level and a body at rest is sent at rest. The same bits mean
 ///    slightly different values, so a v12 peer reads every pose a little off.
-inline constexpr std::uint32_t kNetProtocolVersion = 13;
+///  - 13 → 14: an instance record's placement position is three doubles, so a
+///    blueprint instance far from the world's origin is placed exactly. A v13
+///    peer reads the record twelve bytes short.
+///  - 14 → 15: a body record's position is its world cell, as a change from
+///    the record before it, and its place inside the cell, so it reaches
+///    anywhere in the world rather than a box around the origin.
+///  - 15 → 16: a character's body record carries what it is asked to do after
+///    its ground state: its move, asked stance, sprint and speed scale.
+///  - 16 → 17: ...and after those, the low bits of its jump and landing counts
+///    and whether it has jumped since it last stood.
+inline constexpr std::uint32_t kNetProtocolVersion = 17;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

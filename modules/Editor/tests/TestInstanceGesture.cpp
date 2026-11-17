@@ -97,11 +97,11 @@ void NudgeInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId id, 
         if (scene.Has<ECS::Parent>(member))
             continue;
         if (Transform *transform = scene.GetMut<Transform>(member))
-            transform->position.x += dx;
+            transform->position.x += static_cast<double>(dx);
     }
 
     Runtime::BlueprintInstance moved = *row;
-    moved.transform.position.x += dx;
+    moved.transform.position.x += static_cast<double>(dx);
     table.RestoreAt(id, std::move(moved));
 }
 
@@ -109,7 +109,7 @@ float BodyX(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId id)
 {
     const ECS::Entity body = Runtime::FindMember(scene, table, id, "body");
     REQUIRE(body != ECS::NullEntity);
-    return scene.Get<Transform>(body)->position.x;
+    return static_cast<float>(scene.Get<Transform>(body)->position.x);
 }
 
 /// A world the editor would be drawing: the file on disk, one instance of it, and

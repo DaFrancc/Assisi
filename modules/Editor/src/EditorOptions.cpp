@@ -782,6 +782,122 @@ void EditorOptionsPanel::DrawAmbientOcclusionSettings(const Frame &frame)
     }
 }
 
+// The level's fog. Off is the A/B against the fog alone: the draw distance the
+// level's Fog sets still holds, so what is drawn stays the same.
+void EditorOptionsPanel::DrawFogSettings(const Frame &frame)
+{
+    bool enabled = frame.renderer.FogEnabled();
+    ImGui::TextUnformatted("Fog");
+    if (ImGui::Checkbox("Fog", &enabled))
+    {
+        frame.renderer.SetFogEnabled(enabled);
+        frame.options.fogEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the level's Fog component. Off still stops drawing at its haze distance.");
+}
+
+// A level's Oceans and Lakes. Off is the A/B against the water alone, and frees
+// its wave textures.
+void EditorOptionsPanel::DrawWaterSettings(const Frame &frame)
+{
+    ImGui::TextUnformatted("Water");
+    bool enabled = frame.renderer.WaterEnabled();
+    if (ImGui::Checkbox("Water", &enabled))
+    {
+        frame.renderer.SetWaterEnabled(enabled);
+        frame.options.waterEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the level's Ocean and Lake components.");
+}
+
+// A level's clouds. Off is the A/B against the clouds alone: the light they
+// give the sky stays, so how the level is lit stays the same.
+void EditorOptionsPanel::DrawCloudSettings(const Frame &frame)
+{
+    ImGui::TextUnformatted("Clouds");
+    bool enabled = frame.renderer.CloudsEnabled();
+    if (ImGui::Checkbox("Clouds", &enabled))
+    {
+        frame.renderer.SetCloudsEnabled(enabled);
+        frame.options.cloudsEnabled = enabled;
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("Draws the sky's Clouds component and their shadows. Off keeps the light they give the sky.");
+
+    Assisi::Render::CloudQuality quality = frame.renderer.CloudQuality();
+    bool changed = false;
+
+    // The tier presets, which write both knobs below and leave them editable.
+    static const char *kTierNames[] = {"Low##clouds", "Medium##clouds", "High##clouds", "Ultra##clouds"};
+    const Assisi::Render::CloudTier tier = Assisi::Render::Tier(quality);
+    for (int32_t i = 0; i < IM_ARRAYSIZE(kTierNames); ++i)
+    {
+        if (i > 0)
+        {
+            ImGui::SameLine();
+        }
+        ImGui::BeginDisabled(static_cast<int32_t>(tier) == i);
+        if (ImGui::SmallButton(kTierNames[i]))
+        {
+            quality = Assisi::Render::CloudTierSettings(static_cast<Assisi::Render::CloudTier>(i));
+            changed = true;
+        }
+        ImGui::EndDisabled();
+    }
+
+    // Map widths the combo offers, each a power of two inside the sanitized
+    // range.
+    static const uint32_t kResolutions[] = {256, 512, 1024, 2048, 4096};
+    static const char *kResolutionNames[] = {"256", "512", "1024", "2048", "4096"};
+    int32_t resolutionIndex = 0;
+    for (int32_t i = 0; i < IM_ARRAYSIZE(kResolutions); ++i)
+    {
+        if (kResolutions[i] == quality.resolution)
+        {
+            resolutionIndex = i;
+        }
+    }
+    if (ImGui::Combo("Cloud Map Size", &resolutionIndex, kResolutionNames, IM_ARRAYSIZE(kResolutionNames)))
+    {
+        quality.resolution = kResolutions[resolutionIndex];
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Width of the map the clouds are drawn into; its height is a quarter of that. Larger is "
+                          "sharper and slower.");
+
+    int32_t steps = static_cast<int32_t>(quality.steps);
+    if (ImGui::SliderInt("Cloud Steps", &steps, static_cast<int32_t>(Assisi::Render::kMinCloudSteps),
+                         static_cast<int32_t>(Assisi::Render::kMaxCloudSteps)))
+    {
+        quality.steps = static_cast<uint32_t>(steps);
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Steps along each ray through the clouds. Fewer is faster and shows as blotches.");
+
+    if (changed)
+    {
+        frame.renderer.SetCloudQuality(quality);
+        frame.options.clouds = frame.renderer.CloudQuality();
+        frame.options.SaveToJson();
+    }
+}
+
+// The glow around bright light: the player's switch. How strong and how wide is
+// the level's, set on its PostProcessVolumes. The switch builds or drops the
+// bloom's copies and nothing else.
+void EditorOptionsPanel::DrawBloomSettings(const Frame &frame)
+{
+    ImGui::TextUnformatted("Bloom");
+    if (ImGui::Checkbox("Bloom", &frame.options.bloomEnabled))
+    {
+        frame.options.SaveToJson();
+    }
+    ImGui::SetItemTooltip("A glow around the sun, lamps and bright highlights. The level's PostProcessVolumes set "
+                          "how strong it is.");
+}
+
 bool EditorOptionsPanel::Draw(const Frame &frame)
 {
     bool applyDisplay = false;
@@ -1067,6 +1183,13 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // above, which still clears them with the rest.
         ImGui::Checkbox("Skeletons", &frame.showSkeletons);
 
+        // How splines draw: the colour of those on unselected entities, and how
+        // wide every curve is. Kept in editor.json, which the editor writes once
+        // an edit here settles.
+        ImGui::ColorEdit4("Spline Color", &frame.preferences.splines.color[0]);
+        ImGui::SliderFloat("Spline Thickness", &frame.preferences.splines.thickness, kMinSplineThickness,
+                           kMaxSplineThickness, "%.1f px", ImGuiSliderFlags_AlwaysClamp);
+
         // Screen-size LOD selection. Off pins every instance to LOD0, which is
         // what the renderer drew before selection existed and the A/B against
         // the whole feature; the bias is the quality dial, above 1 holding a
@@ -1138,8 +1261,8 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // Short-circuits the mesh shader to a single material channel, to look at the
         // PBR inputs directly. Runtime only. **This list is indexed by the enum
         // value** — it must stay in Render::MaterialDebugView's order.
-        static const char *kDebugViewNames[] = {"Off",    "Base Color", "Metallic", "Roughness",
-                                                "Normal", "Occlusion",  "Emissive", "Screen Occlusion"};
+        static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic",         "Roughness", "Normal",
+                                                "Occlusion", "Emissive",   "Screen Occlusion", "Smoothing"};
         int32_t debugViewIndex = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {
@@ -1162,9 +1285,26 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
 
         ImGui::Separator();
 
-        // The look. Nothing here rebuilds a target — the values ride in the tone
-        // map's push constants, so every edit lands on the next frame, which is
-        // what makes these usable for comparing one against another.
+        DrawFogSettings(frame);
+
+        ImGui::Separator();
+
+        DrawCloudSettings(frame);
+
+        ImGui::Separator();
+
+        DrawWaterSettings(frame);
+
+        ImGui::Separator();
+
+        DrawBloomSettings(frame);
+
+        ImGui::Separator();
+
+        // The player's part of the look; the level's PostProcessVolumes set the
+        // exposure and grade under it. Nothing here rebuilds a target — the
+        // values ride in the tone map's push constants, so every edit lands on
+        // the next frame.
         //
         // **Indexed by the enum value** — this list must stay in
         // Render::TonemapOperator's order.
@@ -1176,33 +1316,19 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             options.SaveToJson();
         }
 
-        bool lookChanged =
-            ImGui::SliderFloat("Exposure", &options.tonemap.exposureStops, Assisi::Render::kMinExposureStops,
-                               Assisi::Render::kMaxExposureStops, "%.2f stops");
-        lookChanged |= ImGui::SliderFloat("Contrast", &options.tonemap.contrast, Assisi::Render::kMinContrast,
-                                          Assisi::Render::kMaxContrast, "%.2f");
-        lookChanged |= ImGui::SliderFloat("Saturation", &options.tonemap.saturation, Assisi::Render::kMinSaturation,
-                                          Assisi::Render::kMaxSaturation, "%.2f");
-        if (lookChanged)
+        if (ImGui::SliderFloat("Brightness", &options.tonemap.exposureStops, Assisi::Render::kMinExposureStops,
+                               Assisi::Render::kMaxExposureStops, "%.2f stops"))
         {
             options.SaveToJson();
         }
+        ImGui::SetItemTooltip("Added on top of the exposure the level sets. Each stop doubles or halves it.");
 
-        // AgX is neutral by design and reads flat ungraded, so "no grade" is a
-        // comparison point rather than a default worth returning to.
-        if (ImGui::SmallButton("Punchy"))
+        if (ImGui::Checkbox("Dither", &options.tonemap.dither))
         {
-            options.tonemap.contrast = Assisi::Render::kPunchyContrast;
-            options.tonemap.saturation = Assisi::Render::kPunchySaturation;
             options.SaveToJson();
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Neutral"))
-        {
-            options.tonemap.contrast = 1.0f;
-            options.tonemap.saturation = 1.0f;
-            options.SaveToJson();
-        }
+        ImGui::SetItemTooltip("Up to one display step of noise before the image is written at 8 bits, so a slow "
+                              "fade reads as an even grain instead of bands.");
 
         ImGui::Separator();
 

@@ -94,7 +94,7 @@ header and wrote that code for you.
 | Kind | Types |
 |---|---|
 | Numbers | `float`, `double`, `bool`, `int8_t` … `int64_t`, `uint8_t` … `uint64_t` |
-| Math | `glm::vec2`, `glm::vec3`, `glm::vec4`, `glm::quat`, `glm::mat4` |
+| Math | `glm::vec2`, `glm::vec3`, `glm::vec4`, `glm::quat`, `glm::mat4`, and `glm::dvec3` for a position in the world: it stays exact far from the world's center, where a `glm::vec3` loses millimeters |
 | Colors | `Math::Color3`, `Math::Color4` (shown as a color picker) |
 | Text | `Core::InternedString` (a name), `Core::DisplayedString` (words a player reads), `Core::PooledString` with one `Core::StringPool`, `Core::ShortString` (up to 32 bytes), `Core::EntityName` (up to 64). See [Strings](strings.md) |
 | Other entities | `ECS::Entity` |

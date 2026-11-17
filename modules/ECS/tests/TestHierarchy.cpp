@@ -21,11 +21,12 @@ using Assisi::Math::TranslationOf;
 namespace
 {
 
-/// @p e's WorldMatrix, or null when it has none.
+/// @p e's world matrix, or null when it has none: measured from its cell,
+/// which for everything here, within 256 m of the origin, is the world's.
 const glm::mat4 *WorldOf(const ECS::Scene &scene, ECS::Entity e)
 {
     const ECS::WorldMatrix *world = scene.Get<ECS::WorldMatrix>(e);
-    return world != nullptr ? &world->matrix : nullptr;
+    return world != nullptr ? &world->inCell : nullptr;
 }
 
 } // namespace
@@ -68,7 +69,7 @@ TEST_CASE("WorldMatrix: one entity's Transform write rewrites only that entity's
     // A marker no propagation would write: still's matrix keeps it only if the
     // pass leaves still alone.
     const glm::mat4 marker(2.f);
-    scene.Get<ECS::WorldMatrix>(still)->matrix = marker;
+    scene.Get<ECS::WorldMatrix>(still)->inCell = marker;
     scene.GetMut<Transform>(moved)->position.x = 5.f;
     PropagateTransforms(scene, tick);
 

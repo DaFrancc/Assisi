@@ -30,11 +30,11 @@ void CharacterEyeSystem(SystemContext &ctx)
             // character standing still would otherwise re-propagate its camera
             // every step.
             const ECS::Transform *current = scene.Get<ECS::Transform>(child);
-            if (current == nullptr || current->position.y == eyeHeight)
+            if (current == nullptr || current->position.y == static_cast<double>(eyeHeight))
             {
                 continue;
             }
-            scene.GetMut<ECS::Transform>(child)->position.y = eyeHeight;
+            scene.GetMut<ECS::Transform>(child)->position.y = static_cast<double>(eyeHeight);
         }
     }
 }

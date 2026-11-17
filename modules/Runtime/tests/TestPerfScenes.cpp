@@ -8,7 +8,7 @@
 /// The first is that the scenes load at all, from the tree as committed. Their
 /// definition of done is "load from a clean clone", and the failure mode is
 /// quiet: a primitive renamed, a component field dropped, a guid changed, and
-/// the scene either refuses or silently swaps geometry for the fallback cube.
+/// the scene either refuses or swaps geometry for the ERROR sign.
 /// A gate that runs on every merge is the only version of that check anyone
 /// actually performs.
 ///
@@ -188,7 +188,7 @@ TEST_CASE("Perf scene cameras start level and face the scene")
             // ...and it must actually look at the origin, which is where every
             // scene is built around. -Z is forward in view space.
             const glm::vec3 forward = transform->rotation * glm::vec3{0.f, 0.f, -1.f};
-            const glm::vec3 toOrigin = glm::normalize(-transform->position);
+            const glm::vec3 toOrigin = glm::normalize(-glm::vec3(transform->position));
             CHECK(glm::dot(forward, toOrigin) > 0.99f);
         }
         CHECK(activeCameras == 1);
@@ -315,7 +315,7 @@ TEST_CASE("Lights.alvl's spot ring still aims into the middle")
     {
         (void)entity;
         (void)light;
-        const glm::mat4 &world = worldMatrix.matrix;
+        const glm::mat4 world = ECS::MatrixFrom(worldMatrix, glm::dvec3(0.0));
         const glm::vec3 position = Math::TranslationOf(world);
         const glm::vec3 aim = Runtime::SpotWorldDirection(world);
 

@@ -23,6 +23,7 @@
 #include <type_traits>
 #include <vector>
 
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/StrongIdFormat.hpp>
 
 namespace Assisi::Core
@@ -160,7 +161,8 @@ struct LocFmtStr
 // -------------------------------------------------------------------------
 
 /// @note Each checks the level before formatting: a suppressed message must not
-/// pay for a std::format and allocation it will never use.
+/// pay for a format and allocation it will never use. Each formats through
+/// VFormat, so a file that logs does not compile the formatting engine.
 namespace Log
 {
 
@@ -171,7 +173,7 @@ template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&.
     {
         return;
     }
-    logger.Log(LogLevel::Trace, std::format(fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Trace, VFormat(fmt.get(), std::make_format_args(args...)));
 }
 
 template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&... args)
@@ -181,7 +183,7 @@ template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&.
     {
         return;
     }
-    logger.Log(LogLevel::Debug, std::format(fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Debug, VFormat(fmt.get(), std::make_format_args(args...)));
 }
 
 template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&... args)
@@ -191,7 +193,7 @@ template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&..
     {
         return;
     }
-    logger.Log(LogLevel::Info, std::format(fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Info, VFormat(fmt.get(), std::make_format_args(args...)));
 }
 
 template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&... args)
@@ -201,7 +203,7 @@ template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&..
     {
         return;
     }
-    logger.Log(LogLevel::Warn, std::format(fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Warn, VFormat(fmt.get(), std::make_format_args(args...)));
 }
 
 /// @brief Logs an error with automatic file/line capture.
@@ -214,7 +216,7 @@ template <typename... Args> void Error(LocFmtStr<std::type_identity_t<Args>...> 
     {
         return;
     }
-    logger.Log(LogLevel::Error, fmtLoc.loc, std::format(fmtLoc.fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Error, fmtLoc.loc, VFormat(fmtLoc.fmt.get(), std::make_format_args(args...)));
 }
 
 /// @brief Logs a fatal error with automatic file/line capture.
@@ -227,7 +229,7 @@ template <typename... Args> void Fatal(LocFmtStr<std::type_identity_t<Args>...> 
     {
         return;
     }
-    logger.Log(LogLevel::Fatal, fmtLoc.loc, std::format(fmtLoc.fmt, std::forward<Args>(args)...));
+    logger.Log(LogLevel::Fatal, fmtLoc.loc, VFormat(fmtLoc.fmt.get(), std::make_format_args(args...)));
 }
 
 } // namespace Log

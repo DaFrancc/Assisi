@@ -507,6 +507,15 @@ public:
     /// or has not said yet.
     [[nodiscard]] AppliedCommand CommandAppliedAt(std::uint64_t tick) const;
 
+    /// @brief Puts back into every predicted character's CharacterIntent what
+    /// its live step of @p tick consumed, before that step is stepped again.
+    ///
+    /// A replayed step runs only the engine's own systems, so a value the
+    /// game's systems wrote into the intent, such as a speed scale, would
+    /// otherwise be stepped again as it is now rather than as it was then.
+    /// What CharacterCommand writes it writes again over this, the same.
+    void RestoreIntentsAt(std::uint64_t tick);
+
     /// @brief How every kinematic body moved through the step of @p tick, for
     /// that step stepped again, so a platform carries its riders where it did.
     /// In the sync test, every other character too, so it is met where it was.
@@ -828,10 +837,15 @@ private:
     struct TransformSample
     {
         std::uint64_t serverTick = 0;
-        glm::vec3 position{};
+        glm::dvec3 position{};
         glm::quat rotation{1.f, 0.f, 0.f, 0.f};
         glm::vec3 scale{1.f, 1.f, 1.f};
     };
+
+    /// Whether @p entity, of @p netId, has another Parent here than when it was
+    /// last drawn; when it has, @p history keeps only its newest sample, which
+    /// is drawn as it is.
+    bool RestartForNewParent(NetId netId, ECS::Entity entity, std::deque<TransformSample> &history);
 
     /// Capture the current pose of every mirrored entity at @p serverTick. Call
     /// after a snapshot is applied and **before** Interpolate() can overwrite
@@ -846,8 +860,7 @@ private:
     /// local contact has woken it, where it *is* is no longer that.
     struct MirrorBody
     {
-        bool asleep = false;
-        glm::vec3 restPosition{};
+        glm::dvec3 restPosition{};
         glm::quat restRotation{1.f, 0.f, 0.f, 0.f};
 
         /// The visual offset that hides the last correction, as it stands this
@@ -869,6 +882,20 @@ private:
         glm::quat rotationErrorStart{1.f, 0.f, 0.f, 0.f};
         float smoothingElapsed = 0.f;
         float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
+
+        /// For a character this client does not control, what the host's
+        /// newest record says it is asked to do (its move, speed scale, stance
+        /// and sprint) and its counts, carried on by however far the low bits
+        /// the records hold moved. Kept to be given again once a rollback has
+        /// put back what it had at older steps.
+        Physics::CharacterIntent hostIntent;
+        Physics::CharacterCounts hostCounts;
+        /// The low bits of the host's counts in the newest record.
+        std::uint32_t hostJumpBits = 0;
+        std::uint32_t hostLandingBits = 0;
+        bool askedByHost = false;
+
+        bool asleep = false;
     };
 
     /// Forget that a mirror is body-corrected. The body itself goes with the
@@ -881,6 +908,17 @@ private:
     /// @p renderedPosition and @p renderedRotation this instant, and eases to
     /// the corrected pose.
     static void AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered, const Physics::Pose &corrected);
+
+    /// Gives character @p entity what its mirror @p record holds of the
+    /// host's: into its CharacterIntent its move, speed scale, stance and
+    /// sprint, leaving its jump and base this machine's; and its counts.
+    void FollowHost(ECS::Entity entity, const MirrorBody &record);
+
+    /// Takes into @p record the host's character state @p host: what it is
+    /// asked to do, and its counts carried on by however far their low bits
+    /// moved. The first record carries on from character @p entity's own
+    /// counts, changing nothing.
+    void TakeHostCharacter(ECS::Entity entity, MirrorBody &record, const BodyState &host);
 
     /// Where one predicted character was drawn before a rollback moved it.
     struct RenderedBeforeReplay
@@ -924,6 +962,12 @@ private:
     std::unordered_map<ECS::InstanceId, NetId>           _baseByInstanceId;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
+
+    /// The Parent each interpolated mirror had when it was last drawn. Samples
+    /// are measured from the parent, so a mirror this machine gives another
+    /// parent draws its newest sample at once rather than blending from ones
+    /// measured from the parent before.
+    std::unordered_map<NetId, ECS::Entity> _interpolatedParents;
 
     /// For each entity this client predicts.
     std::unordered_map<NetId, PredictionHistory> _history;

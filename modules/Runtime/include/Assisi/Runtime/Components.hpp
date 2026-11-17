@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <Assisi/Prelude.hpp>
@@ -30,6 +31,7 @@
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Geometry/AnimationSampling.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -68,7 +70,11 @@ using ECS::Transform;
 /// Replicable: a mirror with no mesh reference draws nothing. Only the durable
 /// GUID layer travels — a resolved pointer is local to the process that owns it,
 /// and every machine resolves its own from the same ids.
-ACOMP(replicable)
+///
+/// Tracked: a change redraws the entity's kept shadows. Spelled out rather than
+/// left to `replicable`'s implication, so dropping `replicable` would not take
+/// that signal with it.
+ACOMP(replicable, tracked)
 struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetId mesh;
@@ -98,15 +104,32 @@ struct MeshRenderer
 ///        The asset cache never gives a mesh this id.
 inline constexpr uint32_t kUnboundMesh = 0;
 
-/// @brief Poses the skinned mesh its entity's MeshRenderer draws.
+/// @brief Marks the mesh its entity's MeshRenderer draws as one a skeleton
+///        poses. What the pose is lives in the SkinnedPose it brings.
 ///
-/// `pose` is each joint's transform relative to its parent, and is what code,
-/// clips and IK write. It starts at the skeleton's rest pose and is reset only
-/// when the mesh changes, so a value written stays until something writes it
-/// again. `jointModel` and `palette` are written from it every frame before
-/// transforms propagate; read them, never write them. Whenever `boundMeshId` is
-/// not kUnboundMesh all three hold one entry per joint; while it is, they are
-/// empty and the mesh draws unskinned.
+/// Replicable so a remote copy of the entity carries one too, by presence
+/// alone: every machine poses its own copy, so nothing here is ever sent after
+/// the entity arrives.
+ACOMP(replicable, requires = {MeshRenderer, SkinnedPose})
+struct SkinnedMesh
+{
+};
+
+/// @brief The pose of a SkinnedMesh's mesh, worked out on every machine. Never
+///        saved or sent.
+///
+/// `pose` is each joint's transform relative to its parent: the animated pose,
+/// which code and clips write. It starts at the skeleton's rest pose and is
+/// reset only when the mesh changes, so a value written stays until something
+/// writes it again.
+///
+/// `finalPose` is what the frame's pose stage makes of it: a copy of `pose`
+/// each frame, which the steps that adjust a pose after the animation change,
+/// so every one of them starts from the animation again. `jointModel` and
+/// `palette` are worked out from it in the same stage, after every Update
+/// system; read all three, never write them. Whenever `boundMeshId` is not
+/// kUnboundMesh all four hold one entry per joint; while it is, they are empty
+/// and the mesh draws unskinned.
 ///
 /// `posed` is what the entity draws as once its mesh can be posed: a copy of the
 /// MeshRenderer's mesh with a vertex range of its own, which the skinning pass
@@ -114,13 +137,14 @@ inline constexpr uint32_t kUnboundMesh = 0;
 /// the pose. Its id is 0 until it holds a range, and DrawnMesh then answers with
 /// the MeshRenderer's mesh instead.
 ///
-/// Replicable so a remote copy of the entity carries one too. Nothing in it is
-/// sent: every machine poses its own copy from state that is already replicated.
-ACOMP(replicable, requires = {MeshRenderer})
-struct SkinnedMesh
+/// Transient, and apart from SkinnedMesh, so writing it every frame never marks
+/// anything replicated as changed.
+ACOMP(transient)
+struct SkinnedPose
 {
     Assisi::Render::MeshBuffer posed;
     std::vector<Geometry::JointTransform> pose;
+    std::vector<Geometry::JointTransform> finalPose;
     std::vector<glm::mat4> jointModel; ///< Each joint in the mesh's model space.
     std::vector<glm::mat4> palette;    ///< What skinning moves each joint's vertices by.
     uint64_t paletteHash = 0; ///< Of `palette`'s bytes; 0 before the first evaluation.
@@ -128,6 +152,38 @@ struct SkinnedMesh
     /// Whether the last evaluation changed the palette, which moves the mesh's
     /// shadow though its transform stays where it was.
     bool poseChanged = false;
+};
+
+/// @brief Where a JointAttachment found its joint: by name, in the mesh with
+///        this id, so it looks again only when either changes. Never saved or
+///        sent.
+ACOMP(transient)
+struct JointAttachmentRun
+{
+    Core::InternedString joint; ///< The name it looked for.
+    uint32_t meshId = kUnboundMesh; ///< The MeshBuffer::Id it looked in.
+    int32_t index = Geometry::kNoJoint; ///< Where it found it.
+};
+
+/// @brief Holds its entity at one joint of its parent's skinned mesh: a sword
+///        in a hand, a hat on a head.
+///
+/// Give the entity a Parent that is the skinned entity. Its Transform is its
+/// offset from the joint, and stays as its author set it. Each frame, once the
+/// poses are final, the engine writes where the joint is into the entity's
+/// ParentFrame, so the entity and its children are placed from this frame's
+/// pose and never trail it. The joint is found by name, and found again when
+/// the mesh changes, so a model re-exported with its joints in another order
+/// still holds it. A name the mesh lacks is reported once, and the entity
+/// hangs from its parent's origin, as it does from a parent with no skeleton
+/// or one whose mesh has not loaded.
+///
+/// Replicable: a remote copy holds the same joint. Where the joint is, is
+/// worked out on every machine and never sent or saved.
+ACOMP(replicable, requires = {JointAttachmentRun, ParentFrame})
+struct JointAttachment
+{
+    AFIELD() Core::InternedString joint;
 };
 
 /// @brief What plays one animation, the base's or a layer's: the clips it
@@ -145,9 +201,29 @@ struct AnimationTrack
     std::shared_ptr<const Geometry::BlendSpace> space; ///< The space `current` plays, or null.
     Core::AssetId boundAnimation; ///< The animation `current` belongs to.
     Geometry::CrossFade crossFade;
+    float speed = 1.f; ///< The speed `current` last played at.
+    /// The speed `outgoing` plays at: `current`'s when the fade began, whatever
+    /// the state it fades into asks for.
+    float outgoingSpeed = 1.f;
     uint32_t boundMeshId = kUnboundMesh; ///< The mesh `current` was bound for.
+    uint32_t restarts = 0; ///< The request's `restarts` this track last took.
     bool fading = false;
     bool warned = false; ///< Whether this binding's missing joints were reported.
+    bool loop = true;         ///< Whether `current` last played looping.
+    bool outgoingLoop = true; ///< Whether `outgoing` loops, kept from when the fade began.
+    /// Whether it has advanced yet, even playing no animation: the animation it
+    /// starts with cuts in, since there is nothing to fade from.
+    bool started = false;
+    bool waiting = false; ///< The last advance found clips still loading, so nothing is sampled.
+    /// `current`'s or `outgoing`'s clips are not yet bound to the skeleton:
+    /// advancing takes clips without one, and sampling binds them.
+    bool bindingsStale = false;
+    /// A fade began since the last sampling, which takes the pose on screen
+    /// as the side the fade leaves.
+    bool snapshotPending = false;
+    /// The next sampling starts the pose from what lies underneath: after a
+    /// cut, a new mesh, or a fade that finished.
+    bool refillPending = false;
 };
 
 /// @brief How a layer combines with the pose below it, inside its mask.
@@ -212,6 +288,77 @@ struct LayerState
     bool rootMissing = false;      ///< The mask's root names no joint of the mesh.
     bool exclusionMissing = false; ///< An exclusion names no joint of the mesh.
     bool maskWarned = false;       ///< Whether the missing names were reported.
+    /// A fade began since the layer was last sampled, so an additive layer's
+    /// first frame starts mixing from the one it had.
+    bool fadeStarted = false;
+};
+
+/// @brief How a fade takes the animation going out to the one coming in.
+enum class FadeKind : uint8_t
+{
+    CrossFade, ///< Mixes the two poses, the new one's share growing over the fade.
+    Count_,
+};
+
+/// @brief What one animation of a player plays, the base's or a layer's:
+///        what playback reads, whoever decided it.
+///
+/// A new animation starts at `startPhase`. Raising `restarts` starts the one
+/// already playing again at `startPhase`, without a fade, which is how a state
+/// played once is entered anew on the clip it was already playing.
+struct PlaybackRequest
+{
+    Core::AssetId animation;       ///< A clip or a blend space; nil plays nothing.
+    glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
+    float speed = 1.f;             ///< 1 plays at the speed it was authored; negative plays backwards.
+    float startPhase = 0.f;        ///< Where a start begins, from 0 at the first frame to 1 at the end.
+    float fade = 0.15f;            ///< Seconds a change of `animation` fades over; 0 cuts.
+    uint32_t restarts = 0;         ///< How many times the animation was asked to start again.
+    FadeKind fadeKind = FadeKind::CrossFade;
+    bool loop = true;
+};
+
+/// @brief What one layer plays, and how it combines with the pose below it.
+///        The fields beside `play` mean what AnimationLayer's of the same
+///        names do.
+struct LayerRequest
+{
+    std::vector<Core::InternedString> exclusions;
+    PlaybackRequest play;
+    Core::InternedString maskRoot;
+    float weight = 1.f;
+    float weightFade = 0.f;
+    LayerMode mode = LayerMode::Override;
+    WeightSlide weightSlide = WeightSlide::Duration;
+};
+
+/// @brief Everything a player plays this frame: its base, and its layers in
+///        order.
+///
+/// Built from the player's own fields every frame, unless an Animator drives
+/// the player: then the Animator writes it, and the player's fields stay as
+/// the author set them. Never saved.
+struct PlayerRequest
+{
+    std::vector<LayerRequest> layers;
+    PlaybackRequest base;
+};
+
+/// @brief Where an AnimationPlayer's playing has got to, worked out on every
+///        machine. Never saved or sent.
+///
+/// Transient, and apart from the player, so writing it every frame never marks
+/// anything replicated as changed.
+ACOMP(transient)
+struct AnimationPlayback
+{
+    PlayerRequest request; ///< What plays this frame.
+    AnimationTrack track;  ///< What the base of `request` plays.
+    std::vector<LayerState> layerStates; ///< One per layer, in order.
+    /// The pose as the base left it last frame, before the layers wrote over
+    /// it: what a joint a layer took goes back to before the base plays again,
+    /// so no layer builds on what it wrote itself.
+    std::vector<Geometry::JointTransform> underLayers;
 };
 
 /// @brief Plays an animation on its entity's SkinnedMesh: a clip, or a blend
@@ -225,7 +372,8 @@ struct LayerState
 /// their lengths.
 ///
 /// Changing `animation` fades from the pose as it is to the new animation over
-/// `fade` seconds, the outgoing animation still playing as it fades; a change
+/// `fade` seconds, the outgoing animation still playing as it fades, at the
+/// `speed` and `loop` it had before the change; a change
 /// during a fade starts from the pose that fade had reached, so nothing jumps.
 /// A fade takes its seconds as they pass, whatever `speed` is.
 ///
@@ -239,17 +387,17 @@ struct LayerState
 /// moves, or a layer's mask takes, is written every Update, so code that
 /// adjusts it on top runs after the AnimationPlayers system.
 ///
+/// What plays is read from the request in its AnimationPlayback, which the
+/// AnimationPlayers system fills from these fields each frame. With an Animator
+/// on the entity, the Animator fills it instead and these fields are not used.
+///
 /// Replicable: a remote copy plays the same animations at the same speeds and
 /// parameters. Its timelines are its own, so two machines can be a moment apart.
-ACOMP(replicable, requires = {SkinnedMesh})
+/// The systems only read it, so after the entity arrives it is sent again only
+/// when game code changes it.
+ACOMP(replicable, requires = {SkinnedMesh, AnimationPlayback})
 struct AnimationPlayer
 {
-    AnimationTrack track; ///< What `animation` plays.
-    std::vector<LayerState> layerStates; ///< One per layer, in order.
-    /// The pose as the base left it last frame, before the layers wrote over
-    /// it: what a joint a layer took goes back to before the base plays again,
-    /// so no layer builds on what it wrote itself.
-    std::vector<Geometry::JointTransform> underLayers;
     AFIELD() std::vector<AnimationLayer> layers;
     AFIELD() Core::AssetId animation;
     AFIELD() glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
@@ -269,13 +417,20 @@ struct ClipBinding
     AFIELD() Core::InternedString name; ///< The param's name in the file.
 };
 
-/// @brief Where an Animator is in its file. Never saved; rebuilt from the
-///        file when it loads.
+/// @brief Where an Animator is in its file, and the params game code set.
+///        Never saved or sent; rebuilt from the file when it loads.
+///
+/// Transient, and apart from the Animator, so running the file and setting
+/// params every frame never marks anything replicated as changed.
+ACOMP(transient)
 struct AnimatorRun
 {
     std::vector<Sigil::Word> block;           ///< Its params, the engine's values and its lets.
     std::vector<std::vector<uint32_t>> paths; ///< Per layer, the states from the root down to the one playing.
     std::vector<Sigil::Gate> gates;           ///< Scratch: which of a layer's transitions may fire.
+    /// Per slot, the count AnimatorTrigger::FireOnChange last gave the trigger
+    /// there; nothing until it has given one.
+    std::vector<std::optional<uint32_t>> counts;
     std::shared_ptr<const AnimatorGraph> graph;
     bool warned = false; ///< Whether an unbound clip param was reported.
 };
@@ -283,20 +438,21 @@ struct AnimatorRun
 /// @brief Runs a `.sgl` state machine on its entity's AnimationPlayer.
 ///
 /// Each Update, before the player plays, it reads the params game code set,
-/// moves each layer to the state its transitions choose, and writes into the
-/// player what that state plays, at what rate and where in a blend space. The
-/// player's base is the file's first layer and its `layers` the rest, so with
-/// an Animator they are outputs: edit the file instead.
+/// moves each layer to the state its transitions choose, and hands the player
+/// a request: what that state plays, at what rate and where in a blend space.
+/// The request's base is the file's first layer and its layers the rest. The
+/// player's own fields are left as the author set them and not used while the
+/// Animator drives it: edit the file instead.
 ///
 /// `machine` is the `.sgl` file; `clips` fill its `clip` params. A file
 /// changed while the game runs is picked up where it stands: a character stays
 /// in the state of the same name if there is one.
 ///
-/// Replicable: a remote copy runs the same file. Its params are its own.
-ACOMP(replicable, requires = {AnimationPlayer})
+/// Replicable: a remote copy runs the same file. Its params are its own, in its
+/// AnimatorRun, so setting them sends nothing.
+ACOMP(replicable, requires = {AnimationPlayer, AnimatorRun})
 struct Animator
 {
-    AnimatorRun run;
     AFIELD() std::vector<ClipBinding> clips;
     AFIELD() Core::AssetId machine;
 };
@@ -341,7 +497,7 @@ struct Camera
 ACOMP()
 struct Oscillator
 {
-    AFIELD() glm::vec3 origin{0.f, 0.f, 0.f};  ///< World position the travel is centred on.
+    AFIELD() glm::dvec3 origin{0.0, 0.0, 0.0}; ///< World position the travel is centred on.
     AFIELD() glm::vec3 axis{0.f, 1.f, 0.f};    ///< Direction of travel; normalised on use, zero disables.
     AFIELD() float amplitude     = 1.f;         ///< Peak displacement from `origin`, in metres.
     AFIELD(min = 0) float periodSeconds = 4.f;  ///< Seconds for one full there-and-back cycle; 0 disables.

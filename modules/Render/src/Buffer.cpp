@@ -28,21 +28,24 @@ void Buffer::Create(nvrhi::IDevice *device, uint32_t elementStride, uint32_t cap
     _buffer = device->createBuffer(desc);
 }
 
-void Buffer::Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount) const
+void Buffer::Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount,
+                    uint32_t firstElement) const
 {
-    const uint32_t count = std::min(elementCount, _capacityElements);
-    if (elementCount > _capacityElements && !_overflowWarned)
+    const uint32_t room = _capacityElements - std::min(firstElement, _capacityElements);
+    const uint32_t count = std::min(elementCount, room);
+    if (elementCount > room && !_overflowWarned)
     {
-        Core::Log::Warn("Render::Buffer \"{}\": upload of {} elements exceeds capacity {}; "
+        Core::Log::Warn("Render::Buffer \"{}\": upload of {} elements from element {} exceeds capacity {}; "
                         "{} dropped. Increase the buffer's capacity. (Warned once.)",
-                        _debugName, elementCount, _capacityElements, elementCount - _capacityElements);
+                        _debugName, elementCount, firstElement, _capacityElements, elementCount - room);
         _overflowWarned = true;
     }
     if (count == 0)
     {
         return;
     }
-    commandList->writeBuffer(_buffer, data, static_cast<size_t>(count) * _elementStride);
+    commandList->writeBuffer(_buffer, data, static_cast<size_t>(count) * _elementStride,
+                             static_cast<uint64_t>(firstElement) * _elementStride);
 }
 
 void Buffer::ClearToZero(nvrhi::ICommandList *commandList) const

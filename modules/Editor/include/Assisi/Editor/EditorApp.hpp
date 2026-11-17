@@ -52,17 +52,19 @@
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
-#include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/ColliderBlueprint.hpp>
+#include <Assisi/Editor/DoubleClick.hpp>
 #include <Assisi/Editor/EditHistory.hpp>
 #include <Assisi/Editor/EditorEvents.hpp>
+#include <Assisi/Editor/EditorPreferences.hpp>
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/ListEdit.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 #include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Editor/SourceAssets.hpp>
+#include <Assisi/Editor/SplineEdit.hpp>
 #include <Assisi/Editor/ThumbnailCache.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -80,6 +82,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+} // namespace Assisi::Runtime
 
 namespace Assisi::Editor
 {
@@ -160,6 +167,10 @@ struct EditorConfig
     /// here so the two can be A/B'd by a capture run rather than only by
     /// clicking the F11 checkbox, which is not something a measurement can do.
     bool gpuCulling = false;
+
+    /// Check the device with the Vulkan validation layer in any build and fail
+    /// on any error it reports: see Application::RequireVulkanValidation.
+    bool vulkanValidation = false;
 };
 
 class EditorOptionsPanel;
@@ -263,11 +274,14 @@ class EditorApp : public Assisi::App::Application
     /// every panel into it, and submits it. Application drives no UI toolkit of
     /// its own, which is what keeps one out of a game's link.
     void OnRenderUi(Assisi::Render::RenderFrame &frame) override;
-    void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
     void OnShutdown() override;
+    [[nodiscard]] bool AssetsStreaming() const override { return _worlds.AnyStreaming(); }
+    /// Compares the capture's picture with the one accepted for the level on
+    /// this GPU, when the capture names a directory for them.
+    [[nodiscard]] bool CheckCaptureImage(const Render::CapturedImage &image, const std::string &deviceName) override;
 
     /// @brief Every panel of the editor's chrome, drawn inside the ImGui frame
     /// OnRenderUi opened. Split out so the frame's lifetime and its contents are
@@ -341,13 +355,26 @@ class EditorApp : public Assisi::App::Application
     /// this for anything that projects or unprojects — a pick ray, a gizmo — so it
     /// agrees with what was drawn. Reading `_cameraTransform` directly is correct
     /// only for moving the editor camera itself.
-    void ViewCamera(glm::mat4 &world, Assisi::Runtime::Camera &camera) const;
+    void ViewCamera(Assisi::ECS::WorldMatrix &world, Assisi::Runtime::Camera &camera) const;
+    /// @brief Where the viewport is measured from this frame: the camera
+    /// ViewCamera names. Every overlay line is built measured from it, as the
+    /// scene is drawn, so none of them holds a large number.
+    [[nodiscard]] glm::dvec3 ViewOrigin() const;
 
     /// @brief Puts the editor camera at @p eye, looking at @p target.
-    void AimCamera(const glm::vec3 &eye, const glm::vec3 &target);
+    void AimCamera(const glm::dvec3 &eye, const glm::dvec3 &target);
 
     // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
+
+    /// F1 shows and hides the editor; F2 saves a screenshot of what is on
+    /// screen, with a shutter sound. Read before the panels, which F1 can stop
+    /// drawing.
+    void HandleViewKeys();
+
+    /// Plays F2's shutter on the UI bus, or nothing in a process without audio or
+    /// while the sound is still loading.
+    void PlayScreenshotSound();
     void UpdateCamera(float dt);
     /// @brief Recomputes _cameraWorld from _cameraTransform. The camera is
     /// parentless, so world == local; call before reading the view matrix.
@@ -423,6 +450,9 @@ class EditorApp : public Assisi::App::Application
     /// whose `systemNames` a save writes back — `_world` is whichever of the two
     /// is being edited, so this needs no mode of its own.
     void DrawRequiredSystemsWindow();
+    /// @brief The modal raised instead of playing or saving a file that needs
+    /// systems this build does not declare: which ones, and what asks for each.
+    void DrawUndeclaredSystemsModal();
 
     /// @brief Adds @p name to the edited world's required list and installs it.
     /// No-op for a name already there, which is what keeps the list a set.
@@ -452,8 +482,10 @@ class EditorApp : public Assisi::App::Application
     void DrawInstanceGizmo(); // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
     /// and syncs any physics body to it. The tail of a gizmo drag, factored out
-    /// because a multi-selection runs it once per entity.
-    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld, const glm::mat4 &world);
+    /// because a multi-selection runs it once per entity. Both matrices are
+    /// measured from @p origin; a null @p parentWorld is a root.
+    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 *parentWorld, const glm::mat4 &world,
+                               const glm::dvec3 &origin);
     // --- Networking ---------------------------------------------------------
     void DrawNetworkWindow();    // negotiated level + live net stats
     void DrawHostUnsavedModal(); // "save and host / host last-saved / cancel"
@@ -590,10 +622,26 @@ class EditorApp : public Assisi::App::Application
     /// enough to sit under a scene full of lights.
     void SubmitLightGizmos();
 
+    /// @brief Draw each fog volume's shape: a FogBox's box, a FogSphere's
+    /// sphere, a FogOutline's floor and top. Their soft edges never show where
+    /// the shape ends, which is what this does. The selected volume draws on top
+    /// in the selection colour; the rest faintly, in their own colour.
+    void SubmitFogVolumeGizmos();
+
+    /// @brief Draw each box PostProcessVolume's box, and faintly the box its
+    /// blend distance reaches to, so a designer sees where a look starts fading
+    /// in. The selected volume draws on top in the selection colour.
+    void SubmitPostProcessVolumeGizmos();
+
     /// @brief Draw the benchmark camera route: each path's course, which way it
     /// travels, where it starts and what it looks at, and dashes joining each
     /// path to the next in play order.
     void SubmitCameraPathGizmos();
+
+    /// @brief Draw every spline in the level, found in its components by
+    /// reflection. The selected entity's draw on top in the selection colour,
+    /// with a marker on each node and the handles of each Bezier node.
+    void SubmitSplineGizmos();
 
     /// @brief The light whose outline the cursor is on, or NullEntity.
     ///
@@ -626,6 +674,56 @@ class EditorApp : public Assisi::App::Application
     /// @return true when it took the frame's gizmo, which the transform gizmo
     /// checks so the two never draw over each other.
     [[nodiscard]] bool DrawDirectionalLightGizmo();
+
+    /// @brief Takes a click meant for the selected entity's splines: one on a
+    /// node or Bezier handle selects that point, and one with Alt held inserts a
+    /// node on the curve, or adds one past the selected end node.
+    ///
+    /// Ahead of every other pick, because a node sits on the curve it shapes and
+    /// usually on the ground under it too.
+    ///
+    /// @return true when the click was the splines', so nothing else may take it.
+    bool HandleSplineClick(glm::vec2 cursor);
+
+    /// @brief A double-click on the node being shaped: steps its mode, as one
+    /// undo step.
+    ///
+    /// Ahead of the gizmo test rather than inside HandleSplineClick, because the
+    /// gizmo sits on the node it moves, so every click on that node lands on the
+    /// gizmo's handles and is kept from the ordinary pick.
+    ///
+    /// @return true when the cursor was on that node and its mode stepped.
+    bool CycleShapedNodeAt(glm::vec2 cursor);
+
+    /// @brief The entity whose spline's curve the cursor is on, or NullEntity.
+    /// @p tOut is the distance to that point, to weigh against other picks.
+    [[nodiscard]] Assisi::ECS::Entity PickSplineCurveEntity(glm::vec2 cursor, float &tOut);
+
+    /// @brief Draws move handles on the spline node or handle being shaped, in
+    /// place of the transform gizmo, and moves it as they are dragged.
+    ///
+    /// @return true when it took the frame's gizmo; see DrawDirectionalLightGizmo.
+    [[nodiscard]] bool DrawSplineGizmo();
+
+    /// @brief Removes the node being shaped, as one undo step.
+    void DeleteSplineNode();
+
+    /// @brief The spline @p target names, or null when it is gone: its entity,
+    /// its component or the list row on the way to it.
+    [[nodiscard]] Assisi::Geometry::Spline *SplineOf(const Assisi::Editor::SplineTarget &target);
+
+    /// @brief Runs @p edit on the spline @p target names as one undo step called
+    /// @p action, and makes the node it returns the one being shaped; none when
+    /// it returns none.
+    void EditSplineOnce(const Assisi::Editor::SplineTarget &target, std::string_view action,
+                        const std::function<std::optional<std::size_t>(Assisi::Geometry::Spline &)> &edit);
+
+    /// @brief An Alt+click off every curve: a node past the end node being
+    /// shaped, or the first node of @p empty, a spline of the selected entity
+    /// with none. Placed where @p ray meets the level plane at the height of the
+    /// node it extends, or of the entity for a first node.
+    void AddSplineNodeOffCurve(const Assisi::Editor::PickRay &ray, const glm::mat4 &model,
+                               const std::optional<Assisi::Editor::SplineTarget> &empty);
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -667,6 +765,13 @@ class EditorApp : public Assisi::App::Application
     /// @brief Rewrite @p vpath's sidecar to say it is a @p kindName, keeping the
     /// rest of it, then reindex and forget what the store loaded.
     void UseFileAs(const std::string &vpath, const std::string &kindName);
+    /// @brief Whether the model at @p vpath has its sharp smoothing split on
+    /// import (its sidecar's splitSharpSmoothing).
+    [[nodiscard]] bool SplitsSharpSmoothing(const std::string &vpath) const;
+    /// @brief Turn the model at @p vpath's sharp-smoothing split on or off in
+    /// its sidecar, keeping the rest of it, then reindex and forget what the
+    /// store loaded so the model imports again.
+    void SetSplitSharpSmoothing(const std::string &vpath, bool split);
     /// @brief Write each animation in the model at @p vpath out as a clip file
     /// beside it, then reindex so the clips appear.
     void ExtractAnimations(const std::string &vpath);
@@ -1546,6 +1651,19 @@ class EditorApp : public Assisi::App::Application
     /// consequence surfaces minutes later on someone else's screen.
     bool _hostPromptOpen = false;
     bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
+
+    /// What a file needing undeclared systems was refused.
+    enum class UndeclaredRefusal : std::uint8_t
+    {
+        Play,
+        Save,
+        Count_
+    };
+    /// The undeclared systems the last refused Play or save named. Not empty
+    /// while its modal is up: a modal rather than a log line, because Play and
+    /// Save are pressed looking at the scene, not at the log.
+    std::vector<std::string> _refusedForSystems;
+    UndeclaredRefusal _undeclaredRefusal = UndeclaredRefusal::Play;
     // Correction-rate sampling for the Network panel. Rates rather than totals:
     // a total that keeps climbing only says the session is still running, which
     // is already visible. Sampled over a second so a frame-rate stutter does not
@@ -1584,8 +1702,9 @@ class EditorApp : public Assisi::App::Application
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
-    // OnRender is a single Render() call.
-    Assisi::Runtime::SceneRenderer _sceneRenderer;
+    // OnRender is a single Render() call. Held by pointer so only the files
+    // that render include the renderer, and through it every pass.
+    std::unique_ptr<Assisi::Runtime::SceneRenderer> _sceneRenderer;
 
     // Resolves each entity's mesh/materialOverrides ids to shared GPU resources;
     // owns every mesh, texture, and material the scene draws (deduped by path).
@@ -1648,8 +1767,10 @@ class EditorApp : public Assisi::App::Application
     // The fly camera is not level data, so it is plain state here rather than an
     // entity: as members the pose survives a level load for free.
     Assisi::Runtime::Transform _cameraTransform;
-    glm::mat4 _cameraWorld{1.f}; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
-    Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
+    Assisi::ECS::WorldMatrix _cameraWorld; ///< _cameraTransform as a matrix; see RefreshCameraMatrix.
+    // How far the editor sees in a level with no active camera, in metres.
+    static constexpr float kEditorDrawDistance = 200.f;
+    Assisi::Runtime::Camera _camera{60.f, 0.1f, kEditorDrawDistance, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
     float _yaw = 0.f;
@@ -1750,8 +1871,28 @@ class EditorApp : public Assisi::App::Application
     std::vector<LineVertex> _lightLinesDepthTested;
     std::vector<LineVertex> _lightLinesOnTop;
 
+    // The same split for the fog volume shapes.
+    std::vector<LineVertex> _fogVolumeLinesDepthTested;
+    std::vector<LineVertex> _fogVolumeLinesOnTop;
+
+    // The same split for the post-process volume boxes.
+    std::vector<LineVertex> _postProcessVolumeLinesDepthTested;
+    std::vector<LineVertex> _postProcessVolumeLinesOnTop;
+
     // The benchmark camera route. One batch: it always draws on top.
     std::vector<LineVertex> _cameraPathLines;
+
+    // Splines' curves, split as the lights are: the selection on top, the rest
+    // behind the geometry they wind through; drawn at the preferred thickness.
+    // The selection's node markers and handles go on top at one pixel.
+    std::vector<LineVertex> _splineCurvesDepthTested;
+    std::vector<LineVertex> _splineCurvesOnTop;
+    std::vector<LineVertex> _splineMarkers;
+
+    // The editor's own settings (editor.json), and what was last saved, which
+    // is how a change is noticed once it settles.
+    Assisi::Editor::EditorPreferences _preferences;
+    Assisi::Editor::EditorPreferences _savedPreferences;
 
     // One light's outline at a time, rebuilt and cleared per light while a click
     // is resolved. A member only to keep its storage between clicks; nothing here
@@ -1788,6 +1929,19 @@ class EditorApp : public Assisi::App::Application
     // over these on every frame a sun was selected and not dragged.
     bool _lightGizmoHeld = false;
 
+    // The spline node or handle the viewport is shaping, if any, and its drag:
+    // the same pair as the light's aim, against whichever component holds the
+    // spline, which the drag remembers so its release commits the right one.
+    std::optional<Assisi::Editor::SplineTarget> _splineTarget;
+    Assisi::Editor::GizmoDrag _splineDrag;
+    Assisi::Core::Reflect::ComponentId _splineDragComponent = Assisi::Core::Reflect::kInvalidComponentId;
+    bool _splineGizmoHeld = false;
+    // The select button's presses, for telling a double-click, and the point
+    // being shaped when the previous press began: a double-click steps a node's
+    // mode only when the node was already being shaped before its first press.
+    Assisi::Editor::DoubleClick _selectPresses;
+    std::optional<Assisi::Editor::SplineTarget> _shapingAtLastPress;
+
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
     // write) and applies undo/redo in the Editing state. See EditHistory.hpp.
@@ -1807,6 +1961,10 @@ class EditorApp : public Assisi::App::Application
     // drag/type, or the gizmo) is still being manipulated. The end-of-DrawPanels sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
     bool _captureEditingActive = false;
+    // Frames drawn while a perf capture runs. A capture draws its waves at this
+    // count of fixed frames rather than at the clock, so two runs of a GPU test
+    // picture the same sea.
+    std::uint64_t _capturedFrames = 0;
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;
@@ -1901,6 +2059,28 @@ class EditorApp : public Assisi::App::Application
     // passes exist at all is EditorConfig::enableEditorVisuals.
     bool _showEditorOverlays = true;
 
+    // F1: hides every panel, gizmo and overlay, leaving the scene as the game
+    // draws it. Selection by clicking is off with them, so nothing unseen changes.
+    bool _editorHidden = false;
+
+    // Which second the last screenshot was named for, and how many were named
+    // in it. Kept because a screenshot's file is written a frame or more after
+    // F2, so a second press in the same second would not find it on disk yet.
+    struct ScreenshotCount
+    {
+        std::string stamp;
+        uint32_t taken = 0;
+    };
+    ScreenshotCount _screenshotCount;
+
+    // F2's shutter, decoded once at start; null in a process without audio.
+    std::shared_ptr<const Assisi::Audio::PcmClip> _screenshotClip;
+    // Every shutter still playing, oldest first: each F2 starts its own over
+    // the ones before, up to a cap.
+    // A mixer releases a sound nobody holds each frame, so HandleViewKeys holds
+    // these until each finishes.
+    std::vector<Assisi::Audio::SoundHandle> _screenshotSounds;
+
     // F11 "Skeletons" checkbox: draws skinned meshes' skeletons. Under the
     // overlays switch above, so that one still clears everything.
     bool _showSkeletons = true;
@@ -1955,8 +2135,8 @@ class EditorApp : public Assisi::App::Application
     // input cancels it. Always kCameraFocusDuration, whatever the travel distance.
     bool _cameraFocusActive = false;
     float _cameraFocusElapsed = 0.f;
-    glm::vec3 _cameraFocusStartPos{0.f};
-    glm::vec3 _cameraFocusEndPos{0.f};
+    glm::dvec3 _cameraFocusStartPos{0.0};
+    glm::dvec3 _cameraFocusEndPos{0.0};
     glm::quat _cameraFocusStartRot{1.f, 0.f, 0.f, 0.f};
     glm::quat _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
     static constexpr float kCameraFocusDuration = 0.25f;

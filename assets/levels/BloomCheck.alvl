@@ -1,0 +1,331 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Camera": {
+          "farZ": 500.0,
+          "fovDegrees": 50.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.6,
+            6.5
+          ],
+          "rotation": [
+            0.9962,
+            -0.0872,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Camera"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            40.0,
+            1.0,
+            40.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "427963a0-f86e-477d-8794-d9309ed14a22",
+              "path": "materials/ibl_chrome.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            -3.0,
+            0.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "Chrome"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "castsShadows": true,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "colorExpression": 0,
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "intensity": 1.0,
+          "temperatureKelvin": 5778.0,
+          "tintedBySky": true
+        },
+        "Skybox": {
+          "airScattering": [
+            0.1752,
+            0.4078,
+            1.0
+          ],
+          "airThickness": 0.14,
+          "exposure": 10.0,
+          "groundColor": [
+            0.11,
+            0.1,
+            0.09
+          ],
+          "hazeForwardness": 0.76,
+          "hazeScattering": [
+            0.005,
+            0.005,
+            0.005
+          ],
+          "nightColor": [
+            6e-05,
+            0.0001,
+            0.0002
+          ],
+          "minimumAmbient": 0.02,
+          "minimumAmbientColor": [
+            0.35,
+            0.45,
+            0.7
+          ],
+          "preset": 0,
+          "skyBounce": 0.2,
+          "sunDiskColor": [
+            1.0,
+            0.95,
+            0.82
+          ],
+          "sunDiskIntensity": 20.0,
+          "sunEdgeSoftness": 0.1,
+          "sunLimbDarkening": 0.6,
+          "sunSizeDegrees": 0.5
+        },
+        "Sun": {
+          "axialTiltDegrees": 23.44,
+          "bearingDegrees": 0.0,
+          "latitudeDegrees": 45.0
+        },
+        "TimeOfDay": {
+          "day": 0,
+          "dayLengthSeconds": 120.0,
+          "dayOfYear": 0.0,
+          "hour": 18.5,
+          "paused": true,
+          "seasonsPaused": true,
+          "yearLengthDays": 12.0
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": false,
+          "materialOverrides": [
+            {
+              "guid": "136489e9-dfea-4797-8917-26c1ddb9b9a2",
+              "path": "materials/bloom_lamp_warm.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.2,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      },
+      "name": "WarmLamp"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": false,
+          "materialOverrides": [
+            {
+              "guid": "7139020c-0d94-4599-8e67-a79e6bec54f0",
+              "path": "materials/bloom_lamp_cool.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            2.2,
+            0.6,
+            -1.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.3,
+            0.3,
+            0.3
+          ]
+        }
+      },
+      "name": "CoolLamp"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": false,
+          "materialOverrides": [
+            {
+              "guid": "136489e9-dfea-4797-8917-26c1ddb9b9a2",
+              "path": "materials/bloom_lamp_warm.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            3.2,
+            1.4,
+            -0.5
+          ],
+          "rotation": [
+            0.9659,
+            0.0,
+            0.0,
+            0.2588
+          ],
+          "scale": [
+            0.03,
+            1.6,
+            0.03
+          ]
+        }
+      },
+      "name": "NeonBar"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": false,
+          "materialOverrides": [
+            {
+              "guid": "79019ae2-53ad-4866-9e96-806e4220a778",
+              "path": "materials/bloom_spark.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.0,
+            2.2,
+            -2.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.015,
+            0.015,
+            0.015
+          ]
+        }
+      },
+      "name": "Spark"
+    }
+  ],
+  "systems": [
+    "TimeOfDay"
+  ],
+  "version": 2
+}

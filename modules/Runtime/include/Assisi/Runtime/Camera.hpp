@@ -8,11 +8,13 @@
 /// (position and orientation) and a Camera (projection parameters).
 ///
 /// Orientation convention: the camera looks along its local -Z axis.
-/// The functions take the camera's world matrix — for a scene camera,
-/// its ECS::WorldMatrix after PropagateTransforms has run this frame.
+/// The functions take the camera's world matrix measured from wherever the
+/// caller measures everything else from; drawing measures from the camera
+/// itself, so the matrix is its rotation alone and the view is too.
 
 #include <cstdint>
 
+#include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -40,6 +42,6 @@ glm::vec3 UpDirection(const glm::mat4 &world);
 
 /// @brief The world matrix of a free camera posed by @p transform, which is
 /// in world space.
-glm::mat4 CameraWorldMatrix(const Transform &transform);
+ECS::WorldMatrix CameraWorldMatrix(const Transform &transform);
 
 } // namespace Assisi::Runtime

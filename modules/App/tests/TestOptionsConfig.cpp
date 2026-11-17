@@ -223,6 +223,67 @@ TEST_CASE("A settings file from before ambient occlusion existed loads it off, a
     CHECK(read.ambientOcclusion == SsaoSettings{});
 }
 
+TEST_CASE("The player's bloom switch survives a write and a read")
+{
+    OptionsConfig written;
+    written.bloomEnabled = false;
+    CHECK_FALSE(OptionsConfig::FromJsonText(written.ToJsonText()).bloomEnabled);
+    written.bloomEnabled = true;
+    CHECK(OptionsConfig::FromJsonText(written.ToJsonText()).bloomEnabled);
+}
+
+TEST_CASE("A settings file from before bloom existed loads it on")
+{
+    const OptionsConfig read = OptionsConfig::FromJsonText(R"({ "antiAliasing": { "mode": "fxaa" } })");
+    CHECK(read.bloomEnabled);
+}
+
+TEST_CASE("The player's brightness survives a write and a read, and an older file's grade is ignored")
+{
+    // Contrast and saturation are the level's now; a file from before keeps
+    // its brightness and loses the grade, which the level's look replaces.
+    const OptionsConfig older = OptionsConfig::FromJsonText(
+        R"({ "toneMap": { "exposureStops": 1.5, "contrast": 2.0, "saturation": 0.0, "dither": false } })");
+    CHECK(older.tonemap.exposureStops == doctest::Approx(1.5f));
+    CHECK_FALSE(older.tonemap.dither);
+    CHECK(older.ToJsonText().find("contrast") == std::string::npos);
+
+    const OptionsConfig read = OptionsConfig::FromJsonText(older.ToJsonText());
+    CHECK(read.tonemap.exposureStops == doctest::Approx(1.5f));
+    CHECK_FALSE(read.tonemap.dither);
+}
+
+TEST_CASE("A player's fog choice survives a write and a read, and is stored only once made")
+{
+    OptionsConfig written;
+    CHECK(written.ToJsonText().find("\"fog\"") == std::string::npos);
+    CHECK_FALSE(OptionsConfig::FromJsonText(written.ToJsonText()).fogEnabled.has_value());
+
+    written.fogEnabled = false;
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    REQUIRE(read.fogEnabled.has_value());
+    CHECK_FALSE(*read.fogEnabled);
+}
+
+TEST_CASE("Fog is drawn unless the game lets players choose and they turned it off")
+{
+    AppConfig closed;
+    closed.playerSetsFog = false;
+    AppConfig open;
+    open.playerSetsFog = true;
+
+    OptionsConfig off;
+    off.fogEnabled = false;
+    CHECK(off.FogEnabled(closed));
+    CHECK_FALSE(off.FogEnabled(open));
+
+    const OptionsConfig unchosen;
+    CHECK(unchosen.FogEnabled(open));
+    CHECK(unchosen.FogEnabled(closed));
+    // Closed is the default: a game opts its players in.
+    CHECK_FALSE(AppConfig{}.playerSetsFog);
+}
+
 TEST_CASE("Every setting is written, defaults included, so the file shows what there is to change")
 {
     const std::string text = OptionsConfig{}.ToJsonText();
@@ -385,4 +446,34 @@ TEST_CASE("What the player changed survives a restart")
     CHECK(reloaded.bindings.actions.at(Assisi::Core::ShortString("Fire")).front().View() == "LeftMouse");
 
     std::filesystem::remove_all(root);
+}
+
+TEST_CASE("The clouds' quality survives a write and a read, and is brought into range on load")
+{
+    OptionsConfig written;
+    written.clouds = CloudQuality{.resolution = 512, .steps = 96};
+    const OptionsConfig read = OptionsConfig::FromJsonText(written.ToJsonText());
+    CHECK(read.clouds == written.clouds);
+    CHECK_FALSE(read.cloudsEnabled.has_value());
+
+    const OptionsConfig wild =
+        OptionsConfig::FromJsonText(R"({"clouds": {"resolution": 100000, "steps": 0, "enabled": false}})");
+    CHECK(wild.clouds.resolution == kMaxCloudMapResolution);
+    CHECK(wild.clouds.steps == kMinCloudSteps);
+    REQUIRE(wild.cloudsEnabled.has_value());
+    CHECK_FALSE(*wild.cloudsEnabled);
+}
+
+TEST_CASE("Clouds are drawn unless the game lets players choose and they turned them off")
+{
+    AppConfig closed;
+    AppConfig open;
+    open.playerSetsClouds = true;
+
+    OptionsConfig off;
+    off.cloudsEnabled = false;
+    CHECK(off.CloudsEnabled(closed));
+    CHECK_FALSE(off.CloudsEnabled(open));
+    CHECK(OptionsConfig{}.CloudsEnabled(open));
+    CHECK_FALSE(AppConfig{}.playerSetsClouds);
 }

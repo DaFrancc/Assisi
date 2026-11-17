@@ -8,7 +8,9 @@
 #include <Assisi/Math/Float.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -162,6 +164,84 @@ inline MeshData CreateUnitCubeMesh()
     /* 36 indices (6 faces × 2 triangles × 3 indices). */
     mesh.Indices = {0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
                     12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20};
+
+    ComputeTangents(mesh);
+
+    return mesh;
+}
+
+/// @brief The side of one cell of prim://error's letters (m). Its letters are
+///        three cells wide and five tall, so the sign is 2.85 m by 0.75 m: hard
+///        to miss at a character's size.
+inline constexpr float kErrorSignCell = 0.15f;
+
+/// @brief Returns ERROR in block letters, the mesh drawn in place of one that
+///        can't be loaded: one box per cell, standing on y = 0, centred on x
+///        and z, and reading left to right from +Z.
+inline MeshData CreateErrorSignMesh()
+{
+    // Each letter's rows, top first; a set bit is a filled cell, leftmost the
+    // highest of three.
+    constexpr uint32_t kRows = 5;
+    constexpr uint32_t kColumns = 3;
+    constexpr std::array<uint8_t, kRows> kE{0b111, 0b100, 0b111, 0b100, 0b111};
+    constexpr std::array<uint8_t, kRows> kR{0b110, 0b101, 0b110, 0b101, 0b101};
+    constexpr std::array<uint8_t, kRows> kO{0b111, 0b101, 0b101, 0b101, 0b111};
+    constexpr std::array kLetters{kE, kR, kR, kO, kR};
+    // A letter's columns and the empty one after it.
+    constexpr uint32_t kPitch = kColumns + 1;
+    constexpr float kWidth = static_cast<float>(kLetters.size() * kPitch - 1) * kErrorSignCell;
+
+    const MeshData cube = CreateUnitCubeMesh();
+    MeshData mesh;
+    for (std::size_t letter = 0; letter < kLetters.size(); ++letter)
+    {
+        for (uint32_t row = 0; row < kRows; ++row)
+        {
+            for (uint32_t column = 0; column < kColumns; ++column)
+            {
+                if ((kLetters[letter][row] & (1u << (kColumns - 1 - column))) == 0)
+                {
+                    continue;
+                }
+                const glm::vec3 centre{
+                    (static_cast<float>(letter * kPitch + column) + 0.5f) * kErrorSignCell - 0.5f * kWidth,
+                    (static_cast<float>(kRows - 1 - row) + 0.5f) * kErrorSignCell, 0.f};
+                const uint32_t first = static_cast<uint32_t>(mesh.Vertices.size());
+                for (Vertex vertex : cube.Vertices)
+                {
+                    vertex.Position = centre + vertex.Position * kErrorSignCell;
+                    mesh.Vertices.push_back(vertex);
+                }
+                for (const uint32_t index : cube.Indices)
+                {
+                    mesh.Indices.push_back(first + index);
+                }
+            }
+        }
+    }
+
+    ComputeTangents(mesh);
+
+    return mesh;
+}
+
+/// @brief Returns a unit quad, 1 by 1 in the XY plane, centred at the origin and
+/// facing +Z.
+///
+/// One flat face: a foliage card, a sign, a panel. Its texture reads upright and
+/// un-mirrored from the front, as the cube's +Z face does; from behind it is
+/// culled unless its material is double-sided.
+inline MeshData CreateUnitQuadMesh()
+{
+    MeshData mesh;
+    mesh.Vertices = {
+        {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+    };
+    mesh.Indices = {0, 1, 2, 2, 3, 0};
 
     ComputeTangents(mesh);
 

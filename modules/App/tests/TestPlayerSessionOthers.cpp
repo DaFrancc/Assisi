@@ -2,22 +2,28 @@
 
 /// @file TestPlayerSessionOthers.cpp
 /// @brief Another player is drawn where it stands: at its feet on the floor, still
-///        while it presses against this one.
+///        while it presses against this one, and moving as the host has it
+///        between the host's updates.
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 
 #include "PlayerSessionTesting.hpp"
 
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 
 using namespace Assisi;
 using namespace Assisi::App::Testing;
@@ -55,7 +61,88 @@ constexpr float kMostDrawnOffStanding = 0.01f;
 glm::vec3 Drawn(ECS::Scene &scene, ECS::Entity entity)
 {
     const ECS::RenderOffset *offset = scene.Get<ECS::RenderOffset>(entity);
-    return scene.Get<ECS::Transform>(entity)->position + (offset != nullptr ? offset->position : glm::vec3(0.f));
+    return glm::vec3(scene.Get<ECS::Transform>(entity)->position) + (offset != nullptr ? offset->position : glm::vec3(0.f));
+}
+
+/// Frames another player walks before it is watched: long enough to reach full
+/// speed, and for every machine to hear so.
+constexpr std::int32_t kUpToSpeedFrames = 60;
+
+/// Steps the host sends nothing for while another player is watched: a third
+/// of a second, in which a character asked for nothing slows to a stop.
+constexpr std::int32_t kSilentSteps = 20;
+
+/// A character walking at full speed goes at least this share of its walk
+/// speed, and one sprinting at least this, short of the sprint's 1.6.
+constexpr float kWalkingAtLeast = 0.95f;
+constexpr float kSprintingAtLeast = 1.5f;
+
+/// Starts for a host and two clients, in a row 4 m apart (m): clear of each
+/// other's capsules as they walk ahead.
+constexpr std::array<glm::dvec3, 3> kThreeStarts{glm::dvec3{0.0}, glm::dvec3{4.0, 0.0, 0.0},
+                                                 glm::dvec3{8.0, 0.0, 0.0}};
+
+/// How fast @p entity moves along the floor in @p scene (m/s).
+float GroundSpeed(ECS::Scene &scene, ECS::Entity entity)
+{
+    const glm::vec3 velocity = scene.Get<Physics::CharacterState>(entity)->velocity;
+    return glm::length(glm::vec2(velocity.x, velocity.z));
+}
+
+/// A character's ground speed on the host as the host stops sending, and how
+/// far from it another machine's copy strayed while it heard nothing.
+struct SilentSpeeds
+{
+    float onHost = 0.f;
+    float mostOff = 0.f;
+    std::int32_t watched = 0;
+};
+
+/// @p other's copy of the host's entity @p onHost.
+ECS::Entity CopyOf(Machine &host, Machine &other, ECS::Entity onHost)
+{
+    const ECS::Entity copy = other.play.Session().Client()->EntityOf(host.play.Session().Server()->NetIdOf(onHost));
+    REQUIRE(copy != ECS::NullEntity);
+    return copy;
+}
+
+/// Runs @p session with @p drive walking the host's character @p onHost up to
+/// speed, then has @p host send nothing for kSilentSteps steps while
+/// @p watcher's copy of it is watched against the host's.
+SilentSpeeds WatchThroughSilence(Session &session, Machine &host, Machine &watcher, ECS::Entity onHost,
+                                 const std::function<void()> &drive)
+{
+    const ECS::Entity onWatcher = CopyOf(host, watcher, onHost);
+    session.Run(kUpToSpeedFrames, drive);
+
+    SilentSpeeds speeds;
+    speeds.onHost = GroundSpeed(host.world.scene, onHost);
+    host.silentSteps = kSilentSteps;
+    watcher.afterStep = [&](std::uint64_t)
+                        {
+                            if (host.silentSteps > 0)
+                            {
+                                const float off = GroundSpeed(watcher.world.scene, onWatcher) - speeds.onHost;
+                                speeds.mostOff = std::max(speeds.mostOff, std::abs(off));
+                                ++speeds.watched;
+                            }
+                        };
+    while (host.silentSteps > 0)
+    {
+        session.Run(1, drive);
+    }
+    watcher.afterStep = nullptr;
+    return speeds;
+}
+
+/// Walks @p character straight ahead, sprinting when @p sprint is set.
+void Walk(ECS::Scene &scene, ECS::Entity character, bool sprint)
+{
+    if (App::PlayerInput *controls = scene.GetMut<App::PlayerInput>(character))
+    {
+        controls->move = {0.f, 1.f};
+        controls->held = sprint ? App::PlayerButtons::Of(App::PlayerAction::Sprint) : App::PlayerButtons{};
+    }
 }
 
 } // namespace
@@ -98,8 +185,8 @@ TEST_CASE("Another player pressing against this one does not tremble up and down
                 turned = true;
             }
         }
-        const glm::vec3 pusher = client.world.scene.Get<ECS::Transform>(hostOnClient)->position;
-        const glm::vec3 pushed = client.world.scene.Get<ECS::Transform>(clientOwn)->position;
+        const glm::vec3 pusher = glm::vec3(client.world.scene.Get<ECS::Transform>(hostOnClient)->position);
+        const glm::vec3 pushed = glm::vec3(client.world.scene.Get<ECS::Transform>(clientOwn)->position);
         if (glm::length(glm::vec2(pusher.x - pushed.x, pusher.z - pushed.z)) < kPressing)
         {
             ++framesPressing;
@@ -143,7 +230,7 @@ TEST_CASE("Another player walking is drawn at its feet, without bobbing above th
             controls->move = {0.f, 1.f};
         }
         const ECS::RenderOffset *offset = client.world.scene.Get<ECS::RenderOffset>(hostOnClient);
-        const float drawn = client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y +
+        const float drawn = static_cast<float>(client.world.scene.Get<ECS::Transform>(hostOnClient)->position.y) +
                             (offset != nullptr ? offset->position.y : 0.f);
         highestDrawn = std::max(highestDrawn, std::abs(drawn));
     });
@@ -178,7 +265,94 @@ TEST_CASE("With the sync test on, another player that walked and stopped is draw
     host.world.scene.GetMut<App::PlayerInput>(hostOwn)->move = {0.f, 0.f};
     session.Run(kStandFrames);
 
-    const glm::vec3 standing = host.world.scene.Get<ECS::Transform>(hostOwn)->position;
+    const glm::vec3 standing = glm::vec3(host.world.scene.Get<ECS::Transform>(hostOwn)->position);
     REQUIRE(replication.SyncTestResults().replays > 0u);
     CHECK(glm::length(Drawn(client.world.scene, hostOnClient) - standing) < kMostDrawnOffStanding);
+}
+
+TEST_CASE("Another player walking keeps the host's speed while the host sends nothing")
+{
+    // Stepped with nothing asked of it, another player slowed to a stop between
+    // the host's updates, and was put back up to speed by each one.
+    const std::filesystem::path root = FreshRoot("assisi_players_others");
+    WritePlayerBlueprint(root);
+
+    for (const bool sprint : {false, true})
+    {
+        CAPTURE(sprint);
+        Session session;
+        Machine &host = session.Add();
+        Machine &client = session.Add();
+        JoinOnFloor(session, host, client);
+        const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+
+        const SilentSpeeds speeds = WatchThroughSilence(session, host, client, hostOwn,
+                                                        [&] { Walk(host.world.scene, hostOwn, sprint); });
+        const float walkSpeed = host.world.scene.Get<Physics::CharacterLocomotion>(hostOwn)->walkSpeed;
+        CHECK(speeds.onHost > walkSpeed * (sprint ? kSprintingAtLeast : kWalkingAtLeast));
+        CHECK(speeds.watched >= kSilentSteps / 2);
+        CHECK(speeds.mostOff < NetSync::Smoothing().predictionVelocityTolerance);
+
+        // Sprinting is asked for on the client's copy too, not only reported.
+        const ECS::Entity onClient = CopyOf(host, client, hostOwn);
+        CHECK(client.world.scene.Get<Physics::CharacterIntent>(onClient)->sprint == sprint);
+    }
+}
+
+TEST_CASE("Another player handed to this client to predict keeps the host's speed, with the sync test on")
+{
+    // A character this client predicts but does not control is stepped again
+    // by every rollback and every sync test, which put back the intent it had
+    // at each step. Ending there, the next live step went on the intent from
+    // before the host's latest word, and with the sync test on it never took
+    // the host's word at all.
+    const std::filesystem::path root = FreshRoot("assisi_players_others");
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &client = session.Add();
+    JoinOnFloor(session, host, client);
+    const ECS::Entity hostOwn = PlayerOf(host, NetSync::HostClientId);
+    (void)host.world.scene.Add<NetSync::Predicted>(hostOwn,
+                                                   NetSync::Predicted{client.play.Session().LocalClientId().value});
+    session.Run(kCatchUpFrames);
+    NetSync::ReplicationClient &replication = *client.play.Session().Client();
+    const ECS::Entity onClient = CopyOf(host, client, hostOwn);
+    REQUIRE(replication.Predicts(onClient));
+    replication.SetSyncTest(true);
+
+    const SilentSpeeds speeds =
+        WatchThroughSilence(session, host, client, hostOwn, [&] { Walk(host.world.scene, hostOwn, true); });
+    CHECK(replication.SyncTestResults().replays > 0u);
+    CHECK(speeds.watched >= kSilentSteps / 2);
+    CHECK(speeds.mostOff < NetSync::Smoothing().predictionVelocityTolerance);
+    CHECK(client.world.scene.Get<Physics::CharacterIntent>(onClient)->sprint);
+}
+
+TEST_CASE("Another client's player keeps the host's speed on this client while the host sends nothing")
+{
+    // The host relays what the other client asked for, from that client's
+    // commands, the same as for its own player.
+    const std::filesystem::path root = FreshRoot("assisi_players_others");
+    WritePlayerBlueprint(root);
+
+    Session session;
+    Machine &host = session.Add();
+    Machine &first = session.Add();
+    Machine &second = session.Add();
+    AddFloors(session, glm::dvec3{0.0});
+    JoinTwo(session, host, first, second, kThreeStarts);
+
+    const ECS::Entity firstOwn = LocalPlayerOf(first.world.scene);
+    REQUIRE(firstOwn != ECS::NullEntity);
+    const ECS::Entity onHost = PlayerOf(host, first.play.Session().LocalClientId());
+    REQUIRE(onHost != ECS::NullEntity);
+
+    const SilentSpeeds speeds =
+        WatchThroughSilence(session, host, second, onHost, [&] { Walk(first.world.scene, firstOwn, true); });
+    const float walkSpeed = host.world.scene.Get<Physics::CharacterLocomotion>(onHost)->walkSpeed;
+    CHECK(speeds.onHost > walkSpeed * kSprintingAtLeast);
+    CHECK(speeds.watched >= kSilentSteps / 2);
+    CHECK(speeds.mostOff < NetSync::Smoothing().predictionVelocityTolerance);
 }

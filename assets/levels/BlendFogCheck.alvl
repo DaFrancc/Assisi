@@ -1,0 +1,50 @@
+{
+  "entities": [
+    {"name": "Camera", "components": {
+      "Camera": {"farZ": 2000.0, "fovDegrees": 60.0, "isActive": true, "nearZ": 0.1},
+      "Transform": {"position": [0.0, 2.5, 10.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+    {"name": "Sun", "components": {
+      "DirectionalLight": {"color": [1.0, 0.98, 0.95], "direction": [0.3, -1.0, -0.6], "intensity": 2.0},
+      "Skybox": {"preset": 0}}},
+    {"name": "Fog", "components": {
+      "Fog": {"hazeVisibility": 400.0, "hazeHeight": 0.0, "hazeFalloff": 500.0}}},
+
+    {"name": "Ground", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "911c776f-cfb3-4d45-969e-c35456627e19", "path": "materials/fog_grass.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [0.0, -0.5, -150.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [400.0, 1.0, 400.0]}}},
+
+    {"name": "Near pillar", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-4.0, 1.5, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 3.0, 1.0]}}},
+    {"name": "Near clear pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "ddc7228d-2d03-4331-9fac-30490dcff40e", "path": "materials/glass_clear.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-1.5, 1.5, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [2.0, 3.0, 0.04]}}},
+    {"name": "Near blue pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572", "path": "materials/glass_blue.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [1.5, 1.5, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [2.0, 3.0, 0.04]}}},
+
+    {"name": "Middle pillar", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-20.0, 6.0, -60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [4.0, 12.0, 4.0]}}},
+    {"name": "Middle clear pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "ddc7228d-2d03-4331-9fac-30490dcff40e", "path": "materials/glass_clear.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-8.0, 6.0, -60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [8.0, 12.0, 0.1]}}},
+    {"name": "Middle blue pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572", "path": "materials/glass_blue.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [6.0, 6.0, -60.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [8.0, 12.0, 0.1]}}},
+    {"name": "Mist in front of the middle clear pane", "components": {
+      "FogBox": {"size": [10.0, 14.0, 6.0], "visibility": 8.0, "edgeSoftness": 1.0, "color": [0.9, 0.6, 0.4], "litBySky": false},
+      "Transform": {"position": [-8.0, 7.0, -56.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+
+    {"name": "Far pillar", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "47468be6-0ab9-4642-83f0-42a55ec5c042", "path": "materials/fog_rock.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-50.0, 15.0, -160.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [10.0, 30.0, 10.0]}}},
+    {"name": "Far clear pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "ddc7228d-2d03-4331-9fac-30490dcff40e", "path": "materials/glass_clear.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [-18.0, 15.0, -160.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [20.0, 30.0, 0.3]}}},
+    {"name": "Far blue pane", "components": {
+      "MeshRenderer": {"materialOverrides": [{"guid": "cf8e66cd-1529-49cb-bc14-aa8da805c572", "path": "materials/glass_blue.amat"}], "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}},
+      "Transform": {"position": [16.0, 15.0, -160.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [20.0, 30.0, 0.3]}}}
+  ],
+  "version": 2
+}

@@ -151,6 +151,7 @@ struct LinesValue
 [[nodiscard]] std::optional<Alignment> ParseAlignment(std::string_view text);
 [[nodiscard]] std::optional<Direction> ParseDirection(std::string_view text);
 [[nodiscard]] std::optional<CornerStyle> ParseCornerStyle(std::string_view text);
+[[nodiscard]] std::optional<ImageFit> ParseImageFit(std::string_view text);
 [[nodiscard]] std::optional<TextAlign> ParseTextAlign(std::string_view text);
 [[nodiscard]] std::optional<ScrollBarVisibility> ParseScrollBarVisibility(std::string_view text);
 [[nodiscard]] std::optional<ScrollBarDrag> ParseScrollBarDrag(std::string_view text);

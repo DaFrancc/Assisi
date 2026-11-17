@@ -39,7 +39,7 @@ All four are in `<Assisi/Physics/PhysicsComponents.hpp>`:
 | `Collider` | Anything that should be solid. | Gives the entity a collision shape, such as a box or a sphere. With only a `Collider`, the entity is static. |
 | `RigidBody` | An entity with a `Collider` that should move. | Makes the body dynamic or kinematic, and sets how heavy it is and how it moves. |
 | `BodyState` | Nothing: the engine adds it with `RigidBody`. | Holds the body's current speed and spin, updated after every step. |
-| `Character` | A player or an NPC. | Makes the entity walk, jump and crouch instead of tumbling like a box. See [The character controller](physics-character.md). |
+| `Character` | A player or an NPC. | Makes the entity a capsule that walks, jumps and crouches instead of tumbling like a box. It needs an `ArcadeMovement` or a `SourceMovement` beside it to walk; adding either one adds the `Character` too. See [The character controller](physics-character.md). |
 | `Carrier` | A moving body characters should ride: a boat, a train, a lift. | Moves the characters on it in its own frame. See [Riding a moving body](physics-character.md#riding-a-moving-body). |
 
 ## Try it: a floor and a falling box

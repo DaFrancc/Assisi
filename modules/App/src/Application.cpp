@@ -9,8 +9,10 @@
 #endif
 
 // --- Engine headers ---------------------------------------------------------
+#include <Assisi/App/AppPasses.generated.hpp>
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/CrashReport.hpp>
+#include <Assisi/App/CrashReporter.hpp>
 #include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
@@ -27,6 +29,8 @@
 #include <Assisi/Mondrian/FontReader.hpp>
 #include <Assisi/Mondrian/SampleScreen.hpp>
 #include <Assisi/Mondrian/StringTableReader.hpp>
+#include <Assisi/Mondrian/SpriteSheetReader.hpp>
+#include <Assisi/Mondrian/ThemeReader.hpp>
 #include <Assisi/Mondrian/UiConfig.hpp>
 
 #include <Assisi/Core/ConfigReader.hpp>
@@ -34,6 +38,8 @@
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Runtime/ScenePasses.generated.hpp>
+#include <Assisi/Core/Format.hpp>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -115,7 +121,7 @@ Application::Application()
     }
     // One file per launch, named for when the process started: a single truncated
     // log is destroyed by the relaunch after the crash it explains.
-    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string logName = Core::Format("assisi-{}.log", Core::LaunchStamp());
     const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
 
     // Backstop retention, deliberately *before* this run's log exists — the one
@@ -130,7 +136,8 @@ Application::Application()
     // every launch and prune none, growing without bound.
     const std::filesystem::path userRoot = logPath.parent_path();
     Core::PruneOldFiles(userRoot, "assisi-", ".log", kRetentionBackstop);
-    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashLogExtension, kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashDumpExtension, kRetentionBackstop);
 
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
@@ -138,8 +145,15 @@ Application::Application()
     // led up to it pair by name. Resolved now, before anything can crash: doing
     // filesystem resolution inside a handler, on a possibly-corrupt heap, is
     // exactly what the handler cannot afford.
-    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
-    InstallCrashHandlers(Core::AssetSystem::ResolveUser(crashName).value_or(crashName));
+    InstallCrashHandlers(userRoot / CrashFileStem(Core::LaunchStamp()), userRoot / kCrashDumpFolderName);
+}
+
+Application::Application(CrashReporterRole /*role*/) : _reportsOwnCrashes(false)
+{
+    if (Core::HasConsoleOutput())
+    {
+        Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
+    }
 }
 
 bool Application::Initialize()
@@ -240,6 +254,13 @@ bool Application::InitializeCore()
         _options.fpsLimit = -1;
     }
 
+    // A crash reporter's window changes no faster than the display shows it,
+    // whatever the player chose for the game: unpaced, it spins a core.
+    if (!_reportsOwnCrashes)
+    {
+        _options.frameSync = FrameSyncMode::VSync;
+    }
+
     // Retention runs here rather than in the constructor because it is the game
     // config that says how many to keep. The counts are totals including this run.
     //
@@ -253,19 +274,32 @@ bool Application::InitializeCore()
     // yet, so a run that does crash ends with keepDumps + 1 on disk until the
     // next launch trims it. Overshooting by one beats doing directory work with
     // a corrupt heap.
+    //
+    // A crash reporter keeps nothing of its own, and prunes nothing: the files it
+    // reports are the newest there are.
+    if (!_reportsOwnCrashes)
+    {
+        return true;
+    }
     const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
-    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
-    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    const std::string logName = Core::Format("assisi-{}.log", Core::LaunchStamp());
+    const std::string crashStem = CrashFileStem(Core::LaunchStamp());
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
-    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
+    Core::PruneOldFiles(userRoot, "crash-", kCrashLogExtension, _config.keepDumps,
+                        crashStem + std::string(kCrashLogExtension));
+    Core::PruneOldFiles(userRoot, "crash-", kCrashDumpExtension, _config.keepDumps,
+                        crashStem + std::string(kCrashDumpExtension));
 
+    // After the configs, so a reporter for a headless run is started headless.
+    SetCrashReporter(CrashReporterCommand(_headless));
     return true;
 }
 
 bool Application::InitializePresentation()
 {
-    // The player's chosen size over the shipped default, and the capture's over
-    // both. Order matters in one direction only: a capture must render exactly
+    // The player's chosen size over the shipped default, the app's own
+    // SetWindowSize over both, and the capture's over everything. Order matters
+    // in one direction only: a capture must render exactly
     // what it was asked for, so whatever the options say, it is overwritten
     // below rather than consulted.
     if (_options.width)
@@ -275,6 +309,11 @@ bool Application::InitializePresentation()
     if (_options.height)
     {
         _config.height = *_options.height;
+    }
+    if (_windowWidth > 0 && _windowHeight > 0)
+    {
+        _config.width = _windowWidth;
+        _config.height = _windowHeight;
     }
 
     // A capture's requested resolution wins over both — the ledger needs both
@@ -314,7 +353,9 @@ bool Application::InitializePresentation()
     _window->OnFramebufferSize([this](int32_t width, int32_t height) { HandleFramebufferResize(width, height); });
     _window->OnWindowRefresh([this]() { RenderFrame(); });
 
-    if (!Render::RenderSystem::Initialize(*_window))
+    if (!Render::RenderSystem::Initialize(*_window, _vulkanValidationRequired
+                                                        ? Render::Vulkan::Validation::Required
+                                                        : Render::Vulkan::Validation::BuildDefault))
     {
         Core::Log::Fatal("Failed to initialize render system.");
         return false;
@@ -339,6 +380,12 @@ bool Application::InitializePresentation()
             return false;
         }
         ConfigurePostProcess();
+        // A pass that fails to build stays off and has said why; the tone map,
+        // which every frame needs, failed fatally above.
+        _passes = std::make_unique<Passes::AppPassGraph>();
+        _passes->Initialize(Passes::AppPassInit{.device = vulkanContext->GetDevice(),
+                                                .fullscreenVertexShader = _postProcess.FullscreenVertexShader()},
+                            vulkanContext->GetFramebufferInfo());
 
         // Built against the swapchain, which the UI draws onto after the post
         // chain has finished with it.
@@ -361,6 +408,9 @@ bool Application::InitializePresentation()
         // pass that registered it, and an image whose asset has not arrived
         // wants exactly this texture.
         _ui->SetPlaceholderTexture(_uiPass.RegisterTexture(_uiPlaceholderTexture.NativeTexture()));
+        // The UI and the pass are both this Application's, and the UI goes
+        // first.
+        _ui->SetTextureLoader([this](std::string_view vpath) { return LoadUiTexture(vpath); });
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -374,7 +424,7 @@ bool Application::InitializePresentation()
         {
             _ui->SetFont(&_uiFont, _uiPass.RegisterTexture(_uiFontAtlas.NativeTexture()));
         }
-        LoadUiStrings();
+        LoadUiSettings();
 
         // A capture is exactly the case the per-pass render-pass splits are
         // worth paying for: nobody is looking at this frame, and the whole point
@@ -443,6 +493,9 @@ Application::~Application()
         _uiPass.Shutdown();
         _uiPlaceholderTexture = Render::Texture{};
         _uiFontAtlas = Render::Texture{};
+        _uiTextures.clear();
+        _readback = FrameReadback{};
+        _passes.reset();
         _postProcess.Shutdown();
         Render::RenderSystem::Shutdown();
     }
@@ -504,6 +557,23 @@ void Application::SetPerfCapture(const PerfCaptureConfig &config)
     _capturePerPassTiming = config.perPassTiming;
     _captureImagePath = config.imagePath;
     _captureOptionsPath = config.optionsPath;
+}
+
+void Application::FinishCaptureImage(Render::Vulkan::VulkanContext &context, Render::FrameCapture &capture)
+{
+    nvrhi::IDevice *device = context.GetDevice();
+    device->waitForIdle();
+    const std::optional<Render::CapturedImage> image = capture.Read(device);
+    if (!image || !Render::FrameCapture::WritePng(*image, _captureImagePath))
+    {
+        Core::Log::Error("PerfCapture: the picture could not be written to '{}'.", _captureImagePath);
+        _captureFailed = true;
+        return;
+    }
+    if (!CheckCaptureImage(*image, context.GetDeviceName()))
+    {
+        _captureFailed = true;
+    }
 }
 
 void Application::SetExactResolution(int32_t width, int32_t height)
@@ -582,6 +652,17 @@ using Seconds = std::chrono::duration<double>;
 /// in normal play, low enough that a streaming hitch is always reported.
 constexpr double kSlowFrameMs = 8.0;
 
+/// The longest frame the automatic exposure adapts over in one go, so a hitch
+/// or the first frame does not jump it as far as a long pause would.
+constexpr double kMaxExposureFrameSeconds = 0.25;
+
+/// The GPU timers opened inside the app's hooks rather than by a declared pass:
+/// the editor's three overlay passes.
+constexpr std::uint32_t kHookPassTimers = 3;
+static_assert(Passes::kAppPassTimerCount + Runtime::Passes::kScenePassTimerCount + kHookPassTimers <=
+              Render::kMaxTimedPasses,
+              "the frame opens more GPU timers than the timer pool holds");
+
 /// Waits until `target` while wasting as little CPU as possible. sleep_for()
 /// overshoots its request by a scheduler-dependent amount, so we can't sleep the
 /// whole way (we'd overshoot `target`) nor spin the whole way (that pins a core).
@@ -634,6 +715,14 @@ void Application::Run()
     const double physicsStep = 1.0 / _config.physicsHz;
 
     OnStart();
+
+    // After OnStart and before the first frame: a sheet's texture is found by
+    // its path through the asset index, which an editor builds in OnStart, and
+    // the screens naming its sprites load during frames.
+    if (_ui != nullptr)
+    {
+        LoadUiSprites(_uiSettings);
+    }
 
     Clock::time_point prevTime = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
@@ -987,7 +1076,7 @@ void Application::Run()
             ++_frameSampleCount;
         }
 
-        if (_perfCapture)
+        if (_perfCapture && !AssetsStreaming())
         {
             RecordCaptureFrame(cpuMs, gpuMs, rawDt, vulkanContext);
         }
@@ -1022,14 +1111,27 @@ void Application::Run()
     // "destroy ... currently in use by VkCommandBuffer", then a crash).
     if (_presentationInitialized)
     {
-        if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        {
             vulkanContext->GetDevice()->waitForIdle();
+            // Before the process ends without waiting for workers: a screenshot
+            // taken just before quitting is still written in full.
+            FinishScreenshots(vulkanContext->GetDevice());
+        }
     }
 
     OnShutdown();
 
     // Shuts Steam down, which the destructors skipped below never would.
     _steam.reset();
+
+    // A run the validation layer found errors in fails, so a test that drives it
+    // cannot pass on a log nobody read.
+    const uint32_t validationErrors = Render::Vulkan::VulkanContext::ValidationErrorCount();
+    if (validationErrors > 0u)
+    {
+        Core::Log::Error("Application: this run raised {} Vulkan validation errors.", validationErrors);
+    }
 
     // The process ends here instead of unwinding. Workers may be mid-way through a
     // texture encode that takes seconds, and waiting for it makes a closed window
@@ -1040,7 +1142,7 @@ void Application::Run()
     std::cout.flush();
     std::cerr.flush();
     std::fflush(nullptr);
-    std::_Exit(_startupFailed ? EXIT_FAILURE : EXIT_SUCCESS);
+    std::_Exit(_startupFailed || _captureFailed || validationErrors > 0u ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
 namespace
@@ -1138,105 +1240,60 @@ void Application::RenderFrame()
         return; // minimized, or swapchain is stale and about to be resized
     }
 
-    // The scene always renders into PostProcess's HDR offscreen target — the
-    // swapchain cannot hold radiance. Everything else about `frame` (commandList,
-    // width, height) is unchanged.
-    Render::RenderFrame sceneFrame = *frame;
-    sceneFrame.framebuffer = _postProcess.SceneFramebuffer();
-    sceneFrame.colorTexture = _postProcess.SceneColorTexture();
-    sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
+    // Each image the passes name, at the surface this frame's route puts it on.
+    // The scene always draws offscreen, in HDR: the swapchain cannot hold
+    // radiance.
+    const Render::RenderTarget swapchain{.framebuffer = frame->framebuffer,
+                                         .colorTexture = frame->colorTexture,
+                                         .depthTexture = frame->depthTexture,
+                                         .width = frame->width,
+                                         .height = frame->height};
+    const Render::ChainRoute &route = _postProcess.Route();
+    Passes::SceneTarget sceneTarget{_postProcess.Target(route.sceneTarget, swapchain)};
+    Passes::SceneHdr sceneHdr{_postProcess.Target(route.sceneHdr, swapchain)};
+    Passes::ToneMapped toneMapped{_postProcess.Target(route.toneMapped, swapchain)};
+    Passes::Display display{_postProcess.Target(route.display, swapchain)};
+    Passes::Screen screen{swapchain};
+    Passes::AppImports imports{.frameHooks = *this,
+                               .postProcess = _postProcess,
+                               .quadPass = _uiPass,
+                               .sceneTarget = sceneTarget,
+                               .sceneHdr = sceneHdr,
+                               .toneMapped = toneMapped,
+                               .display = display,
+                               .screen = screen};
 
+    // The window-refresh callback also draws, so the time between draws is
+    // measured here rather than taken from the loop.
+    const Clock::time_point now = Clock::now();
+    const float frameSeconds =
+        static_cast<float>(std::min(Seconds(now - _lastPostProcess).count(), kMaxExposureFrameSeconds));
+    _lastPostProcess = now;
+
+    // The game UI is part of the finished frame, so it draws before the capture.
+    // A redraw from the window-refresh callback shows the last frame's list,
+    // which is still current. Null only if that callback fires during bring-up,
+    // before the UI exists.
+    const Passes::AppFrame appFrame{.tonemap = _options.tonemap,
+                                    .gameUi = _ui && _uiShown ? &_ui->GetDrawList() : nullptr,
+                                    .clearColor = Math::ToLinear(_config.clearColor),
+                                    .frameSeconds = frameSeconds,
+                                    .route = route,
+                                    .bloomEnabled = _options.bloomEnabled,
+                                    .captureFrame = (_captureImagePending && !_closeRequested) ||
+                                                    !_frameImagePath.empty()};
+    if (_passes)
     {
-        // The last unscoped thing inside `render` — small, but an unnamed gap
-        // between two slices is exactly what sends you looking in the wrong place.
-        ASSISI_PROFILE_GPU_PASS(sceneFrame.commandList, "clear-targets");
-        // The scene target holds radiance, so the sRGB clear colour is decoded on
-        // the way in — same treatment any sRGB texture gets. The tone map puts it
-        // back where it was.
-        const Assisi::Math::Color4<Assisi::Math::ColorSpace::Linear> clearLinear =
-            Assisi::Math::ToLinear(_config.clearColor);
-        sceneFrame.commandList->clearTextureFloat(
-            sceneFrame.colorTexture, nvrhi::AllSubresources,
-            nvrhi::Color(clearLinear.r, clearLinear.g, clearLinear.b, _config.clearColor.a));
-        if (sceneFrame.depthTexture)
-        {
-            sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
-                                                             1.0f, false, 0);
-        }
+        _passes->Run(imports, frame->commandList, appFrame);
     }
 
-    {
-        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "scene");
-        OnRender(sceneFrame);
-    }
-
-    {
-        // Resolve, then tone map: the chain's HDR half. The look rides in push
-        // constants, so handing it over per frame is what makes an editor slider
-        // land on the next frame with nothing to rebuild.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process");
-        _postProcess.SetTonemapSettings(_options.tonemap);
-        _postProcess.RunBeforeOverlays(frame->commandList, *frame);
-    }
-
-    // Display-referred content, drawn into the tone-mapped image rather than
-    // through the tone map. The target still carries the scene's depth, so
-    // overlays occlude against the scene exactly as they did.
-    if (nvrhi::IFramebuffer *overlayFramebuffer = _postProcess.OverlayFramebuffer())
-    {
-        Render::RenderFrame overlayFrame = *frame;
-        overlayFrame.framebuffer = overlayFramebuffer;
-        overlayFrame.depthTexture = _postProcess.SceneDepthTexture();
-
-        // A scope, not a pass: the overlay passes open their own pass timers.
-        ASSISI_PROFILE_GPU_SCOPE(overlayFrame.commandList, "overlays");
-        OnRenderOverlays(overlayFrame);
-    }
-
-    {
-        // Whatever is left: the overlay resolve, and FXAA or the final copy.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "post-process-output");
-        _postProcess.RunAfterOverlays(frame->commandList, *frame);
-    }
-
-    // The game UI is part of the finished frame, so it draws before the capture
-    // below. A redraw from the window-refresh callback lands here without a Sync
-    // and shows the last one's list, which is still current. Null only if that
-    // callback fires during bring-up, before the UI exists.
-    if (_ui && _uiShown)
-    {
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "game-ui");
-        _uiPass.Draw(frame->commandList, frame->framebuffer, _ui->GetDrawList());
-    }
-
-    // The finished frame, before the debug UI draws over it.
-    Render::FrameCapture frameCapture;
-    bool captureImage = false;
-    if (_captureImagePending && !_closeRequested)
-    {
-        captureImage = frameCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
-        if (!captureImage)
-        {
-            RequestClose();
-        }
-    }
-
-    // A picture an app asked for, which unlike the capture's does not end the run.
-    Render::FrameCapture requestedCapture;
-    std::string requestedPath;
-    requestedPath.swap(_frameImagePath);
-    const bool requestedImage =
-        !requestedPath.empty() &&
-        requestedCapture.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
-
-    {
-        // One scope, because what happens inside belongs to whoever overrode
-        // this: bringing a UI toolkit up, drawing into it and submitting it are
-        // that layer's business, and an application that draws no UI spends
-        // nothing here.
-        ASSISI_PROFILE_GPU_PASS(frame->commandList, "ui");
-        OnRenderUi(*frame);
-    }
+    // What reaches the screen, debug UI and all. After the UI, which is also
+    // where a request for one is made, so the shot is of the frame that asked.
+    Render::FrameCapture screenshot;
+    std::string screenshotPath;
+    screenshotPath.swap(_screenshotPath);
+    const bool screenshotRecorded =
+        !screenshotPath.empty() && screenshot.Record(vulkanContext->GetDevice(), frame->commandList, frame->colorTexture);
 
     {
         ASSISI_PROFILE_SCOPE("end-frame");
@@ -1245,15 +1302,107 @@ void Application::RenderFrame()
 
     // After EndFrame, which submits the list the copy was recorded on. The flag
     // stays set so the capture's report is not written a second time.
-    if (captureImage)
+    if (_readback.captured)
     {
-        (void)frameCapture.Write(vulkanContext->GetDevice(), _captureImagePath);
+        FinishCaptureImage(*vulkanContext, _readback.capture);
         RequestClose();
     }
-    if (requestedImage)
+    if (_readback.requestedTaken)
     {
-        (void)requestedCapture.Write(vulkanContext->GetDevice(), requestedPath);
+        (void)_readback.requested.Write(vulkanContext->GetDevice(), _readback.requestedPath);
     }
+    _readback = FrameReadback{};
+    // Read back frames later rather than now: waiting here would stall this
+    // frame on the GPU, and the PNG encode is a worker's job.
+    if (screenshotRecorded)
+    {
+        if (screenshot.MarkSubmitted(vulkanContext->GetDevice()))
+        {
+            _pendingScreenshots.push_back(
+                PendingScreenshot{.capture = std::move(screenshot), .path = std::move(screenshotPath)});
+        }
+        else
+        {
+            (void)screenshot.Write(vulkanContext->GetDevice(), screenshotPath);
+        }
+    }
+    CollectScreenshots(vulkanContext->GetDevice());
+}
+
+void Application::DrawScene(Render::RenderFrame &frame, Passes::SceneLook &look)
+{
+    OnRender(frame);
+    // The app sets both while it draws, so they are read after.
+    look = Passes::SceneLook{.settings = Render::Sanitized(_scenePostProcess), .passthrough = _tonemapPassthrough};
+}
+
+void Application::DrawOverlays(Render::RenderFrame &frame)
+{
+    OnRenderOverlays(frame);
+}
+
+void Application::DrawUi(Render::RenderFrame &frame)
+{
+    // What happens inside belongs to whoever overrode this: bringing a UI
+    // toolkit up, drawing into it and submitting it are that layer's business,
+    // and an application that draws no UI spends nothing here.
+    OnRenderUi(frame);
+}
+
+void Application::CaptureFrame(nvrhi::ICommandList *commandList, nvrhi::ITexture *screen)
+{
+    nvrhi::IDevice *device = Render::RenderSystem::GetVulkanContext()->GetDevice();
+    if (_captureImagePending && !_closeRequested)
+    {
+        _readback.captured = _readback.capture.Record(device, commandList, screen);
+        if (!_readback.captured)
+        {
+            RequestClose();
+        }
+    }
+
+    // A picture an app asked for, which unlike the capture's does not end the run.
+    _readback.requestedPath.swap(_frameImagePath);
+    _readback.requestedTaken =
+        !_readback.requestedPath.empty() && _readback.requested.Record(device, commandList, screen);
+}
+
+void Application::CollectScreenshots(nvrhi::IDevice *device)
+{
+    std::erase_if(_screenshotWrites, [](const Core::Task<bool> &write) { return write.IsComplete(); });
+    for (std::size_t i = 0; i < _pendingScreenshots.size();)
+    {
+        PendingScreenshot &pending = _pendingScreenshots[i];
+        if (!pending.capture.Ready(device))
+        {
+            ++i;
+            continue;
+        }
+        if (std::optional<Render::CapturedImage> image = pending.capture.Read(device))
+        {
+            _screenshotWrites.push_back(
+                _jobs.Run(Core::Pool::Worker, [image = std::move(*image), path = std::move(pending.path)]
+                          { return Render::FrameCapture::WritePng(image, path); }));
+        }
+        _pendingScreenshots.erase(_pendingScreenshots.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+
+void Application::FinishScreenshots(nvrhi::IDevice *device)
+{
+    for (PendingScreenshot &pending : _pendingScreenshots)
+    {
+        if (const std::optional<Render::CapturedImage> image = pending.capture.Read(device))
+        {
+            (void)Render::FrameCapture::WritePng(*image, pending.path);
+        }
+    }
+    _pendingScreenshots.clear();
+    for (Core::Task<bool> &write : _screenshotWrites)
+    {
+        write.Wait();
+    }
+    _screenshotWrites.clear();
 }
 
 void Application::InitializeAudio()
@@ -1321,16 +1470,78 @@ void Application::InitializeAudio()
     }
 }
 
-void Application::LoadUiStrings()
+void Application::LoadUiSettings()
 {
-    // A project with no UI settings has no tables, which is not an error.
+    // A project with no UI settings has no tables, themes or sheets, which is
+    // not an error.
     Mondrian::UiConfig settings;
     if (const std::expected<void, Core::ConfigError> read = Core::ReadConfig(Mondrian::kUiConfigPath, settings); !read)
     {
-        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables.", Mondrian::kUiConfigPath,
-                        Core::ToString(read.error()));
+        Core::Log::Info("UI: no UI settings at '{}' ({}); the UI has no string tables, themes or sprite sheets.",
+                        Mondrian::kUiConfigPath, Core::ToString(read.error()));
         return;
     }
+    LoadUiStrings(settings);
+    LoadUiThemes(settings);
+    _uiSettings = std::move(settings);
+}
+
+void Application::LoadUiSprites(const Mondrian::UiConfig &settings)
+{
+    const std::expected<Mondrian::SpriteSheets, Mondrian::SpriteSheetLoadError> sheets =
+        Mondrian::LoadSpriteSheets(settings);
+    if (!sheets)
+    {
+        Core::Log::Error("UI: the sprite sheet '{}' did not load ({}); every sprite shows the placeholder.",
+                         sheets.error().vpath, Mondrian::ToString(sheets.error().error));
+        return;
+    }
+    for (const Mondrian::ListedSheet &sheet : sheets->listed)
+    {
+        // A sheet whose texture did not load, which LoadUiTexture has said,
+        // leaves its sprites out, and a screen naming one shows the
+        // placeholder.
+        if (const std::optional<Mondrian::Sprite> texture = LoadUiTexture(sheet.document.texture.View()))
+        {
+            _ui->AddSpriteSheet(sheet.vpath, sheet.document, texture->texture);
+        }
+    }
+}
+
+std::optional<Mondrian::Sprite> Application::LoadUiTexture(std::string_view vpath)
+{
+    Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (vulkanContext == nullptr)
+    {
+        return std::nullopt;
+    }
+    Render::Texture texture;
+    const std::optional<Mondrian::Extent> size =
+        Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), vpath);
+    if (!size)
+    {
+        return std::nullopt;
+    }
+    const Mondrian::TextureId id = _uiPass.RegisterTexture(texture.NativeTexture());
+    _uiTextures.push_back(std::move(texture));
+    return Mondrian::WholeTexture(id, size->width, size->height);
+}
+
+void Application::LoadUiThemes(const Mondrian::UiConfig &settings)
+{
+    std::expected<Mondrian::Themes, Mondrian::ThemeLoadError> themes = Mondrian::LoadThemes(settings);
+    if (!themes)
+    {
+        Core::Log::Error("UI: the theme '{}' did not load ({}); every node wears only its own look.",
+                         themes.error().vpath, Mondrian::ToString(themes.error().error));
+        return;
+    }
+    _uiThemes = std::move(*themes);
+    _ui->SetThemes(&_uiThemes);
+}
+
+void Application::LoadUiStrings(const Mondrian::UiConfig &settings)
+{
     std::expected<Mondrian::StringTables, Mondrian::StringTableLoadError> tables = Mondrian::LoadStringTables(settings);
     if (!tables)
     {

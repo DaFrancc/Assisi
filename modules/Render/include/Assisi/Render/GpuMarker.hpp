@@ -30,6 +30,8 @@
 
 #include <Assisi/Chiara/Profile.hpp>
 
+#include <cstdint>
+
 #if defined(ASSISI_ENABLE_GPU_MARKERS)
 #    include <nvrhi/nvrhi.h>
 
@@ -95,6 +97,13 @@ private:
 
 namespace Assisi::Render
 {
+
+/// @brief How many GPU pass timers one frame can open. Fixed, so no query is
+/// allocated between BeginFrame and EndFrame, which would be a hitch inside
+/// the thing being measured; a timer past it is dropped with one warning. A
+/// timer is two timestamps, so the headroom costs nothing, and the scene's
+/// generated pass count is checked against it at build time.
+inline constexpr std::uint32_t kMaxTimedPasses = 64;
 
 /// @brief Opens a GPU timer around a pass on construction, closes it on
 /// destruction. Inert unless per-pass timing has been switched on.

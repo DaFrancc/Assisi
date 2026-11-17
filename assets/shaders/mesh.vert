@@ -1,7 +1,6 @@
 #version 450
 
-// Three builds of one stage. The plain one is the lit pass's whenever there is
-// no depth prepass, and is what every frame drew with before there was one.
+// Three builds of one stage. The plain one draws see-through surfaces.
 //
 // ASSISI_DEPTH_ONLY builds the prepass: position out and nothing else, plus the
 // texture coordinate and material row mesh_depth.frag alpha-tests against when
@@ -9,9 +8,10 @@
 // that draws after it.
 //
 // Both of those declare gl_Position invariant. The lit pass after a prepass
-// tests its depth against the prepass's with LessOrEqual and writes none of its
-// own, so a fragment survives only if the two stages computed its position to
-// the bit. Two separately compiled stages are free to schedule the same
+// tests its depth against the prepass's, with GreaterOrEqual for solid
+// surfaces and Equal for cutouts (reversed Z: see Render/SceneDepth.hpp), and
+// writes none of its own, so a fragment survives only if the two stages
+// computed its position to the bit. Two separately compiled stages are free to schedule the same
 // arithmetic differently unless both say invariant; one that is off by an ulp
 // leaves a crack of whatever the depth clear shows through. The plain build
 // does not declare it, so the frame without a prepass is the frame it always was.
@@ -32,6 +32,12 @@ layout(location = 3) out float vViewZ;       // view-space Z (negative for geome
 layout(location = 4) out vec3  vTangent;     // world-space tangent (for the normal-map TBN)
 layout(location = 5) out float vTangentSign; // bitangent handedness (glTF TANGENT.w)
 layout(location = 6) out flat uint vMaterialIndex; // row into the material table (per instance)
+// The plane tangent to the surface at this vertex, the one its normal n faces
+// through its position V, as its distance along n from the origin: V.n. A point
+// p lies (V - p).n below it, which is V.n less p.n, so interpolated beside
+// vNormal it gives every fragment the blend of its depths below the three
+// corners' planes (SmoothSurfaceLift).
+layout(location = 7) out float vPlaneDistance;
 #elif defined(ASSISI_ALPHA_MASK)
 // The same locations the lit build writes them at, so mesh_depth.frag reads them
 // where mesh.frag does.
@@ -81,6 +87,8 @@ layout(binding = 256) uniform FrameConstants
     vec4  shadowPcss;
     vec4  shadowCascade[8];
     mat4  shadowViewProjection[8];
+    // mesh.frag's copy goes on to the fog, which this stage never reads. Left
+    // off rather than mirrored: it is last, so leaving it moves nothing above.
 } uFrame;
 
 void main()
@@ -93,11 +101,20 @@ void main()
     vMaterialIndex = inst.materialIndex;
     vWorldPos = worldPos.xyz;
     // Normals transform by the inverse-transpose of the model's upper-left 3x3,
-    // so non-uniform scale doesn't skew them (for uniform scale/rotation this
-    // reduces to mat3(model)). Computed per-vertex from the instance's model
-    // matrix; inverse() of a 3x3 is cheap.
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
-    vNormal   = normalize(normalMatrix * inNormal);
+    // so non-uniform scale doesn't skew them. That is the cofactor matrix over
+    // the determinant; the normalize removes the scale, so only the
+    // determinant's sign is kept, which turns the normal back out of a mirrored
+    // model. Three cross products rather than a full inverse per vertex.
+    mat3 linear       = mat3(model);
+    vec3 acrossX      = cross(linear[1], linear[2]);
+    mat3 normalMatrix = mat3(acrossX, cross(linear[2], linear[0]), cross(linear[0], linear[1]));
+    // The determinant, from the cross product already taken.
+    float handedness  = sign(dot(linear[0], acrossX));
+    vNormal   = normalize(normalMatrix * inNormal * handedness);
+    // In vWorldPos's space, measured from the camera: the fragment shader takes
+    // the difference of terms as large as the distance to it, and a far origin
+    // would leave nothing of the difference but rounding.
+    vPlaneDistance = dot(worldPos.xyz, vNormal);
     // Tangents are directions along the surface, so they transform by the plain
     // model 3x3 (not the inverse-transpose) — the fragment shader re-orthonormalizes
     // against the normal, absorbing any residual skew. w carries handedness.

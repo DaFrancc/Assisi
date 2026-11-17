@@ -6,6 +6,7 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/Reflect/PredictedCompare.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -39,8 +40,8 @@ float AngleBetween(const glm::quat &a, const glm::quat &b)
 /// "@p name: mine vs host's", for a quantity the tolerances say differs.
 template <typename T> std::string Difference(std::string_view name, const T &mine, const T &host)
 {
-    return std::format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
-                       Core::Reflect::PredictedFieldText(host));
+    return Core::Format("{}: {} vs {}", name, Core::Reflect::PredictedFieldText(mine),
+                        Core::Reflect::PredictedFieldText(host));
 }
 
 /// Counts a correction the host's word for @p tick made to @p section, apart
@@ -92,8 +93,8 @@ void ReplicationClient::RecordReports(std::uint64_t tick)
         }
         const Physics::Pose pose = _physics->GetBodyPose(entity);
         const Physics::BodyState motion = _physics->GetBodyState(entity);
-        report.bodies.push_back(BodyState{.netId = netId,
-                                          .position = pose.position,
+        report.bodies.push_back(BodyState{.position = pose.position,
+                                          .netId = netId,
                                           .rotation = pose.rotation,
                                           .linearVelocity = motion.linearVelocity,
                                           .angularVelocity = motion.angularVelocity,
@@ -354,7 +355,7 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
     if (confirmed.physicsTick == serverTick && record.hasCharacter && confirmed.body.character)
     {
         ++counts.physics.compares;
-        const float divergence = glm::length(record.character.position - confirmed.body.position);
+        const float divergence = static_cast<float>(glm::length(record.character.position - confirmed.body.position));
         _corrections.divergenceSum += static_cast<double>(divergence);
         _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
         if (std::string difference = PhysicsDifference(confirmed.body, record); !difference.empty())
@@ -425,7 +426,7 @@ std::string ReplicationClient::PhysicsDifference(const BodyState &host, const Pr
 {
     const ViewSmoothing &smoothing = Smoothing();
     const Physics::CharacterFrame &mine = record.character;
-    if (glm::length(mine.position - host.position) > smoothing.predictionTolerance)
+    if (glm::length(mine.position - host.position) > static_cast<double>(smoothing.predictionTolerance))
     {
         return Difference("position", mine.position, host.position);
     }
@@ -694,7 +695,7 @@ std::vector<std::string> ReplicationClient::SyncDifferences(const PredictedRecor
         const void *b = replayed.components.data() + _predictedOffsets[i];
         if (!meta.predictedEquals(a, b))
         {
-            differences.push_back(std::format("{} {}", meta.name, meta.predictedDifference(a, b)));
+            differences.push_back(Core::Format("{} {}", meta.name, meta.predictedDifference(a, b)));
         }
     }
     return differences;
@@ -746,7 +747,7 @@ std::optional<ReplicationClient::Replay> ReplicationClient::RollBackTo(std::uint
                     .pose = body == _bodies.end()
                             ? simulated
                             : Physics::Pose{body->second.rotationError * simulated.rotation,
-                                            simulated.position + body->second.positionError},
+                                            simulated.position + glm::dvec3(body->second.positionError)},
                     .netId = netId});
         }
         if (record.hasCharacter)
@@ -790,6 +791,24 @@ ReplicationClient::AppliedCommand ReplicationClient::CommandAppliedAt(std::uint6
     return starved == 0 ? own : AppliedCommand{.command = nullptr, .starvedTicks = starved};
 }
 
+void ReplicationClient::RestoreIntentsAt(std::uint64_t tick)
+{
+    ASSISI_ASSERT(_rollingBack, "ReplicationClient::RestoreIntentsAt outside a rollback");
+    for (const auto &[netId, history] : _history)
+    {
+        const PredictedRecord &record = history.records[tick % kPredictionHistoryTicks];
+        if (record.tick != tick || !record.hasCharacter)
+        {
+            continue;
+        }
+        Physics::CharacterIntent *intent = _scene.GetMut<Physics::CharacterIntent>(EntityOf(netId));
+        if (intent != nullptr)
+        {
+            *intent = record.character.intent;
+        }
+    }
+}
+
 void ReplicationClient::EndRollback()
 {
     ASSISI_ASSERT(_rollingBack, "ReplicationClient::EndRollback without BeginRollback");
@@ -820,6 +839,19 @@ void ReplicationClient::EndRollback()
         AbsorbCorrection(body->second, before.pose, SimulatedPose(entity));
     }
     _renderedBeforeReplay.clear();
+
+    // The replay put back what each predicted character was asked and had
+    // counted at each step. One this client does not control goes on, live,
+    // as the host's newest word has it, which may have come since. Only those
+    // the replay stepped: one it left alone may have landed since that word.
+    for (const auto &[netId, body] : _bodies)
+    {
+        const ECS::Entity entity = EntityOf(netId);
+        if (body.askedByHost && _confirmed.contains(netId) && _scene.IsAlive(entity) && !ControlsEntity(entity))
+        {
+            FollowHost(entity, body);
+        }
+    }
 }
 
 const ReplicationClient::EntityPredictionCounts *ReplicationClient::PredictionCountsOf(NetId netId) const
