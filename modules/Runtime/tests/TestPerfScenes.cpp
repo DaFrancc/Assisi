@@ -8,7 +8,7 @@
 /// The first is that the scenes load at all, from the tree as committed. Their
 /// definition of done is "load from a clean clone", and the failure mode is
 /// quiet: a primitive renamed, a component field dropped, a guid changed, and
-/// the scene either refuses or silently swaps geometry for the fallback cube.
+/// the scene either refuses or swaps geometry for the ERROR sign.
 /// A gate that runs on every merge is the only version of that check anyone
 /// actually performs.
 ///

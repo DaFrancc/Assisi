@@ -5,11 +5,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 
+using Assisi::Geometry::CreateErrorSignMesh;
 using Assisi::Geometry::CreateIcosphereMesh;
 using Assisi::Geometry::CreateUnitCubeMesh;
 using Assisi::Geometry::CreateUnitCylinderMesh;
@@ -147,6 +149,96 @@ TEST_CASE("Primitives wind counter-clockwise when seen from outside")
     // The icosphere has no poles, so none of its triangles collapse.
     CheckOutwardWinding(CreateIcosphereMesh(0));
     CheckOutwardWinding(CreateIcosphereMesh(2));
+}
+
+namespace
+{
+
+/// The rows of prim://error's letters, and the vertices of one of its boxes.
+constexpr uint32_t kSignRows = 5;
+constexpr std::size_t kBoxVertices = 24;
+
+/// The height of the middle of row @p row of the sign, the bottom row 0 (m).
+float RowCentre(uint32_t row)
+{
+    return (static_cast<float>(row) + 0.5f) * Assisi::Geometry::kErrorSignCell;
+}
+
+/// Whether one of @p sign's boxes is centred at @p x, @p y.
+bool HasCellAt(const MeshData &sign, float x, float y)
+{
+    const float tolerance = 0.25f * Assisi::Geometry::kErrorSignCell;
+    for (std::size_t first = 0; first + kBoxVertices <= sign.Vertices.size(); first += kBoxVertices)
+    {
+        glm::vec3 centre{0.f};
+        for (std::size_t vertex = first; vertex < first + kBoxVertices; ++vertex)
+        {
+            centre += sign.Vertices[vertex].Position;
+        }
+        centre /= static_cast<float>(kBoxVertices);
+        if (std::abs(centre.x - x) < tolerance && std::abs(centre.y - y) < tolerance)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("CreateErrorSignMesh: every triangle winds counter-clockwise toward its own normal")
+{
+    // Its boxes sit away from the origin, so outward is each face's normal
+    // rather than the direction from the centre.
+    const MeshData mesh = CreateErrorSignMesh();
+    for (std::size_t i = 0; i + 2 < mesh.Indices.size(); i += 3)
+    {
+        const Vertex &v0 = mesh.Vertices[mesh.Indices[i]];
+        const Vertex &v1 = mesh.Vertices[mesh.Indices[i + 1]];
+        const Vertex &v2 = mesh.Vertices[mesh.Indices[i + 2]];
+        const glm::vec3 faceNormal = glm::cross(v1.Position - v0.Position, v2.Position - v0.Position);
+        CHECK(glm::dot(faceNormal, v0.Normal) > 0.0f);
+    }
+}
+
+TEST_CASE("CreateErrorSignMesh: ERROR in block letters, standing on the ground and facing +Z")
+{
+    const MeshData mesh = CreateErrorSignMesh();
+
+    // E, R, R, O, R on a 3-by-5 grid: 11 + 10 + 10 + 12 + 10 cells, a box of
+    // 12 triangles each.
+    constexpr std::size_t kCells = 53;
+    CHECK(mesh.Indices.size() == kCells * 12 * 3);
+
+    glm::vec3 low{std::numeric_limits<float>::max()};
+    glm::vec3 high{std::numeric_limits<float>::lowest()};
+    for (const Vertex &vertex : mesh.Vertices)
+    {
+        low = glm::min(low, vertex.Position);
+        high = glm::max(high, vertex.Position);
+    }
+    // Five letters three cells wide with a cell between each, five cells tall
+    // and one deep.
+    const float cell = Assisi::Geometry::kErrorSignCell;
+    CHECK(high.x - low.x == doctest::Approx(19.f * cell));
+    CHECK(high.y - low.y == doctest::Approx(5.f * cell));
+    CHECK(high.z - low.z == doctest::Approx(cell));
+    CHECK(low.y == doctest::Approx(0.f));
+    CHECK(low.x == doctest::Approx(-high.x));
+    CHECK(low.z == doctest::Approx(-high.z));
+
+    // Read from +Z, left is -x: the E's spine fills its first column from the
+    // ground to the top, while the last R's leg leaves the top right cell empty.
+    // Read from behind, the two would swap.
+    const float firstColumn = low.x + 0.5f * cell;
+    const float lastColumn = high.x - 0.5f * cell;
+    for (uint32_t row = 0; row < kSignRows; ++row)
+    {
+        CAPTURE(row);
+        CHECK(HasCellAt(mesh, firstColumn, RowCentre(row)));
+    }
+    CHECK_FALSE(HasCellAt(mesh, lastColumn, RowCentre(kSignRows - 1)));
+    CHECK(HasCellAt(mesh, lastColumn, RowCentre(kSignRows - 2)));
 }
 
 TEST_CASE("CreateUnitQuadMesh: one face toward +Z, its texture upright and unmirrored")

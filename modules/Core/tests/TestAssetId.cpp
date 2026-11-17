@@ -30,7 +30,7 @@ TEST_CASE("Built-in ids are reserved, distinct, and not nil")
     CHECK(BuiltinAssetId::Cube.ToString() == "00000000-0000-0000-0000-000000000001");
 
     // Nil excluded; every other reserved id is a resolvable primitive.
-    CHECK(BuiltinAssets().size() == 13);
+    CHECK(BuiltinAssets().size() == 14);
     for (const BuiltinAssetEntry &entry : BuiltinAssets())
     {
         CHECK(entry.id.IsReserved());
@@ -72,6 +72,7 @@ TEST_CASE("Built-in ids are stable — levels on disk store these")
     CHECK(BuiltinAssetId::Cylinder.ToString() == "00000000-0000-0000-0000-00000000000b");
     CHECK(BuiltinAssetId::CylinderHigh.ToString() == "00000000-0000-0000-0000-00000000000c");
     CHECK(BuiltinAssetId::Quad.ToString() == "00000000-0000-0000-0000-00000000000d");
+    CHECK(BuiltinAssetId::Error.ToString() == "00000000-0000-0000-0000-00000000000e");
 }
 
 TEST_CASE("AssetId string round-trips")
