@@ -202,7 +202,10 @@ locomotion -> airborne when jump && grounded { fade 0.05; };
 
 ## Setting params from code
 
-A system sets the params before the Animators system runs, by name:
+A system sets the params before the Animators system runs, by name. They live
+in the `AnimatorRun` the engine adds next to every `Animator`, which is never
+sent over the network, so run the system on every machine (see
+[Animation in a multiplayer game](animation.md#animation-in-a-multiplayer-game)):
 
 ```cpp
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -220,14 +223,14 @@ ASYSTEM(Update, name = "HeroAnimation", before = "Animators")
 void HeroAnimationSystem(Assisi::App::SystemContext &ctx)
 {
     using namespace Assisi;
-    for (auto [entity, animator, state, seen] :
-         ctx.world.scene.Query<Mut<Runtime::Animator>, Physics::CharacterState, Mut<HeroJumpsSeen>>())
+    for (auto [entity, run, state, seen] :
+         ctx.world.scene.Query<Mut<Runtime::AnimatorRun>, Physics::CharacterState, Mut<HeroJumpsSeen>>())
     {
-        Runtime::SetAnimatorFloat(animator, "speed", state.groundSpeed);
-        Runtime::SetAnimatorBool(animator, "grounded", state.ground == Physics::GroundState::OnGround);
+        Runtime::SetAnimatorFloat(run, "speed", state.groundSpeed);
+        Runtime::SetAnimatorBool(run, "grounded", state.ground == Physics::GroundState::OnGround);
         if (state.jumps != seen.jumps)
         {
-            Runtime::FireAnimatorTrigger(animator, "jump");
+            Runtime::FireAnimatorTrigger(run, "jump");
             seen.jumps = state.jumps;
         }
     }

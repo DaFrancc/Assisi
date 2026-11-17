@@ -52,6 +52,7 @@ add_executable(Assisi-App-Tests
   # The session cases run in real time, a few seconds each, so they are spread
   # over files that ctest runs side by side.
   TestBlueprintReplication.cpp
+  TestAnimationReplication.cpp
   PlayerSessionTesting.cpp
   TestPlayerSessionBodies.cpp
   TestPlayerSessionContact.cpp

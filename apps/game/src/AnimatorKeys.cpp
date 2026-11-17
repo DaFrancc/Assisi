@@ -52,16 +52,17 @@ void AnimatorKeysSystem(Assisi::App::SystemContext &ctx)
     // air for as long as it stays held.
     const bool grounded = !input.IsKeyDown(Key::Space) || input.IsKeyPressed(Key::Space);
 
-    for (auto [entity, animator] : ctx.world.scene.Query<Mut<Assisi::Runtime::Animator>>())
+    // The params live in each Animator's run, which is never sent.
+    for (auto [entity, run] : ctx.world.scene.Query<Mut<Assisi::Runtime::AnimatorRun>>())
     {
-        const float speed = Assisi::Runtime::AnimatorFloat(animator, "speed").value_or(0.f);
-        const float aiming = Assisi::Runtime::AnimatorFloat(animator, "aiming").value_or(0.f);
-        (void)Assisi::Runtime::SetAnimatorFloat(animator, "speed", Towards(speed, targetSpeed, kSpeedRate * ctx.dt));
-        (void)Assisi::Runtime::SetAnimatorFloat(animator, "aiming", Towards(aiming, targetAim, kAimRate * ctx.dt));
-        (void)Assisi::Runtime::SetAnimatorBool(animator, "grounded", grounded);
+        const float speed = Assisi::Runtime::AnimatorFloat(run, "speed").value_or(0.f);
+        const float aiming = Assisi::Runtime::AnimatorFloat(run, "aiming").value_or(0.f);
+        (void)Assisi::Runtime::SetAnimatorFloat(run, "speed", Towards(speed, targetSpeed, kSpeedRate * ctx.dt));
+        (void)Assisi::Runtime::SetAnimatorFloat(run, "aiming", Towards(aiming, targetAim, kAimRate * ctx.dt));
+        (void)Assisi::Runtime::SetAnimatorBool(run, "grounded", grounded);
         if (input.IsKeyPressed(Key::Space))
         {
-            (void)Assisi::Runtime::FireAnimatorTrigger(animator, "jump");
+            (void)Assisi::Runtime::FireAnimatorTrigger(run, "jump");
         }
     }
 }

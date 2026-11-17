@@ -1,8 +1,9 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestSkinnedMesh.cpp
-/// @brief A SkinnedMesh starts at its skeleton's rest pose, keeps what code
-/// writes into it until the mesh changes, and is saved as presence alone.
+/// @brief A SkinnedMesh's pose starts at its skeleton's rest pose and keeps
+/// what code writes into it until the mesh changes; the SkinnedMesh itself is
+/// saved as presence alone.
 
 #include <doctest/doctest.h>
 
@@ -23,6 +24,7 @@ using Assisi::Geometry::Skeleton;
 using Assisi::Runtime::BindPose;
 using Assisi::Runtime::kUnboundMesh;
 using Assisi::Runtime::SkinnedMesh;
+using Assisi::Runtime::SkinnedPose;
 
 namespace
 {
@@ -51,7 +53,7 @@ Skeleton Chain(uint32_t jointCount)
 TEST_CASE("SkinnedMesh: binding starts at the rest pose, sized for the skeleton")
 {
     const Skeleton skeleton = Chain(3);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
 
     CHECK(BindPose(skinned, skeleton, kFirstMesh) == &skeleton);
     CHECK(skinned.boundMeshId == kFirstMesh);
@@ -66,7 +68,7 @@ TEST_CASE("SkinnedMesh: a pose written from code survives binding to the same me
     // Binding runs every frame before evaluation; resetting here would undo every
     // joint code or a clip set since the last frame.
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
 
     skinned.pose[1].Rotation = glm::angleAxis(1.f, glm::vec3(0.f, 0.f, 1.f));
@@ -79,7 +81,7 @@ TEST_CASE("SkinnedMesh: a different mesh resets and resizes the pose")
 {
     const Skeleton small = Chain(2);
     const Skeleton large = Chain(4);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, small, kFirstMesh);
     skinned.pose[1].Rotation = glm::angleAxis(1.f, glm::vec3(0.f, 0.f, 1.f));
 
@@ -95,7 +97,7 @@ TEST_CASE("SkinnedMesh: a different mesh resets and resizes the pose")
 TEST_CASE("SkinnedMesh: a mesh with no skeleton leaves nothing bound")
 {
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
 
     CHECK(BindPose(skinned, Skeleton{}, kSecondMesh) == nullptr);
@@ -108,7 +110,7 @@ TEST_CASE("SkinnedMesh: a mesh with no skeleton leaves nothing bound")
 TEST_CASE("SkinnedMesh: unbinding empties it, so the next bind starts from rest")
 {
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
     skinned.pose[1].Rotation = glm::angleAxis(1.f, glm::vec3(0.f, 0.f, 1.f));
 
@@ -120,22 +122,53 @@ TEST_CASE("SkinnedMesh: unbinding empties it, so the next bind starts from rest"
     CHECK(skinned.pose[1].Rotation.w == doctest::Approx(1.f));
 }
 
-TEST_CASE("SkinnedMesh: saved and loaded by presence, bringing its MeshRenderer")
+TEST_CASE("SkinnedMesh: saved and loaded by presence, bringing its MeshRenderer and an unbound pose")
 {
     ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, SkinnedMesh{}) != nullptr);
     REQUIRE(scene.Get<Runtime::MeshRenderer>(entity) != nullptr);
+    REQUIRE(scene.Get<SkinnedPose>(entity) != nullptr);
 
     ECS::Scene loaded;
     REQUIRE(Runtime::SceneSerializer::Load(loaded, Runtime::SceneSerializer::Save(scene)).has_value());
 
     const ECS::Entity first{.index = 0, .generation = 0};
-    const SkinnedMesh *skinned = loaded.Get<SkinnedMesh>(first);
+    CHECK(loaded.Get<SkinnedMesh>(first) != nullptr);
+    const SkinnedPose *skinned = loaded.Get<SkinnedPose>(first);
     REQUIRE(skinned != nullptr);
     CHECK(skinned->boundMeshId == kUnboundMesh);
     CHECK(skinned->pose.empty());
     CHECK(loaded.Get<Runtime::MeshRenderer>(first) != nullptr);
+}
+
+TEST_CASE("SkinnedMesh: removing it lets the pose it brought go, so the entity draws its MeshRenderer's mesh")
+{
+    Render::MeshBuffer mesh;
+    mesh.SetId(kFirstMesh);
+    ECS::Scene scene;
+    const ECS::Entity entity = scene.Create();
+    REQUIRE(scene.Add(entity, SkinnedMesh{}) != nullptr);
+    Runtime::MeshRenderer *renderer = scene.Get<Runtime::MeshRenderer>(entity);
+    REQUIRE(renderer != nullptr);
+    renderer->meshBuffer = &mesh;
+    SkinnedPose *skinned = scene.Get<SkinnedPose>(entity);
+    REQUIRE(skinned != nullptr);
+    const Skeleton skeleton = Chain(3);
+    REQUIRE(BindPose(*skinned, skeleton, kFirstMesh) != nullptr);
+    constexpr uint32_t kPosedBase = 500;
+    constexpr uint32_t kPosedId = 77;
+    skinned->posed = mesh.PosedInstance(kPosedBase, kPosedId);
+    REQUIRE(Runtime::DrawnMesh(*renderer, skinned) == &skinned->posed);
+
+    // Kept while the SkinnedMesh stays.
+    Runtime::ReleaseOrphanedPoses(scene);
+    CHECK(Runtime::DrawnMesh(*renderer, skinned) == &skinned->posed);
+
+    REQUIRE(scene.Remove<SkinnedMesh>(entity) == ECS::RemoveResult::Removed);
+    Runtime::ReleaseOrphanedPoses(scene);
+    CHECK(skinned->boundMeshId == kUnboundMesh);
+    CHECK(Runtime::DrawnMesh(*renderer, skinned) == &mesh);
 }
 
 TEST_CASE("SkinnedMesh: an instance that holds no range yet draws its MeshRenderer's mesh")
@@ -144,7 +177,7 @@ TEST_CASE("SkinnedMesh: an instance that holds no range yet draws its MeshRender
     mesh.SetId(kFirstMesh);
     Runtime::MeshRenderer renderer;
     renderer.meshBuffer = &mesh;
-    const SkinnedMesh skinned;
+    const SkinnedPose skinned;
 
     CHECK(Runtime::DrawnMesh(renderer, &skinned) == &mesh);
     CHECK(Runtime::DrawnMesh(renderer, nullptr) == &mesh);
@@ -160,7 +193,7 @@ TEST_CASE("SkinnedMesh: an instance holding a range draws its own copy, not the 
     mesh.SetId(kFirstMesh);
     Runtime::MeshRenderer renderer;
     renderer.meshBuffer = &mesh;
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     skinned.posed = mesh.PosedInstance(kPosedBase, kPosedId);
 
     const Render::MeshBuffer *drawn = Runtime::DrawnMesh(renderer, &skinned);
@@ -174,7 +207,7 @@ TEST_CASE("SkinnedMesh: binding a different mesh lets the posed copy go")
 {
     // Kept, the copy would go on drawing the old mesh's range under the new mesh.
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
     skinned.posed = Render::MeshBuffer{}.PosedInstance(100, 9);
 
@@ -188,7 +221,7 @@ TEST_CASE("SkinnedMesh: binding a different mesh lets the posed copy go")
 TEST_CASE("SkinnedMesh: unbinding lets the posed copy go")
 {
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
     skinned.posed = Render::MeshBuffer{}.PosedInstance(100, 9);
 
@@ -201,7 +234,7 @@ TEST_CASE("SkinnedMesh: a pose that moves a joint is a change, the same pose aga
     // Every frame that reported a change would hold the mesh's shadow out of
     // every cache; one that missed a change would leave the shadow behind.
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
 
     Runtime::NotePoseChange(skinned);
@@ -219,7 +252,7 @@ TEST_CASE("SkinnedMesh: a pose that moves a joint is a change, the same pose aga
 TEST_CASE("SkinnedMesh: the first pose after binding another mesh is not a change")
 {
     const Skeleton skeleton = Chain(2);
-    SkinnedMesh skinned;
+    SkinnedPose skinned;
     (void)BindPose(skinned, skeleton, kFirstMesh);
     Runtime::NotePoseChange(skinned);
 

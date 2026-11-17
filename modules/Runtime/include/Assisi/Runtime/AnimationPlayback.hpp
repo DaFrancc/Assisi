@@ -61,21 +61,21 @@ struct TrackSettings
 bool AdvanceTrack(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation,
                   const Geometry::Skeleton &skeleton, std::span<Geometry::JointTransform> out);
 
-/// @brief Fills @p player's request from its own fields, for a player no
+/// @brief Fills @p request from @p player's own fields, for a player no
 ///        Animator drives.
 ///
 /// `restarts` is left as it is: only an Animator raises it, and a player it
 /// stopped driving goes on from the count its track already took.
-void RequestFromAuthored(AnimationPlayer &player);
+void RequestFromAuthored(const AnimationPlayer &player, PlayerRequest &request);
 
 /// @brief Plays @p animation on @p skinned for @p dt seconds, as the base of
-///        @p player's request, under any layers.
+///        @p playback's request, under any layers.
 ///
 /// Clearing the animation returns the pose to rest and then leaves it to code.
 /// Returns whether it rebound, which is when the caller reports missing joints.
 /// Does nothing while @p skinned is not sized for @p skeleton.
-bool AdvanceAnimationPlayer(AnimationPlayer &player, const ResolvedAnimation &animation,
-                            const Geometry::Skeleton &skeleton, float dt, SkinnedMesh &skinned);
+bool AdvanceAnimationPlayer(AnimationPlayback &playback, const ResolvedAnimation &animation,
+                            const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned);
 
 /// @brief Which names of a mask matched no joint.
 struct MaskResult
@@ -93,14 +93,14 @@ struct MaskResult
 MaskResult BuildJointMask(const Geometry::Skeleton &skeleton, Core::InternedString root,
                           std::span<const Core::InternedString> exclusions, std::vector<uint8_t> &out);
 
-/// @brief Gives each layer of @p player's request its state, before they play.
+/// @brief Gives each layer of @p playback's request its state, before they play.
 ///
 /// A state follows its layer when the list is reordered or a layer removed,
 /// found by its animation and mode, so moving a row neither restarts nor fades
 /// anything. A layer whose animation or mode changed in place keeps the state
 /// at its place, so it fades from what it was playing; a new layer starts a
 /// fresh one.
-void MatchLayerStates(AnimationPlayer &player);
+void MatchLayerStates(AnimationPlayback &playback);
 
 /// @brief Plays @p layer's animation for @p dt seconds and combines it with
 ///        @p skinned's pose inside its mask, by its weight.
@@ -110,6 +110,6 @@ void MatchLayerStates(AnimationPlayer &player);
 /// layer comes back. Names its mask lacks are left in @p state for the caller
 /// to report. Does nothing while @p skinned is not sized for @p skeleton.
 void AdvanceAnimationLayer(const LayerRequest &layer, LayerState &state, const ResolvedAnimation &animation,
-                           const Geometry::Skeleton &skeleton, float dt, SkinnedMesh &skinned);
+                           const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned);
 
 } // namespace Assisi::Runtime

@@ -58,7 +58,7 @@ to entities in the editor, but it helps to know what they are.
 | `Transform` | `<Assisi/ECS/Transform.hpp>` | Position, rotation and scale. Almost every entity has one. |
 | `Parent` | `<Assisi/ECS/Hierarchy.hpp>` | Attaches an entity to another, so it moves with it. |
 | `MeshRenderer` | `<Assisi/Runtime/Components.hpp>` | Draws a mesh with materials. |
-| `SkinnedMesh` | `<Assisi/Runtime/Components.hpp>` | Holds the pose of a rigged mesh: where each of its joints is. See [Animation](animation.md). |
+| `SkinnedMesh` | `<Assisi/Runtime/Components.hpp>` | Marks a rigged mesh, and brings a `SkinnedPose` that holds where each of its joints is. See [Animation](animation.md). |
 | `AnimationPlayer` | `<Assisi/Runtime/Components.hpp>` | Plays an animation clip or a blend space on the entity's `SkinnedMesh`, fading when it changes. See [Playing a clip](animation.md#playing-a-clip). |
 | `Camera` | `<Assisi/Runtime/Components.hpp>` | A camera. The one with `isActive` set is the one you see through. |
 | `DirectionalLight`, `PointLight`, `SpotLight` | `<Assisi/Runtime/LightComponents.hpp>` | Lights. |

@@ -6,11 +6,13 @@
 ///        transitions choose, and the player's request says what that state
 ///        plays. The system that runs it each Update only loads the file.
 ///
-/// The Animator writes only the player's request, never the fields an author
-/// set on it.
+/// The Animator writes only its AnimatorRun and the request in the player's
+/// AnimationPlayback, never a component an author set, so running it sends
+/// nothing over the network.
 ///
-/// Game code sets the file's params through SetAnimator* and FireAnimatorTrigger,
-/// in any stage before the Animator's Update.
+/// Game code sets the file's params on the entity's AnimatorRun through
+/// SetAnimator* and FireAnimatorTrigger, in any stage before the Animator's
+/// Update.
 
 #include <Assisi/Runtime/AnimatorGraph.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -25,42 +27,43 @@
 namespace Assisi::Runtime
 {
 
-/// @brief Points @p animator at @p graph, a new file or a new version of the
-///        one it runs, and writes into @p player's request what each layer
-///        plays.
+/// @brief Points @p run at @p graph, a new file or a new version of the one
+///        it runs, and writes into @p playback's request what each layer
+///        plays. @p animator supplies the clips for the file's clip params.
 ///
 /// Each layer stays in the states of the same names, as far down as they are
 /// still there, and otherwise starts at the first; a param keeps its value
 /// when the new file has one of the same name and type. Layers are matched by
 /// name too.
-void BindAnimator(Animator &animator, AnimationPlayer &player, std::shared_ptr<const AnimatorGraph> graph);
+void BindAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback &playback,
+                  std::shared_ptr<const AnimatorGraph> graph);
 
-/// @brief Runs one frame of @p animator's file and writes the result into
-///        @p player's request. Does nothing until it is bound.
+/// @brief Runs one frame of @p run's file and writes the result into
+///        @p playback's request. Does nothing until it is bound.
 ///
 /// For each layer in order: writes `progress()`, works out the lets, and fires
 /// the first transition that may, outer states first; one that may not
 /// interrupt waits while the layer is fading. With none, a clip played once
 /// that has finished moves on to its `then`. Then the state's rate, blend
 /// position and the layer's weight are written. Triggers are cleared last.
-void StepAnimator(Animator &animator, AnimationPlayer &player);
+void StepAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback &playback);
 
-/// @brief The states @p layer of @p animator is in, outermost first; empty
-///        while it is unbound or has no such layer.
-[[nodiscard]] std::vector<std::string> AnimatorStateNames(const Animator &animator, uint32_t layer);
+/// @brief The states @p layer of @p run is in, outermost first; empty while it
+///        is unbound or has no such layer.
+[[nodiscard]] std::vector<std::string> AnimatorStateNames(const AnimatorRun &run, uint32_t layer);
 
-/// @brief Sets a param of @p animator's file. False, changing nothing, when it
-///        is unbound, has no param @p name, or the param is of another type;
-///        an int param takes SetAnimatorInt, a trigger FireAnimatorTrigger.
-bool SetAnimatorFloat(Animator &animator, std::string_view name, float value);
-bool SetAnimatorInt(Animator &animator, std::string_view name, int32_t value);
-bool SetAnimatorBool(Animator &animator, std::string_view name, bool value);
+/// @brief Sets a param of @p run's file. False, changing nothing, when it is
+///        unbound, has no param @p name, or the param is of another type; an
+///        int param takes SetAnimatorInt, a trigger FireAnimatorTrigger.
+bool SetAnimatorFloat(AnimatorRun &run, std::string_view name, float value);
+bool SetAnimatorInt(AnimatorRun &run, std::string_view name, int32_t value);
+bool SetAnimatorBool(AnimatorRun &run, std::string_view name, bool value);
 
 /// @brief Sets trigger @p name for this frame. False when there is none.
-bool FireAnimatorTrigger(Animator &animator, std::string_view name);
+bool FireAnimatorTrigger(AnimatorRun &run, std::string_view name);
 
 /// @brief The value of float param @p name, for code that eases it towards a
 ///        target; nothing when it is unbound or has no such float param.
-[[nodiscard]] std::optional<float> AnimatorFloat(const Animator &animator, std::string_view name);
+[[nodiscard]] std::optional<float> AnimatorFloat(const AnimatorRun &run, std::string_view name);
 
 } // namespace Assisi::Runtime
