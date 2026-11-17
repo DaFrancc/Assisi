@@ -45,25 +45,26 @@ bool SameClips(const Geometry::ClipBlend &blend, ClipList clips)
     return true;
 }
 
-bool NeedsRebind(const AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation)
+bool NewClips(const AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation)
 {
-    return settings.animation != track.boundAnimation || settings.meshId != track.boundMeshId ||
-           animation.space != track.space || !SameClips(track.current, animation.clips);
+    return settings.animation != track.boundAnimation || animation.space != track.space ||
+           !SameClips(track.current, animation.clips);
 }
 
 /// Whatever was fading out stops, so only the current animation plays.
 void EndFade(AnimationTrack &track)
 {
     track.fading = false;
+    track.snapshotPending = false;
     track.outgoing.Sources.clear();
     track.outgoing.Weights.clear();
 }
 
-/// Fades from the pose as it is. A fade already running is frozen where it
-/// got to, so the new fade starts from what was on screen.
-void StartFade(AnimationTrack &track, const TrackSettings &settings, std::span<const Geometry::JointTransform> pose)
+/// Fades from the pose as it is, which the next sampling takes. A fade already
+/// running is frozen where it got to, so the new fade starts from what was on
+/// screen.
+void StartFade(AnimationTrack &track, const TrackSettings &settings)
 {
-    track.fromPose.assign(pose.begin(), pose.end());
     if (track.fading)
     {
         track.outgoing.Sources.clear();
@@ -77,21 +78,30 @@ void StartFade(AnimationTrack &track, const TrackSettings &settings, std::span<c
         track.outgoingSpeed = track.speed;
         track.outgoingLoop = track.loop;
     }
-    track.toPose.assign(settings.underneath.begin(), settings.underneath.end());
     track.crossFade = Geometry::CrossFade{.Elapsed = 0.f, .Duration = settings.fade};
     track.fading = true;
+    track.snapshotPending = true;
 }
 
-void BindClips(Geometry::ClipBlend &blend, ClipList clips, const Geometry::Skeleton &skeleton)
+/// Puts @p clips in @p blend, unbound until a skeleton is known.
+void TakeClips(Geometry::ClipBlend &blend, ClipList clips)
 {
     blend.Sources.resize(clips.size());
     for (std::size_t source = 0; source < clips.size(); ++source)
     {
         blend.Sources[source].Clip = clips[source];
-        blend.Sources[source].Binding = Geometry::BindClip(*clips[source], skeleton);
+        blend.Sources[source].Binding = Geometry::ClipBinding{};
     }
     // A clip on its own has all the weight; a space's come from its parameter.
     blend.Weights.assign(clips.size(), clips.size() == 1 ? 1.f : 0.f);
+}
+
+void BindClips(Geometry::ClipBlend &blend, const Geometry::Skeleton &skeleton)
+{
+    for (Geometry::BlendSource &source : blend.Sources)
+    {
+        source.Binding = Geometry::BindClip(*source.Clip, skeleton);
+    }
 }
 
 void TakePositions(AnimationTrack &track, const Geometry::BlendSpace *space)
@@ -107,25 +117,26 @@ void TakePositions(AnimationTrack &track, const Geometry::BlendSpace *space)
     }
 }
 
-void Rebind(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation,
-            const Geometry::Skeleton &skeleton, Pose out)
+/// Takes the animation's clips when they are new: a different animation fades
+/// in over the fade, from the second one on, and starts at the start phase;
+/// anything else cuts. Needs no skeleton.
+void StartClips(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation)
 {
     const bool changed = settings.animation != track.boundAnimation;
-    // Fading needs a pose to fade from that is this mesh's.
-    const bool fades = changed && settings.fade > 0.f && settings.meshId == track.boundMeshId;
-    if (fades)
+    if (changed && settings.fade > 0.f && track.started)
     {
-        StartFade(track, settings, out);
+        StartFade(track, settings);
     }
     else
     {
         EndFade(track);
         // An animation only moves the joints it has tracks for. Without this,
         // joints one played before this one moved would stay where it left them.
-        std::ranges::copy(settings.underneath, out.begin());
+        track.refillPending = true;
     }
 
-    BindClips(track.current, animation.clips, skeleton);
+    TakeClips(track.current, animation.clips);
+    track.bindingsStale = true;
     if (changed)
     {
         track.current.Phase = settings.startPhase;
@@ -133,46 +144,31 @@ void Rebind(AnimationTrack &track, const TrackSettings &settings, const Resolved
     track.space = animation.space;
     TakePositions(track, animation.space.get());
     track.boundAnimation = settings.animation;
-    track.boundMeshId = settings.meshId;
-    track.warned = false;
 }
 
-void Fade(AnimationTrack &track, const TrackSettings &settings, const Geometry::Skeleton &skeleton, Pose out)
-{
-    if (!track.outgoing.Sources.empty())
-    {
-        Geometry::AdvancePhase(track.outgoing, settings.dt * track.outgoingSpeed, track.outgoingLoop);
-        Geometry::SampleBlend(track.outgoing, skeleton, track.fromPose);
-    }
-    std::ranges::copy(settings.underneath, track.toPose.begin());
-    Geometry::SampleBlend(track.current, skeleton, track.toPose);
-    track.crossFade.Advance(settings.dt);
-    Geometry::MixPoses(track.fromPose, track.toPose, track.crossFade.Weight(), out);
-    if (track.crossFade.Done())
-    {
-        std::ranges::copy(track.toPose, out.begin());
-        EndFade(track);
-    }
-}
-
-TrackStep Step(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation,
-               const Geometry::Skeleton &skeleton, Pose out)
+/// Moves @p track on by the frame: which clips play, their weights and phases,
+/// and the fade's clock. Needs no skeleton, so a process that poses nothing
+/// can still run an animator through its states.
+TrackStep AdvanceClips(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation)
 {
     // No animation is no clips; an animation with none has not loaded yet.
     const bool loaded = settings.animation.IsNil() || !animation.clips.empty();
-    if (!loaded || std::ranges::contains(animation.clips, nullptr) || out.size() != skeleton.JointCount())
+    track.waiting = !loaded || std::ranges::contains(animation.clips, nullptr);
+    if (track.waiting)
     {
         return TrackStep::Waiting;
     }
     ASSISI_ASSERT(animation.space == nullptr || animation.space->Points.size() == animation.clips.size(),
                   "a clip per point");
-    ASSISI_ASSERT(settings.underneath.size() == out.size(), "what lies underneath is a whole pose");
 
-    const bool rebind = NeedsRebind(track, settings, animation);
-    if (rebind)
+    const bool rebound = NewClips(track, settings, animation);
+    if (rebound)
     {
-        Rebind(track, settings, animation, skeleton, out);
+        StartClips(track, settings, animation);
     }
+    // Playing no animation counts: what code sets after it fades in from the
+    // pose as it is, rather than being taken as the first and cutting in.
+    track.started = true;
     // Asked to start again: what is playing goes back to the start phase, and
     // nothing fades, since the pose on screen is the same animation's.
     if (settings.restarts != track.restarts)
@@ -191,17 +187,77 @@ TrackStep Step(AnimationTrack &track, const TrackSettings &settings, const Resol
     track.loop = settings.loop;
     if (track.fading)
     {
-        Fade(track, settings, skeleton, out);
+        if (!track.outgoing.Sources.empty())
+        {
+            Geometry::AdvancePhase(track.outgoing, settings.dt * track.outgoingSpeed, track.outgoingLoop);
+        }
+        track.crossFade.Advance(settings.dt);
+        if (track.crossFade.Done())
+        {
+            // The pose lands exactly on the new animation, as a cut would.
+            EndFade(track);
+            track.refillPending = true;
+        }
+    }
+    return rebound ? TrackStep::Rebound : TrackStep::Played;
+}
+
+/// Writes what @p track plays into @p out: binds its clips to @p skeleton when
+/// they or the mesh are new, then samples and blends. Returns Rebound when it
+/// bound, Waiting when the track has nothing to play yet.
+TrackStep SampleClips(AnimationTrack &track, const TrackSettings &settings, const Geometry::Skeleton &skeleton,
+                      Pose out)
+{
+    if (track.waiting || !track.started || out.size() != skeleton.JointCount())
+    {
+        return TrackStep::Waiting;
+    }
+    ASSISI_ASSERT(settings.underneath.size() == out.size(), "what lies underneath is a whole pose");
+
+    bool rebound = false;
+    if (settings.meshId != track.boundMeshId)
+    {
+        // A fade needs a pose to fade from that is this mesh's.
+        EndFade(track);
+        track.refillPending = true;
+        track.bindingsStale = true;
+        track.boundMeshId = settings.meshId;
+    }
+    if (track.bindingsStale)
+    {
+        BindClips(track.current, skeleton);
+        BindClips(track.outgoing, skeleton);
+        track.bindingsStale = false;
+        track.warned = false;
+        rebound = true;
+    }
+
+    if (track.fading)
+    {
+        if (track.snapshotPending)
+        {
+            track.fromPose.assign(out.begin(), out.end());
+            track.toPose.assign(settings.underneath.begin(), settings.underneath.end());
+            track.snapshotPending = false;
+        }
+        if (!track.outgoing.Sources.empty())
+        {
+            Geometry::SampleBlend(track.outgoing, skeleton, track.fromPose);
+        }
+        std::ranges::copy(settings.underneath, track.toPose.begin());
+        Geometry::SampleBlend(track.current, skeleton, track.toPose);
+        Geometry::MixPoses(track.fromPose, track.toPose, track.crossFade.Weight(), out);
     }
     else
     {
-        if (settings.refill)
+        if (settings.refill || track.refillPending)
         {
             std::ranges::copy(settings.underneath, out.begin());
         }
         Geometry::SampleBlend(track.current, skeleton, out);
     }
-    return rebind ? TrackStep::Rebound : TrackStep::Played;
+    track.refillPending = false;
+    return rebound ? TrackStep::Rebound : TrackStep::Played;
 }
 
 /// Climbs from @p joint towards the root: taken once it meets @p root, not
@@ -391,12 +447,48 @@ void RestoreUnderLayers(const AnimationPlayback &playback, Pose pose)
     }
 }
 
+/// What moving @p play on by @p dt needs: no pose, no mesh.
+TrackSettings AdvanceSettings(const PlaybackRequest &play, float dt)
+{
+    return TrackSettings{.underneath = {},
+                         .animation = play.animation,
+                         .parameter = play.parameter,
+                         .speed = play.speed,
+                         .startPhase = play.startPhase,
+                         .fade = play.fade,
+                         .dt = dt,
+                         .meshId = kUnboundMesh,
+                         .restarts = play.restarts,
+                         .loop = play.loop,
+                         .refill = false};
+}
+
+/// What sampling into a pose of mesh @p meshId needs, over @p underneath.
+TrackSettings SampleSettings(std::span<const Geometry::JointTransform> underneath, uint32_t meshId, bool refill)
+{
+    TrackSettings settings;
+    settings.underneath = underneath;
+    settings.meshId = meshId;
+    settings.refill = refill;
+    return settings;
+}
+
+bool Bound(const Geometry::Skeleton &skeleton, const SkinnedPose &skinned)
+{
+    return skinned.boundMeshId != kUnboundMesh && skinned.pose.size() == skeleton.JointCount();
+}
+
 } // namespace
 
-bool AdvanceTrack(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation,
-                  const Geometry::Skeleton &skeleton, std::span<Geometry::JointTransform> out)
+bool AdvanceTrack(AnimationTrack &track, const TrackSettings &settings, const ResolvedAnimation &animation)
 {
-    return Step(track, settings, animation, skeleton, out) == TrackStep::Rebound;
+    return AdvanceClips(track, settings, animation) == TrackStep::Rebound;
+}
+
+bool SampleTrack(AnimationTrack &track, const TrackSettings &settings, const Geometry::Skeleton &skeleton,
+                 std::span<Geometry::JointTransform> out)
+{
+    return SampleClips(track, settings, skeleton, out) == TrackStep::Rebound;
 }
 
 void RequestFromAuthored(const AnimationPlayer &player, PlayerRequest &request)
@@ -431,32 +523,36 @@ void RequestFromAuthored(const AnimationPlayer &player, PlayerRequest &request)
     }
 }
 
-bool AdvanceAnimationPlayer(AnimationPlayback &playback, const ResolvedAnimation &animation,
-                            const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned)
+void AdvancePlayerTime(AnimationPlayback &playback, const ResolvedAnimation &animation, float dt)
 {
-    if (skinned.boundMeshId == kUnboundMesh || skinned.pose.size() != skeleton.JointCount())
+    (void)AdvanceClips(playback.track, AdvanceSettings(playback.request.base, dt), animation);
+}
+
+bool SamplePlayerPose(AnimationPlayback &playback, const Geometry::Skeleton &skeleton, SkinnedPose &skinned)
+{
+    if (!Bound(skeleton, skinned))
     {
         return false;
     }
     RestoreUnderLayers(playback, skinned.pose);
-    const PlaybackRequest &base = playback.request.base;
-    const TrackSettings settings{.underneath = skeleton.RestLocal,
-                                 .animation = base.animation,
-                                 .parameter = base.parameter,
-                                 .speed = base.speed,
-                                 .startPhase = base.startPhase,
-                                 .fade = base.fade,
-                                 .dt = dt,
-                                 .meshId = skinned.boundMeshId,
-                                 .restarts = base.restarts,
-                                 .loop = base.loop,
-                                 .refill = false};
-    const bool rebound = AdvanceTrack(playback.track, settings, animation, skeleton, skinned.pose);
+    const TrackSettings settings = SampleSettings(skeleton.RestLocal, skinned.boundMeshId, /*refill=*/ false);
+    const bool rebound = SampleClips(playback.track, settings, skeleton, skinned.pose) == TrackStep::Rebound;
     if (!playback.request.layers.empty())
     {
         playback.underLayers.assign(skinned.pose.begin(), skinned.pose.end());
     }
     return rebound;
+}
+
+bool AdvanceAnimationPlayer(AnimationPlayback &playback, const ResolvedAnimation &animation,
+                            const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned)
+{
+    if (!Bound(skeleton, skinned))
+    {
+        return false;
+    }
+    AdvancePlayerTime(playback, animation, dt);
+    return SamplePlayerPose(playback, skeleton, skinned);
 }
 
 void MatchLayerStates(AnimationPlayback &playback)
@@ -525,15 +621,31 @@ MaskResult BuildJointMask(const Geometry::Skeleton &skeleton, Core::InternedStri
     return result;
 }
 
-void AdvanceAnimationLayer(const LayerRequest &layer, LayerState &state, const ResolvedAnimation &animation,
-                           const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned)
+void AdvanceLayerTime(const LayerRequest &layer, LayerState &state, const ResolvedAnimation &animation, float dt)
 {
-    if (skinned.boundMeshId == kUnboundMesh || skinned.pose.size() != skeleton.JointCount())
-    {
-        return;
-    }
     SlideWeight(layer, state, dt);
+    const TrackStep step = AdvanceClips(state.track, AdvanceSettings(layer.play, dt), animation);
+    // Kept until the layer is next sampled, which may be frames later at weight 0.
+    if (step == TrackStep::Rebound && state.track.fading)
+    {
+        state.fadeStarted = true;
+    }
+}
+
+bool SampleLayerPose(const LayerRequest &layer, LayerState &state, const Geometry::Skeleton &skeleton,
+                     SkinnedPose &skinned)
+{
+    if (!Bound(skeleton, skinned))
+    {
+        return false;
+    }
     RefreshMask(layer, state, skeleton, skinned.boundMeshId);
+    // A layer at weight 0 shows nothing, so it is not sampled at all; its
+    // timeline still moved on in AdvanceLayerTime.
+    if (state.weight <= 0.f)
+    {
+        return false;
+    }
 
     // An additive layer measures from rest, so a joint its animation doesn't
     // move adds nothing; an override one leaves such a joint as it is below.
@@ -545,38 +657,34 @@ void AdvanceAnimationLayer(const LayerRequest &layer, LayerState &state, const R
     {
         state.pose.assign(underneath.begin(), underneath.end());
     }
-    const TrackSettings settings{.underneath = underneath,
-                                 .animation = layer.play.animation,
-                                 .parameter = layer.play.parameter,
-                                 .speed = layer.play.speed,
-                                 .startPhase = layer.play.startPhase,
-                                 .fade = layer.play.fade,
-                                 .dt = dt,
-                                 .meshId = skinned.boundMeshId,
-                                 .restarts = layer.play.restarts,
-                                 .loop = layer.play.loop,
-                                 .refill = true};
-    const TrackStep step = Step(state.track, settings, animation, skeleton, state.pose);
+    const TrackSettings settings = SampleSettings(underneath, skinned.boundMeshId, /*refill=*/ true);
+    const TrackStep step = SampleClips(state.track, settings, skeleton, state.pose);
     if (step == TrackStep::Waiting)
     {
-        return;
+        return false;
     }
     if (additive)
     {
-        UpdateReference(state, skeleton, step == TrackStep::Rebound && state.track.fading);
-    }
-    if (state.weight <= 0.f)
-    {
-        return;
-    }
-    if (additive)
-    {
+        UpdateReference(state, skeleton, state.fadeStarted);
         Add(state, skinned.pose);
     }
     else
     {
         Override(state, skinned.pose);
     }
+    state.fadeStarted = false;
+    return step == TrackStep::Rebound;
+}
+
+void AdvanceAnimationLayer(const LayerRequest &layer, LayerState &state, const ResolvedAnimation &animation,
+                           const Geometry::Skeleton &skeleton, float dt, SkinnedPose &skinned)
+{
+    if (!Bound(skeleton, skinned))
+    {
+        return;
+    }
+    AdvanceLayerTime(layer, state, animation, dt);
+    SampleLayerPose(layer, state, skeleton, skinned);
 }
 
 } // namespace Assisi::Runtime

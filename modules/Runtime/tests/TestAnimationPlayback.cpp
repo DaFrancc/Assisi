@@ -436,6 +436,20 @@ TEST_CASE("Animation playback: clearing the animation with a fade eases back to 
     CHECK_FALSE(rig.playback.track.fading);
 }
 
+TEST_CASE("Animation playback: a player that starts with no animation fades into the first one it is given")
+{
+    Rig rig;
+    rig.Stop();
+    (void)rig.Advance(kFrame);
+    REQUIRE(rig.Knee() == doctest::Approx(0.f));
+
+    rig.player.fade = 1.f;
+    rig.Play(KneeHeld(10.f, 1.f), 2);
+    (void)rig.Advance(2.f * kFrame);
+    CHECK(rig.playback.track.fading);
+    CHECK(rig.Knee() == doctest::Approx(5.f));
+}
+
 TEST_CASE("Animation playback: an animation set after none fades in from the pose as it is")
 {
     Rig rig;

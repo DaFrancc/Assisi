@@ -127,9 +127,9 @@ std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &ass
     return std::nullopt;
 }
 
-/// Plays each layer of @p playback's request over the pose its base wrote, in order.
-void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayback &playback, const Geometry::Skeleton &skeleton,
-                   float dt, Runtime::SkinnedPose &skinned)
+/// Moves each layer of @p playback's request on by @p dt, in order. A layer
+/// whose clips are still loading waits, and is not sampled this frame.
+void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayback &playback, float dt)
 {
     Runtime::MatchLayerStates(playback);
     for (std::size_t index = 0; index < playback.request.layers.size(); ++index)
@@ -138,12 +138,27 @@ void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayback &playbac
         Runtime::LayerState &state = playback.layerStates[index];
         const std::optional<Runtime::ResolvedAnimation> animation =
             ResolveAnimation(assets, layer.play.animation, state.track);
-        if (!animation.has_value())
+        state.track.waiting = !animation.has_value();
+        if (animation.has_value())
         {
-            continue;
+            Runtime::AdvanceLayerTime(layer, state, *animation, dt);
         }
-        Runtime::AdvanceAnimationLayer(layer, state, *animation, skeleton, dt, skinned);
-        WarnMissingJoints(state.track);
+    }
+}
+
+/// Writes each layer of @p playback's request over the pose its base wrote, in order.
+void SampleLayers(Runtime::AnimationPlayback &playback, const Geometry::Skeleton &skeleton,
+                  Runtime::SkinnedPose &skinned)
+{
+    for (std::size_t index = 0; index < playback.request.layers.size(); ++index)
+    {
+        const Runtime::LayerRequest &layer = playback.request.layers[index];
+        Runtime::LayerState &state = playback.layerStates[index];
+        // Only when it bound: a layer at weight 0 may have clips never bound.
+        if (Runtime::SampleLayerPose(layer, state, skeleton, skinned))
+        {
+            WarnMissingJoints(state.track);
+        }
         WarnMissingMaskJoints(layer, state, index);
     }
 }
@@ -182,26 +197,31 @@ void AnimationPlayerSystem(SystemContext &ctx)
          ctx.world.scene.Query<Runtime::AnimationPlayer, Mut<Runtime::AnimationPlayback>, Mut<Runtime::SkinnedPose>,
                                Runtime::MeshRenderer>())
     {
-        // Before the mesh is checked, so a run an Animator left behind is
-        // emptied even while nothing can be posed.
-        const bool driven = DrivenByAnimator(ctx.world.scene, entity);
+        if (!DrivenByAnimator(ctx.world.scene, entity))
+        {
+            Runtime::RequestFromAuthored(player, playback.request);
+        }
+        // Time moves on whether or not there is a mesh to pose, so an Animator
+        // runs through its states where nothing is drawn.
+        const std::optional<Runtime::ResolvedAnimation> animation =
+            ResolveAnimation(*ctx.assets, playback.request.base.animation, playback.track);
+        playback.track.waiting = !animation.has_value();
+        if (animation.has_value())
+        {
+            Runtime::AdvancePlayerTime(playback, *animation, ctx.dt);
+        }
+        AdvanceLayers(*ctx.assets, playback, ctx.dt);
+
         if (Runtime::BindSkinnedMesh(skinned, renderer) == nullptr)
         {
             continue;
         }
-        if (!driven)
-        {
-            Runtime::RequestFromAuthored(player, playback.request);
-        }
         const Geometry::Skeleton &skeleton = renderer.meshBuffer->Skeleton();
-        const std::optional<Runtime::ResolvedAnimation> animation =
-            ResolveAnimation(*ctx.assets, playback.request.base.animation, playback.track);
-        if (animation.has_value() &&
-            Runtime::AdvanceAnimationPlayer(playback, *animation, skeleton, ctx.dt, skinned))
+        if (Runtime::SamplePlayerPose(playback, skeleton, skinned))
         {
             WarnMissingJoints(playback.track);
         }
-        AdvanceLayers(*ctx.assets, playback, skeleton, ctx.dt, skinned);
+        SampleLayers(playback, skeleton, skinned);
     }
 }
 

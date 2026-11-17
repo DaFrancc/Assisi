@@ -321,6 +321,28 @@ TEST_CASE("Animation layers: at weight 0 a layer's timeline still runs, and a ma
     CHECK(missing.playback.layerStates[0].rootMissing);
 }
 
+TEST_CASE("Animation layers: a layer at weight 0 only advances: its clips are never bound or sampled")
+{
+    Rig rig;
+    AnimationLayer &aim = rig.Add(kAim, LayerMode::Override, "spine");
+    aim.weight = 0.f;
+    rig.Advance(0.5f);
+    const Runtime::AnimationTrack &track = rig.playback.layerStates[0].track;
+    CHECK(track.current.Phase > 0.f);
+    REQUIRE(track.current.Sources.size() == 1);
+    CHECK(track.current.Sources[0].Binding.JointOfTrack.empty());
+    CHECK(rig.X(Spine) == doctest::Approx(0.f));
+    // Nothing was bound, so there is nothing for the caller to report.
+    CHECK_FALSE(Runtime::SampleLayerPose(rig.playback.request.layers[0], rig.playback.layerStates[0],
+                                         rig.skeleton, rig.skinned));
+
+    // Turned up, it binds and shows.
+    aim.weight = 1.f;
+    rig.Advance(0.f);
+    CHECK_FALSE(track.current.Sources[0].Binding.JointOfTrack.empty());
+    CHECK(rig.X(Spine) == doctest::Approx(3.f));
+}
+
 TEST_CASE("Animation layers: reordering the list moves each layer's playback with it")
 {
     Rig rig;
