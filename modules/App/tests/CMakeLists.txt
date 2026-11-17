@@ -65,6 +65,7 @@ add_executable(Assisi-App-Tests
   TestPlayerSessionReach.cpp
   TestPlayerSessionTicks.cpp
   TestPlayerSessionWalls.cpp
+  TestPlayerSessionAnimation.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
@@ -100,6 +101,9 @@ target_link_libraries(Assisi-App-Tests
     Assisi::App
     Assisi-App-TestSystems
     Assisi::TestSupport
+    # The animator compiler, for the session tests that give characters built in
+    # code an animator written in the test.
+    Assisi::RuntimeImport
 )
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen

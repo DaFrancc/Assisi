@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@
 #include <Assisi/App/FixedStepClock.hpp>
 #include <Assisi/App/NetworkedPlay.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/AssetStore.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -66,11 +68,14 @@ void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view mo
 /// clock and tick, since a client runs a little faster or slower than the host.
 struct Machine
 {
-    /// Runs the systems the editor's play runs a player with, its session
-    /// tuned by @p config.
-    explicit Machine(NetSync::ReplicationConfig config = {});
+    /// Runs the systems the editor's play runs a player with, and @p extra,
+    /// its session tuned by @p config.
+    explicit Machine(NetSync::ReplicationConfig config = {}, std::vector<std::string> extra = {});
 
     App::World world{Physics::NoCollisionAssets()};
+    /// What this machine's frame systems resolve assets through. Never
+    /// initialized: a test provides what its systems need (AssetStore::Provide).
+    Core::AssetStore assets;
     App::NetworkedPlay play;
     Core::EventQueue universal{Core::EventScope::Universal};
     App::FixedStepClock clock{kStep, kMaxStepsPerFrame};
@@ -86,6 +91,10 @@ struct Machine
 
 /// One fixed step on @p machine, as every program runs one.
 void Step(Machine &machine, std::uint64_t localTick);
+
+/// @p machine's per-frame phase, after its fixed steps, as every program runs
+/// it: its Update systems, with its asset store and animation on.
+void Update(Machine &machine);
 
 template <typename T> std::int32_t Count(ECS::Scene &scene)
 {
@@ -116,7 +125,9 @@ struct Session
 {
     std::vector<std::unique_ptr<Machine>> machines;
 
-    Machine &Add(NetSync::ReplicationConfig config = {});
+    /// A machine running @p extra systems besides a player's, such as the
+    /// animation systems.
+    Machine &Add(NetSync::ReplicationConfig config = {}, std::vector<std::string> extra = {});
 
     /// Runs @p frames frames. Real time has to match: these are real sockets,
     /// and a client's clock measures the trip in milliseconds and leads by it
@@ -139,6 +150,7 @@ struct Session
                 {
                     Step(*machine, ++machine->tick);
                 }
+                Update(*machine);
                 // Once a frame, after the steps, as the editor draws.
                 machine->play.Session().SmoothView(kStep);
             }
