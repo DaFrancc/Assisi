@@ -184,6 +184,14 @@ void SetSmoothing(const ViewSmoothing &smoothing);
 /// no longer describe either of them.
 void SetQuantization(const BodyQuantization &quantization);
 
+/// @brief Bits of a character's jump and landing counts on the wire. A count
+/// that changed means a jump or a landing, even one between two records; 16
+/// in one gap would read as none, and a jump takes about half a second.
+inline constexpr std::uint32_t kCharacterCountBits = 4;
+
+/// @brief The bits of a count that cross, as a mask.
+inline constexpr std::uint32_t kCharacterCountMask = (1u << kCharacterCountBits) - 1u;
+
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
@@ -203,6 +211,11 @@ struct BodyState
     /// it is not 1.
     float speedScale = 1.f;
 
+    /// A character's CharacterState::jumps and landings. Only the low
+    /// kCharacterCountBits cross, so a received one holds only those.
+    std::uint32_t jumps = 0;
+    std::uint32_t landings = 0;
+
     bool asleep = false;
     /// A character's record, which also says how it stands and on what: a
     /// client predicting it compares both, since a wrong one moves it only
@@ -216,11 +229,15 @@ struct BodyState
     Physics::Stance wantedStance = Physics::Stance::Standing;
     /// A character's CharacterIntent::sprint.
     bool sprint = false;
+    /// Whether a character has jumped since it last stood, which keeps it
+    /// from jumping again however recently it left the ground.
+    bool jumpedSinceGrounded = false;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when
 /// awake — the velocities, all at the resolutions Quantization() names; then,
-/// for a character, its stance and ground state and what it is asked to do.
+/// for a character, its stance and ground state, what it is asked to do, and
+/// its jumps and landings.
 /// The position is written against @p reference, which every record in the
 /// same run shares.
 void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer);

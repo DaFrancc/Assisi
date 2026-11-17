@@ -174,7 +174,16 @@ character walks on at the speed it has on the host instead of slowing down.
 The same goes for characters an AI moves on the host.
 
 A jump is not part of this. Your machine sees another player jump when the
-host's update says it is in the air.
+host's update says it is in the air. Its `CharacterState` still says what the
+host's does, `jumps` and `landings` included: the host sends both counts, and
+each changes on your machine once for every jump and landing on the host. That
+holds even for a jump that went up and came down between two updates, which
+your machine never saw in the air. So an animation that plays a jump when
+`jumps` changes plays it for other players too. For a jump like that, `jumps`
+and `landings` both change in the same step, so an animation that plays a jump
+and then a landing gets both at once. After a long gap in the host's updates, a
+count can also go up by more than one in a step. The counts on your machine
+aren't the host's numbers, only their changes are the same.
 
 ### Components you predict
 
