@@ -3,6 +3,7 @@
 #include <Assisi/NetSync/ReplicationServer.hpp>
 
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/Math/Float.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
@@ -274,18 +275,35 @@ void ReplicationServer::CaptureBodyStates()
         BodyRecord &record = _bodyStates[netId];
 
         // A character never sleeps and carries its velocity in CharacterState,
-        // so a client can carry it on between updates.
+        // and what it is asked to do in CharacterIntent, so a client can carry
+        // it on between updates as it goes on here.
         if (const Physics::CharacterState *character = _scene.Get<Physics::CharacterState>(entity))
         {
+            const Physics::CharacterIntent *intent = _scene.Get<Physics::CharacterIntent>(entity);
+            Physics::CharacterIntent asked = intent != nullptr ? *intent : Physics::CharacterIntent{};
+            // Taken as zero, as its movement takes them: a speed that is not a
+            // number would be refused by every client, and the snapshot with it.
+            if (!Math::IsFinite(asked.move))
+            {
+                asked.move = glm::vec3{0.f};
+            }
+            if (!Math::IsFinite(asked.speedScale) || asked.speedScale < 0.f)
+            {
+                asked.speedScale = 0.f;
+            }
             record.state = BodyState{.position = transform.position,
                                      .netId = netId,
                                      .rotation = transform.rotation,
                                      .linearVelocity = character->velocity,
                                      .angularVelocity = glm::vec3{0.f},
+                                     .move = asked.move,
+                                     .speedScale = asked.speedScale,
                                      .asleep = false,
                                      .character = true,
                                      .stance = character->stance,
-                                     .ground = character->ground};
+                                     .ground = character->ground,
+                                     .wantedStance = asked.stance,
+                                     .sprint = asked.sprint};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -293,8 +311,12 @@ void ReplicationServer::CaptureBodyStates()
         if (std::find(_activeBodies.begin(), _activeBodies.end(), entity) != _activeBodies.end())
         {
             const Physics::BodyState &state = *_scene.Get<Physics::BodyState>(entity);
-            record.state = BodyState{transform.position, netId, transform.rotation,
-                                     state.linearVelocity, state.angularVelocity, /*asleep=*/ false};
+            record.state = BodyState{.position = transform.position,
+                                     .netId = netId,
+                                     .rotation = transform.rotation,
+                                     .linearVelocity = state.linearVelocity,
+                                     .angularVelocity = state.angularVelocity,
+                                     .asleep = false};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -336,7 +358,7 @@ void ReplicationServer::CaptureBodyStates()
                 continue;
 
             const bool transition = justSlept;
-            record.state = BodyState{position, netId, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/ true};
+            record.state = BodyState{.position = position, .netId = netId, .rotation = rotation, .asleep = true};
             record.tick  = _bodyStateTick;
 
             // Every other update is superseded by the next one; a delayed final

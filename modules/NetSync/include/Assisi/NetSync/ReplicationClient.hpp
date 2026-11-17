@@ -877,6 +877,14 @@ private:
         glm::quat rotationErrorStart{1.f, 0.f, 0.f, 0.f};
         float smoothingElapsed = 0.f;
         float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
+
+        /// For a character this client does not control, what the host's
+        /// newest record says it is asked to do: its move, speed scale, stance
+        /// and sprint. Kept to be asked again once a rollback has put back
+        /// what it was asked at older steps.
+        Physics::CharacterIntent hostIntent;
+        bool askedByHost = false;
+
         bool asleep = false;
     };
 
@@ -890,6 +898,11 @@ private:
     /// @p renderedPosition and @p renderedRotation this instant, and eases to
     /// the corrected pose.
     static void AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered, const Physics::Pose &corrected);
+
+    /// Writes into character @p entity's CharacterIntent what its mirror
+    /// @p record holds of the host's: its move, speed scale, stance and sprint.
+    /// Its jump and base stay this machine's.
+    void AskAsHost(ECS::Entity entity, const MirrorBody &record);
 
     /// Where one predicted character was drawn before a rollback moved it.
     struct RenderedBeforeReplay

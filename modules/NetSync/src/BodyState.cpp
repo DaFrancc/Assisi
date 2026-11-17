@@ -141,6 +141,19 @@ void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitW
     {
         writer.WriteBits(static_cast<std::uint32_t>(state.stance), kEnumBits<Physics::Stance>);
         writer.WriteBits(static_cast<std::uint32_t>(state.ground), kEnumBits<Physics::GroundState>);
+
+        // What it is asked to do. The vertical of a move is never read, so only
+        // the two horizontal components go.
+        writer.WriteFloatQuantized(std::clamp(state.move.x, -1.f, 1.f), -1.f, 1.f, q.moveBits);
+        writer.WriteFloatQuantized(std::clamp(state.move.z, -1.f, 1.f), -1.f, 1.f, q.moveBits);
+        writer.WriteBits(static_cast<std::uint32_t>(state.wantedStance), kEnumBits<Physics::Stance>);
+        writer.WriteBool(state.sprint);
+        const bool scaled = state.speedScale != 1.f;
+        writer.WriteBool(scaled);
+        if (scaled)
+        {
+            writer.WriteFloat(state.speedScale);
+        }
     }
 }
 
@@ -180,6 +193,28 @@ bool ReadBodyState(Core::BitReader &reader, CellReference &reference, BodyState 
     {
         reader.Invalidate();
         return false;
+    }
+    if (state.character)
+    {
+        state.move.x = reader.ReadFloatQuantized(-1.f, 1.f, q.moveBits);
+        state.move.z = reader.ReadFloatQuantized(-1.f, 1.f, q.moveBits);
+        if (!ReadEnum(reader, state.wantedStance))
+        {
+            reader.Invalidate();
+            return false;
+        }
+        state.sprint = reader.ReadBool();
+        // Handed to the character's movement, which would carry a NaN into
+        // its velocity and from there into everything it touches.
+        if (reader.ReadBool())
+        {
+            state.speedScale = reader.ReadFloat();
+            if (!Math::IsFinite(state.speedScale))
+            {
+                reader.Invalidate();
+                return false;
+            }
+        }
     }
 
     if (!reader.Ok() || state.netId == InvalidNetId)

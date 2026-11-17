@@ -164,6 +164,18 @@ A correction at a step the host took without your controls, because they
 arrived late or not at all, is counted as **starved** instead. The connection
 caused that one, not your game code.
 
+### Other players' characters
+
+Your machine moves the other players' characters too, between the host's
+updates. With each update, the host sends what every character is being asked
+to do: which way it is walking, whether it is sprinting or crouching, and its
+`speedScale`. Your machine keeps asking the same until the next update, so the
+character walks on at the speed it has on the host instead of slowing down.
+The same goes for characters an AI moves on the host.
+
+A jump is not part of this. Your machine sees another player jump when the
+host's update says it is in the air.
+
 ### Components you predict
 
 Your machine predicts your character, everything in its blueprint (its camera,

@@ -130,6 +130,19 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         _physics->SetCharacterPushable(entity, predicted);
     }
 
+    // Asked to do what the host's is, so it moves on between records as it
+    // does there rather than slowing to a stop. The one this machine controls
+    // is asked by its own controls instead.
+    if (character && state.character && !ControlsEntity(entity))
+    {
+        record.hostIntent.move = state.move;
+        record.hostIntent.speedScale = state.speedScale;
+        record.hostIntent.stance = state.wantedStance;
+        record.hostIntent.sprint = state.sprint;
+        record.askedByHost = true;
+        AskAsHost(entity, record);
+    }
+
     ++_corrections.applied;
 
     // Compared with where the client had it at the same tick, not where it is
@@ -175,6 +188,19 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     record.asleep       = state.asleep;
     record.restPosition = correctedPosition;
     record.restRotation = state.rotation;
+}
+
+void ReplicationClient::AskAsHost(ECS::Entity entity, const MirrorBody &record)
+{
+    Physics::CharacterIntent *intent = _scene.GetMut<Physics::CharacterIntent>(entity);
+    if (intent == nullptr)
+    {
+        return;
+    }
+    intent->move = record.hostIntent.move;
+    intent->speedScale = record.hostIntent.speedScale;
+    intent->stance = record.hostIntent.stance;
+    intent->sprint = record.hostIntent.sprint;
 }
 
 void ReplicationClient::AbsorbCorrection(MirrorBody &record, const Physics::Pose &rendered,

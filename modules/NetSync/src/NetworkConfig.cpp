@@ -40,7 +40,7 @@ OwnershipConfig gOwnership;
 {
     return config.linearVelocityMax > 0.f && config.angularVelocityMax > 0.f &&
            BitsInRange(config.positionBits) && BitsInRange(config.linearVelocityBits) &&
-           BitsInRange(config.angularVelocityBits);
+           BitsInRange(config.angularVelocityBits) && BitsInRange(config.moveBits);
 }
 
 /// @brief Whether @p config's smoothing describes a convergence that terminates.
@@ -69,13 +69,14 @@ void ApplyQuantization(const NetworkConfig &config)
                                   .linearVelocityMax   = config.linearVelocityMax,
                                   .linearVelocityBits  = config.linearVelocityBits,
                                   .angularVelocityMax  = config.angularVelocityMax,
-                                  .angularVelocityBits = config.angularVelocityBits};
+                                  .angularVelocityBits = config.angularVelocityBits,
+                                  .moveBits            = config.moveBits};
     SetQuantization(loaded);
     Core::Log::Info("NetSync: body quantization - position at {} bits in a cell, linear +/-{:g} m/s at {} bits, "
-                    "angular +/-{:g} rad/s at {} bits.",
+                    "angular +/-{:g} rad/s at {} bits, a character's move at {} bits.",
                     loaded.positionBits,
                     static_cast<double>(loaded.linearVelocityMax), loaded.linearVelocityBits,
-                    static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits);
+                    static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits, loaded.moveBits);
 }
 
 void ApplySmoothing(const NetworkConfig &config)
