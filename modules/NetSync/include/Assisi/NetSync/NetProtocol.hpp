@@ -226,7 +226,11 @@ enum class RejectReason : std::uint8_t
 ///  - 14 → 15: a body record's position is its world cell, as a change from
 ///    the record before it, and its place inside the cell, so it reaches
 ///    anywhere in the world rather than a box around the origin.
-inline constexpr std::uint32_t kNetProtocolVersion = 15;
+///  - 15 → 16: a character's body record carries what it is asked to do after
+///    its ground state: its move, asked stance, sprint and speed scale.
+///  - 16 → 17: ...and after those, the low bits of its jump and landing counts
+///    and whether it has jumped since it last stood.
+inline constexpr std::uint32_t kNetProtocolVersion = 17;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

@@ -1,0 +1,62 @@
+// The sample game's player: it walks, runs and sprints on the locomotion blend
+// space, crouches, jumps, falls and lands, and plays a gesture when it rings
+// the bell on the ground. The game's PlayerAnimation system sets the params
+// from the character's CharacterState on every machine.
+use animation;
+skeleton "quaternius/UAL1/UAL1.glb";
+
+param speed: float;    // across the ground (m/s)
+// Off the ground for longer than a stair's drop. False until it is first set,
+// so a character starts on its feet.
+param airborne: bool;
+param crouched: bool;
+param jump: trigger;
+param land: trigger;
+param interact: trigger;
+
+const locomotion_space = "quaternius/UAL1/Locomotion.ablnd";
+const crouch_idle_clip = "quaternius/UAL1/UAL1_animations/Crouch_Idle_Loop.glb";
+const crouch_walk_clip = "quaternius/UAL1/UAL1_animations/Crouch_Fwd_Loop.glb";
+const jump_clip = "quaternius/UAL1/UAL1_animations/Jump_Start.glb";
+const fall_clip = "quaternius/UAL1/UAL1_animations/Jump_Loop.glb";
+const land_clip = "quaternius/UAL1/UAL1_animations/Jump_Land.glb";
+const interact_clip = "quaternius/UAL1/UAL1_animations/Interact.glb";
+
+// How fast the crouched walk clip moves as authored (m/s), so its feet keep
+// pace with the character; and the speeds it starts and stops at, apart so a
+// speed hovering between them doesn't flicker.
+const crouch_walk_speed = 2.0;
+const starts_walking = 0.3;
+const stops_walking = 0.15;
+
+layer base {
+    state locomotion { play locomotion_space; x speed; }
+    state crouch {
+        state crouch_idle { play crouch_idle_clip; }
+        state crouch_walk { play crouch_walk_clip; rate speed / crouch_walk_speed; }
+
+        crouch_idle -> crouch_walk when speed > starts_walking;
+        crouch_walk -> crouch_idle when speed < stops_walking;
+    }
+    state jump { play jump_clip; then fall; }
+    state fall { play fall_clip; }
+    state land { play land_clip; then locomotion; }
+    state interact { play interact_clip; then locomotion; }
+
+    // A jump wins over the fall it starts, and doesn't wait out a fade: a
+    // trigger no transition takes is gone the next frame.
+    locomotion + crouch + interact + land -> jump when jump { fade 0.05; interrupt; };
+    locomotion + crouch + interact -> fall when airborne;
+    // Landing is the character's own landing, counted by its physics. A
+    // character is airborne only once it has been off the ground long enough
+    // for its landing to count, so every fall ends in one.
+    jump + fall -> land when land { fade 0.1; interrupt; };
+    land -> fall when airborne { interrupt; };
+    // Moving or crouching ends a landing once the fade into it has shown the
+    // impact, rather than waiting for it to stand up.
+    land -> locomotion when speed > starts_walking { fade 0.2; };
+    land -> crouch when crouched;
+    locomotion -> crouch when crouched { interrupt; };
+    crouch -> locomotion when !crouched;
+    locomotion + crouch + land -> interact when interact { interrupt; };
+}

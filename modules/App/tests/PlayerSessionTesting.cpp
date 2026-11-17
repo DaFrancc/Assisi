@@ -15,6 +15,7 @@
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/PlayerSession.hpp>
 #include <Assisi/App/StepWorld.hpp>
+#include <Assisi/App/WorldFrame.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -78,10 +79,11 @@ void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view mo
     REQUIRE(out.good());
 }
 
-Machine::Machine(NetSync::ReplicationConfig config) : play(world, std::move(config))
+Machine::Machine(NetSync::ReplicationConfig config, std::vector<std::string> extra) : play(world, std::move(config))
 {
-    REQUIRE(App::WorldManager::ApplySystems(world, std::vector<std::string>{"LocalPlayer", "CharacterCommand"},
-                                            "players"));
+    std::vector<std::string> systems{"LocalPlayer", "CharacterCommand"};
+    systems.insert(systems.end(), extra.begin(), extra.end());
+    REQUIRE(App::WorldManager::ApplySystems(world, systems, "players"));
 }
 
 void Step(Machine &machine, std::uint64_t localTick)
@@ -111,6 +113,23 @@ void Step(Machine &machine, std::uint64_t localTick)
     {
         machine.afterStep(tick);
     }
+}
+
+void Update(Machine &machine)
+{
+    // No window, so no input, actions or UI, as a headless host; but animation
+    // on, as on a machine somebody plays at.
+    App::UpdateWorld({.world = machine.world,
+                      .dt = kStep,
+                      .simTick = machine.tick,
+                      .input = nullptr,
+                      .actions = nullptr,
+                      .universalEvents = machine.universal,
+                      .isActiveWorld = true,
+                      .worldManager = nullptr,
+                      .assets = &machine.assets,
+                      .animates = true});
+    App::PoseWorld(machine.world);
 }
 
 ECS::Entity LocalPlayerOf(ECS::Scene &scene)
@@ -154,9 +173,9 @@ ECS::Entity PlayerOf(Machine &host, NetSync::ClientId client)
     return ECS::NullEntity;
 }
 
-Machine &Session::Add(NetSync::ReplicationConfig config)
+Machine &Session::Add(NetSync::ReplicationConfig config, std::vector<std::string> extra)
 {
-    machines.push_back(std::make_unique<Machine>(std::move(config)));
+    machines.push_back(std::make_unique<Machine>(std::move(config), std::move(extra)));
     return *machines.back();
 }
 

@@ -82,6 +82,17 @@ class AssetCookContext
     /// @brief Shows @p message to whoever is cooking: a refused file's whole
     ///        explanation, which an AssetError's fixed detail can't hold.
     virtual void Report(std::string message) const = 0;
+
+    /// @brief The joint names of the model at @p vpath when this context knows
+    ///        them without reading the file; nothing to have the model read.
+    ///
+    /// For a model that exists only in memory, such as a skeleton a test builds
+    /// in code, so a file written for it can be checked against its joints.
+    [[nodiscard]] virtual std::optional<std::vector<std::string>> SkeletonJoints(std::string_view vpath) const
+    {
+        (void)vpath;
+        return std::nullopt;
+    }
 };
 
 /// @brief A context with no other files and nobody to report to beyond the

@@ -252,7 +252,7 @@ void EditorApp::SubmitColliderWireframes()
             // included.
             const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
             const Assisi::Render::MeshBuffer *mesh =
-                mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedMesh>(entity))
+                mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedPose>(entity))
                                : nullptr;
             if (mesh != nullptr)
             {

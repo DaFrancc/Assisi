@@ -66,10 +66,10 @@ std::string QuantizationDescription()
 {
     const BodyQuantization &q = Quantization();
     return Core::Format("body cell={:g} positionBits={} linearMax={:g} linearBits={} "
-                        "angularMax={:g} angularBits={}",
+                        "angularMax={:g} angularBits={} moveBits={}",
                         Math::kWorldCellSize, q.positionBits,
                         static_cast<double>(q.linearVelocityMax), q.linearVelocityBits,
-                        static_cast<double>(q.angularVelocityMax), q.angularVelocityBits);
+                        static_cast<double>(q.angularVelocityMax), q.angularVelocityBits, q.moveBits);
 }
 
 } // namespace

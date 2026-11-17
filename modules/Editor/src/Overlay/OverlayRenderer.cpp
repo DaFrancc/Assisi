@@ -346,7 +346,7 @@ void OverlayRenderer::DrawHighlightOutlineFor(const Render::RenderFrame &frame, 
     const glm::vec3 color = entity == _activeHighlight ? kActiveSelectionOutline : kSelectionOutline;
 
     const Render::MeshBuffer *mesh =
-        renderer != nullptr ? Runtime::DrawnMesh(*renderer, scene.Get<Runtime::SkinnedMesh>(entity)) : nullptr;
+        renderer != nullptr ? Runtime::DrawnMesh(*renderer, scene.Get<Runtime::SkinnedPose>(entity)) : nullptr;
     if (mesh != nullptr)
     {
         // The level the mesh pass drew this entity at, not a second opinion: a

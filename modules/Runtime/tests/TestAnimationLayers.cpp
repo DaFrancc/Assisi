@@ -124,8 +124,9 @@ std::shared_ptr<const AnimationClip> Kick()
 struct Rig
 {
     Skeleton skeleton = Body();
-    Runtime::SkinnedMesh skinned;
+    Runtime::SkinnedPose skinned;
     Runtime::AnimationPlayer player;
+    Runtime::AnimationPlayback playback;
     std::map<uint8_t, std::vector<std::shared_ptr<const AnimationClip>>> clips{
         {kRun, {Run()}}, {kAim, {Aim(3.f)}}, {kAimHigh, {Aim(5.f)}}, {kFlinch, {Flinch()}}, {kKick, {Kick()}}};
 
@@ -154,12 +155,14 @@ struct Rig
 
     void Advance(float dt)
     {
-        (void)Runtime::AdvanceAnimationPlayer(player, Resolved(player.animation), skeleton, dt, skinned);
-        Runtime::MatchLayerStates(player);
-        for (std::size_t layer = 0; layer < player.layers.size(); ++layer)
+        Runtime::RequestFromAuthored(player, playback.request);
+        (void)Runtime::AdvanceAnimationPlayer(playback, Resolved(player.animation), skeleton, dt, skinned);
+        Runtime::MatchLayerStates(playback);
+        for (std::size_t layer = 0; layer < playback.request.layers.size(); ++layer)
         {
-            Runtime::AdvanceAnimationLayer(player.layers[layer], player.layerStates[layer],
-                                           Resolved(player.layers[layer].animation), skeleton, dt, skinned);
+            const Runtime::LayerRequest &request = playback.request.layers[layer];
+            Runtime::AdvanceAnimationLayer(request, playback.layerStates[layer], Resolved(request.play.animation),
+                                           skeleton, dt, skinned);
         }
     }
 
@@ -270,22 +273,22 @@ TEST_CASE("Animation layers: the weight slides over weightFade, as a duration or
     aim.weightFade = 0.5f;
     aim.weight = 0.f;
     rig.Advance(0.25f);
-    CHECK(rig.player.layerStates[0].weight == doctest::Approx(0.5f));
+    CHECK(rig.playback.layerStates[0].weight == doctest::Approx(0.5f));
     rig.Advance(0.25f);
-    CHECK(rig.player.layerStates[0].weight == doctest::Approx(0.f));
+    CHECK(rig.playback.layerStates[0].weight == doctest::Approx(0.f));
 
     // As a speed, a change of a quarter takes a quarter of weightFade.
     aim.weightSlide = Runtime::WeightSlide::Speed;
     aim.weight = 0.25f;
     rig.Advance(0.0625f);
-    CHECK(rig.player.layerStates[0].weight == doctest::Approx(0.125f));
+    CHECK(rig.playback.layerStates[0].weight == doctest::Approx(0.125f));
     rig.Advance(0.0625f);
-    CHECK(rig.player.layerStates[0].weight == doctest::Approx(0.25f));
+    CHECK(rig.playback.layerStates[0].weight == doctest::Approx(0.25f));
 
     aim.weightFade = 0.f;
     aim.weight = 1.f;
     rig.Advance(0.f);
-    CHECK(rig.player.layerStates[0].weight == doctest::Approx(1.f));
+    CHECK(rig.playback.layerStates[0].weight == doctest::Approx(1.f));
 }
 
 TEST_CASE("Animation layers: a layer's animation changes over the layer's fade, not the player's")
@@ -308,14 +311,36 @@ TEST_CASE("Animation layers: at weight 0 a layer's timeline still runs, and a ma
     flinch.weight = 0.f;
     rig.Advance(0.f);
     rig.Advance(0.5f);
-    CHECK(rig.player.layerStates[0].track.current.Phase == doctest::Approx(0.25f));
+    CHECK(rig.playback.layerStates[0].track.current.Phase == doctest::Approx(0.25f));
     CHECK(rig.X(Hand) == doctest::Approx(0.f));
 
     Rig missing;
     (void)missing.Add(kAim, LayerMode::Override, "tail");
     missing.Advance(0.f);
     CHECK(missing.X(Spine) == doctest::Approx(0.f));
-    CHECK(missing.player.layerStates[0].rootMissing);
+    CHECK(missing.playback.layerStates[0].rootMissing);
+}
+
+TEST_CASE("Animation layers: a layer at weight 0 only advances: its clips are never bound or sampled")
+{
+    Rig rig;
+    AnimationLayer &aim = rig.Add(kAim, LayerMode::Override, "spine");
+    aim.weight = 0.f;
+    rig.Advance(0.5f);
+    const Runtime::AnimationTrack &track = rig.playback.layerStates[0].track;
+    CHECK(track.current.Phase > 0.f);
+    REQUIRE(track.current.Sources.size() == 1);
+    CHECK(track.current.Sources[0].Binding.JointOfTrack.empty());
+    CHECK(rig.X(Spine) == doctest::Approx(0.f));
+    // Nothing was bound, so there is nothing for the caller to report.
+    CHECK_FALSE(Runtime::SampleLayerPose(rig.playback.request.layers[0], rig.playback.layerStates[0],
+                                         rig.skeleton, rig.skinned));
+
+    // Turned up, it binds and shows.
+    aim.weight = 1.f;
+    rig.Advance(0.f);
+    CHECK_FALSE(track.current.Sources[0].Binding.JointOfTrack.empty());
+    CHECK(rig.X(Spine) == doctest::Approx(3.f));
 }
 
 TEST_CASE("Animation layers: reordering the list moves each layer's playback with it")
@@ -335,13 +360,13 @@ TEST_CASE("Animation layers: reordering the list moves each layer's playback wit
     rig.Advance(0.f);
     CHECK(rig.X(Knee) == doctest::Approx(2.f));
     CHECK(rig.X(Spine) == doctest::Approx(3.f));
-    CHECK_FALSE(rig.player.layerStates[0].track.fading);
-    CHECK(rig.player.layerStates[0].track.current.Phase == doctest::Approx(0.5f));
+    CHECK_FALSE(rig.playback.layerStates[0].track.fading);
+    CHECK(rig.playback.layerStates[0].track.current.Phase == doctest::Approx(0.5f));
 
     // A layer removed takes its playback with it; the one left keeps its own.
     rig.player.layers.erase(rig.player.layers.begin());
     rig.Advance(0.f);
-    REQUIRE(rig.player.layerStates.size() == 1);
-    CHECK_FALSE(rig.player.layerStates[0].track.fading);
+    REQUIRE(rig.playback.layerStates.size() == 1);
+    CHECK_FALSE(rig.playback.layerStates[0].track.fading);
     CHECK(rig.X(Spine) == doctest::Approx(3.f));
 }

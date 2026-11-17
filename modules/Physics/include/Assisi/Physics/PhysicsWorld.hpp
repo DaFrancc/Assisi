@@ -112,6 +112,17 @@ struct CharacterFrame
     bool withGround = false;
 };
 
+/// @brief A character's jumps and landings, as another machine counts them for
+/// a character whose motion that machine decides.
+struct CharacterCounts
+{
+    std::uint32_t jumps = 0;    ///< CharacterState::jumps.
+    std::uint32_t landings = 0; ///< CharacterState::landings.
+    /// Whether it has jumped since it last stood: a character that has may not
+    /// jump again, coyote time or not, so CharacterState::canJump follows it.
+    bool jumpedSinceGrounded = false;
+};
+
 /// @brief Where a kinematic body, a dynamic body or a character is and how it
 /// moves, as a step left it.
 ///
@@ -694,6 +705,24 @@ public:
     /// would only be put back where it was by the next word from there.
     /// Kept until set again or the character is destroyed.
     void SetCharacterPushable(ECS::Entity entity, bool pushable);
+
+    /// @brief Whether @p entity's character counts its own jumps and landings.
+    /// On until turned off.
+    ///
+    /// Off for a character whose motion another machine decides: it is moved
+    /// into the air by that machine's word rather than jumping, so it would
+    /// miss jumps and count landings at its own moments. SetCharacterCounts
+    /// gives it that machine's counts instead. It still jumps and lands as
+    /// before. Kept until set again or the character is destroyed.
+    void SetCharacterCountsItself(ECS::Entity entity, bool countsItself);
+
+    /// @brief Gives @p entity's character @p counts, shown in its
+    /// CharacterState at once. Not while the world is stepping.
+    void SetCharacterCounts(ECS::Entity entity, const CharacterCounts &counts);
+
+    /// @brief @p entity's character's counts, for another machine to give its
+    /// copy. Default counts for an entity with no character.
+    [[nodiscard]] CharacterCounts CharacterCountsOf(ECS::Entity entity) const;
 
     /// @brief Where @p entity's character is now and what its last step
     /// consumed. A default frame for an entity with no character.

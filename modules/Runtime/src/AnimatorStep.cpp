@@ -24,47 +24,42 @@ constexpr float kPhaseEnd = 1.f;
 constexpr float kMinWeight = 0.f;
 constexpr float kMaxWeight = 1.f;
 
-/// The settings of the player that @p layer writes: the base for the first,
+/// The parts of an entity an Animator drives: what the author set, where it is
+/// in its file, and what it asks playback for.
+struct Driven
+{
+    const Animator &animator;
+    AnimatorRun &run;
+    AnimationPlayback &playback;
+};
+
+/// The part of the request that @p layer writes: the base for the first,
 /// otherwise one of its layers.
 struct Target
 {
-    Core::AssetId *animation = nullptr;
-    glm::vec2 *parameter = nullptr;
-    float *speed = nullptr;
-    float *fade = nullptr;
+    PlaybackRequest *play = nullptr;
     float *weight = nullptr; ///< Null for the base, which has none.
-    bool *loop = nullptr;
 };
 
-Target TargetOf(AnimationPlayer &player, uint32_t layer)
+Target TargetOf(AnimationPlayback &playback, uint32_t layer)
 {
     if (layer == 0)
     {
-        return Target{.animation = &player.animation,
-                      .parameter = &player.parameter,
-                      .speed = &player.speed,
-                      .fade = &player.fade,
-                      .weight = nullptr,
-                      .loop = &player.loop};
+        return Target{.play = &playback.request.base, .weight = nullptr};
     }
-    AnimationLayer &upper = player.layers[layer - 1];
-    return Target{.animation = &upper.animation,
-                  .parameter = &upper.parameter,
-                  .speed = &upper.speed,
-                  .fade = &upper.fade,
-                  .weight = &upper.weight,
-                  .loop = &upper.loop};
+    LayerRequest &upper = playback.request.layers[layer - 1];
+    return Target{.play = &upper.play, .weight = &upper.weight};
 }
 
-/// The track playing @p layer's animation, or null until the player has made
+/// The track playing @p layer's animation, or null until playback has made
 /// one for it.
-AnimationTrack *TrackOf(AnimationPlayer &player, uint32_t layer)
+const AnimationTrack *TrackOf(const AnimationPlayback &playback, uint32_t layer)
 {
     if (layer == 0)
     {
-        return &player.track;
+        return &playback.track;
     }
-    return layer - 1 < player.layerStates.size() ? &player.layerStates[layer - 1].track : nullptr;
+    return layer - 1 < playback.layerStates.size() ? &playback.layerStates[layer - 1].track : nullptr;
 }
 
 float FloatAt(const AnimatorGraph &graph, std::span<const Sigil::Word> block, uint32_t entry, float otherwise)
@@ -72,32 +67,33 @@ float FloatAt(const AnimatorGraph &graph, std::span<const Sigil::Word> block, ui
     return entry == kNotWritten ? otherwise : Sigil::ToFloat(Sigil::Evaluate(graph.code, entry, block));
 }
 
-const AnimatorState &LeafOf(const Animator &animator, uint32_t layer)
+const AnimatorState &LeafOf(const AnimatorRun &run, uint32_t layer)
 {
-    return animator.run.graph->layers[layer].states[animator.run.paths[layer].back()];
+    return run.graph->layers[layer].states[run.paths[layer].back()];
 }
 
 /// What @p clip plays: the asset the file names, or the one the Animator binds
 /// to its param, reported once when there is none.
-Core::AssetId ClipOf(Animator &animator, const AnimatorClip &clip)
+Core::AssetId ClipOf(const Driven &driven, const AnimatorClip &clip)
 {
     if (clip.param == kNotWritten)
     {
         return clip.asset;
     }
-    const std::string &name = animator.run.graph->clipParams[clip.param];
-    const std::vector<ClipBinding>::const_iterator bound = std::ranges::find_if(
-        animator.clips, [&name](const ClipBinding &binding) { return binding.name.View() == name; });
-    if (bound != animator.clips.end())
+    const std::string &name = driven.run.graph->clipParams[clip.param];
+    const std::vector<ClipBinding> &clips = driven.animator.clips;
+    const std::vector<ClipBinding>::const_iterator bound =
+        std::ranges::find_if(clips, [&name](const ClipBinding &binding) { return binding.name.View() == name; });
+    if (bound != clips.end())
     {
         return bound->clip;
     }
-    if (!animator.run.warned)
+    if (!driven.run.warned)
     {
         Core::Log::Warn("Animator: the file's clip param \"{}\" has no clip in the Animator's clips, so it plays "
                         "nothing.",
                         name);
-        animator.run.warned = true;
+        driven.run.warned = true;
     }
     return Core::AssetId{};
 }
@@ -110,117 +106,97 @@ enum class Arrival : uint8_t
     Count_,
 };
 
-/// Puts @p player on what @p layer's state plays, fading over @p fade. A
+/// Asks playback for what @p layer's state plays, fading over @p fade. A
 /// clip played once or held starts again from the top when entered anew, even
 /// on the clip already playing; a file changing under it leaves it be.
-void ApplyLeaf(Animator &animator, AnimationPlayer &player, uint32_t layer, float fade, Arrival arrival)
+void ApplyLeaf(const Driven &driven, uint32_t layer, float fade, Arrival arrival)
 {
-    const AnimatorState &leaf = LeafOf(animator, layer);
-    const Core::AssetId clip = ClipOf(animator, leaf.clip);
-    const Target target = TargetOf(player, layer);
-    AnimationTrack *track = TrackOf(player, layer);
+    const AnimatorState &leaf = LeafOf(driven.run, layer);
+    const Core::AssetId clip = ClipOf(driven, leaf.clip);
+    PlaybackRequest &play = *TargetOf(driven.playback, layer).play;
     const bool restarts = leaf.then != kNotWritten || leaf.pose;
-    if (arrival == Arrival::Entered && *target.animation == clip && restarts && track != nullptr)
+    if (arrival == Arrival::Entered && play.animation == clip && restarts)
     {
-        track->current.Phase = 0.f;
+        ++play.restarts;
     }
-    *target.fade = fade;
-    *target.animation = clip;
-    *target.loop = !restarts;
+    play.startPhase = 0.f;
+    play.fade = fade;
+    play.fadeKind = FadeKind::CrossFade;
+    play.animation = clip;
+    play.loop = !restarts;
 }
 
 /// Whether @p layer's state, a clip played once, has played to its end.
-bool Finished(Animator &animator, AnimationPlayer &player, uint32_t layer)
+bool Finished(const Driven &driven, uint32_t layer)
 {
-    const AnimatorState &leaf = LeafOf(animator, layer);
-    const AnimationTrack *track = TrackOf(player, layer);
+    const AnimatorState &leaf = LeafOf(driven.run, layer);
+    const AnimationTrack *track = TrackOf(driven.playback, layer);
     if (leaf.then == kNotWritten || leaf.pose || track == nullptr)
     {
         return false;
     }
     // A track still on the clip before has not started this one.
-    const bool playing = track->boundAnimation == ClipOf(animator, leaf.clip);
+    const bool playing = track->boundAnimation == ClipOf(driven, leaf.clip);
     return playing && !track->fading && track->current.Phase >= kPhaseEnd;
 }
 
 /// Writes what @p layer's state and the layer work out every frame.
-void WriteOutputs(Animator &animator, AnimationPlayer &player, uint32_t layer)
+void WriteOutputs(const AnimatorRun &run, AnimationPlayback &playback, uint32_t layer)
 {
-    const AnimatorGraph &graph = *animator.run.graph;
+    const AnimatorGraph &graph = *run.graph;
     const AnimatorLayer &lowered = graph.layers[layer];
-    const AnimatorState &leaf = LeafOf(animator, layer);
-    const Target target = TargetOf(player, layer);
-    const std::span<const Sigil::Word> block = animator.run.block;
-    *target.speed = leaf.pose ? 0.f : FloatAt(graph, block, leaf.rate, 1.f);
-    *target.parameter = glm::vec2{FloatAt(graph, block, leaf.x, 0.f), FloatAt(graph, block, leaf.y, 0.f)};
+    const AnimatorState &leaf = LeafOf(run, layer);
+    const Target target = TargetOf(playback, layer);
+    const std::span<const Sigil::Word> block = run.block;
+    target.play->speed = leaf.pose ? 0.f : FloatAt(graph, block, leaf.rate, 1.f);
+    target.play->parameter = glm::vec2{FloatAt(graph, block, leaf.x, 0.f), FloatAt(graph, block, leaf.y, 0.f)};
     if (target.weight != nullptr)
     {
         *target.weight = std::clamp(FloatAt(graph, block, lowered.weight, kMaxWeight), kMinWeight, kMaxWeight);
     }
 }
 
-float LayerFade(const Animator &animator, uint32_t layer)
+float LayerFade(const AnimatorRun &run, uint32_t layer)
 {
-    const AnimatorGraph &graph = *animator.run.graph;
-    return FloatAt(graph, animator.run.block, graph.layers[layer].fade, kDefaultAnimatorFade);
+    const AnimatorGraph &graph = *run.graph;
+    return FloatAt(graph, run.block, graph.layers[layer].fade, kDefaultAnimatorFade);
 }
 
-void StepLayer(Animator &animator, AnimationPlayer &player, uint32_t layer)
+void StepLayer(const Driven &driven, uint32_t layer)
 {
-    const AnimatorGraph &graph = *animator.run.graph;
+    AnimatorRun &run = driven.run;
+    const AnimatorGraph &graph = *run.graph;
     const AnimatorLayer &lowered = graph.layers[layer];
-    std::vector<uint32_t> &path = animator.run.paths[layer];
-    const AnimationTrack *track = TrackOf(player, layer);
+    std::vector<uint32_t> &path = run.paths[layer];
+    const AnimationTrack *track = TrackOf(driven.playback, layer);
     if (graph.progressSlot != kNotWritten)
     {
-        animator.run.block[graph.progressSlot] = Sigil::FromFloat(track != nullptr ? track->current.Phase : 0.f);
+        run.block[graph.progressSlot] = Sigil::FromFloat(track != nullptr ? track->current.Phase : 0.f);
     }
-    Sigil::EvaluateLets(graph.code, graph.letEntries, graph.layout, animator.run.block);
+    Sigil::EvaluateLets(graph.code, graph.letEntries, graph.layout, run.block);
 
     const bool fading = track != nullptr && track->fading;
-    std::vector<Sigil::Gate> &gates = animator.run.gates;
+    std::vector<Sigil::Gate> &gates = run.gates;
     gates.assign(lowered.transitions.size(), Sigil::Gate::Open);
     for (std::size_t t = 0; t < lowered.transitions.size(); ++t)
     {
         gates[t] = fading && !lowered.transitions[t].interrupt ? Sigil::Gate::Closed : Sigil::Gate::Open;
     }
-    const std::optional<Sigil::Fired> fired =
-        Sigil::StepGraph(lowered.graph, path, graph.code, animator.run.block, gates);
+    const std::optional<Sigil::Fired> fired = Sigil::StepGraph(lowered.graph, path, graph.code, run.block, gates);
     if (fired.has_value())
     {
         const float fade =
-            FloatAt(graph, animator.run.block, lowered.transitions[fired->transition].fade, LayerFade(animator, layer));
+            FloatAt(graph, run.block, lowered.transitions[fired->transition].fade, LayerFade(run, layer));
         Sigil::Enter(lowered.graph, fired->depth, lowered.graph.transitions[fired->transition].target, path);
-        ApplyLeaf(animator, player, layer, fade, Arrival::Entered);
+        ApplyLeaf(driven, layer, fade, Arrival::Entered);
     }
-    else if (Finished(animator, player, layer))
+    else if (Finished(driven, layer))
     {
-        const uint32_t then = LeafOf(animator, layer).then;
+        const uint32_t then = LeafOf(run, layer).then;
         Sigil::Enter(lowered.graph, static_cast<uint32_t>(path.size() - 2), then, path);
-        ApplyLeaf(animator, player, layer, LayerFade(animator, layer), Arrival::Entered);
+        ApplyLeaf(driven, layer, LayerFade(run, layer), Arrival::Entered);
     }
-    WriteOutputs(animator, player, layer);
-}
-
-/// The param slot named @p name holding @p type, if the bound file has one.
-std::optional<uint32_t> ParamSlot(const Animator &animator, std::string_view name, Sigil::SlotType type)
-{
-    if (animator.run.graph == nullptr)
-    {
-        return std::nullopt;
-    }
-    const Sigil::Layout &layout = animator.run.graph->layout;
-    const std::optional<uint32_t> slot = Sigil::FindSlot(layout, name);
-    if (!slot.has_value() || layout.slots[*slot].kind != Sigil::SlotKind::Param || layout.slots[*slot].type != type)
-    {
-        return std::nullopt;
-    }
-    return slot;
-}
-
-bool IsTrigger(const Animator &animator, uint32_t slot)
-{
-    return std::ranges::find(animator.run.graph->triggerSlots, slot) != animator.run.graph->triggerSlots.end();
+    WriteOutputs(run, driven.playback, layer);
 }
 
 /// The value of each param of @p previous that @p layout has too, by name
@@ -247,6 +223,29 @@ std::vector<Sigil::Word> CarryParams(const AnimatorRun &previous, const Sigil::L
     return block;
 }
 
+/// The count each slot of @p previous last followed, for the slot of the same
+/// name in a block laid out by @p layout, so a changed file does not take the
+/// next count for a first sight. Only a handle that finds a trigger there reads
+/// it.
+std::vector<std::optional<uint32_t>> CarryCounts(const AnimatorRun &previous, const Sigil::Layout &layout)
+{
+    std::vector<std::optional<uint32_t>> counts(layout.slots.size());
+    if (previous.graph == nullptr)
+    {
+        return counts;
+    }
+    const Sigil::Layout &before = previous.graph->layout;
+    for (uint32_t old = 0; old < previous.counts.size() && old < before.slots.size(); ++old)
+    {
+        const std::optional<uint32_t> now = Sigil::FindSlot(layout, before.slots[old].name);
+        if (previous.counts[old].has_value() && now.has_value())
+        {
+            counts[*now] = previous.counts[old];
+        }
+    }
+    return counts;
+}
+
 /// The states each layer of the bound file was in, by layer name.
 std::vector<std::string> PreviousNames(const AnimatorRun &previous, std::string_view layerName)
 {
@@ -264,13 +263,14 @@ std::vector<std::string> PreviousNames(const AnimatorRun &previous, std::string_
     return {};
 }
 
-/// Sizes @p player's layers to the file's, each with the file's mask and mode.
-void ShapeLayers(const AnimatorGraph &graph, AnimationPlayer &player)
+/// Sizes the layers of @p playback's request to the file's, each with the
+/// file's mask and mode.
+void ShapeLayers(const AnimatorGraph &graph, AnimationPlayback &playback)
 {
-    player.layers.resize(graph.layers.size() - 1);
+    playback.request.layers.resize(graph.layers.size() - 1);
     for (std::size_t layer = 1; layer < graph.layers.size(); ++layer)
     {
-        AnimationLayer &upper = player.layers[layer - 1];
+        LayerRequest &upper = playback.request.layers[layer - 1];
         upper.maskRoot = graph.layers[layer].maskRoot;
         upper.exclusions = graph.layers[layer].exclusions;
         upper.mode = graph.layers[layer].mode;
@@ -281,112 +281,61 @@ void ShapeLayers(const AnimatorGraph &graph, AnimationPlayer &player)
 
 } // namespace
 
-void BindAnimator(Animator &animator, AnimationPlayer &player, std::shared_ptr<const AnimatorGraph> graph)
+void BindAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback &playback,
+                  std::shared_ptr<const AnimatorGraph> graph)
 {
     // A library has no layers, and plays nothing; it never loads as a graph.
     if (graph == nullptr || graph->layers.empty())
     {
         return;
     }
-    AnimatorRun run;
-    run.block = CarryParams(animator.run, graph->layout);
-    run.paths.resize(graph->layers.size());
+    AnimatorRun bound;
+    bound.block = CarryParams(run, graph->layout);
+    bound.counts = CarryCounts(run, graph->layout);
+    bound.paths.resize(graph->layers.size());
     for (std::size_t layer = 0; layer < graph->layers.size(); ++layer)
     {
-        Sigil::Remap(graph->layers[layer].graph, PreviousNames(animator.run, graph->layers[layer].name),
-                     run.paths[layer]);
+        Sigil::Remap(graph->layers[layer].graph, PreviousNames(run, graph->layers[layer].name), bound.paths[layer]);
     }
-    run.graph = std::move(graph);
-    animator.run = std::move(run);
-    ShapeLayers(*animator.run.graph, player);
-    for (uint32_t layer = 0; layer < animator.run.graph->layers.size(); ++layer)
+    bound.graph = std::move(graph);
+    run = std::move(bound);
+    ShapeLayers(*run.graph, playback);
+    const Driven driven{.animator = animator, .run = run, .playback = playback};
+    for (uint32_t layer = 0; layer < run.graph->layers.size(); ++layer)
     {
-        ApplyLeaf(animator, player, layer, LayerFade(animator, layer), Arrival::Rebound);
+        ApplyLeaf(driven, layer, LayerFade(run, layer), Arrival::Rebound);
     }
 }
 
-void StepAnimator(Animator &animator, AnimationPlayer &player)
+void StepAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback &playback)
 {
-    if (animator.run.graph == nullptr)
+    if (run.graph == nullptr)
     {
         return;
     }
-    // A player whose layers were edited away is shaped back to the file's.
-    if (player.layers.size() + 1 != animator.run.graph->layers.size())
+    // A request whose layers were changed from outside is shaped back to the file's.
+    if (playback.request.layers.size() + 1 != run.graph->layers.size())
     {
-        ShapeLayers(*animator.run.graph, player);
+        ShapeLayers(*run.graph, playback);
     }
-    for (uint32_t layer = 0; layer < animator.run.graph->layers.size(); ++layer)
+    const Driven driven{.animator = animator, .run = run, .playback = playback};
+    for (uint32_t layer = 0; layer < run.graph->layers.size(); ++layer)
     {
-        StepLayer(animator, player, layer);
+        StepLayer(driven, layer);
     }
-    for (const uint32_t slot : animator.run.graph->triggerSlots)
+    for (const uint32_t slot : run.graph->triggerSlots)
     {
-        animator.run.block[slot] = Sigil::FromBool(false);
+        run.block[slot] = Sigil::FromBool(false);
     }
 }
 
-std::vector<std::string> AnimatorStateNames(const Animator &animator, uint32_t layer)
+std::vector<std::string> AnimatorStateNames(const AnimatorRun &run, uint32_t layer)
 {
-    if (animator.run.graph == nullptr || layer >= animator.run.paths.size())
+    if (run.graph == nullptr || layer >= run.paths.size())
     {
         return {};
     }
-    return Sigil::PathNames(animator.run.graph->layers[layer].graph, animator.run.paths[layer]);
-}
-
-bool SetAnimatorFloat(Animator &animator, std::string_view name, float value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Float);
-    if (!slot.has_value())
-    {
-        return false;
-    }
-    animator.run.block[*slot] = Sigil::FromFloat(value);
-    return true;
-}
-
-bool SetAnimatorInt(Animator &animator, std::string_view name, int32_t value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Int);
-    if (!slot.has_value())
-    {
-        return false;
-    }
-    animator.run.block[*slot] = Sigil::FromInt(value);
-    return true;
-}
-
-bool SetAnimatorBool(Animator &animator, std::string_view name, bool value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Bool);
-    if (!slot.has_value() || IsTrigger(animator, *slot))
-    {
-        return false;
-    }
-    animator.run.block[*slot] = Sigil::FromBool(value);
-    return true;
-}
-
-std::optional<float> AnimatorFloat(const Animator &animator, std::string_view name)
-{
-    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Float);
-    if (!slot.has_value())
-    {
-        return std::nullopt;
-    }
-    return Sigil::ToFloat(animator.run.block[*slot]);
-}
-
-bool FireAnimatorTrigger(Animator &animator, std::string_view name)
-{
-    const std::optional<uint32_t> slot = ParamSlot(animator, name, Sigil::SlotType::Bool);
-    if (!slot.has_value() || !IsTrigger(animator, *slot))
-    {
-        return false;
-    }
-    animator.run.block[*slot] = Sigil::FromBool(true);
-    return true;
+    return Sigil::PathNames(run.graph->layers[layer].graph, run.paths[layer]);
 }
 
 } // namespace Assisi::Runtime

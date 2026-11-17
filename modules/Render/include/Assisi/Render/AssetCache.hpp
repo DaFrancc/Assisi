@@ -18,9 +18,11 @@
 /// a material's empty channels — engine assets that live in this same cache, so a
 /// device rebuild regenerates them uniformly.
 ///
-/// A nil or unknown mesh, or one that fails to load, falls back to the unit cube
-/// so the entity still renders; a material that fails falls back to a neutral
-/// one; a texture that fails draws as an error pattern.
+/// A nil mesh draws as the unit cube, a fresh component's default; an unknown
+/// built-in, or a mesh that fails to load, draws as the ERROR sign
+/// (`prim://error`) so the entity still renders and the missing file shows; a
+/// material that fails falls back to a neutral one; a texture that fails draws
+/// as an error pattern.
 
 #include <array>
 #include <optional>
@@ -77,10 +79,11 @@ public:
     /// `prim://cube`) resolve synchronously. A mesh **file** imports on a worker
     /// thread: the first resolve kicks the load and returns **nullptr** ("still
     /// loading" — the caller shows a placeholder); once the import finishes and
-    /// uploads (on the main thread), subsequent resolves return the buffer. A
-    /// nil/unknown id, or a file that fails to load, resolves to the unit cube. The
-    /// pointer stays valid until Clear(). Poll again (see HasPendingLoads) until a
-    /// loading mesh becomes non-null.
+    /// uploads (on the main thread), subsequent resolves return the buffer. A nil
+    /// id resolves to the unit cube; an unknown built-in id, or a file that fails
+    /// to load, to the ERROR sign (`prim://error`). The pointer stays valid until
+    /// Clear(). Poll again (see HasPendingLoads) until a loading mesh becomes
+    /// non-null.
     const MeshBuffer *ResolveMesh(const Core::AssetId &id);
 
     /// @brief Keeps @p posed — one skinned instance of @p source — drawing from a

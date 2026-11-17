@@ -416,6 +416,109 @@ TEST_CASE("a character's body record carries its stance and what it stands on, a
     CHECK(crateWriter.BitsWritten() < writer.BitsWritten());
 }
 
+TEST_CASE("a character's body record carries what it is asked to do, and a body's does not")
+{
+    const BodyQuantization &q = Quantization();
+
+    BodyState walker;
+    walker.netId = NetId{9};
+    walker.character = true;
+    walker.move = glm::normalize(glm::vec3{0.6f, 0.f, -0.8f});
+    walker.speedScale = 0.5f;
+    walker.wantedStance = Physics::Stance::Crouching;
+    walker.sprint = true;
+
+    Core::BitWriter writer;
+    WriteAlone(walker, writer);
+    BodyState decoded;
+    Core::BitReader reader(writer.Data());
+    REQUIRE(ReadAlone(reader, decoded));
+
+    // Within one step of the 2 / 2^moveBits a move component is rounded to.
+    const float moveStep = 2.f / static_cast<float>(1u << q.moveBits);
+    CHECK(glm::length(decoded.move - walker.move) < moveStep);
+    CHECK(decoded.speedScale == walker.speedScale);
+    CHECK(decoded.wantedStance == Physics::Stance::Crouching);
+    CHECK(decoded.sprint);
+
+    // Standing still, at full speed: zero is a level, so it stays exactly zero.
+    BodyState standing = walker;
+    standing.move = glm::vec3{0.f};
+    standing.speedScale = 1.f;
+    Core::BitWriter standingWriter;
+    WriteAlone(standing, standingWriter);
+    BodyState standingDecoded;
+    Core::BitReader standingReader(standingWriter.Data());
+    REQUIRE(ReadAlone(standingReader, standingDecoded));
+    CHECK(standingDecoded.move == glm::vec3{0.f});
+    CHECK(standingDecoded.speedScale == 1.f);
+    CHECK(standingWriter.BitsWritten() < writer.BitsWritten());
+
+    // A body's record is the same size whatever its intent fields hold: none
+    // of them is written.
+    BodyState crate = walker;
+    crate.character = false;
+    BodyState plainCrate;
+    plainCrate.netId = walker.netId;
+    Core::BitWriter crateWriter;
+    WriteAlone(crate, crateWriter);
+    Core::BitWriter plainCrateWriter;
+    WriteAlone(plainCrate, plainCrateWriter);
+    CHECK(crateWriter.BitsWritten() == plainCrateWriter.BitsWritten());
+    BodyState crateDecoded;
+    Core::BitReader crateReader(crateWriter.Data());
+    REQUIRE(ReadAlone(crateReader, crateDecoded));
+    CHECK(crateDecoded.move == glm::vec3{0.f});
+    CHECK_FALSE(crateDecoded.sprint);
+}
+
+TEST_CASE("a character's body record carries its jumps and landings as wrapping counts")
+{
+    BodyState jumper;
+    jumper.netId = NetId{9};
+    jumper.character = true;
+    jumper.jumps = 37u;
+    jumper.landings = 36u;
+    jumper.jumpedSinceGrounded = true;
+
+    Core::BitWriter writer;
+    WriteAlone(jumper, writer);
+    BodyState decoded;
+    Core::BitReader reader(writer.Data());
+    REQUIRE(ReadAlone(reader, decoded));
+
+    // Only the low bits cross, which is all a change needs.
+    CHECK(decoded.jumps == (37u & kCharacterCountMask));
+    CHECK(decoded.landings == (36u & kCharacterCountMask));
+    CHECK(decoded.jumpedSinceGrounded);
+}
+
+TEST_CASE("a character asked for a speed that is not a number still reaches the client")
+{
+    // Its movement takes such a speed as zero. Sent as it was, it was refused
+    // by every client, and with it every snapshot from then on.
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+    const ECS::Entity character = harness.serverScene.Create();
+    (void)harness.serverScene.Add<ECS::Transform>(character, ECS::Transform{});
+    (void)harness.serverScene.Add<Physics::SourceMovement>(character);
+    (void)harness.serverScene.Add<Replicated>(character, Replicated{});
+    harness.server.SetControl(character, harness.server.ClientIdOf(harness.serverSide()));
+    harness.Step(10);
+    Physics::CharacterIntent &intent = *harness.serverScene.GetMut<Physics::CharacterIntent>(character);
+    intent.speedScale = std::numeric_limits<float>::quiet_NaN();
+    intent.move = glm::vec3{std::numeric_limits<float>::infinity(), 0.f, 0.f};
+    intent.stance = Physics::Stance::Crouching;
+    harness.Step(30);
+
+    const ReplicationClient::Confirmed *confirmed = harness.client.ConfirmedOf(harness.server.NetIdOf(character));
+    REQUIRE(confirmed != nullptr);
+    CHECK(confirmed->body.stance == Physics::Stance::Crouching);
+    CHECK(confirmed->body.speedScale == 0.f);
+    CHECK(confirmed->body.move == glm::vec3{0.f});
+}
+
 TEST_CASE("a character on the host reaches the client's confirmed copy with its stance and ground")
 {
     PhysicsHarness harness;

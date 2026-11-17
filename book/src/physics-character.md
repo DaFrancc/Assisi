@@ -113,9 +113,11 @@ flag set by the first, and one that runs no step would see it again. Something
 that reads `CharacterState` once a frame, such as an animation, remembers the
 count it last saw and reacts when it changes; see
 [Setting params from code](animator.md#setting-params-from-code). A count only
-ever goes up by one, so it can't be missed. A drop off a stair edge is not a
+ever goes up, so a change can't be missed. A drop off a stair edge is not a
 landing: without a jump, the character has to be in the air for a tenth of a
-second first.
+second first. In multiplayer, another player's counts change on your machine
+once for each of their jumps and landings on the host; see
+[Other players' characters](multiplayer.md#other-players-characters).
 
 ## Walk speed and jump: `CharacterLocomotion`
 

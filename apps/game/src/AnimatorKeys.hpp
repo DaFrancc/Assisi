@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file AnimatorKeys.hpp
-/// @brief Drives every Animator from the keyboard and mouse, to watch an
-///        animation file's states without gameplay behind them.
+/// @brief Drives every Animator but the players' from the keyboard and mouse,
+///        to watch an animation file's states without gameplay behind them.
 ///
 /// For files written with `speed`, `grounded`, `jump` and `aiming` params, as
 /// the book's character is. Hold W to walk, add Shift to run, press Space to

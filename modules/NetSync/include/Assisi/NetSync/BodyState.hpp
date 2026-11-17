@@ -70,6 +70,11 @@ struct BodyQuantization
     /// same reasoning as the linear one applies.
     std::uint32_t angularVelocityBits = 11;
 
+    /// Bits per horizontal component of the way a character is asked to move,
+    /// over ±1. 10 is steps of about 2 mm/s per m/s of its speed: 1.2 cm/s
+    /// sprinting at 6 m/s, under the velocity's own step.
+    std::uint32_t moveBits = 10;
+
     bool operator==(const BodyQuantization &) const = default;
 
     /// @brief The distance between two positions the wire can tell apart, per
@@ -179,6 +184,14 @@ void SetSmoothing(const ViewSmoothing &smoothing);
 /// no longer describe either of them.
 void SetQuantization(const BodyQuantization &quantization);
 
+/// @brief Bits of a character's jump and landing counts on the wire. A count
+/// that changed means a jump or a landing, even one between two records; 16
+/// in one gap would read as none, and a jump takes about half a second.
+inline constexpr std::uint32_t kCharacterCountBits = 4;
+
+/// @brief The bits of a count that cross, as a mask.
+inline constexpr std::uint32_t kCharacterCountMask = (1u << kCharacterCountBits) - 1u;
+
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
@@ -187,19 +200,46 @@ struct BodyState
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.
+
+    /// A character's CharacterIntent::move, horizontal only. With @ref
+    /// speedScale, @ref sprint and @ref wantedStance, what the character is
+    /// asked to do: a client steps a character it does not control on them, so
+    /// it moves on between records as it does on the host. A component past ±1
+    /// is sent as ±1.
+    glm::vec3 move{0.f};
+    /// A character's CharacterIntent::speedScale. Sent in full, and only when
+    /// it is not 1.
+    float speedScale = 1.f;
+
+    /// A character's CharacterState::jumps and landings. Only the low
+    /// kCharacterCountBits cross, so a received one holds only those.
+    std::uint32_t jumps = 0;
+    std::uint32_t landings = 0;
+
     bool asleep = false;
     /// A character's record, which also says how it stands and on what: a
     /// client predicting it compares both, since a wrong one moves it only
-    /// ticks later. Neither is on the wire for any other body.
+    /// ticks later. Neither is on the wire for any other body, nor is what it
+    /// is asked to do.
     bool character = false;
     Physics::Stance stance = Physics::Stance::Standing;
     Physics::GroundState ground = Physics::GroundState::InAir;
+    /// A character's CharacterIntent::stance: the stance asked for, where
+    /// @ref stance is the one it managed.
+    Physics::Stance wantedStance = Physics::Stance::Standing;
+    /// A character's CharacterIntent::sprint.
+    bool sprint = false;
+    /// Whether a character has jumped since it last stood, which keeps it
+    /// from jumping again however recently it left the ground.
+    bool jumpedSinceGrounded = false;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when
 /// awake — the velocities, all at the resolutions Quantization() names; then,
-/// for a character, its stance and ground state. The position is written
-/// against @p reference, which every record in the same run shares.
+/// for a character, its stance and ground state, what it is asked to do, and
+/// its jumps and landings.
+/// The position is written against @p reference, which every record in the
+/// same run shares.
 void WriteBodyState(const BodyState &state, CellReference &reference, Core::BitWriter &writer);
 
 /// @brief Inverse of WriteBodyState. Returns false on a truncated or malformed

@@ -87,7 +87,9 @@ Save it as `assets/quaternius/UAL1/Character.sgl`.
 
 In the editor, give an entity a `MeshRenderer` with the mesh
 `quaternius/UAL1/UAL1.glb`, and add a `SkinnedMesh`, an `AnimationPlayer` and
-an `Animator`. Set the Animator's `machine` to `Character.sgl`.
+an `Animator`. Set the Animator's `machine` to `Character.sgl`. Leave the
+AnimationPlayer's fields as they are: while the Animator runs, the player plays
+what the Animator picks, and its own fields in the inspector don't change.
 
 ### Step 2: add the systems
 
@@ -200,56 +202,79 @@ locomotion -> airborne when jump && grounded { fade 0.05; };
 
 ## Setting params from code
 
-A system sets the params before the Animators system runs, by name:
+A system sets the params before the Animators system runs. They live in the
+`AnimatorRun` the engine adds next to every `Animator`, which is never sent
+over the network, so run the system on every machine (see
+[Animation in a multiplayer game](animation.md#animation-in-a-multiplayer-game)).
+
+You set a param through a **handle**: a small object that names one param and
+its type. Make one for each param, as a `static` in the system that sets it:
 
 ```cpp
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/AnimatorStep.hpp>
+#include <Assisi/Runtime/AnimatorParams.hpp>
 #include <Assisi/Runtime/Components.hpp>
-
-/// The jump count the hero's animation last saw.
-ACOMP(transient)
-struct HeroJumpsSeen
-{
-    AFIELD() std::uint32_t jumps = 0;
-};
 
 ASYSTEM(Update, name = "HeroAnimation", before = "Animators")
 void HeroAnimationSystem(Assisi::App::SystemContext &ctx)
 {
     using namespace Assisi;
-    for (auto [entity, animator, state, seen] :
-         ctx.world.scene.Query<Mut<Runtime::Animator>, Physics::CharacterState, Mut<HeroJumpsSeen>>())
+    static Runtime::AnimatorParam<float> speed{"speed"};
+    static Runtime::AnimatorParam<bool> grounded{"grounded"};
+    static Runtime::AnimatorTrigger jump{"jump"};
+
+    for (auto [entity, run, state] :
+         ctx.world.scene.Query<Mut<Runtime::AnimatorRun>, Physics::CharacterState>())
     {
-        Runtime::SetAnimatorFloat(animator, "speed", state.groundSpeed);
-        Runtime::SetAnimatorBool(animator, "grounded", state.ground == Physics::GroundState::OnGround);
-        if (state.jumps != seen.jumps)
-        {
-            Runtime::FireAnimatorTrigger(animator, "jump");
-            seen.jumps = state.jumps;
-        }
+        speed.SetDamped(entity, run, state.groundSpeed, 0.1f, ctx.dt);
+        grounded.Set(entity, run, state.ground == Physics::GroundState::OnGround);
+        jump.FireOnChange(entity, run, state.jumps);
     }
 }
 ```
 
 This one reads a [character controller](physics-character.md)'s
-`CharacterState`: its speed across what it stands on, whether it stands on
-something, and whether it has jumped since the last frame. Give the character a
-`HeroJumpsSeen` as well. `jumps` counts every jump, and the system fires the
-trigger when the count has moved since it last looked, so it fires once for each
-jump at any frame rate.
+`CharacterState`:
+- **`speed`** eases towards the character's speed across what it stands on, so
+  the blend moves smoothly instead of jumping.
+- **`grounded`** says whether it stands on something.
+- **`jump`** fires each time it jumps. `jumps` counts every jump, and
+  `FireOnChange` fires the trigger when the count has moved since it last
+  looked, so it fires once for each jump at any frame rate. The first count it
+  sees is only remembered, so a character appearing doesn't jump. It works for
+  other players' characters too (see
+  [Other players' characters](multiplayer.md#other-players-characters)).
 
-| Function | Sets |
+| Handle and call | Does |
 |---|---|
-| `SetAnimatorFloat` | A `float` param. |
-| `SetAnimatorInt` | An `int` param, or an enum param by its value's position. |
-| `SetAnimatorBool` | A `bool` param. |
-| `FireAnimatorTrigger` | A `trigger` param, for this frame. |
-| `AnimatorFloat` | Reads a `float` param back, for easing one towards a target. |
+| `AnimatorParam<float>`, `<int32_t>`, `<bool>` | Name a `float`, `int` or `bool` param. An enum param is an `int`, set by its value's position: pass a C++ enum as `static_cast<int32_t>(value)`. |
+| `.Set(entity, run, value)` | Sets the param. |
+| `.SetDamped(entity, run, target, seconds, dt)` | A `float` only: moves it towards `target`, about two thirds of the way every `seconds`, the same at any frame rate. `0` seconds goes straight there. |
+| `.Get(run)` | Reads the param back, or nothing when there is none. |
+| `AnimatorTrigger` | Names a `trigger` param. |
+| `.Fire(entity, run)` | Sets the trigger for this frame. |
+| `.FireOnChange(entity, run, count)` | Fires the trigger when `count` differs from the last one it was given for that character. |
 
-The setters return false and change nothing when the file has no param of that
-name and type, or hasn't loaded yet; `AnimatorFloat` returns nothing then. A
-param keeps its value until you set it again, except a trigger.
+A handle looks its param up in the file the first time it's used, and again
+after you change the file while the game runs, so you don't have to do anything
+after a reload. A param keeps its value until you set it again, except a
+trigger.
+
+**A mistake is logged once.** When the file has no param of that name, or the
+param has another type, the call changes nothing and returns false, and the log
+says so once, naming the entity and the param:
+
+```
+Animator: entity (index 42, gen 1) has no float param "sped" in its file, so setting it does nothing.
+```
+
+A file that hasn't loaded yet isn't a mistake: the call returns false and logs
+nothing. Putting a value of the wrong type in a call, such as `speed.Set(entity,
+run, true)` on a `float` param, doesn't compile.
+
+**Keep each handle in one system.** A handle remembers where it found its
+param, so two systems that may run at the same time shouldn't share one. A
+`static` inside the system, as above, is the way to use it.
 
 ## One file for many characters
 

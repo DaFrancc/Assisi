@@ -2,6 +2,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/ParentFrame.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -144,6 +146,21 @@ WorldMatrix RootMatrix(const DrawnPose &pose)
     return WorldMatrix{.inCell = ComposeMatrix(pose.rotation, offset, pose.scale), .cell = cell};
 }
 
+/// The space a child with @p frame is measured in: @p parent, then the frame,
+/// still in the parent's cell. ChildMatrix moves the child into its own.
+WorldMatrix FramedParent(const WorldMatrix &parent, const ParentFrame &frame)
+{
+    return WorldMatrix{
+        .inCell = MultiplyMatrices(parent.inCell, ComposeMatrix(frame.rotation, frame.position, frame.scale)),
+        .cell = parent.cell};
+}
+
+/// @p frame as a TRS a ComposeTransform can take.
+Transform FrameTransform(const ParentFrame &frame)
+{
+    return Transform{.position = glm::dvec3(frame.position), .rotation = frame.rotation, .scale = frame.scale};
+}
+
 /// A child drawn at @p pose, which is relative to @p parent: composed in the
 /// parent's cell, then moved into its own.
 WorldMatrix ChildMatrix(const WorldMatrix &parent, const DrawnPose &pose)
@@ -226,11 +243,13 @@ struct Propagation
             std::vector<Entity> changed;
             scene.ChangedSince<Transform>(lastTick, changed);
             scene.ChangedSince<Parent>(lastTick, changed);
-            // Removing Parent or RenderOffset stamps nothing; the removal log is
-            // what says it happened. A log that no longer reaches back far enough
-            // redraws everything.
+            scene.ChangedSince<ParentFrame>(lastTick, changed);
+            // Removing Parent, ParentFrame or RenderOffset stamps nothing; the
+            // removal log is what says it happened. A log that no longer reaches
+            // back far enough redraws everything.
             std::vector<Entity> unposed;
             const bool complete = scene.RemovedSince<Parent>(lastTick, changed) &&
+                                  scene.RemovedSince<ParentFrame>(lastTick, changed) &&
                                   scene.RemovedSince<RenderOffset>(lastTick, changed) &&
                                   scene.RemovedSince<Transform>(lastTick, unposed);
             if (!complete)
@@ -351,7 +370,12 @@ struct Propagation
         if (worldChanged)
         {
             const DrawnPose local = DrawnLocalPose(slot, *scene.Get<Transform>(e));
-            WorldMatrix drawn = parentWorld != nullptr ? ChildMatrix(*parentWorld, local) : RootMatrix(local);
+            WorldMatrix drawn = RootMatrix(local);
+            if (parentWorld != nullptr)
+            {
+                const ParentFrame *frame = scene.Get<ParentFrame>(e);
+                drawn = ChildMatrix(frame != nullptr ? FramedParent(*parentWorld, *frame) : *parentWorld, local);
+            }
             if (const RenderOffset *offset = scene.Get<RenderOffset>(e); offset != nullptr)
             {
                 ApplyRenderOffset(drawn.inCell, *offset);
@@ -585,20 +609,30 @@ Transform WorldTransformOf(const Scene &scene, Entity entity)
             break; // a parent with no pose defines no space; the chain ends here
         }
 
+        if (const ParentFrame *frame = scene.Get<ParentFrame>(current); frame != nullptr)
+        {
+            world = ComposeTransform(FrameTransform(*frame), world);
+        }
         world = ComposeTransform(*parentLocal, world);
         current = parent->parent;
     }
     return world;
 }
 
-const WorldMatrix *ParentWorldMatrix(const Scene &scene, Entity entity)
+std::optional<WorldMatrix> ParentWorldMatrix(const Scene &scene, Entity entity)
 {
     const Parent *parent = scene.Get<Parent>(entity);
     if (parent == nullptr || parent->parent == NullEntity)
     {
-        return nullptr;
+        return std::nullopt;
     }
-    return scene.Get<WorldMatrix>(parent->parent);
+    const WorldMatrix *parentWorld = scene.Get<WorldMatrix>(parent->parent);
+    if (parentWorld == nullptr)
+    {
+        return std::nullopt;
+    }
+    const ParentFrame *frame = scene.Get<ParentFrame>(entity);
+    return frame != nullptr ? FramedParent(*parentWorld, *frame) : *parentWorld;
 }
 
 } // namespace Assisi::ECS

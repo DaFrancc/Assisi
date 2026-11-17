@@ -42,7 +42,7 @@ class AssetStore
     AssetStore &operator=(AssetStore &&) = delete;
 
     /// @brief Load through @p provider on @p jobs from now on. Until this is
-    ///        called, every Resolve returns null.
+    ///        called, Resolve returns only what was provided (Provide).
     ///
     /// @p jobs and @p provider must outlive every load started, which the app
     /// guarantees by owning both for the life of the process.
@@ -81,6 +81,16 @@ class AssetStore
         return result;
     }
 
+    /// @brief Holds @p value under @p id as if it had loaded, for an asset made
+    ///        in code rather than read from a file.
+    ///
+    /// Resolve hands it back from then on, with or without a provider; it
+    /// replaces whatever @p id held, and Clear or Forget drop it like any other.
+    template <typename T> void Provide(AssetId id, std::shared_ptr<const T> value)
+    {
+        ProvideErased(id, std::move(value), std::type_index(typeid(T)));
+    }
+
     /// @brief Whether any asset is still being read or loaded.
     [[nodiscard]] bool HasPendingLoads() const;
 
@@ -106,6 +116,8 @@ class AssetStore
 
     /// @p accepted is every type the caller can take the asset as.
     [[nodiscard]] ErasedAsset ResolveErased(AssetId id, std::span<const std::type_index> accepted);
+
+    void ProvideErased(AssetId id, std::shared_ptr<const void> value, std::type_index type);
 
     /// Replaced whole by Clear(). A load's publish holds a weak reference to the
     /// state it started in, so one that lands after a Clear finds it gone.

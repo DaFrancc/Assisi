@@ -839,6 +839,19 @@ void ReplicationClient::EndRollback()
         AbsorbCorrection(body->second, before.pose, SimulatedPose(entity));
     }
     _renderedBeforeReplay.clear();
+
+    // The replay put back what each predicted character was asked and had
+    // counted at each step. One this client does not control goes on, live,
+    // as the host's newest word has it, which may have come since. Only those
+    // the replay stepped: one it left alone may have landed since that word.
+    for (const auto &[netId, body] : _bodies)
+    {
+        const ECS::Entity entity = EntityOf(netId);
+        if (body.askedByHost && _confirmed.contains(netId) && _scene.IsAlive(entity) && !ControlsEntity(entity))
+        {
+            FollowHost(entity, body);
+        }
+    }
 }
 
 const ReplicationClient::EntityPredictionCounts *ReplicationClient::PredictionCountsOf(NetId netId) const

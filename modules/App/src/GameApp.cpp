@@ -259,6 +259,7 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StartChiaraSession();
+            _world->systems.SetTiming(true);
         }
         else
         {
@@ -271,8 +272,10 @@ void GameApp::AdvanceBenchmark()
         if (shotsDirectory.empty())
         {
             StopChiaraSession();
+            _world->systems.SetTiming(false);
             Core::Log::Info("Benchmark: finished after {} s; capture written to '{}'.", _benchmark->ElapsedSeconds(),
                             LastChiaraDump().path);
+            ReportAnimationCost();
         }
         else
         {
@@ -284,6 +287,69 @@ void GameApp::AdvanceBenchmark()
     case BenchmarkPhase::Count_:
         break;
     }
+}
+
+bool GameApp::MeasuringBenchmark() const
+{
+    return _benchmark && _benchmark->Phase() == BenchmarkPhase::Running && _launch.benchmark->shotsDirectory.empty();
+}
+
+void GameApp::ReportAnimationCost() const
+{
+    constexpr double kMillisecondsPerSecond = 1000.0;
+    if (_benchmarkFrames == 0)
+    {
+        return;
+    }
+    const double frames = static_cast<double>(_benchmarkFrames);
+    double animators = 0.0;
+    double players = 0.0;
+    for (const SystemTime &system : _world->systems.Timings())
+    {
+        if (system.name == "Animators")
+        {
+            animators = system.seconds;
+        }
+        else if (system.name == "AnimationPlayers")
+        {
+            players = system.seconds;
+        }
+    }
+    // What was measured, so the times can be scaled to other content: the cost
+    // grows with characters, their joints and the layers each one plays.
+    uint32_t characters = 0;
+    std::size_t joints = 0;
+    std::size_t layers = 0;
+    for (auto [entity, playback, skinned] : _world->scene.Query<Runtime::AnimationPlayback, Runtime::SkinnedPose>())
+    {
+        if (skinned.boundMeshId == Runtime::kUnboundMesh)
+        {
+            continue;
+        }
+        ++characters;
+        joints += skinned.pose.size();
+        layers += 1 + playback.request.layers.size();
+    }
+    const PoseTimes &stage = _benchmarkPoseTimes;
+    const double total = animators + players + stage.placing + stage.posing + stage.placingAgain;
+    Core::Log::Info("Benchmark: animation, milliseconds per frame over {} frames:", _benchmarkFrames);
+    Core::Log::Info("Benchmark:   animators               {:.3f}", animators * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   playback                {:.3f}", players * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms              {:.3f}", stage.placing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   poses                   {:.3f}", stage.posing * kMillisecondsPerSecond / frames);
+    Core::Log::Info("Benchmark:   transforms after poses  {:.3f}",
+                    stage.placingAgain * kMillisecondsPerSecond / frames);
+    if (characters == 0)
+    {
+        return;
+    }
+    constexpr double kMicrosecondsPerSecond = 1e6;
+    const double perCharacter = total * kMicrosecondsPerSecond / frames / static_cast<double>(characters);
+    Core::Log::Info("Benchmark:   {} animated characters, {:.1f} joints and {:.1f} layers each on average",
+                    characters, static_cast<double>(joints) / static_cast<double>(characters),
+                    static_cast<double>(layers) / static_cast<double>(characters));
+    Core::Log::Info("Benchmark:   {:.2f} us per character, {:.3f} us per joint", perCharacter,
+                    total * kMicrosecondsPerSecond / frames / static_cast<double>(joints));
 }
 
 bool GameApp::SetupRenderer()
@@ -343,7 +409,9 @@ SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTic
             .mixer = GetMixer(),
             .settings = GetPlayerSettings(),
             .assets = &GetAssets(),
-            .steam = &GetSteam()};
+            .steam = &GetSteam(),
+            // A headless run is a host with nobody watching: it evaluates no animation.
+            .animates = HasPresentation()};
 }
 
 SystemContext GameApp::WorldStartContext(World &world)
@@ -511,6 +579,10 @@ void GameApp::OnUpdate(float dt)
 
             const SystemContext ctx = WorldContext(world, dt, GetSimTick());
             UpdateWorld(ctx);
+            // The drawn world keeps its characters' posed vertices in the same pass.
+            const bool drawn = &world == _world;
+            PoseWorld(world, drawn ? &_assetCache : nullptr,
+                      drawn && MeasuringBenchmark() ? &_benchmarkPoseTimes : nullptr);
             PresentWorld(ctx);
         });
 
@@ -527,13 +599,19 @@ void GameApp::OnRender(Render::RenderFrame &frame)
         return;
     }
 
+    // A world that ran no Update this frame, paused, is posed here instead.
+    EnsurePosed(*_world, &_assetCache);
+
     // Before the camera is chosen, not only inside Render(): a camera is placed
     // from its *world* matrix, and one parented to a character that just moved
     // would otherwise sit where the previous frame computed — permanently a frame
-    // behind whatever it is attached to.
-    // Poses first: what follows a joint is placed from where the joint is this frame.
-    Runtime::EvaluateScenePoses(_world->scene, _assetCache);
+    // behind whatever it is attached to. After the pose stage it places only
+    // what the Ui systems moved.
     _world->propagationTick = ECS::PropagateTransforms(_world->scene, _world->propagationTick);
+    if (MeasuringBenchmark())
+    {
+        ++_benchmarkFrames;
+    }
     ASSISI_PROFILE_COUNTER("propagate-resolved", ECS::LastPropagationResolved(_world->scene));
 
     // A benchmark flies its route from the scene camera's lens: the route says

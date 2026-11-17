@@ -112,7 +112,7 @@ void AssetStore::Initialize(JobSystem &jobs, const AssetProvider &provider)
 
 AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const std::type_index> accepted)
 {
-    if (id.IsNil() || _jobs == nullptr)
+    if (id.IsNil())
     {
         return {};
     }
@@ -132,7 +132,8 @@ AssetStore::ErasedAsset AssetStore::ResolveErased(AssetId id, std::span<const st
         }
         return ErasedAsset{.value = found->second, .type = type};
     }
-    if (state.loading.contains(id) || state.failed.contains(id))
+    // Only now does a missing provider matter: what was provided needs none.
+    if (_jobs == nullptr || state.loading.contains(id) || state.failed.contains(id))
     {
         return {};
     }
@@ -182,6 +183,21 @@ void AssetStore::Forget(AssetId id)
     state.failed.erase(id);
     state.loading.erase(id);
     ++state.forgotten[id];
+}
+
+void AssetStore::ProvideErased(AssetId id, std::shared_ptr<const void> value, std::type_index type)
+{
+    if (id.IsNil() || value == nullptr)
+    {
+        return;
+    }
+    State &state = *_state;
+    state.failed.erase(id);
+    state.loading.erase(id);
+    // A load of the id already in flight must not land over what was provided.
+    ++state.forgotten[id];
+    state.resident.insert_or_assign(id, std::move(value));
+    state.residentType.insert_or_assign(id, type);
 }
 
 bool AssetStore::HasPendingLoads() const

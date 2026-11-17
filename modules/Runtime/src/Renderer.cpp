@@ -138,7 +138,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
             const glm::mat4 world = Assisi::ECS::MatrixFrom(worldMatrix, params.origin);
-            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
+            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
             if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
             {
                 continue;
@@ -242,7 +242,7 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
         for (auto [entity, worldMatrix, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
         {
             const glm::mat4 world = Assisi::ECS::MatrixFrom(worldMatrix, params.origin);
-            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
+            const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
             if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
             {
                 continue;

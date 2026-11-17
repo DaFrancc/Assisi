@@ -1,0 +1,192 @@
+{
+  "entities": [
+    {
+      "components": {
+        "DirectionalLight": {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
+          "intensity": 0.6
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "Collider": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            16.0,
+            0.5,
+            16.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            -3.0,
+            0.0,
+            3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart"
+    },
+    {
+      "components": {
+        "PlayerStart": {
+          "blueprint": "blueprints/Player.abp"
+        },
+        "Transform": {
+          "position": [
+            3.0,
+            0.0,
+            3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "PlayerStart2"
+    },
+    {
+      "components": {
+        "Holdable": {
+          "joint": "hand_r",
+          "offset": [
+            0.0,
+            0.1,
+            0.0
+          ]
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000006",
+            "path": "prim://sphere"
+          }
+        },
+        "Replicated": {},
+        "Transform": {
+          "position": [
+            0.0,
+            0.075,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.15,
+            0.15,
+            0.15
+          ]
+        }
+      },
+      "name": "Sphere"
+    }
+  ],
+  "instances": [
+    {
+      "name": "Player",
+      "source": "blueprints/Player.abp",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          3.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "systems": [
+    "PickUpHoldables",
+    "AskToDrop",
+    "DropHoldables",
+    "HoldHoldables"
+  ],
+  "version": 2
+}

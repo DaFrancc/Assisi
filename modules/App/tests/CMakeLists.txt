@@ -10,6 +10,7 @@ target_link_libraries(Assisi-App-TestSystems INTERFACE Assisi::App)
 assisi_reflect(
   TARGET Assisi-App-TestSystems
   HEADERS
+    support/include/Assisi/App/TestComponents.hpp
     support/include/Assisi/App/TestMessages.hpp
     support/include/Assisi/App/TestSystems.hpp
 )
@@ -38,6 +39,8 @@ add_executable(Assisi-App-Tests
   TestOptionsConfig.cpp
   TestPlayerSettings.cpp
   TestPlayerSystems.cpp
+  TestPoseStage.cpp
+  TestJointAttachment.cpp
   TestSceneCamera.cpp
   TestShippedLevels.cpp
   TestStartupScene.cpp
@@ -52,6 +55,7 @@ add_executable(Assisi-App-Tests
   # The session cases run in real time, a few seconds each, so they are spread
   # over files that ctest runs side by side.
   TestBlueprintReplication.cpp
+  TestAnimationReplication.cpp
   PlayerSessionTesting.cpp
   TestPlayerSessionBodies.cpp
   TestPlayerSessionContact.cpp
@@ -59,11 +63,14 @@ add_executable(Assisi-App-Tests
   TestPlayerSessionGapWalks.cpp
   TestPlayerSessionMessages.cpp
   TestPlayerSessionOthers.cpp
+  TestPlayerSessionOtherState.cpp
+  TestPlayerSessionPlayerBodies.cpp
   TestPlayerSessionOwnCharacter.cpp
   TestPlayerSessionPlayers.cpp
   TestPlayerSessionReach.cpp
   TestPlayerSessionTicks.cpp
   TestPlayerSessionWalls.cpp
+  TestPlayerSessionAnimation.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
@@ -99,6 +106,9 @@ target_link_libraries(Assisi-App-Tests
     Assisi::App
     Assisi-App-TestSystems
     Assisi::TestSupport
+    # The animator compiler, for the session tests that give characters built in
+    # code an animator written in the test.
+    Assisi::RuntimeImport
 )
 
 # Scene indexes pools by ComponentId, which the static initializers reflectgen

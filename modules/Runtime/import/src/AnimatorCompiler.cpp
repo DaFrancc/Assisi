@@ -186,6 +186,12 @@ class TreeAssets final : public AnimationAssets
 
     void ReadJoints()
     {
+        // A model the context holds in memory answers for itself.
+        if (std::optional<std::vector<std::string>> joints = _context->SkeletonJoints(_skeleton); joints.has_value())
+        {
+            _joints = std::move(*joints);
+            return;
+        }
         std::expected<Geometry::MeshData, Geometry::MeshImportError> mesh = Geometry::ImportMesh(_skeleton);
         if (!mesh)
         {

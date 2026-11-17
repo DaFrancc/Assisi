@@ -8,6 +8,7 @@
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Runtime/AnimatorGraph.hpp>
 #include <Assisi/Runtime/Import/AnimatorCompiler.hpp>
 
@@ -54,7 +55,8 @@ class TestTree final : public Core::AssetCookContext
         Name(std::string{kSpace}, "blend space");
         Name(std::string{kMaterial}, "reflected");
         for (const std::string_view clip : {"Idle_Loop", "Walk_Loop", "Jump_Start", "Jump_Loop", "Jump_Land",
-                                            "Pistol_Aim_Neutral", "Hit_Chest"})
+                                            "Pistol_Aim_Neutral", "Hit_Chest", "Crouch_Idle_Loop", "Crouch_Fwd_Loop",
+                                            "Interact"})
         {
             Name(std::string{kClips} + std::string{clip} + ".glb", "animation");
         }
@@ -105,6 +107,61 @@ class TestTree final : public Core::AssetCookContext
     std::unordered_map<Core::AssetId, std::string> _kinds;
     std::unordered_map<std::string, std::string> _libraries;
     mutable std::string _reported;
+};
+
+/// An asset tree holding only what a test builds in code: models a test names
+/// with a skeleton built in code (TestRig.hpp), and clips. Needs nothing on
+/// disk, so tests built on it never skip.
+class RigTree final : public Core::AssetCookContext
+{
+  public:
+    /// @p vpath is a model whose joints are @p skeleton's.
+    void Model(const std::string &vpath, const Geometry::Skeleton &skeleton)
+    {
+        Name(vpath, "mesh");
+        _joints[vpath] = skeleton.Names;
+    }
+
+    /// @p vpath is a clip, so a file may play it.
+    void Clip(const std::string &vpath) { Name(vpath, "animation"); }
+
+    [[nodiscard]] std::string_view Path() const override { return "tests/rig.sgl"; }
+
+    /// Nothing here has bytes: models answer through SkeletonJoints.
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> Read(std::string_view vpath) const override
+    {
+        (void)vpath;
+        return std::unexpected("not in the tree");
+    }
+
+    [[nodiscard]] std::optional<Core::AssetId> IdFor(std::string_view vpath) const override
+    {
+        const Core::AssetId id = Core::DerivedAssetId(vpath);
+        return _kinds.contains(id) ? std::optional<Core::AssetId>{id} : std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::string> KindNameOf(Core::AssetId id) const override
+    {
+        const std::unordered_map<Core::AssetId, std::string>::const_iterator found = _kinds.find(id);
+        return found != _kinds.end() ? std::optional<std::string>{found->second} : std::nullopt;
+    }
+
+    /// Nothing reads what a file built on this tree reports; a test that
+    /// expects a failure checks the compiler's result instead.
+    void Report(std::string message) const override { (void)message; }
+
+    [[nodiscard]] std::optional<std::vector<std::string>> SkeletonJoints(std::string_view vpath) const override
+    {
+        const std::unordered_map<std::string, std::vector<std::string>>::const_iterator found =
+            _joints.find(std::string{vpath});
+        return found != _joints.end() ? std::optional<std::vector<std::string>>{found->second} : std::nullopt;
+    }
+
+  private:
+    void Name(const std::string &vpath, std::string kind) { _kinds[Core::DerivedAssetId(vpath)] = std::move(kind); }
+
+    std::unordered_map<Core::AssetId, std::string> _kinds;
+    std::unordered_map<std::string, std::vector<std::string>> _joints;
 };
 
 /// The character the book teaches from: locomotion on a blend space, a jump

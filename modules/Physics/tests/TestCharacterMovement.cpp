@@ -563,6 +563,42 @@ TEST_CASE("jumps and landings count every jump and every landing, and a rewind p
     CHECK(PhysicsTests::StateOf(scene, character).jumps == 1u);
 }
 
+TEST_CASE("a character that does not count itself keeps the counts it is given, and shows them at once")
+{
+    ECS::Scene scene;
+    Physics::PhysicsWorld world{scene, Assisi::Physics::NoCollisionAssets()};
+    SpawnFloor(scene, world);
+    const ECS::Entity character =
+        SpawnArcade(scene, world, Physics::CharacterLocomotion{}, Physics::ArcadeMovement{});
+    scene.GetMut<ECS::Transform>(character)->position = {0.f, 1.f, 0.f};
+    world.Reconcile();
+    world.SetCharacterCountsItself(character, false);
+
+    // Just dropped, within coyote time: it could still jump, until it is told
+    // it already has.
+    Step(scene, world, character, glm::vec3(0.f), /*jump=*/ false);
+    REQUIRE(PhysicsTests::StateOf(scene, character).canJump);
+    world.SetCharacterCounts(character, Physics::CharacterCounts{.jumps = 5u, .landings = 7u,
+                                                                 .jumpedSinceGrounded = true});
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 5u);
+    CHECK(PhysicsTests::StateOf(scene, character).landings == 7u);
+    CHECK_FALSE(PhysicsTests::StateOf(scene, character).canJump);
+
+    // It lands and jumps as before, and counts neither.
+    Settle(scene, world, character);
+    REQUIRE(PhysicsTests::StateOf(scene, character).ground == Physics::GroundState::OnGround);
+    Step(scene, world, character, glm::vec3(0.f), /*jump=*/ true);
+    CHECK(PhysicsTests::StateOf(scene, character).velocity.y > 0.f);
+    Settle(scene, world, character);
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 5u);
+    CHECK(PhysicsTests::StateOf(scene, character).landings == 7u);
+
+    // Counting itself again, it counts on from them.
+    world.SetCharacterCountsItself(character, true);
+    Step(scene, world, character, glm::vec3(0.f), /*jump=*/ true);
+    CHECK(PhysicsTests::StateOf(scene, character).jumps == 6u);
+}
+
 TEST_CASE("maxFallSpeed holds a falling character to it, and zero sets no limit")
 {
     CHECK(FallSpeedAfterASecond(5.f) == doctest::Approx(5.f).epsilon(kSpeedTolerance));

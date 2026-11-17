@@ -38,8 +38,10 @@ add_executable(Assisi-Runtime-Tests
   TestAnimationLayers.cpp
   TestAnimator.cpp
   TestAnimatorCompile.cpp
+  TestAnimatorParams.cpp
   TestAnimationPlayback.cpp
   TestSkinnedMesh.cpp
+  TestRig.cpp
   TestLifecycle.cpp
   TestLightingSystem.cpp
   TestLodSelection.cpp

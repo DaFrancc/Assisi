@@ -38,6 +38,7 @@ target_sources(Assisi-Runtime
     "src/AssetResolve.cpp"
     "src/AnimationPlayback.cpp"
     "src/AnimatorGraph.cpp"
+    "src/AnimatorParams.cpp"
     "src/AnimatorStep.cpp"
     "src/SkinnedMeshPose.cpp"
     "src/Blueprint.cpp"

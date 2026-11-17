@@ -325,6 +325,9 @@ void ServerApp::OnUpdate(float dt)
     // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
     // sounds would have nowhere to go.
     Assisi::App::UpdateWorld(WorldContext(dt, _stepTick));
+    // As every program: no mesh loads here, so it poses nothing, but entities
+    // are placed as on a host somebody plays at.
+    Assisi::App::PoseWorld(_world);
     ReportStatus();
 }
 
@@ -389,7 +392,9 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
 
 Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 {
-    // No window, so no input, no action map and no UI, in every phase.
+    // No window, so no input, no action map and no UI, in every phase. Assets,
+    // so what runs here can load clips and animator files, but no animation: a
+    // headless host evaluates none.
     return {.world         = _world,
             .dt            = dt,
             .simTick       = tick,
@@ -399,7 +404,9 @@ Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
             .isActiveWorld = true,
             .worldManager  = nullptr,
             .ui            = nullptr,
-            .steam         = &GetSteam()};
+            .assets        = &GetAssets(),
+            .steam         = &GetSteam(),
+            .animates      = false};
 }
 
 void ServerApp::OnShutdown()

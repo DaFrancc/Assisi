@@ -150,7 +150,7 @@ template <typename Visit> void ForEachMovingCaster(Assisi::ECS::Scene &scene,
         {
             continue;
         }
-        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedMesh>(entity));
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, scene.Get<SkinnedPose>(entity));
         if (mesh != nullptr)
         {
             visit(entity, *world, *meshRenderer, *mesh);
@@ -164,7 +164,7 @@ template <typename Visit> void ForEachCaster(Assisi::ECS::Scene &scene, Visit &&
 {
     for (auto [entity, world, meshRenderer] : scene.Query<Assisi::ECS::WorldMatrix, MeshRenderer>())
     {
-        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedMesh>(entity));
+        const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
         if (mesh != nullptr)
         {
             visit(entity, world, meshRenderer, *mesh);
@@ -297,7 +297,7 @@ void GatherShadowMovers(Assisi::ECS::Scene &scene, std::span<const Assisi::ECS::
         {
             continue; // it moved, but nothing it does reaches a shadow map
         }
-        const SkinnedMesh *skinned = scene.Get<SkinnedMesh>(entity);
+        const SkinnedPose *skinned = scene.Get<SkinnedPose>(entity);
         const Assisi::Render::MeshBuffer *mesh = DrawnMesh(*meshRenderer, skinned);
         if (mesh == nullptr)
         {
