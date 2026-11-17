@@ -5,7 +5,8 @@
 /// it starts each layer at its first state, fires transitions from triggers and
 /// params with their own fades, waits for a fade unless a transition may
 /// interrupt, moves on when a clip played once ends, keeps its place when the
-/// file changes, and writes rate, blend position and weight every frame.
+/// file changes, and writes rate, blend position and weight every frame. All of
+/// it goes into the player's request; the player's own fields are not touched.
 
 #include "AnimatorTesting.hpp"
 
@@ -80,23 +81,41 @@ TEST_CASE("Animator: each layer starts at its first state, and the player plays 
     const Character character = Bound();
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"locomotion"});
     CHECK(Runtime::AnimatorStateNames(character.animator, 1) == std::vector<std::string>{"aim"});
-    CHECK(character.player.animation == Core::DerivedAssetId(kSpace));
-    CHECK(character.player.loop);
+    CHECK(character.player.request.base.animation == Core::DerivedAssetId(kSpace));
+    CHECK(character.player.request.base.loop);
 
-    REQUIRE(character.player.layers.size() == 1);
-    const Runtime::AnimationLayer &upper = character.player.layers[0];
-    CHECK(upper.animation == ClipId("Pistol_Aim_Neutral"));
+    REQUIRE(character.player.request.layers.size() == 1);
+    const Runtime::LayerRequest &upper = character.player.request.layers[0];
+    CHECK(upper.play.animation == ClipId("Pistol_Aim_Neutral"));
     CHECK(upper.maskRoot.View() == "spine_01");
-    CHECK_FALSE(upper.loop);
+    CHECK_FALSE(upper.play.loop);
+}
+
+TEST_CASE("Animator: the player's own fields stay as the author set them" * NeedsUal1())
+{
+    Character character;
+    const Core::AssetId authored = ClipId("Idle_Loop");
+    character.player.animation = authored;
+    character.player.speed = 2.f;
+    character.player.loop = false;
+    Runtime::BindAnimator(character.animator, character.player, Cooked(kCharacter));
+    Jump(character);
+
+    CHECK(character.player.animation == authored);
+    CHECK(character.player.speed == 2.f);
+    CHECK(character.player.fade == doctest::Approx(Runtime::AnimationPlayer{}.fade));
+    CHECK_FALSE(character.player.loop);
+    CHECK(character.player.layers.empty());
+    CHECK(character.player.request.base.animation == ClipId("Jump_Start"));
 }
 
 TEST_CASE("Animator: a transition fires into a state holding states, with its own fade" * NeedsUal1())
 {
     Character character = Bound();
     Jump(character);
-    CHECK(character.player.animation == ClipId("Jump_Start"));
-    CHECK(character.player.fade == doctest::Approx(kJumpFade));
-    CHECK_FALSE(character.player.loop);
+    CHECK(character.player.request.base.animation == ClipId("Jump_Start"));
+    CHECK(character.player.request.base.fade == doctest::Approx(kJumpFade));
+    CHECK_FALSE(character.player.request.base.loop);
 }
 
 TEST_CASE("Animator: a trigger lasts one frame, used or not" * NeedsUal1())
@@ -128,9 +147,9 @@ TEST_CASE("Animator: a clip played once moves on when it ends, and not a frame b
     Playing(character.player, ClipId("Jump_Start"), 1.f);
     Runtime::StepAnimator(character.animator, character.player);
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"airborne", "fall"});
-    CHECK(character.player.animation == ClipId("Jump_Loop"));
-    CHECK(character.player.fade == doctest::Approx(Runtime::kDefaultAnimatorFade));
-    CHECK(character.player.loop);
+    CHECK(character.player.request.base.animation == ClipId("Jump_Loop"));
+    CHECK(character.player.request.base.fade == doctest::Approx(Runtime::kDefaultAnimatorFade));
+    CHECK(character.player.request.base.loop);
 }
 
 TEST_CASE("Animator: an outer transition wins over the state inside it moving on" * NeedsUal1())
@@ -140,7 +159,7 @@ TEST_CASE("Animator: an outer transition wins over the state inside it moving on
     Playing(character.player, ClipId("Jump_Start"), 1.f);
     Runtime::StepAnimator(character.animator, character.player);
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"land"});
-    CHECK(character.player.fade == doctest::Approx(kLandFade));
+    CHECK(character.player.request.base.fade == doctest::Approx(kLandFade));
 }
 
 TEST_CASE("Animator: during a fade only a transition that may interrupt fires" * NeedsUal1())
@@ -170,9 +189,12 @@ TEST_CASE("Animator: a state played once again from the start when entered on th
         Bound("use animation;\nskeleton \"" + std::string{kModel} + "\";\nlayer base {\n    state a { play \"" + walk +
               "\"; then b; }\n    state b { play \"" + walk + "\"; then a; }\n}\n");
     Playing(character.player, ClipId("Walk_Loop"), 1.f);
+    const uint32_t before = character.player.request.base.restarts;
     Runtime::StepAnimator(character.animator, character.player);
     CHECK(Runtime::AnimatorStateNames(character.animator, 0) == std::vector<std::string>{"b"});
-    CHECK(character.player.track.current.Phase == 0.f);
+    // Playback takes the clip back to the start phase when the count goes up.
+    CHECK(character.player.request.base.restarts == before + 1);
+    CHECK(character.player.request.base.startPhase == 0.f);
 }
 
 TEST_CASE("Animator: rate, blend position and weight are written every frame" * NeedsUal1())
@@ -183,12 +205,12 @@ TEST_CASE("Animator: rate, blend position and weight are written every frame" * 
     REQUIRE(Runtime::SetAnimatorFloat(character.animator, "speed", kSpeed));
     REQUIRE(Runtime::SetAnimatorFloat(character.animator, "aiming", kAiming));
     Runtime::StepAnimator(character.animator, character.player);
-    CHECK(character.player.parameter.x == doctest::Approx(kSpeed));
-    CHECK(character.player.speed == doctest::Approx(1.f));
-    REQUIRE(character.player.layers.size() == 1);
-    CHECK(character.player.layers[0].weight == doctest::Approx(kAiming));
+    CHECK(character.player.request.base.parameter.x == doctest::Approx(kSpeed));
+    CHECK(character.player.request.base.speed == doctest::Approx(1.f));
+    REQUIRE(character.player.request.layers.size() == 1);
+    CHECK(character.player.request.layers[0].weight == doctest::Approx(kAiming));
     // A pose holds still.
-    CHECK(character.player.layers[0].speed == 0.f);
+    CHECK(character.player.request.layers[0].play.speed == 0.f);
 }
 
 TEST_CASE("Animator: a changed file keeps each layer in the states of the same names, and the params" * NeedsUal1())
@@ -213,7 +235,7 @@ TEST_CASE("Animator: a changed file keeps each layer in the states of the same n
     REQUIRE(Runtime::SetAnimatorFloat(walking.animator, "speed", 2.f));
     Runtime::BindAnimator(walking.animator, walking.player, Cooked(kCharacter));
     Runtime::StepAnimator(walking.animator, walking.player);
-    CHECK(walking.player.parameter.x == doctest::Approx(2.f));
+    CHECK(walking.player.request.base.parameter.x == doctest::Approx(2.f));
 }
 
 TEST_CASE("Animator: a param is set only by its own name and type" * NeedsUal1())
@@ -265,10 +287,10 @@ TEST_CASE("Animator: a clip param plays what the Animator binds to it" * NeedsUa
     character.animator.clips.push_back(
         Runtime::ClipBinding{.clip = ClipId("Walk_Loop"), .name = Core::InternedString{"run_clip"}});
     Runtime::BindAnimator(character.animator, character.player, Cooked(source));
-    CHECK(character.player.animation == ClipId("Walk_Loop"));
+    CHECK(character.player.request.base.animation == ClipId("Walk_Loop"));
 
     Character unboundClip;
     Runtime::BindAnimator(unboundClip.animator, unboundClip.player, Cooked(source));
-    CHECK(unboundClip.player.animation == Core::AssetId{});
+    CHECK(unboundClip.player.request.base.animation == Core::AssetId{});
     CHECK(unboundClip.animator.run.warned);
 }

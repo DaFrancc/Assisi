@@ -14,6 +14,9 @@ struct SystemContext;
 /// @brief Plays every AnimationPlayer's clip or blend space on its SkinnedMesh
 ///        for the frame.
 ///
+/// What it plays is the player's request: what its Animator picked, or, with
+/// no Animator that has its file, the player's own fields.
+///
 /// Update, so animations play only while the world simulates, and code that
 /// adjusts joints on top runs after it, in Update with after = "AnimationPlayers"
 /// or in Ui. A player whose mesh, clip,

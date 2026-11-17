@@ -145,6 +145,7 @@ struct Rig
 
     bool Advance(float dt)
     {
+        Runtime::RequestFromAuthored(player);
         const Runtime::ResolvedAnimation animation{.space = space, .clips = clips};
         return AdvanceAnimationPlayer(player, animation, skeleton, dt, skinned);
     }
@@ -214,6 +215,40 @@ TEST_CASE("Animation playback: another clip starts from the top; a reload or ano
     rig.player.animation = ClipId(2);
     CHECK(rig.Advance(kFrame));
     CHECK(rig.Time() == doctest::Approx(kFrame));
+}
+
+TEST_CASE("Animation playback: a raised restart count starts the clip playing again, with no fade")
+{
+    Rig rig;
+    rig.player.fade = 1.f;
+    (void)rig.Advance(4.f * kFrame);
+    REQUIRE(rig.Knee() == doctest::Approx(1.f));
+
+    // As an Animator asks: the same clip, from a quarter of the way through.
+    Runtime::RequestFromAuthored(rig.player);
+    rig.player.request.base.startPhase = 0.25f;
+    ++rig.player.request.base.restarts;
+    const Runtime::ResolvedAnimation animation{.space = nullptr, .clips = rig.clips};
+    CHECK_FALSE(AdvanceAnimationPlayer(rig.player, animation, rig.skeleton, kFrame, rig.skinned));
+    CHECK_FALSE(rig.player.track.fading);
+    CHECK(rig.Time() == doctest::Approx(0.25f * kDuration + kFrame));
+    CHECK(rig.Knee() == doctest::Approx(0.25f * kDuration + kFrame));
+
+    // Taken once: the next frame plays on from there.
+    CHECK_FALSE(AdvanceAnimationPlayer(rig.player, animation, rig.skeleton, kFrame, rig.skinned));
+    CHECK(rig.Time() == doctest::Approx(0.25f * kDuration + 2.f * kFrame));
+}
+
+TEST_CASE("Animation playback: a new animation starts at the request's start phase")
+{
+    Rig rig;
+    (void)rig.Advance(kFrame);
+    rig.Play(KneeSlide(), 2);
+    Runtime::RequestFromAuthored(rig.player);
+    rig.player.request.base.startPhase = 0.5f;
+    const Runtime::ResolvedAnimation animation{.space = nullptr, .clips = rig.clips};
+    CHECK(AdvanceAnimationPlayer(rig.player, animation, rig.skeleton, kFrame, rig.skinned));
+    CHECK(rig.Time() == doctest::Approx(0.5f * kDuration + kFrame));
 }
 
 TEST_CASE("Animation playback: a joint the mesh lacks is skipped and the rest still play")

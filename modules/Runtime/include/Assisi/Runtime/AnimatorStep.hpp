@@ -3,8 +3,11 @@
 
 /// @file AnimatorStep.hpp
 /// @brief One frame of an Animator: each layer moves to the state its
-///        transitions choose, and the player is told what that state plays.
-///        The system that runs it each Update only loads the file.
+///        transitions choose, and the player's request says what that state
+///        plays. The system that runs it each Update only loads the file.
+///
+/// The Animator writes only the player's request, never the fields an author
+/// set on it.
 ///
 /// Game code sets the file's params through SetAnimator* and FireAnimatorTrigger,
 /// in any stage before the Animator's Update.
@@ -23,7 +26,8 @@ namespace Assisi::Runtime
 {
 
 /// @brief Points @p animator at @p graph, a new file or a new version of the
-///        one it runs, and puts @p player on what each layer plays.
+///        one it runs, and writes into @p player's request what each layer
+///        plays.
 ///
 /// Each layer stays in the states of the same names, as far down as they are
 /// still there, and otherwise starts at the first; a param keeps its value
@@ -32,7 +36,7 @@ namespace Assisi::Runtime
 void BindAnimator(Animator &animator, AnimationPlayer &player, std::shared_ptr<const AnimatorGraph> graph);
 
 /// @brief Runs one frame of @p animator's file and writes the result into
-///        @p player. Does nothing until it is bound.
+///        @p player's request. Does nothing until it is bound.
 ///
 /// For each layer in order: writes `progress()`, works out the lets, and fires
 /// the first transition that may, outer states first; one that may not

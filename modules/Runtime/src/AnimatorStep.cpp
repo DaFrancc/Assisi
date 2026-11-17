@@ -24,41 +24,27 @@ constexpr float kPhaseEnd = 1.f;
 constexpr float kMinWeight = 0.f;
 constexpr float kMaxWeight = 1.f;
 
-/// The settings of the player that @p layer writes: the base for the first,
-/// otherwise one of its layers.
+/// The part of the player's request that @p layer writes: the base for the
+/// first, otherwise one of its layers.
 struct Target
 {
-    Core::AssetId *animation = nullptr;
-    glm::vec2 *parameter = nullptr;
-    float *speed = nullptr;
-    float *fade = nullptr;
+    PlaybackRequest *play = nullptr;
     float *weight = nullptr; ///< Null for the base, which has none.
-    bool *loop = nullptr;
 };
 
 Target TargetOf(AnimationPlayer &player, uint32_t layer)
 {
     if (layer == 0)
     {
-        return Target{.animation = &player.animation,
-                      .parameter = &player.parameter,
-                      .speed = &player.speed,
-                      .fade = &player.fade,
-                      .weight = nullptr,
-                      .loop = &player.loop};
+        return Target{.play = &player.request.base, .weight = nullptr};
     }
-    AnimationLayer &upper = player.layers[layer - 1];
-    return Target{.animation = &upper.animation,
-                  .parameter = &upper.parameter,
-                  .speed = &upper.speed,
-                  .fade = &upper.fade,
-                  .weight = &upper.weight,
-                  .loop = &upper.loop};
+    LayerRequest &upper = player.request.layers[layer - 1];
+    return Target{.play = &upper.play, .weight = &upper.weight};
 }
 
 /// The track playing @p layer's animation, or null until the player has made
 /// one for it.
-AnimationTrack *TrackOf(AnimationPlayer &player, uint32_t layer)
+const AnimationTrack *TrackOf(const AnimationPlayer &player, uint32_t layer)
 {
     if (layer == 0)
     {
@@ -110,27 +96,28 @@ enum class Arrival : uint8_t
     Count_,
 };
 
-/// Puts @p player on what @p layer's state plays, fading over @p fade. A
+/// Asks @p player for what @p layer's state plays, fading over @p fade. A
 /// clip played once or held starts again from the top when entered anew, even
 /// on the clip already playing; a file changing under it leaves it be.
 void ApplyLeaf(Animator &animator, AnimationPlayer &player, uint32_t layer, float fade, Arrival arrival)
 {
     const AnimatorState &leaf = LeafOf(animator, layer);
     const Core::AssetId clip = ClipOf(animator, leaf.clip);
-    const Target target = TargetOf(player, layer);
-    AnimationTrack *track = TrackOf(player, layer);
+    PlaybackRequest &play = *TargetOf(player, layer).play;
     const bool restarts = leaf.then != kNotWritten || leaf.pose;
-    if (arrival == Arrival::Entered && *target.animation == clip && restarts && track != nullptr)
+    if (arrival == Arrival::Entered && play.animation == clip && restarts)
     {
-        track->current.Phase = 0.f;
+        ++play.restarts;
     }
-    *target.fade = fade;
-    *target.animation = clip;
-    *target.loop = !restarts;
+    play.startPhase = 0.f;
+    play.fade = fade;
+    play.fadeKind = FadeKind::CrossFade;
+    play.animation = clip;
+    play.loop = !restarts;
 }
 
 /// Whether @p layer's state, a clip played once, has played to its end.
-bool Finished(Animator &animator, AnimationPlayer &player, uint32_t layer)
+bool Finished(Animator &animator, const AnimationPlayer &player, uint32_t layer)
 {
     const AnimatorState &leaf = LeafOf(animator, layer);
     const AnimationTrack *track = TrackOf(player, layer);
@@ -151,8 +138,8 @@ void WriteOutputs(Animator &animator, AnimationPlayer &player, uint32_t layer)
     const AnimatorState &leaf = LeafOf(animator, layer);
     const Target target = TargetOf(player, layer);
     const std::span<const Sigil::Word> block = animator.run.block;
-    *target.speed = leaf.pose ? 0.f : FloatAt(graph, block, leaf.rate, 1.f);
-    *target.parameter = glm::vec2{FloatAt(graph, block, leaf.x, 0.f), FloatAt(graph, block, leaf.y, 0.f)};
+    target.play->speed = leaf.pose ? 0.f : FloatAt(graph, block, leaf.rate, 1.f);
+    target.play->parameter = glm::vec2{FloatAt(graph, block, leaf.x, 0.f), FloatAt(graph, block, leaf.y, 0.f)};
     if (target.weight != nullptr)
     {
         *target.weight = std::clamp(FloatAt(graph, block, lowered.weight, kMaxWeight), kMinWeight, kMaxWeight);
@@ -264,13 +251,14 @@ std::vector<std::string> PreviousNames(const AnimatorRun &previous, std::string_
     return {};
 }
 
-/// Sizes @p player's layers to the file's, each with the file's mask and mode.
+/// Sizes the layers of @p player's request to the file's, each with the file's
+/// mask and mode.
 void ShapeLayers(const AnimatorGraph &graph, AnimationPlayer &player)
 {
-    player.layers.resize(graph.layers.size() - 1);
+    player.request.layers.resize(graph.layers.size() - 1);
     for (std::size_t layer = 1; layer < graph.layers.size(); ++layer)
     {
-        AnimationLayer &upper = player.layers[layer - 1];
+        LayerRequest &upper = player.request.layers[layer - 1];
         upper.maskRoot = graph.layers[layer].maskRoot;
         upper.exclusions = graph.layers[layer].exclusions;
         upper.mode = graph.layers[layer].mode;
@@ -311,8 +299,8 @@ void StepAnimator(Animator &animator, AnimationPlayer &player)
     {
         return;
     }
-    // A player whose layers were edited away is shaped back to the file's.
-    if (player.layers.size() + 1 != animator.run.graph->layers.size())
+    // A request whose layers were changed from outside is shaped back to the file's.
+    if (player.request.layers.size() + 1 != animator.run.graph->layers.size())
     {
         ShapeLayers(*animator.run.graph, player);
     }

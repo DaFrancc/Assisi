@@ -228,9 +228,10 @@ Things to know about layers:
 Setting `animation`, `fade` and the layers from code works for one or two
 animations. A character that walks, runs, jumps, lands and aims needs rules for
 which plays when, and an **Animator** runs those rules from a `.sgl` file. With
-an Animator on the entity, the player's `animation`, `parameter`, `speed`,
-`loop`, `fade` and `layers` are set by it every frame, so change the file
-rather than those fields. [Animators](animator.md) shows how.
+an Animator on the entity, it decides what the player plays every frame, and
+the player's own `animation`, `parameter`, `speed`, `loop`, `fade` and
+`layers` are not used. They keep whatever you set, so change the file rather
+than those fields. [Animators](animator.md) shows how.
 
 ## Example: turning a joint from code
 
