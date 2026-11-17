@@ -184,6 +184,35 @@ TEST_CASE("An asset loads in the background and is shared once the load lands")
     CHECK(package.Opens() == 1);
 }
 
+TEST_CASE("A provided asset resolves at once, without a provider, and never as another type")
+{
+    Core::AssetStore uninitialized;
+    const std::shared_ptr<const Testing::TestBytes> made =
+        std::make_shared<const Testing::TestBytes>(Testing::TestBytes{.bytes = Bytes("made")});
+    uninitialized.Provide(kPresent, made);
+    CHECK(uninitialized.Resolve<Testing::TestBytes>(kPresent) == made);
+    CHECK_FALSE(uninitialized.HasPendingLoads());
+    // Asked for as a type it was not provided as, it is refused rather than cast.
+    CHECK(uninitialized.Resolve<Testing::TestCount>(kPresent) == nullptr);
+
+    // Over a provider, what was provided wins and nothing is opened.
+    Core::JobSystem jobs(kWorkers);
+    MemoryProvider package;
+    package.Add(kPresent, Blob(Testing::kRawKind, "from the package"));
+    Core::AssetStore store;
+    store.Initialize(jobs, package);
+    store.Provide(kPresent, made);
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == made);
+    CHECK(package.Opens() == 0);
+
+    // Forgotten, it loads from the package like anything else.
+    store.Forget(kPresent);
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent) == nullptr);
+    Finish(jobs, store);
+    REQUIRE(store.Resolve<Testing::TestBytes>(kPresent) != nullptr);
+    CHECK(store.Resolve<Testing::TestBytes>(kPresent)->bytes == Bytes("from the package"));
+}
+
 TEST_CASE("A nil id resolves to nothing and opens nothing")
 {
     Core::JobSystem jobs(kWorkers);
