@@ -188,7 +188,7 @@ bool DrivenByAnimator(ECS::Scene &scene, ECS::Entity entity)
 
 void AnimationPlayerSystem(SystemContext &ctx)
 {
-    if (ctx.assets == nullptr)
+    if (!ctx.animates || ctx.assets == nullptr)
     {
         return;
     }
@@ -227,7 +227,7 @@ void AnimationPlayerSystem(SystemContext &ctx)
 
 void AnimatorSystem(SystemContext &ctx)
 {
-    if (ctx.assets == nullptr)
+    if (!ctx.animates || ctx.assets == nullptr)
     {
         return;
     }

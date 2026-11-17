@@ -406,7 +406,9 @@ SystemContext GameApp::WorldContext(World &world, float dt, std::uint64_t simTic
             .mixer = GetMixer(),
             .settings = GetPlayerSettings(),
             .assets = &GetAssets(),
-            .steam = &GetSteam()};
+            .steam = &GetSteam(),
+            // A headless run is a host with nobody watching: it evaluates no animation.
+            .animates = HasPresentation()};
 }
 
 SystemContext GameApp::WorldStartContext(World &world)

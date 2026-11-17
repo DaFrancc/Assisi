@@ -528,7 +528,10 @@ The editor binary can also run as a server with no window:
 headless simulation with no networking at all.
 
 A headless process runs the level's systems in every phase but `Ui`, which is
-for screens it doesn't have, and it plays no sounds. It draws nothing, so it
+for screens it doesn't have, and it plays no sounds. It plays no animation
+either: the `Animators` and `AnimationPlayers` systems do nothing there, because
+`ctx.animates` is false. It can still load clips and animator files through
+`ctx.assets`, for code that needs them on the server. It draws nothing, so it
 runs one frame for each step, 60 a second by default: `Update` runs as often as
 `FixedUpdate` there. A dedicated server hands out characters the same way the editor's host
 does, except that the server has none of its own: only the players who join

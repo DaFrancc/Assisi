@@ -177,6 +177,34 @@ TEST_CASE("Animation replication: a character's animation reaches a client, then
     CHECK(bytesPerSnapshot < kIdleSnapshotBytes);
 }
 
+TEST_CASE("Animation replication: a host that does not animate runs no animation, by its switch rather than a missing store")
+{
+    App::World world{Physics::NoCollisionAssets()};
+    Core::AssetStore assets;
+    Core::EventQueue universal{Core::EventScope::Universal};
+    const ECS::Entity character = MakeCharacter(world.scene);
+    App::SystemContext ctx{.world = world,
+                           .dt = kFrame,
+                           .simTick = 0,
+                           .input = nullptr,
+                           .actions = nullptr,
+                           .universalEvents = universal,
+                           .isActiveWorld = true,
+                           .worldManager = nullptr,
+                           .assets = &assets,
+                           .animates = false};
+
+    // As a headless host: it has assets, and still nothing plays.
+    App::AnimatorSystem(ctx);
+    App::AnimationPlayerSystem(ctx);
+    CHECK(world.scene.Get<Runtime::AnimationPlayback>(character)->request.base.animation.IsNil());
+
+    ctx.animates = true;
+    App::AnimationPlayerSystem(ctx);
+    CHECK(world.scene.Get<Runtime::AnimationPlayback>(character)->request.base.animation ==
+          Core::DerivedAssetId("characters/walk.glb"));
+}
+
 TEST_CASE("Animation replication: an Animator removed leaves no bound run behind, so one added back binds again")
 {
     App::World world{Physics::NoCollisionAssets()};

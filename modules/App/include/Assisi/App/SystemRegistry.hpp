@@ -177,6 +177,13 @@ struct SystemContext
     /// hosts that run systems without an application (tests).
     Steam::Services *steam = nullptr;
 
+    /// Whether the animation systems run. A headless host sets it false: it
+    /// evaluates no animation, though its asset store can still load clips and
+    /// animator files for the systems that need them there. Every host says
+    /// which it is, so animation is off by this switch, never by an asset store
+    /// that happens to be missing.
+    bool animates = true;
+
     /// True while a client steps again a tick it has already stepped, to bring
     /// what it predicted in line with what the host sent. Only the engine's own
     /// fixed-step systems marked `replayed` run then; every other system runs
