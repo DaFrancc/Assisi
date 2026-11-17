@@ -12,9 +12,11 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <set>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 
 namespace Assisi::App
@@ -431,14 +433,24 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
 
     for (std::size_t i : phase.sorted)
     {
-        const typename Phase<Ctx>::Entry &entry = phase.entries[i];
+        typename Phase<Ctx>::Entry &entry = phase.entries[i];
         if (!ShouldRun(entry, Skips{.activeOnly = skipActiveOnly, .replaying = Replaying(ctx)}, gateScene))
         {
             continue;
         }
 
         ASSISI_PROFILE_SCOPE(entry.chiaraName);
+        // Only game phases are timed, which is all Timings reports.
+        if (!_timing || !std::is_same_v<Ctx, SystemContext>)
+        {
+            entry.fn(ctx);
+            continue;
+        }
+        const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
         entry.fn(ctx);
+        const std::chrono::nanoseconds took = std::chrono::steady_clock::now() - start;
+        entry.timedNanoseconds += static_cast<uint64_t>(took.count());
+        ++entry.timedRuns;
     }
 }
 
@@ -563,6 +575,42 @@ void SystemRegistry::RunOnce(SystemPhase phase, SystemContext ctx)
         ASSISI_PROFILE_SCOPE(entry.chiaraName);
         entry.fn(ctx);
     }
+}
+
+void SystemRegistry::SetTiming(bool on)
+{
+    if (on)
+    {
+        for (Phase<SystemContext> &phase : _gamePhases)
+        {
+            for (Phase<SystemContext>::Entry &entry : phase.entries)
+            {
+                entry.timedNanoseconds = 0;
+                entry.timedRuns = 0;
+            }
+        }
+    }
+    _timing = on;
+}
+
+std::vector<SystemTime> SystemRegistry::Timings() const
+{
+    constexpr double kSecondsPerNanosecond = 1e-9;
+    std::vector<SystemTime> timed;
+    for (const Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (const Phase<SystemContext>::Entry &entry : phase.entries)
+        {
+            if (entry.timedRuns == 0)
+            {
+                continue;
+            }
+            timed.push_back(SystemTime{.name = entry.name,
+                                       .seconds = static_cast<double>(entry.timedNanoseconds) * kSecondsPerNanosecond,
+                                       .runs = entry.timedRuns});
+        }
+    }
+    return timed;
 }
 
 void SystemRegistry::ClearOnceMarks()

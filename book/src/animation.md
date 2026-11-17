@@ -283,6 +283,9 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
   the vertices). The engine works both out from `pose` every frame, in the
   editor too, so anything you write there is replaced.
 
+The mesh bends on screen in the same frame you write the pose, and so does its
+shadow.
+
 ## Animation in a multiplayer game
 
 Animation is not sent over the network. When a character arrives on another
@@ -301,9 +304,6 @@ So game code that plays animation runs on every machine, not only the host:
 - Params, the pose and where each clip has got to are never sent. Setting a
   param every frame costs nothing on the network.
 
-The mesh bends on screen in the same frame you write the pose, and so does its
-shadow.
-
 ## How a pose reaches the screen
 
 Each frame, before anything is drawn, the GPU moves every skinned entity's
@@ -321,3 +321,35 @@ What that means for you:
 - **A character that keeps changing pose keeps its shadow redrawn.** A
   character in a pose that doesn't change for a while has its shadow kept, like
   any object that has stopped moving.
+
+## Measuring animation
+
+The game's [benchmark](rendering-debugging.md#benchmarking-a-level-along-a-camera-route)
+also reports what animation costs the processor each frame. Run it on any level
+with animated characters. `levels/AnimationCrowd.alvl` is made for it: 100
+copies of the UAL1 character from the Quaternius Universal Animation Library,
+each walking with a blend space, aiming with its upper body, and holding an
+additive layer at weight 0. Put the character in `assets/quaternius/UAL1/`
+first; the level needs it.
+
+```bash
+./assisi package ship --profiler
+cd out/build/gcc-ship-chiara/apps/game
+./Assisi-Game --benchmark levels/AnimationCrowd.alvl
+```
+
+When the run ends, the log shows milliseconds per frame for each step:
+
+| Step | What it is |
+|---|---|
+| `animators` | Running each Animator's state machine. |
+| `playback` | Moving clips on and blending them into each pose. |
+| `poses` | Turning each pose into the joint positions the renderer moves vertices by. |
+| `transforms` | Placing every entity in the world, animated or not. |
+
+Below that it says how many characters it measured, with how many joints and
+layers each, and the cost per character and per joint. **The numbers depend on
+the content.** A skeleton with more joints, clips with more keys, or more layers
+cost more. Use the per-joint cost to estimate other characters, and compare
+runs on the same level to see whether a change made animation faster or slower.
+Measure with a `ship` build that has the profiler, never `dev` or `debug`.

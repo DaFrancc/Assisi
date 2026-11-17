@@ -170,6 +170,12 @@ class GameApp : public Application
     /// the run starts and ending it, and the game, when the run ends.
     void AdvanceBenchmark();
 
+    /// Whether this frame is part of a benchmark's measured run.
+    [[nodiscard]] bool MeasuringBenchmark() const;
+
+    /// Logs what each animation step cost per frame over the measured run.
+    void ReportAnimationCost() const;
+
     // Largest first, so the object carries no interior padding.
 
     /// GPU-side meshes, materials and textures, and the bindless table the mesh
@@ -207,9 +213,18 @@ class GameApp : public Application
     /// The benchmark run clock the simulation has been advanced to.
     double _simulatedRunSeconds = 0.0;
 
+    /// Seconds a measured run spent working out poses and propagating
+    /// transforms, the two animation steps the game calls itself rather than
+    /// through a system.
+    double _benchmarkPoseSeconds = 0.0;
+    double _benchmarkTransformSeconds = 0.0;
+
     /// The world being played. Points into the manager, which keeps world
     /// addresses stable for their lifetime.
     World *_world = nullptr;
+
+    /// Frames drawn in a measured run, which the benchmark times are divided by.
+    uint32_t _benchmarkFrames = 0;
 };
 
 } // namespace Assisi::App

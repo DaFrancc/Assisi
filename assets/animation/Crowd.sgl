@@ -1,0 +1,26 @@
+// The animator every character in AnimationCrowd.alvl runs: a base and two
+// layers, one of them additive at weight 0, so the benchmark measures each
+// kind of work a character's animation does every frame.
+use animation;
+skeleton "quaternius/UAL1/UAL1.glb";
+
+const walk_space = "quaternius/UAL1/Locomotion.ablnd";
+const aim_clip = "quaternius/UAL1/UAL1_animations/Pistol_Aim_Neutral.glb";
+const idle_clip = "quaternius/UAL1/UAL1_animations/Idle_Loop.glb";
+
+// Between the space's walk and jog, so every frame blends two clips.
+layer base {
+    state walk { play walk_space; x 2.5; }
+}
+
+layer upper {
+    mask "spine_01";
+    state aim { pose aim_clip; }
+}
+
+// A layer waiting to be faded in.
+layer breathing {
+    additive;
+    weight 0;
+    state idle { play idle_clip; }
+}
