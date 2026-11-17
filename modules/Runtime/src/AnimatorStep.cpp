@@ -199,27 +199,6 @@ void StepLayer(const Driven &driven, uint32_t layer)
     WriteOutputs(run, driven.playback, layer);
 }
 
-/// The param slot named @p name holding @p type, if the bound file has one.
-std::optional<uint32_t> ParamSlot(const AnimatorRun &run, std::string_view name, Sigil::SlotType type)
-{
-    if (run.graph == nullptr)
-    {
-        return std::nullopt;
-    }
-    const Sigil::Layout &layout = run.graph->layout;
-    const std::optional<uint32_t> slot = Sigil::FindSlot(layout, name);
-    if (!slot.has_value() || layout.slots[*slot].kind != Sigil::SlotKind::Param || layout.slots[*slot].type != type)
-    {
-        return std::nullopt;
-    }
-    return slot;
-}
-
-bool IsTrigger(const AnimatorRun &run, uint32_t slot)
-{
-    return std::ranges::find(run.graph->triggerSlots, slot) != run.graph->triggerSlots.end();
-}
-
 /// The value of each param of @p previous that @p layout has too, by name
 /// and type, in a block laid out by @p layout.
 std::vector<Sigil::Word> CarryParams(const AnimatorRun &previous, const Sigil::Layout &layout)
@@ -242,6 +221,29 @@ std::vector<Sigil::Word> CarryParams(const AnimatorRun &previous, const Sigil::L
         }
     }
     return block;
+}
+
+/// The count each slot of @p previous last followed, for the slot of the same
+/// name in a block laid out by @p layout, so a changed file does not take the
+/// next count for a first sight. Only a handle that finds a trigger there reads
+/// it.
+std::vector<std::optional<uint32_t>> CarryCounts(const AnimatorRun &previous, const Sigil::Layout &layout)
+{
+    std::vector<std::optional<uint32_t>> counts(layout.slots.size());
+    if (previous.graph == nullptr)
+    {
+        return counts;
+    }
+    const Sigil::Layout &before = previous.graph->layout;
+    for (uint32_t old = 0; old < previous.counts.size() && old < before.slots.size(); ++old)
+    {
+        const std::optional<uint32_t> now = Sigil::FindSlot(layout, before.slots[old].name);
+        if (previous.counts[old].has_value() && now.has_value())
+        {
+            counts[*now] = previous.counts[old];
+        }
+    }
+    return counts;
 }
 
 /// The states each layer of the bound file was in, by layer name.
@@ -289,6 +291,7 @@ void BindAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback 
     }
     AnimatorRun bound;
     bound.block = CarryParams(run, graph->layout);
+    bound.counts = CarryCounts(run, graph->layout);
     bound.paths.resize(graph->layers.size());
     for (std::size_t layer = 0; layer < graph->layers.size(); ++layer)
     {
@@ -333,60 +336,6 @@ std::vector<std::string> AnimatorStateNames(const AnimatorRun &run, uint32_t lay
         return {};
     }
     return Sigil::PathNames(run.graph->layers[layer].graph, run.paths[layer]);
-}
-
-bool SetAnimatorFloat(AnimatorRun &run, std::string_view name, float value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(run, name, Sigil::SlotType::Float);
-    if (!slot.has_value())
-    {
-        return false;
-    }
-    run.block[*slot] = Sigil::FromFloat(value);
-    return true;
-}
-
-bool SetAnimatorInt(AnimatorRun &run, std::string_view name, int32_t value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(run, name, Sigil::SlotType::Int);
-    if (!slot.has_value())
-    {
-        return false;
-    }
-    run.block[*slot] = Sigil::FromInt(value);
-    return true;
-}
-
-bool SetAnimatorBool(AnimatorRun &run, std::string_view name, bool value)
-{
-    const std::optional<uint32_t> slot = ParamSlot(run, name, Sigil::SlotType::Bool);
-    if (!slot.has_value() || IsTrigger(run, *slot))
-    {
-        return false;
-    }
-    run.block[*slot] = Sigil::FromBool(value);
-    return true;
-}
-
-std::optional<float> AnimatorFloat(const AnimatorRun &run, std::string_view name)
-{
-    const std::optional<uint32_t> slot = ParamSlot(run, name, Sigil::SlotType::Float);
-    if (!slot.has_value())
-    {
-        return std::nullopt;
-    }
-    return Sigil::ToFloat(run.block[*slot]);
-}
-
-bool FireAnimatorTrigger(AnimatorRun &run, std::string_view name)
-{
-    const std::optional<uint32_t> slot = ParamSlot(run, name, Sigil::SlotType::Bool);
-    if (!slot.has_value() || !IsTrigger(run, *slot))
-    {
-        return false;
-    }
-    run.block[*slot] = Sigil::FromBool(true);
-    return true;
 }
 
 } // namespace Assisi::Runtime

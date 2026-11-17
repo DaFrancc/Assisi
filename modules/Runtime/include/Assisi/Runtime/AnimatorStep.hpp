@@ -10,18 +10,15 @@
 /// AnimationPlayback, never a component an author set, so running it sends
 /// nothing over the network.
 ///
-/// Game code sets the file's params on the entity's AnimatorRun through
-/// SetAnimator* and FireAnimatorTrigger, in any stage before the Animator's
-/// Update.
+/// Game code sets the file's params on the entity's AnimatorRun through the
+/// handles in AnimatorParams.hpp, in any stage before the Animator's Update.
 
 #include <Assisi/Runtime/AnimatorGraph.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace Assisi::Runtime
@@ -51,19 +48,5 @@ void StepAnimator(const Animator &animator, AnimatorRun &run, AnimationPlayback 
 /// @brief The states @p layer of @p run is in, outermost first; empty while it
 ///        is unbound or has no such layer.
 [[nodiscard]] std::vector<std::string> AnimatorStateNames(const AnimatorRun &run, uint32_t layer);
-
-/// @brief Sets a param of @p run's file. False, changing nothing, when it is
-///        unbound, has no param @p name, or the param is of another type; an
-///        int param takes SetAnimatorInt, a trigger FireAnimatorTrigger.
-bool SetAnimatorFloat(AnimatorRun &run, std::string_view name, float value);
-bool SetAnimatorInt(AnimatorRun &run, std::string_view name, int32_t value);
-bool SetAnimatorBool(AnimatorRun &run, std::string_view name, bool value);
-
-/// @brief Sets trigger @p name for this frame. False when there is none.
-bool FireAnimatorTrigger(AnimatorRun &run, std::string_view name);
-
-/// @brief The value of float param @p name, for code that eases it towards a
-///        target; nothing when it is unbound or has no such float param.
-[[nodiscard]] std::optional<float> AnimatorFloat(const AnimatorRun &run, std::string_view name);
 
 } // namespace Assisi::Runtime

@@ -13,6 +13,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
 #include <Assisi/Runtime/AnimationPlayback.hpp>
+#include <Assisi/Runtime/AnimatorParams.hpp>
 #include <Assisi/Runtime/AnimatorStep.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -69,11 +70,39 @@ void Playing(Runtime::AnimationPlayback &playback, Core::AssetId animation, floa
     playback.track.fading = fading;
 }
 
+/// What these characters' params are set for: they are in no scene.
+constexpr ECS::Entity kNoEntity{};
+
+/// The character's params, set as game code sets them.
+void SetGrounded(Character &character, bool grounded)
+{
+    static Runtime::AnimatorParam<bool> param{"grounded"};
+    REQUIRE(param.Set(kNoEntity, character.run, grounded));
+}
+
+void SetSpeed(Character &character, float speed)
+{
+    static Runtime::AnimatorParam<float> param{"speed"};
+    REQUIRE(param.Set(kNoEntity, character.run, speed));
+}
+
+void SetAiming(Character &character, float aiming)
+{
+    static Runtime::AnimatorParam<float> param{"aiming"};
+    REQUIRE(param.Set(kNoEntity, character.run, aiming));
+}
+
+void FireJump(Character &character)
+{
+    static Runtime::AnimatorTrigger jump{"jump"};
+    REQUIRE(jump.Fire(kNoEntity, character.run));
+}
+
 /// Jumps from locomotion and steps once, landing in jump_start.
 void Jump(Character &character)
 {
-    REQUIRE(Runtime::SetAnimatorBool(character.run, "grounded", true));
-    REQUIRE(Runtime::FireAnimatorTrigger(character.run, "jump"));
+    SetGrounded(character, true);
+    FireJump(character);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
     REQUIRE(Runtime::AnimatorStateNames(character.run,0) == std::vector<std::string>{"airborne", "jump_start"});
 }
@@ -125,10 +154,10 @@ TEST_CASE("Animator: a transition fires into a state holding states, with its ow
 TEST_CASE("Animator: a trigger lasts one frame, used or not" * NeedsUal1())
 {
     Character character = Bound();
-    REQUIRE(Runtime::SetAnimatorBool(character.run, "grounded", false));
-    REQUIRE(Runtime::FireAnimatorTrigger(character.run, "jump"));
+    SetGrounded(character, false);
+    FireJump(character);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
-    REQUIRE(Runtime::SetAnimatorBool(character.run, "grounded", true));
+    SetGrounded(character, true);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
     CHECK(Runtime::AnimatorStateNames(character.run,0) == std::vector<std::string>{"locomotion"});
 }
@@ -137,7 +166,7 @@ TEST_CASE("Animator: a clip played once moves on when it ends, and not a frame b
 {
     Character character = Bound();
     Jump(character);
-    REQUIRE(Runtime::SetAnimatorBool(character.run, "grounded", false));
+    SetGrounded(character, false);
 
     Playing(character.playback, ClipId("Jump_Start"), 0.99f);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
@@ -179,7 +208,7 @@ TEST_CASE("Animator: during a fade only a transition that may interrupt fires" *
     Runtime::StepAnimator(character.animator, character.run, character.playback);
     REQUIRE(Runtime::AnimatorStateNames(character.run,0) == std::vector<std::string>{"land"});
 
-    REQUIRE(Runtime::SetAnimatorBool(character.run, "grounded", false));
+    SetGrounded(character, false);
     Playing(character.playback, ClipId("Jump_Land"), 0.f, true);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
     // land -> airborne may interrupt.
@@ -237,8 +266,8 @@ TEST_CASE("Animator: rate, blend position and weight are written every frame" * 
     Character character = Bound();
     constexpr float kSpeed = 3.f;
     constexpr float kAiming = 0.4f;
-    REQUIRE(Runtime::SetAnimatorFloat(character.run, "speed", kSpeed));
-    REQUIRE(Runtime::SetAnimatorFloat(character.run, "aiming", kAiming));
+    SetSpeed(character, kSpeed);
+    SetAiming(character, kAiming);
     Runtime::StepAnimator(character.animator, character.run, character.playback);
     CHECK(character.playback.request.base.parameter.x == doctest::Approx(kSpeed));
     CHECK(character.playback.request.base.speed == doctest::Approx(1.f));
@@ -267,27 +296,12 @@ TEST_CASE("Animator: a changed file keeps each layer in the states of the same n
 
     // Locomotion plays where speed puts it, so speed's value shows there.
     Character walking = Bound();
-    REQUIRE(Runtime::SetAnimatorFloat(walking.run, "speed", 2.f));
+    SetSpeed(walking, 2.f);
     Runtime::BindAnimator(walking.animator, walking.run, walking.playback, Cooked(kCharacter));
     Runtime::StepAnimator(walking.animator, walking.run, walking.playback);
     CHECK(walking.playback.request.base.parameter.x == doctest::Approx(2.f));
 }
 
-TEST_CASE("Animator: a param is set only by its own name and type" * NeedsUal1())
-{
-    Character character = Bound();
-    CHECK_FALSE(Runtime::SetAnimatorBool(character.run, "jump", true));
-    CHECK_FALSE(Runtime::FireAnimatorTrigger(character.run, "grounded"));
-    CHECK_FALSE(Runtime::SetAnimatorFloat(character.run, "grounded", 1.f));
-    CHECK_FALSE(Runtime::SetAnimatorFloat(character.run, "sped", 1.f));
-    Runtime::AnimatorRun unbound;
-    CHECK_FALSE(Runtime::SetAnimatorFloat(unbound, "speed", 1.f));
-
-    REQUIRE(Runtime::SetAnimatorFloat(character.run, "speed", 2.5f));
-    CHECK(Runtime::AnimatorFloat(character.run, "speed") == std::optional<float>{2.5f});
-    CHECK_FALSE(Runtime::AnimatorFloat(character.run, "grounded").has_value());
-    CHECK_FALSE(Runtime::AnimatorFloat(unbound, "speed").has_value());
-}
 
 TEST_CASE("Animator: a level keeps its file and clip bindings, and not where it was in them" * NeedsUal1())
 {
