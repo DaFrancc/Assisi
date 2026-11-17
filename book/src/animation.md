@@ -253,7 +253,7 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
     using namespace Assisi;
 
     for (auto [entity, skinned, renderer] :
-         ctx.world.scene.Query<Mut<Runtime::SkinnedMesh>, Runtime::MeshRenderer>())
+         ctx.world.scene.Query<Mut<Runtime::SkinnedPose>, Runtime::MeshRenderer>())
     {
         // Empty until the mesh has loaded.
         if (skinned.pose.empty())
@@ -275,10 +275,31 @@ void LookLeftSystem(Assisi::App::SystemContext &ctx)
 - A joint keeps the value you give it until something changes it again. It goes
   back to the rest pose only when the entity's mesh changes, or its
   `AnimationPlayer` starts another clip.
-- Write to `pose` only. `SkinnedMesh` also holds `jointModel` (where each joint
+- The pose lives in `SkinnedPose`, which the engine adds next to every
+  `SkinnedMesh`. It is never saved and never sent over the network: each machine
+  works out its own.
+- Write to `pose` only. `SkinnedPose` also holds `jointModel` (where each joint
   ends up, relative to the entity) and `palette` (what the renderer uses to move
   the vertices). The engine works both out from `pose` every frame, in the
   editor too, so anything you write there is replaced.
+
+## Animation in a multiplayer game
+
+Animation is not sent over the network. When a character arrives on another
+machine, its `SkinnedMesh`, `AnimationPlayer` and `Animator` arrive with it, and
+that machine plays the animation itself. Two machines can be a moment apart, but
+what players see stays close.
+
+So game code that plays animation runs on every machine, not only the host:
+
+- A system that sets an Animator's params, or changes a player's `animation`,
+  should run everywhere, from state every machine has, such as a character's
+  `CharacterState`.
+- Changing a player's or an Animator's own fields on the host sends the change
+  to everyone, like any other replicated field. Do it when something changes,
+  not every frame.
+- Params, the pose and where each clip has got to are never sent. Setting a
+  param every frame costs nothing on the network.
 
 The mesh bends on screen in the same frame you write the pose, and so does its
 shadow.

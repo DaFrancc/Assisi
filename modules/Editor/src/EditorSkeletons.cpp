@@ -51,7 +51,7 @@ void EditorApp::SubmitSkeletons()
     // Measured from the camera, as the overlay draws them.
     const glm::dvec3 origin = ViewOrigin();
     for (auto [entity, skinned, renderer, world] :
-         _scene->Query<Assisi::Runtime::SkinnedMesh, Assisi::Runtime::MeshRenderer, Assisi::ECS::WorldMatrix>())
+         _scene->Query<Assisi::Runtime::SkinnedPose, Assisi::Runtime::MeshRenderer, Assisi::ECS::WorldMatrix>())
     {
         if (skinned.boundMeshId == Assisi::Runtime::kUnboundMesh || renderer.meshBuffer == nullptr)
         {
@@ -84,7 +84,7 @@ void EditorApp::DrawSkeletonJointTooltip()
     const std::string *name = nullptr;
     float nearestPixels = std::numeric_limits<float>::max();
     for (auto [entity, skinned, renderer, world] :
-         _scene->Query<Assisi::Runtime::SkinnedMesh, Assisi::Runtime::MeshRenderer, Assisi::ECS::WorldMatrix>())
+         _scene->Query<Assisi::Runtime::SkinnedPose, Assisi::Runtime::MeshRenderer, Assisi::ECS::WorldMatrix>())
     {
         if (skinned.boundMeshId == Assisi::Runtime::kUnboundMesh || renderer.meshBuffer == nullptr)
         {

@@ -362,7 +362,7 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     Assisi::Geometry::BoundingSphere world;
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     const Assisi::Render::MeshBuffer *mesh =
-        mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedMesh>(entity)) : nullptr;
+        mrc != nullptr ? Assisi::Runtime::DrawnMesh(*mrc, _scene->Get<Assisi::Runtime::SkinnedPose>(entity)) : nullptr;
     if (mesh != nullptr && mesh->LocalBounds().radius > 0.f)
     {
         world = Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), placed);

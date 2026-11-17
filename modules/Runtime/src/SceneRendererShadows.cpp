@@ -70,7 +70,7 @@ void SceneRenderer::UpdateShadowMovers(ECS::Scene &scene)
     // A skinned mesh posing where it stands moves its shadow without moving its
     // matrix. Its change ticks cannot say so: evaluation writes it every frame,
     // changed or not.
-    for (auto [entity, skinned] : scene.Query<SkinnedMesh>())
+    for (auto [entity, skinned] : scene.Query<SkinnedPose>())
     {
         if (skinned.poseChanged && std::ranges::find(_movedEntities, entity) == _movedEntities.end())
         {

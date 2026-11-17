@@ -127,15 +127,15 @@ std::optional<Runtime::ResolvedAnimation> ResolveAnimation(Core::AssetStore &ass
     return std::nullopt;
 }
 
-/// Plays each of @p player's layers over the pose its base wrote, in order.
-void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayer &player, const Geometry::Skeleton &skeleton,
-                   float dt, Runtime::SkinnedMesh &skinned)
+/// Plays each layer of @p playback's request over the pose its base wrote, in order.
+void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayback &playback, const Geometry::Skeleton &skeleton,
+                   float dt, Runtime::SkinnedPose &skinned)
 {
-    Runtime::MatchLayerStates(player);
-    for (std::size_t index = 0; index < player.request.layers.size(); ++index)
+    Runtime::MatchLayerStates(playback);
+    for (std::size_t index = 0; index < playback.request.layers.size(); ++index)
     {
-        const Runtime::LayerRequest &layer = player.request.layers[index];
-        Runtime::LayerState &state = player.layerStates[index];
+        const Runtime::LayerRequest &layer = playback.request.layers[index];
+        Runtime::LayerState &state = playback.layerStates[index];
         const std::optional<Runtime::ResolvedAnimation> animation =
             ResolveAnimation(assets, layer.play.animation, state.track);
         if (!animation.has_value())
@@ -148,6 +148,27 @@ void AdvanceLayers(Core::AssetStore &assets, Runtime::AnimationPlayer &player, c
     }
 }
 
+/// Whether an Animator that has its file drives @p entity's player, and so
+/// writes its request itself.
+///
+/// Removing an Animator leaves the AnimatorRun it brought. Such a run is
+/// emptied here, so an Animator added back binds its file again rather than
+/// taking the stale run as already bound.
+bool DrivenByAnimator(ECS::Scene &scene, ECS::Entity entity)
+{
+    Runtime::AnimatorRun *run = scene.Get<Runtime::AnimatorRun>(entity);
+    if (run == nullptr || run->graph == nullptr)
+    {
+        return false;
+    }
+    if (!scene.Has<Runtime::Animator>(entity))
+    {
+        *run = Runtime::AnimatorRun{};
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 void AnimationPlayerSystem(SystemContext &ctx)
@@ -156,27 +177,31 @@ void AnimationPlayerSystem(SystemContext &ctx)
     {
         return;
     }
-    for (auto [entity, player, skinned, renderer] :
-         ctx.world.scene.Query<Mut<Runtime::AnimationPlayer>, Mut<Runtime::SkinnedMesh>, Runtime::MeshRenderer>())
+    // The authored components are only read, so playing sends nothing.
+    for (auto [entity, player, playback, skinned, renderer] :
+         ctx.world.scene.Query<Runtime::AnimationPlayer, Mut<Runtime::AnimationPlayback>, Mut<Runtime::SkinnedPose>,
+                               Runtime::MeshRenderer>())
     {
+        // Before the mesh is checked, so a run an Animator left behind is
+        // emptied even while nothing can be posed.
+        const bool driven = DrivenByAnimator(ctx.world.scene, entity);
         if (Runtime::BindSkinnedMesh(skinned, renderer) == nullptr)
         {
             continue;
         }
-        // An Animator that has its file writes the request itself.
-        const Runtime::Animator *animator = ctx.world.scene.Get<Runtime::Animator>(entity);
-        if (animator == nullptr || animator->run.graph == nullptr)
+        if (!driven)
         {
-            Runtime::RequestFromAuthored(player);
+            Runtime::RequestFromAuthored(player, playback.request);
         }
         const Geometry::Skeleton &skeleton = renderer.meshBuffer->Skeleton();
         const std::optional<Runtime::ResolvedAnimation> animation =
-            ResolveAnimation(*ctx.assets, player.request.base.animation, player.track);
-        if (animation.has_value() && Runtime::AdvanceAnimationPlayer(player, *animation, skeleton, ctx.dt, skinned))
+            ResolveAnimation(*ctx.assets, playback.request.base.animation, playback.track);
+        if (animation.has_value() &&
+            Runtime::AdvanceAnimationPlayer(playback, *animation, skeleton, ctx.dt, skinned))
         {
-            WarnMissingJoints(player.track);
+            WarnMissingJoints(playback.track);
         }
-        AdvanceLayers(*ctx.assets, player, skeleton, ctx.dt, skinned);
+        AdvanceLayers(*ctx.assets, playback, skeleton, ctx.dt, skinned);
     }
 }
 
@@ -186,17 +211,18 @@ void AnimatorSystem(SystemContext &ctx)
     {
         return;
     }
-    for (auto [entity, animator, player] :
-         ctx.world.scene.Query<Mut<Runtime::Animator>, Mut<Runtime::AnimationPlayer>>())
+    // The Animator is only read, so running it sends nothing.
+    for (auto [entity, animator, run, playback] :
+         ctx.world.scene.Query<Runtime::Animator, Mut<Runtime::AnimatorRun>, Mut<Runtime::AnimationPlayback>>())
     {
         std::shared_ptr<const Runtime::AnimatorGraph> graph =
             ctx.assets->Resolve<Runtime::AnimatorGraph>(animator.machine);
         // Null while a changed file cooks again, or when it won't: the one bound plays on.
-        if (graph != nullptr && graph != animator.run.graph)
+        if (graph != nullptr && graph != run.graph)
         {
-            Runtime::BindAnimator(animator, player, std::move(graph));
+            Runtime::BindAnimator(animator, run, playback, std::move(graph));
         }
-        Runtime::StepAnimator(animator, player);
+        Runtime::StepAnimator(animator, run, playback);
     }
 }
 

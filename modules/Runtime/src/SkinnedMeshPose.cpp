@@ -12,7 +12,7 @@
 namespace Assisi::Runtime
 {
 
-const Geometry::Skeleton *BindPose(SkinnedMesh &skinned, const Geometry::Skeleton &skeleton, uint32_t meshId)
+const Geometry::Skeleton *BindPose(SkinnedPose &skinned, const Geometry::Skeleton &skeleton, uint32_t meshId)
 {
     if (skeleton.Empty())
     {
@@ -33,7 +33,7 @@ const Geometry::Skeleton *BindPose(SkinnedMesh &skinned, const Geometry::Skeleto
     return &skeleton;
 }
 
-const Geometry::Skeleton *BindSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
+const Geometry::Skeleton *BindSkinnedMesh(SkinnedPose &skinned, const MeshRenderer &renderer)
 {
     if (renderer.meshBuffer == nullptr)
     {
@@ -43,7 +43,7 @@ const Geometry::Skeleton *BindSkinnedMesh(SkinnedMesh &skinned, const MeshRender
     return BindPose(skinned, renderer.meshBuffer->Skeleton(), renderer.meshBuffer->Id());
 }
 
-void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
+void EvaluateSkinnedMesh(SkinnedPose &skinned, const MeshRenderer &renderer)
 {
     const Geometry::Skeleton *skeleton = BindSkinnedMesh(skinned, renderer);
     if (skeleton == nullptr)
@@ -66,7 +66,7 @@ void EvaluateSkinnedMesh(SkinnedMesh &skinned, const MeshRenderer &renderer)
     }
 }
 
-void NotePoseChange(SkinnedMesh &skinned)
+void NotePoseChange(SkinnedPose &skinned)
 {
     const std::span<const glm::mat4> palette = skinned.palette;
     const uint64_t hash = Core::ContentHash64(std::as_bytes(palette));
@@ -74,9 +74,22 @@ void NotePoseChange(SkinnedMesh &skinned)
     skinned.paletteHash = hash;
 }
 
+void ReleaseOrphanedPoses(ECS::Scene &scene)
+{
+    for (auto [entity, skinned] : scene.Query<Mut<SkinnedPose>>())
+    {
+        const bool holding = skinned.boundMeshId != kUnboundMesh || skinned.posed.Id() != 0;
+        if (holding && !scene.Has<SkinnedMesh>(entity))
+        {
+            UnbindSkinnedMesh(skinned);
+        }
+    }
+}
+
 void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache)
 {
-    for (auto [entity, skinned, renderer] : scene.Query<Mut<SkinnedMesh>, MeshRenderer>())
+    ReleaseOrphanedPoses(scene);
+    for (auto [entity, skinned, marker, renderer] : scene.Query<Mut<SkinnedPose>, SkinnedMesh, MeshRenderer>())
     {
         // Kept first, so the copy evaluation fits the bounds of is this frame's.
         // A mesh with a skeleton but no weights draws as it is.
@@ -90,7 +103,7 @@ void EvaluateScenePoses(ECS::Scene &scene, Render::AssetCache &cache)
     cache.EndSkinFrame();
 }
 
-void UnbindSkinnedMesh(SkinnedMesh &skinned)
+void UnbindSkinnedMesh(SkinnedPose &skinned)
 {
     skinned.pose.clear();
     skinned.jointModel.clear();
@@ -101,7 +114,7 @@ void UnbindSkinnedMesh(SkinnedMesh &skinned)
     skinned.poseChanged = false;
 }
 
-const Render::MeshBuffer *DrawnMesh(const MeshRenderer &renderer, const SkinnedMesh *skinned)
+const Render::MeshBuffer *DrawnMesh(const MeshRenderer &renderer, const SkinnedPose *skinned)
 {
     if (skinned != nullptr && skinned->posed.Id() != 0)
     {
@@ -114,7 +127,7 @@ const Render::MeshBuffer *GatherPosedInstances(const ECS::Scene &scene, Render::
 {
     batch.Reset();
     const Render::MeshBuffer *anyMesh = nullptr;
-    for (auto [entity, skinned, renderer] : scene.Query<SkinnedMesh, MeshRenderer>())
+    for (auto [entity, skinned, marker, renderer] : scene.Query<SkinnedPose, SkinnedMesh, MeshRenderer>())
     {
         const Render::MeshBuffer *source = renderer.meshBuffer;
         if (source == nullptr || skinned.posed.Id() == 0 || skinned.palette.size() != source->Skeleton().JointCount())

@@ -68,7 +68,7 @@ void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
 
     // Bound here as well as before each evaluation, so a freshly loaded skinned
     // mesh holds its rest pose before anything reads it.
-    for (auto [entity, skinned, meshRenderer] : scene.Query<Mut<SkinnedMesh>, MeshRenderer>())
+    for (auto [entity, skinned, meshRenderer] : scene.Query<Mut<SkinnedPose>, MeshRenderer>())
     {
         (void)BindSkinnedMesh(skinned, meshRenderer);
     }
@@ -81,7 +81,7 @@ void ClearSceneAssetBindings(ECS::Scene &scene)
         meshRenderer.meshBuffer = nullptr;
         meshRenderer.materials.clear();
     }
-    for (auto [entity, skinned] : scene.Query<Mut<SkinnedMesh>>())
+    for (auto [entity, skinned] : scene.Query<Mut<SkinnedPose>>())
     {
         UnbindSkinnedMesh(skinned);
     }

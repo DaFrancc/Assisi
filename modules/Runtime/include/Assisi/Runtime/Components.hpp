@@ -102,7 +102,19 @@ struct MeshRenderer
 ///        The asset cache never gives a mesh this id.
 inline constexpr uint32_t kUnboundMesh = 0;
 
-/// @brief Poses the skinned mesh its entity's MeshRenderer draws.
+/// @brief Marks the mesh its entity's MeshRenderer draws as one a skeleton
+///        poses. What the pose is lives in the SkinnedPose it brings.
+///
+/// Replicable so a remote copy of the entity carries one too, by presence
+/// alone: every machine poses its own copy, so nothing here is ever sent after
+/// the entity arrives.
+ACOMP(replicable, requires = {MeshRenderer, SkinnedPose})
+struct SkinnedMesh
+{
+};
+
+/// @brief The pose of a SkinnedMesh's mesh, worked out on every machine. Never
+///        saved or sent.
 ///
 /// `pose` is each joint's transform relative to its parent, and is what code,
 /// clips and IK write. It starts at the skeleton's rest pose and is reset only
@@ -118,10 +130,10 @@ inline constexpr uint32_t kUnboundMesh = 0;
 /// the pose. Its id is 0 until it holds a range, and DrawnMesh then answers with
 /// the MeshRenderer's mesh instead.
 ///
-/// Replicable so a remote copy of the entity carries one too. Nothing in it is
-/// sent: every machine poses its own copy from state that is already replicated.
-ACOMP(replicable, requires = {MeshRenderer})
-struct SkinnedMesh
+/// Transient, and apart from SkinnedMesh, so writing it every frame never marks
+/// anything replicated as changed.
+ACOMP(transient)
+struct SkinnedPose
 {
     Assisi::Render::MeshBuffer posed;
     std::vector<Geometry::JointTransform> pose;
@@ -276,6 +288,23 @@ struct PlayerRequest
     PlaybackRequest base;
 };
 
+/// @brief Where an AnimationPlayer's playing has got to, worked out on every
+///        machine. Never saved or sent.
+///
+/// Transient, and apart from the player, so writing it every frame never marks
+/// anything replicated as changed.
+ACOMP(transient)
+struct AnimationPlayback
+{
+    PlayerRequest request; ///< What plays this frame.
+    AnimationTrack track;  ///< What the base of `request` plays.
+    std::vector<LayerState> layerStates; ///< One per layer, in order.
+    /// The pose as the base left it last frame, before the layers wrote over
+    /// it: what a joint a layer took goes back to before the base plays again,
+    /// so no layer builds on what it wrote itself.
+    std::vector<Geometry::JointTransform> underLayers;
+};
+
 /// @brief Plays an animation on its entity's SkinnedMesh: a clip, or a blend
 ///        space that mixes clips by `parameter`, with `layers` on top.
 ///
@@ -302,22 +331,17 @@ struct PlayerRequest
 /// moves, or a layer's mask takes, is written every Update, so code that
 /// adjusts it on top runs after the AnimationPlayers system.
 ///
-/// What plays is read from `request`, which the AnimationPlayers system fills
-/// from these fields each frame. With an Animator on the entity, the Animator
-/// fills it instead and these fields are not used.
+/// What plays is read from the request in its AnimationPlayback, which the
+/// AnimationPlayers system fills from these fields each frame. With an Animator
+/// on the entity, the Animator fills it instead and these fields are not used.
 ///
 /// Replicable: a remote copy plays the same animations at the same speeds and
 /// parameters. Its timelines are its own, so two machines can be a moment apart.
-ACOMP(replicable, requires = {SkinnedMesh})
+/// The systems only read it, so after the entity arrives it is sent again only
+/// when game code changes it.
+ACOMP(replicable, requires = {SkinnedMesh, AnimationPlayback})
 struct AnimationPlayer
 {
-    PlayerRequest request; ///< What plays this frame.
-    AnimationTrack track;  ///< What the base of `request` plays.
-    std::vector<LayerState> layerStates; ///< One per layer, in order.
-    /// The pose as the base left it last frame, before the layers wrote over
-    /// it: what a joint a layer took goes back to before the base plays again,
-    /// so no layer builds on what it wrote itself.
-    std::vector<Geometry::JointTransform> underLayers;
     AFIELD() std::vector<AnimationLayer> layers;
     AFIELD() Core::AssetId animation;
     AFIELD() glm::vec2 parameter{0.f, 0.f}; ///< Where a blend space plays; a clip ignores it.
@@ -337,8 +361,12 @@ struct ClipBinding
     AFIELD() Core::InternedString name; ///< The param's name in the file.
 };
 
-/// @brief Where an Animator is in its file. Never saved; rebuilt from the
-///        file when it loads.
+/// @brief Where an Animator is in its file, and the params game code set.
+///        Never saved or sent; rebuilt from the file when it loads.
+///
+/// Transient, and apart from the Animator, so running the file and setting
+/// params every frame never marks anything replicated as changed.
+ACOMP(transient)
 struct AnimatorRun
 {
     std::vector<Sigil::Word> block;           ///< Its params, the engine's values and its lets.
@@ -361,11 +389,11 @@ struct AnimatorRun
 /// changed while the game runs is picked up where it stands: a character stays
 /// in the state of the same name if there is one.
 ///
-/// Replicable: a remote copy runs the same file. Its params are its own.
-ACOMP(replicable, requires = {AnimationPlayer})
+/// Replicable: a remote copy runs the same file. Its params are its own, in its
+/// AnimatorRun, so setting them sends nothing.
+ACOMP(replicable, requires = {AnimationPlayer, AnimatorRun})
 struct Animator
 {
-    AnimatorRun run;
     AFIELD() std::vector<ClipBinding> clips;
     AFIELD() Core::AssetId machine;
 };

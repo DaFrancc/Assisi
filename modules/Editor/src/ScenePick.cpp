@@ -171,7 +171,7 @@ std::optional<Geometry::Aabb> MeshPickBounds(const ECS::Scene &scene, ECS::Entit
     {
         return std::nullopt;
     }
-    const Render::MeshBuffer *mesh = Runtime::DrawnMesh(*mrc, scene.Get<Runtime::SkinnedMesh>(entity));
+    const Render::MeshBuffer *mesh = Runtime::DrawnMesh(*mrc, scene.Get<Runtime::SkinnedPose>(entity));
     if (mesh == nullptr)
     {
         return kFallbackPickBounds;
