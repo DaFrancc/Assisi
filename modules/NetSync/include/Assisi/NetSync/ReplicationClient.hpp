@@ -842,6 +842,11 @@ private:
         glm::vec3 scale{1.f, 1.f, 1.f};
     };
 
+    /// Whether @p entity, of @p netId, has another Parent here than when it was
+    /// last drawn; when it has, @p history keeps only its newest sample, which
+    /// is drawn as it is.
+    bool RestartForNewParent(NetId netId, ECS::Entity entity, std::deque<TransformSample> &history);
+
     /// Capture the current pose of every mirrored entity at @p serverTick. Call
     /// after a snapshot is applied and **before** Interpolate() can overwrite
     /// anything, so the buffer holds authoritative poses and not interpolated
@@ -957,6 +962,12 @@ private:
     std::unordered_map<ECS::InstanceId, NetId>           _baseByInstanceId;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
+
+    /// The Parent each interpolated mirror had when it was last drawn. Samples
+    /// are measured from the parent, so a mirror this machine gives another
+    /// parent draws its newest sample at once rather than blending from ones
+    /// measured from the parent before.
+    std::unordered_map<NetId, ECS::Entity> _interpolatedParents;
 
     /// For each entity this client predicts.
     std::unordered_map<NetId, PredictionHistory> _history;

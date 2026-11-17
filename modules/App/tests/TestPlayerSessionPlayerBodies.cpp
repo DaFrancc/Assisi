@@ -17,11 +17,14 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <expected>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,11 +33,16 @@
 
 #include <Assisi/App/Network.hpp>
 #include <Assisi/App/PlayerComponents.hpp>
+#include <Assisi/App/TestComponents.hpp>
 #include <Assisi/App/TestMessages.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Received.hpp>
+#include <Assisi/Core/InternedString.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/WorldMatrix.hpp>
+#include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Geometry/AnimationClip.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -431,7 +439,178 @@ struct GestureWatch
     }
 };
 
+/// The joint of the biped's body an item is held at, and where it sits from it (m).
+constexpr std::string_view kHeldAt = "limb_l_end";
+constexpr glm::vec3 kHeldOffset{0.f, 0.1f, 0.f};
+
+/// Where a free item lies, picked up and dropped this many times (m).
+constexpr glm::dvec3 kItemLies{1.0, 0.075, 1.0};
+constexpr std::int32_t kHoldCycles = 5;
+
+/// Frames an item is held, then lies free, in each cycle: long enough for
+/// every machine to hear, and for what each draws to settle.
+constexpr std::int32_t kHoldFrames = 40;
+
+/// The item's size.
+constexpr float kItemScale = 0.15f;
+
+/// Hands @p item to @p handTo, or lays it free where it lies for NullEntity, once
+/// it is set: its Transform the offset from the joint while held, where it lies
+/// while free.
+void HandItem(ECS::Scene &scene, ECS::Entity item, std::optional<ECS::Entity> &handTo)
+{
+    if (!handTo.has_value() || item == ECS::NullEntity)
+    {
+        return;
+    }
+    const bool held = *handTo != ECS::NullEntity;
+    scene.GetMut<App::Test::TestHoldable>(item)->holder = *handTo;
+    *scene.GetMut<ECS::Transform>(item) =
+        ECS::Transform{.position = held ? glm::dvec3(kHeldOffset) : kItemLies, .scale = glm::vec3(kItemScale)};
+    handTo.reset();
+}
+
+/// How far from where it should be a machine may draw an item (m).
+constexpr float kHeldNear = 0.01f;
+
+/// Hangs each held item from its holder's body at the joint, and lets go of a
+/// free one, as the sample's HoldHoldables does on every machine.
+void HoldItems(ECS::Scene &scene)
+{
+    std::vector<std::pair<ECS::Entity, ECS::Entity>> held;
+    std::vector<ECS::Entity> loose;
+    for (auto [item, holdable] : scene.Query<App::Test::TestHoldable>())
+    {
+        const ECS::Entity body =
+            scene.IsAlive(holdable.holder) ? BodyOf(scene, holdable.holder) : ECS::NullEntity;
+        if (body != ECS::NullEntity)
+        {
+            held.emplace_back(item, body);
+        }
+        else if (holdable.holder == ECS::NullEntity)
+        {
+            loose.push_back(item);
+        }
+    }
+    for (const auto &[item, body] : held)
+    {
+        // The host's JointAttachment may have arrived already: it is sent.
+        if (!scene.Has<ECS::Parent>(item))
+        {
+            REQUIRE(scene.Add(item, ECS::Parent{.parent = body}) != nullptr);
+        }
+        if (!scene.Has<Runtime::JointAttachment>(item))
+        {
+            REQUIRE(scene.Add(item, Runtime::JointAttachment{.joint = Core::InternedString{kHeldAt}}) != nullptr);
+        }
+    }
+    for (const ECS::Entity item : loose)
+    {
+        (void)scene.Remove<Runtime::JointAttachment>(item);
+        (void)scene.Remove<ECS::Parent>(item);
+    }
+}
+
+/// How far from where it should be each machine draws the item, at its worst
+/// over a cycle: at the holder's joint while that machine has it held, where
+/// it lies once that machine has it free.
+struct HeldWatch
+{
+    std::array<float, 3> worstHeld{};
+    std::array<float, 3> worstFree{};
+
+    void Frame(Session &session, const Character &character, ECS::Entity itemOnHost)
+    {
+        Animate(session, character);
+        Machine &host = *session.machines[0];
+        for (std::size_t index = 0; index < session.machines.size(); ++index)
+        {
+            Machine &machine = *session.machines[index];
+            ECS::Scene &scene = machine.world.scene;
+            const ECS::Entity item = CopyOn(host, machine, itemOnHost);
+            if (item == ECS::NullEntity)
+            {
+                continue;
+            }
+            // Placed as the frame is drawn, after the view is smoothed.
+            machine.world.propagationTick = ECS::PropagateTransforms(scene, machine.world.propagationTick);
+            const glm::vec3 drawn = glm::vec3(ECS::WorldPositionOf(*scene.Get<ECS::WorldMatrix>(item)));
+            const ECS::Entity holder = scene.Get<App::Test::TestHoldable>(item)->holder;
+            if (holder == ECS::NullEntity)
+            {
+                worstFree[index] = std::max(worstFree[index], glm::length(drawn - glm::vec3(kItemLies)));
+                continue;
+            }
+            const ECS::Entity body = BodyOf(scene, holder);
+            const Runtime::SkinnedPose *pose = scene.Get<Runtime::SkinnedPose>(body);
+            const int32_t joint = Geometry::FindJoint(character.mesh.Skeleton(), kHeldAt);
+            if (pose == nullptr || pose->jointModel.size() <= static_cast<std::size_t>(joint))
+            {
+                continue;
+            }
+            const glm::mat4 bodyWorld = ECS::MatrixFrom(*scene.Get<ECS::WorldMatrix>(body), glm::dvec3(0.0));
+            const glm::vec3 expected =
+                glm::vec3(bodyWorld * pose->jointModel[static_cast<std::size_t>(joint)] * glm::vec4(kHeldOffset, 1.f));
+            worstHeld[index] = std::max(worstHeld[index], glm::length(drawn - expected));
+        }
+    }
+};
+
 } // namespace
+
+TEST_CASE("A held item is at its holder's joint on every machine from the frame it is held, however often it changes "
+          "hands")
+{
+    const std::filesystem::path root = FreshRoot("assisi_players_bodies_held");
+    WritePlayerWithBody(root);
+    Character character;
+    Build(character);
+
+    const std::vector<std::string> animation{"Animators", "AnimationPlayers"};
+    Session session;
+    Machine &host = session.Add({}, animation);
+    Machine &first = session.Add({}, animation);
+    Machine &second = session.Add({}, animation);
+    // What the host does with the item at its next Update, before the machines
+    // hang it, as the sample's PickUpHoldables and DropHoldables do.
+    std::optional<ECS::Entity> handTo;
+    ECS::Entity item = ECS::NullEntity;
+    host.world.systems.Register(App::SystemPhase::Update, "Hand",
+                                [&](App::SystemContext &ctx) { HandItem(ctx.world.scene, item, handTo); });
+    for (const std::unique_ptr<Machine> &machine : session.machines)
+    {
+        Provide(*machine, character);
+        machine->world.systems.Register(App::SystemPhase::Update, "Hold",
+                                        [](App::SystemContext &ctx) { HoldItems(ctx.world.scene); });
+    }
+    AddFloors(session, glm::dvec3{0.0});
+    JoinTwo(session, host, first, second, kStarts);
+    const ECS::Entity holder = PlayerOf(host, second.play.Session().LocalClientId());
+    REQUIRE(holder != ECS::NullEntity);
+
+    item = host.world.scene.Create();
+    REQUIRE(host.world.scene.Add(item, ECS::Transform{.position = kItemLies, .scale = glm::vec3(kItemScale)}) !=
+            nullptr);
+    REQUIRE(host.world.scene.Add(item, NetSync::Replicated{}) != nullptr);
+    REQUIRE(host.world.scene.Add(item, App::Test::TestHoldable{}) != nullptr);
+    session.Run(kActFrames, [&] { Animate(session, character); });
+
+    for (int32_t cycle = 0; cycle < kHoldCycles; ++cycle)
+    {
+        CAPTURE(cycle);
+        HeldWatch watch;
+        handTo = holder;
+        session.Run(kHoldFrames, [&] { watch.Frame(session, character, item); });
+        handTo = ECS::NullEntity;
+        session.Run(kHoldFrames, [&] { watch.Frame(session, character, item); });
+        for (std::size_t index = 0; index < session.machines.size(); ++index)
+        {
+            CAPTURE(index);
+            CHECK(watch.worstHeld[index] < kHeldNear);
+            CHECK(watch.worstFree[index] < kHeldNear);
+        }
+    }
+}
 
 TEST_CASE("Every player's body animates on every machine as that player moves: sprinting, crouched, standing, "
           "jumping")

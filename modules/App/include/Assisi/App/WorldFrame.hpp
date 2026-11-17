@@ -33,7 +33,7 @@ void UpdateWorld(const SystemContext &ctx);
 struct PoseTimes
 {
     double placing = 0.0;      ///< Placing every entity before the poses (s).
-    double posing = 0.0;       ///< Turning poses into joint matrices (s).
+    double posing = 0.0;       ///< Turning poses into joint matrices, and moving what joints hold (s).
     double placingAgain = 0.0; ///< Placing what the poses moved (s).
 };
 
@@ -42,13 +42,13 @@ struct PoseTimes
 /// its animated pose and turned into joint matrices, and what that moved is
 /// placed again. What runs after it reads this frame's joints.
 ///
-/// Its order is fixed: placing, the final poses, joint matrices, placing
-/// again. The engine has no steps that adjust a pose after the animation yet;
-/// they belong between the final poses and the joint matrices, in this order:
-/// warping, limb IK, look-at, limb planting. Entities that follow joints
-/// belong after the joint matrices, so the second placing puts them, and their
-/// children, where this frame's joints are. Placing visits only what changed
-/// since it last ran, so the second costs little.
+/// Its order is fixed: placing, the final poses, joint matrices, entities held
+/// at joints (Runtime::FollowJoints), placing again, so the second placing
+/// puts what is held, and its children, where this frame's joints are. The
+/// engine has no steps that adjust a pose after the animation yet; they belong
+/// between the final poses and the joint matrices, in this order: warping,
+/// limb IK, look-at, limb planting. Placing visits only what changed since it
+/// last ran, so the second costs little.
 ///
 /// Every program runs it, a dedicated server too, where no mesh loads and so
 /// nothing is posed. For the world drawn this frame, pass the renderer's

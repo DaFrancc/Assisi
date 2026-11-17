@@ -295,7 +295,9 @@ character's pose in one step, the **pose stage**:
 1. It places every entity in the world.
 2. It copies each `pose` into `finalPose`.
 3. It works out `jointModel` and `palette` from `finalPose`.
-4. It places again whatever moved since step 1.
+4. It moves everything held at a joint to where that joint now is (see
+   [Holding something at a joint](#holding-something-at-a-joint)).
+5. It places again whatever moved since step 1.
 
 `finalPose` is kept apart from `pose` for steps that adjust a pose after the
 animation, such as turning a head to look at something. They change only
@@ -313,6 +315,59 @@ So what you read from `jointModel` depends on when your system runs:
 The pose stage runs in every program: the game, the editor (also while you
 edit, or while the game is paused) and a dedicated server. A dedicated server
 loads no meshes, so nothing is posed there.
+
+## Holding something at a joint
+
+A sword in a hand or a hat on a head has to move with the joint it's on, not
+just with the character. To make an entity follow a joint:
+
+1. Make the sword its own entity, with a `Transform` and a `MeshRenderer`.
+2. Give it a `Parent` whose `parent` is the character, the entity with the
+   `SkinnedMesh`.
+3. Add a `JointAttachment` and type the joint's name into `joint`, for example
+   `hand_r`. To find a joint's name, select the character in the editor and
+   hover over the joint in the skeleton drawn over it.
+4. Set the sword's `Transform` to where it should sit relative to the joint:
+   in the palm rather than at the wrist, turned to point forward.
+
+From then on the sword follows the hand, and anything parented to the sword
+follows it too. The `Transform` stays the offset you set, measured from the
+joint. Moving the sword with the gizmo in the editor changes that offset, so
+you can line it up by eye.
+
+- **It never trails the hand.** The pose stage moves held things after the
+  joints are final, in the same frame, so the sword isn't a frame behind.
+- **The joint is found by name.** If you re-export the model with its joints
+  in another order, or swap the character's mesh for one with a joint of the
+  same name, the sword stays on that joint.
+- **A name the mesh doesn't have** puts a warning in the log, naming the
+  joint, and the sword hangs from the character's origin instead.
+- **Only the joint's name and the offset are saved.** Where the joint is at
+  this moment is worked out again every frame on every machine. It is never
+  saved in the level and never sent over the network.
+- **On a dedicated server, held things stay at the character's origin,**
+  because nothing is posed there.
+
+### Picking something up while the game runs
+
+`levels/PickUp.alvl` has a sphere on the floor. Walk into it and it goes into
+your right hand. Press **Q** to drop it in front of you, then walk away and
+back to pick it up again. Pick **Host + 2 clients** and watch another window's
+player: your own body is hidden from your camera.
+
+The code is in `apps/game/src/Pickup.cpp`. In a networked game, add the
+`Parent` and the `JointAttachment` on every machine, not only on the host,
+because parent links are not sent over the network:
+
+1. The sphere has a replicated `Holdable` component whose `holder` names the
+   character holding it, or nobody.
+2. Only the host changes `holder`: when a player walks into the sphere, or
+   asks to drop it.
+3. Every machine runs `HoldHoldables`, which gives a held sphere a `Parent`
+   (the holder's body) and a `JointAttachment`, and takes both off a free one.
+
+A player who joins later gets `holder` with everything else, so they see the
+sphere in the right hand too.
 
 ## Animation in a multiplayer game
 

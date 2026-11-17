@@ -2,9 +2,15 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
 
+#include <cstddef>
+#include <optional>
 #include <span>
+#include <vector>
 
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/ParentFrame.hpp>
 #include <Assisi/Geometry/Pose.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/MeshSkinner.hpp>
@@ -29,6 +35,88 @@ void FitPosedBounds(SkinnedPose &skinned, const Geometry::Skeleton &skeleton)
     if (!Geometry::IsEmpty(bounds))
     {
         skinned.posed.SetLocalBounds(Geometry::SphereAround(bounds), bounds);
+    }
+}
+
+/// A scale this close to zero has no direction to take a rotation from.
+constexpr float kNoScale = 1e-8f;
+
+/// @p model, a joint's transform in its mesh's space, as a frame: its
+/// position, its rotation and its scale along each of its axes.
+ECS::ParentFrame FrameOf(const glm::mat4 &model)
+{
+    const glm::vec3 x(model[0]);
+    const glm::vec3 y(model[1]);
+    const glm::vec3 z(model[2]);
+    const glm::vec3 scale(glm::length(x), glm::length(y), glm::length(z));
+    ECS::ParentFrame frame{.position = glm::vec3(model[3]), .scale = scale};
+    if (scale.x > kNoScale && scale.y > kNoScale && scale.z > kNoScale)
+    {
+        frame.rotation = glm::normalize(glm::quat_cast(glm::mat3(x / scale.x, y / scale.y, z / scale.z)));
+    }
+    return frame;
+}
+
+bool SameFrame(const ECS::ParentFrame &a, const ECS::ParentFrame &b)
+{
+    return a.rotation == b.rotation && a.position == b.position && a.scale == b.scale;
+}
+
+/// Where @p attachment's joint is in this frame's pose of @p entity's parent,
+/// looking its name up again when the name or the mesh changed. The parent's
+/// origin while the parent has no pose to read, a parent that is not skinned
+/// or whose mesh has not loaded, so a pose read from another parent or mesh
+/// never stays; and for a joint its mesh lacks, said once for each lookup that
+/// misses.
+ECS::ParentFrame JointFrame(const ECS::Scene &scene, ECS::Entity entity, const JointAttachment &attachment,
+                            JointAttachmentRun &run)
+{
+    const ECS::Parent *parent = scene.Get<ECS::Parent>(entity);
+    const SkinnedPose *skinned = parent != nullptr ? scene.Get<SkinnedPose>(parent->parent) : nullptr;
+    const MeshRenderer *renderer = parent != nullptr ? scene.Get<MeshRenderer>(parent->parent) : nullptr;
+    if (skinned == nullptr || renderer == nullptr || renderer->meshBuffer == nullptr ||
+        skinned->boundMeshId == kUnboundMesh || skinned->jointModel.empty())
+    {
+        // Looked up again once there is a pose, even in the same mesh.
+        run.meshId = kUnboundMesh;
+        return ECS::ParentFrame{};
+    }
+    if (run.joint != attachment.joint || run.meshId != skinned->boundMeshId)
+    {
+        run.joint = attachment.joint;
+        run.meshId = skinned->boundMeshId;
+        run.index = Geometry::FindJoint(renderer->meshBuffer->Skeleton(), attachment.joint.View());
+        if (run.index == Geometry::kNoJoint)
+        {
+            Core::Log::Warn("JointAttachment: the mesh of the parent of entity (index {}, gen {}) has no joint \"{}\", "
+                            "so the entity hangs from its parent's origin.",
+                            entity.index, entity.generation, attachment.joint.View());
+        }
+    }
+    if (run.index == Geometry::kNoJoint || static_cast<std::size_t>(run.index) >= skinned->jointModel.size())
+    {
+        return ECS::ParentFrame{};
+    }
+    return FrameOf(skinned->jointModel[static_cast<std::size_t>(run.index)]);
+}
+
+/// Takes the frame and the lookup off every entity whose JointAttachment was
+/// taken off, so it hangs from its parent's origin again.
+void ReleaseDetached(ECS::Scene &scene)
+{
+    std::vector<ECS::Entity> detached;
+    for (auto [entity, run] : scene.Query<JointAttachmentRun>())
+    {
+        (void)run;
+        if (!scene.Has<JointAttachment>(entity))
+        {
+            detached.push_back(entity);
+        }
+    }
+    for (const ECS::Entity entity : detached)
+    {
+        (void)scene.Remove<ECS::ParentFrame>(entity);
+        (void)scene.Remove<JointAttachmentRun>(entity);
     }
 }
 
@@ -98,6 +186,20 @@ void FinishPoses(ECS::Scene &scene, Render::AssetCache *cache)
     {
         cache->EndSkinFrame();
     }
+}
+
+void FollowJoints(ECS::Scene &scene)
+{
+    for (auto [entity, attachment, run] : scene.Query<JointAttachment, Mut<JointAttachmentRun>>())
+    {
+        const ECS::ParentFrame frame = JointFrame(scene, entity, attachment, run);
+        const ECS::ParentFrame *held = scene.Get<ECS::ParentFrame>(entity);
+        if (held != nullptr && !SameFrame(*held, frame))
+        {
+            *scene.GetMut<ECS::ParentFrame>(entity) = frame;
+        }
+    }
+    ReleaseDetached(scene);
 }
 
 void NotePoseChange(SkinnedPose &skinned)

@@ -371,7 +371,8 @@ bool EditorApp::DrawTransformGizmoHandles()
     // The frame the result is converted back through. None for a root, whose
     // local pose is its world pose.
     std::optional<glm::mat4> parentWorld;
-    if (const Assisi::ECS::WorldMatrix *parentMatrix = Assisi::ECS::ParentWorldMatrix(*_scene, _selectedEntity))
+    if (const std::optional<Assisi::ECS::WorldMatrix> parentMatrix =
+            Assisi::ECS::ParentWorldMatrix(*_scene, _selectedEntity))
     {
         parentWorld = Assisi::ECS::MatrixFrom(*parentMatrix, origin);
     }
@@ -506,7 +507,8 @@ bool EditorApp::DrawTransformGizmoHandles()
                     continue;
 
                 std::optional<glm::mat4> entityParentWorld;
-                if (const Assisi::ECS::WorldMatrix *parentMatrix = Assisi::ECS::ParentWorldMatrix(*_scene, entity))
+                if (const std::optional<Assisi::ECS::WorldMatrix> parentMatrix =
+                        Assisi::ECS::ParentWorldMatrix(*_scene, entity))
                 {
                     entityParentWorld = Assisi::ECS::MatrixFrom(*parentMatrix, origin);
                 }

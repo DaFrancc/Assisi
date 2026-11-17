@@ -4,6 +4,7 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -12,6 +13,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <utility>
 #include <vector>
 
 #include "ReplicationInternal.hpp"
@@ -486,7 +489,10 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
 
 void ReplicationClient::Interpolate(double serverTimeTicks)
 {
-    for (const auto &[netId, history] : _transformHistory)
+    std::erase_if(_interpolatedParents,
+                  [this](const std::pair<const NetId, ECS::Entity> &entry)
+                  { return !_transformHistory.contains(entry.first); });
+    for (auto &[netId, history] : _transformHistory)
     {
         if (history.empty())
             continue;
@@ -498,6 +504,15 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
         if (transform == nullptr)
             continue;
+
+        if (RestartForNewParent(netId, entity->second, history))
+        {
+            transform->position = history.back().position;
+            transform->rotation = history.back().rotation;
+            transform->scale    = history.back().scale;
+            ECS::SnapTransform(_scene, entity->second);
+            continue;
+        }
 
         // Past the newest sample: hold the last known pose rather than
         // extrapolate. A wrong guess costs a visible snap when the real value
@@ -545,6 +560,22 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         // the error is worst where rotation is fastest.
         transform->rotation = glm::slerp(before->rotation, after->rotation, t);
     }
+}
+
+bool ReplicationClient::RestartForNewParent(NetId netId, ECS::Entity entity, std::deque<TransformSample> &history)
+{
+    const ECS::Parent *parent = _scene.Get<ECS::Parent>(entity);
+    const ECS::Entity parentNow = parent != nullptr ? parent->parent : ECS::NullEntity;
+    const auto [known, first] = _interpolatedParents.try_emplace(netId, parentNow);
+    if (first || known->second == parentNow)
+    {
+        return false;
+    }
+    known->second = parentNow;
+    // Every sample but the newest is measured from the parent before: the
+    // newest came with whatever made this machine change the parent.
+    history.erase(history.begin(), std::prev(history.end()));
+    return true;
 }
 
 ECS::Entity ReplicationClient::EntityOf(NetId netId) const

@@ -10,6 +10,7 @@ target_link_libraries(Assisi-App-TestSystems INTERFACE Assisi::App)
 assisi_reflect(
   TARGET Assisi-App-TestSystems
   HEADERS
+    support/include/Assisi/App/TestComponents.hpp
     support/include/Assisi/App/TestMessages.hpp
     support/include/Assisi/App/TestSystems.hpp
 )
@@ -39,6 +40,7 @@ add_executable(Assisi-App-Tests
   TestPlayerSettings.cpp
   TestPlayerSystems.cpp
   TestPoseStage.cpp
+  TestJointAttachment.cpp
   TestSceneCamera.cpp
   TestShippedLevels.cpp
   TestStartupScene.cpp
