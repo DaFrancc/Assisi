@@ -19,6 +19,9 @@ struct SystemContext;
 /// fields. It only reads the AnimationPlayer and SkinnedMesh, and writes their
 /// AnimationPlayback and SkinnedPose, so playing sends nothing over the network.
 ///
+/// Does nothing on a host whose context does not animate, such as a dedicated
+/// server: a headless host evaluates no animation.
+///
 /// Update, so animations play only while the world simulates, and code that
 /// adjusts joints on top runs after it, in Update with after = "AnimationPlayers"
 /// or in Ui. A player whose mesh, clip,
@@ -31,7 +34,8 @@ ASYSTEM(Update, name = "AnimationPlayers") void AnimationPlayerSystem(SystemCont
 ///        AnimationPlayer what to play.
 ///
 /// Before AnimationPlayers in the same Update, so what a transition chose
-/// plays this frame. An Animator waits while its file loads; one whose file
+/// plays this frame. Off, like AnimationPlayers, on a host that does not
+/// animate. An Animator waits while its file loads; one whose file
 /// is changed while the game runs carries on in the new one from where it
 /// was, and keeps the old one while the new one loads or if it won't cook.
 ASYSTEM(Update, name = "Animators", before = "AnimationPlayers") void AnimatorSystem(SystemContext &ctx);

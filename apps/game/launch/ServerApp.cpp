@@ -389,7 +389,9 @@ Assisi::App::SystemContext ServerApp::WorldStartContext()
 
 Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 {
-    // No window, so no input, no action map and no UI, in every phase.
+    // No window, so no input, no action map and no UI, in every phase. Assets,
+    // so what runs here can load clips and animator files, but no animation: a
+    // headless host evaluates none.
     return {.world         = _world,
             .dt            = dt,
             .simTick       = tick,
@@ -399,7 +401,9 @@ Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
             .isActiveWorld = true,
             .worldManager  = nullptr,
             .ui            = nullptr,
-            .steam         = &GetSteam()};
+            .assets        = &GetAssets(),
+            .steam         = &GetSteam(),
+            .animates      = false};
 }
 
 void ServerApp::OnShutdown()
