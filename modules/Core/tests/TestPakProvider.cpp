@@ -63,8 +63,8 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
         REQUIRE(stored.has_value());
 
         PakEntry entry;
+        entry.path = slice.vpath;
         entry.id = DerivedAssetId("id:" + slice.vpath);
-        entry.pathId = DerivedAssetId(slice.vpath);
         entry.offset = offset;
         entry.storedSize = stored->size();
         entry.uncompressedSize = slice.bytes.size();
@@ -81,14 +81,12 @@ void WriteTestPak(const std::filesystem::path &path, const std::vector<TestSlice
     PakHeader header;
     header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.indexOffset = offset;
+    header.pathBytes = PakPathBytes(entries);
 
     BitWriter out;
     WritePakHeader(out, header);
     out.WriteBytes(body.Data());
-    for (const PakEntry &entry : entries)
-    {
-        WritePakEntry(out, entry);
-    }
+    WritePakIndex(out, entries);
 
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     const std::span<const std::byte> bytes = out.Data();
@@ -160,6 +158,29 @@ TEST_CASE("A pak resolves a packed path to its id and refuses one it does not ho
     const std::expected<AssetId, AssetError> absent = mounted->Resolve("config/absent.json");
     REQUIRE_FALSE(absent.has_value());
     CHECK(absent.error() == AssetErrorCode::UnknownAssetId);
+}
+
+TEST_CASE("A mounted pak names every path it holds, and finds each one's row by path")
+{
+    // What a shipped game lists its levels and blueprints from: a pak that kept
+    // only path hashes could answer "is this here" but never "what is here".
+    const TempPak pak("assisi-pak-paths.pak", {{.vpath = "levels/a.alvl", .bytes = Pattern(3, 1)},
+                          {.vpath = "blueprints/b.abp", .bytes = Pattern(5, 2)}});
+    const std::expected<PakProvider, AssetError> mounted = PakProvider::Mount(pak.Path());
+    REQUIRE(mounted.has_value());
+
+    std::vector<std::string> paths;
+    for (const PakEntry &entry : mounted->Entries())
+    {
+        paths.push_back(entry.path);
+    }
+    CHECK(paths == std::vector<std::string>{"levels/a.alvl", "blueprints/b.abp"});
+
+    const PakEntry *found = mounted->Find("blueprints/b.abp");
+    REQUIRE(found != nullptr);
+    CHECK(found->id == IdOf("blueprints/b.abp"));
+    CHECK(found->uncompressedSize == 5);
+    CHECK(mounted->Find("blueprints/absent.abp") == nullptr);
 }
 
 TEST_CASE("An id the pak does not hold, or a built-in id, is unknown and nothing else is read")

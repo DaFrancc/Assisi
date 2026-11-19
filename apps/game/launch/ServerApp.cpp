@@ -185,11 +185,10 @@ void ServerApp::BuildJoinedWorld()
 
     // Every question a join has to answer before touching the scene, asked in the
     // one place every target asks it.
-    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> file =
-        Assisi::App::ResolveJoinLevel(hello->level);
-    if (!file)
+    const std::expected<void, Assisi::App::JoinLevelError> joinable = Assisi::App::CheckJoinLevel(hello->level);
+    if (!joinable)
     {
-        fail(Assisi::App::JoinLevelErrorMessage(file.error(), hello->level.path));
+        fail(Assisi::App::JoinLevelErrorMessage(joinable.error(), hello->level.path));
         return;
     }
 

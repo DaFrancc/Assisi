@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/App/LevelRuntime.hpp>
 
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
@@ -8,6 +9,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
@@ -136,13 +138,54 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, bool &
     }
 }
 
-std::optional<std::uint64_t> HashLevelFile(std::string_view virtualPath)
+namespace
 {
+
+/// The hash a peer compares for the level at @p virtualPath, or why there is none.
+///
+/// From the package's index when running from one, where the level has no file
+/// to read; from the normalized source text otherwise.
+std::expected<std::uint64_t, JoinLevelError> VirtualLevelHash(std::string_view virtualPath)
+{
+    if (const Core::PakProvider *package = ContentPackage(); package != nullptr)
+    {
+        const Core::PakEntry *entry = package->Find(virtualPath);
+        if (entry == nullptr)
+        {
+            return std::unexpected(JoinLevelError::Unresolvable);
+        }
+        return entry->contentHash;
+    }
+
     const std::expected<std::filesystem::path, Core::AssetError> resolved = Core::AssetSystem::Resolve(virtualPath);
     if (!resolved)
-        return std::nullopt;
+    {
+        return std::unexpected(JoinLevelError::Unresolvable);
+    }
 
-    return Core::HashTextFileNormalized(*resolved);
+    // Resolving says where the file *would* be, not that it is there, so absence
+    // is checked here. Kept apart from Unreadable because the two ask different
+    // things of whoever is joining: fetch the level, versus fix your disk.
+    std::error_code ec;
+    if (!std::filesystem::exists(*resolved, ec) || ec)
+    {
+        return std::unexpected(JoinLevelError::Unresolvable);
+    }
+
+    const std::optional<std::uint64_t> hash = Core::HashTextFileNormalized(*resolved);
+    if (!hash)
+    {
+        return std::unexpected(JoinLevelError::Unreadable);
+    }
+    return *hash;
+}
+
+} // namespace
+
+std::optional<std::uint64_t> HashLevelFile(std::string_view virtualPath)
+{
+    const std::expected<std::uint64_t, JoinLevelError> hash = VirtualLevelHash(virtualPath);
+    return hash ? std::optional<std::uint64_t>{*hash} : std::nullopt;
 }
 
 std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path)
@@ -165,38 +208,35 @@ std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path)
     return "the host's level cannot be built here.";
 }
 
-std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetSync::LevelIdentity &level)
+std::expected<void, JoinLevelError> CheckJoinLevel(const NetSync::LevelIdentity &level)
 {
-    std::filesystem::path file;
+    std::expected<std::uint64_t, JoinLevelError> localHash = std::unexpected(JoinLevelError::NoLevel);
     switch (level.addressing)
     {
     case NetSync::LevelAddressing::None:
         return std::unexpected(JoinLevelError::NoLevel);
     case NetSync::LevelAddressing::Virtual:
-    {
-        const std::expected<std::filesystem::path, Core::AssetError> resolved = Core::AssetSystem::Resolve(level.path);
-        if (!resolved)
-            return std::unexpected(JoinLevelError::Unresolvable);
-        file = *resolved;
+        localHash = VirtualLevelHash(level.path);
         break;
-    }
     case NetSync::LevelAddressing::AbsolutePath:
+    {
         // A play-in-editor snapshot, written by a host on this machine. Nothing
         // about reading it needs a renderer, so no target has to refuse it.
-        file = level.path;
+        std::error_code ec;
+        if (!std::filesystem::exists(level.path, ec) || ec)
+        {
+            return std::unexpected(JoinLevelError::Unresolvable);
+        }
+        const std::optional<std::uint64_t> hash = Core::HashTextFileNormalized(level.path);
+        localHash = hash ? std::expected<std::uint64_t, JoinLevelError>{*hash}
+                         : std::unexpected(JoinLevelError::Unreadable);
         break;
     }
-
-    // Resolving says where the file *would* be, not that it is there, so absence
-    // is checked here. Kept apart from Unreadable because the two ask different
-    // things of whoever is joining: fetch the level, versus fix your disk.
-    std::error_code ec;
-    if (!std::filesystem::exists(file, ec) || ec)
-        return std::unexpected(JoinLevelError::Unresolvable);
-
-    const std::optional<std::uint64_t> localHash = Core::HashTextFileNormalized(file);
+    }
     if (!localHash)
-        return std::unexpected(JoinLevelError::Unreadable);
+    {
+        return std::unexpected(localHash.error());
+    }
 
     if (*localHash != level.contentHash)
     {
@@ -214,12 +254,14 @@ std::expected<std::filesystem::path, JoinLevelError> ResolveJoinLevel(const NetS
     // Read the way the file was found: a play-in-editor snapshot is outside the
     // asset root, where a virtual path cannot reach.
     const bool declared = level.addressing == NetSync::LevelAddressing::AbsolutePath
-                              ? LevelFileSystemsAreDeclared(file)
+                              ? LevelFileSystemsAreDeclared(level.path)
                               : LevelSystemsAreDeclared(level.path);
     if (!declared)
+    {
         return std::unexpected(JoinLevelError::SystemsMissing);
+    }
 
-    return file;
+    return {};
 }
 
 StrippedEntities StripReplicatedEntities(ECS::Scene &scene)

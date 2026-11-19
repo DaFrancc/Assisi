@@ -22,8 +22,8 @@ namespace
 PakEntry FilledEntry()
 {
     PakEntry entry;
+    entry.path             = "levels/a.alvl";
     entry.id               = DerivedAssetId("levels/a.alvl");
-    entry.pathId           = DerivedAssetId("path");
     entry.offset           = 0x0102030405060708ULL;
     entry.storedSize       = 11;
     entry.uncompressedSize = 13;
@@ -40,6 +40,23 @@ std::vector<std::byte> ToVector(std::span<const std::byte> bytes)
     return {bytes.begin(), bytes.end()};
 }
 
+/// The header an index of @p entries is read with.
+PakHeader HeaderFor(std::span<const PakEntry> entries)
+{
+    PakHeader header;
+    header.entryCount = static_cast<std::uint32_t>(entries.size());
+    header.pathBytes  = PakPathBytes(entries);
+    return header;
+}
+
+/// @p entries written as an index and read back, or the reason it did not read.
+std::expected<std::vector<PakEntry>, PakFormatError> RoundTrip(std::span<const PakEntry> entries)
+{
+    BitWriter writer;
+    WritePakIndex(writer, entries);
+    return ReadPakIndex(writer.Data(), HeaderFor(entries));
+}
+
 } // namespace
 
 TEST_CASE("A pak header reads back as written, at its declared size")
@@ -47,6 +64,7 @@ TEST_CASE("A pak header reads back as written, at its declared size")
     PakHeader header;
     header.entryCount  = 42;
     header.indexOffset = 0x1122334455ULL;
+    header.pathBytes   = 0x0A0B0C0DU;
 
     BitWriter writer;
     WritePakHeader(writer, header);
@@ -57,22 +75,26 @@ TEST_CASE("A pak header reads back as written, at its declared size")
     REQUIRE(read.has_value());
     CHECK(read->entryCount == header.entryCount);
     CHECK(read->indexOffset == header.indexOffset);
+    CHECK(read->pathBytes == header.pathBytes);
 }
 
 TEST_CASE("A pak entry reads back as written, at its declared size")
 {
-    const PakEntry entry = FilledEntry();
+    const std::vector<PakEntry> entries{FilledEntry()};
+    const PakEntry &entry = entries.front();
 
     BitWriter writer;
-    WritePakEntry(writer, entry);
-    // The index is addressed by position, so every entry is exactly this size.
-    REQUIRE(writer.Data().size() == kPakEntryBytes);
+    WritePakIndex(writer, entries);
+    // The entries are addressed by position, so every one is exactly this size,
+    // and the path follows them.
+    REQUIRE(writer.Data().size() == kPakEntryBytes + entry.path.size());
 
-    BitReader reader{writer.Data()};
-    const std::expected<PakEntry, PakFormatError> read = ReadPakEntry(reader);
-    REQUIRE(read.has_value());
+    const std::expected<std::vector<PakEntry>, PakFormatError> index = RoundTrip(entries);
+    REQUIRE(index.has_value());
+    REQUIRE(index->size() == 1);
+    const PakEntry *read = &index->front();
+    CHECK(read->path == entry.path);
     CHECK(read->id == entry.id);
-    CHECK(read->pathId == entry.pathId);
     CHECK(read->offset == entry.offset);
     CHECK(read->storedSize == entry.storedSize);
     CHECK(read->uncompressedSize == entry.uncompressedSize);
@@ -103,18 +125,56 @@ TEST_CASE("A pak of a layout version this build does not read is refused")
     CHECK(read.error() == PakFormatError::UnsupportedVersion);
 }
 
-TEST_CASE("A short header or entry is refused")
+TEST_CASE("A short header or index is refused")
 {
     BitWriter header;
     WritePakHeader(header, PakHeader{});
     const std::vector<std::byte> headerBytes = ToVector(header.Data());
     CHECK_FALSE(ReadPakHeader(std::span<const std::byte>{headerBytes.data(), kPakHeaderBytes - 1}).has_value());
 
-    BitWriter entry;
-    WritePakEntry(entry, FilledEntry());
-    const std::vector<std::byte> entryBytes = ToVector(entry.Data());
-    BitReader reader{std::span<const std::byte>{entryBytes.data(), kPakEntryBytes - 1}};
-    CHECK_FALSE(ReadPakEntry(reader).has_value());
+    const std::vector<PakEntry> entries{FilledEntry()};
+    BitWriter index;
+    WritePakIndex(index, entries);
+    const std::vector<std::byte> indexBytes = ToVector(index.Data());
+    const std::expected<std::vector<PakEntry>, PakFormatError> read =
+        ReadPakIndex(std::span<const std::byte>{indexBytes.data(), indexBytes.size() - 1}, HeaderFor(entries));
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == PakFormatError::Truncated);
+}
+
+TEST_CASE("Every entry keeps its own path, whatever the order and lengths")
+{
+    // A path is found by its offset into the table, so an offset taken from the
+    // wrong entry, or a length off by one, hands one asset another's name.
+    std::vector<PakEntry> entries(3, FilledEntry());
+    entries[0].path = "blueprints/Player.abp";
+    entries[1].path = "a";
+    entries[2].path = "levels/forest/Clearing.alvl";
+
+    const std::expected<std::vector<PakEntry>, PakFormatError> read = RoundTrip(entries);
+    REQUIRE(read.has_value());
+    REQUIRE(read->size() == entries.size());
+    for (std::size_t i = 0; i < entries.size(); ++i)
+    {
+        CHECK((*read)[i].path == entries[i].path);
+    }
+}
+
+TEST_CASE("An index whose path lies outside the path table is refused")
+{
+    // Written for a longer path than the table then holds: the header says the
+    // table ends early, so the entry points past it.
+    const std::vector<PakEntry> entries{FilledEntry()};
+    BitWriter writer;
+    WritePakIndex(writer, entries);
+    PakHeader header = HeaderFor(entries);
+    header.pathBytes -= 1;
+    const std::vector<std::byte> bytes = ToVector(writer.Data());
+
+    const std::expected<std::vector<PakEntry>, PakFormatError> read =
+        ReadPakIndex(std::span<const std::byte>{bytes.data(), bytes.size() - 1}, header);
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == PakFormatError::BadPath);
 }
 
 TEST_CASE("An entry of a kind this build has never heard of reads back as written")
@@ -122,13 +182,10 @@ TEST_CASE("An entry of a kind this build has never heard of reads back as writte
     // A module can add a kind the engine does not know, and the pak index must
     // carry it rather than refuse the whole package.
     constexpr AssetKindId kUnheardOf{"a kind no module in this build registers"};
-    PakEntry entry = FilledEntry();
-    entry.kind = kUnheardOf;
+    std::vector<PakEntry> entries{FilledEntry()};
+    entries.front().kind = kUnheardOf;
 
-    BitWriter writer;
-    WritePakEntry(writer, entry);
-    BitReader reader{writer.Data()};
-    const std::expected<PakEntry, PakFormatError> read = ReadPakEntry(reader);
+    const std::expected<std::vector<PakEntry>, PakFormatError> read = RoundTrip(entries);
     REQUIRE(read.has_value());
-    CHECK(read->kind == kUnheardOf);
+    CHECK(read->front().kind == kUnheardOf);
 }

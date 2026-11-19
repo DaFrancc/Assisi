@@ -13,13 +13,16 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string_view>
 
 #include <Assisi/Cook/CookTree.hpp>
 #include <Assisi/Cook/Cooker.hpp>
+#include <Assisi/Core/Errors.hpp>
 #include <Assisi/Core/PakCodec.hpp>
 #include <Assisi/Core/PakFormat.hpp>
+#include <Assisi/Core/PakProvider.hpp>
 
 namespace Assisi::Cook
 {
@@ -78,6 +81,18 @@ inline constexpr std::uint64_t kMaxPakGapPercent = 10;
                                                            std::span<const ManifestEntry> entries,
                                                            const std::filesystem::path &outPath, Core::PakCodec codec,
                                                            std::span<const Core::PakEntry> previous);
+
+/// @brief Mount the pak the last release shipped, for a pack to lay out over.
+///
+/// A pak written in another layout version has no placements this pack can keep:
+/// a change to the header or the index moves where slices may start. That is no
+/// failure, only a release whose update is a full download, so it comes back as
+/// nullopt and the pack lays out fresh.
+///
+/// @return the mounted pak, nullopt for a pak of another layout version, or the
+///         reason a file that claims to be a current pak does not mount.
+[[nodiscard]] std::expected<std::optional<Core::PakProvider>, Core::AssetError>
+MountPreviousPak(const std::filesystem::path &path);
 
 /// @brief A short name for @p layout, for the pack tool's report line.
 [[nodiscard]] std::string_view ToString(PakLayout layout) noexcept;

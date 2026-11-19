@@ -56,6 +56,12 @@ TEST_CASE("A packed tree serves every manifest asset's cooked bytes, by id and b
             CAPTURE(entry.vpath);
             const AssetId id = *AssetId::Parse(entry.guid);
 
+            // Its path as text, which is what lets a game list what it ships.
+            const Assisi::Core::PakEntry *row = pak->Find(entry.vpath);
+            REQUIRE(row != nullptr);
+            CHECK(row->path == entry.vpath);
+            CHECK(row->contentHash == entry.outputHash);
+
             const std::expected<AssetId, AssetError> resolved = pak->Resolve(entry.vpath);
             REQUIRE(resolved.has_value());
             CHECK(*resolved == id);

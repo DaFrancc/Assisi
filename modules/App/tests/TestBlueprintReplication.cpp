@@ -18,11 +18,14 @@
 #include <ostream>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,7 +39,10 @@
 #include <Assisi/App/TestStartContext.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/PakFormat.hpp>
+#include <Assisi/Core/PakProvider.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -92,6 +98,79 @@ nlohmann::json CarFile()
                                                {{"name", "wheel_l"}, {"components", left}},
                                                {{"name", "wheel_r"}, {"components", right}}})}};
 }
+
+/// One asset in a test package: its path, and the content hash its row records.
+struct PackedFile
+{
+    std::string path;
+    std::uint64_t contentHash = 0;
+};
+
+/// A pak in the temp directory, holding one byte per file, that removes itself.
+/// Only the index matters here: what a game lists and hashes its content from.
+class TempPackage
+{
+public:
+    TempPackage(const char *name, const std::vector<PackedFile> &files)
+        : _path(std::filesystem::temp_directory_path() / name)
+    {
+        std::vector<Core::PakEntry> entries;
+        std::uint64_t offset = Core::kPakHeaderBytes;
+        for (const PackedFile &file : files)
+        {
+            Core::PakEntry entry;
+            entry.path = file.path;
+            entry.id = Core::DerivedAssetId("id:" + file.path);
+            entry.offset = offset;
+            entry.storedSize = 1;
+            entry.uncompressedSize = 1;
+            entry.contentHash = file.contentHash;
+            entries.push_back(std::move(entry));
+            ++offset;
+        }
+
+        Core::PakHeader header;
+        header.entryCount = static_cast<std::uint32_t>(entries.size());
+        header.indexOffset = offset;
+        header.pathBytes = Core::PakPathBytes(entries);
+
+        Core::BitWriter out;
+        Core::WritePakHeader(out, header);
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            out.WriteUInt8(0);
+        }
+        Core::WritePakIndex(out, entries);
+
+        std::ofstream file(_path, std::ios::binary | std::ios::trunc);
+        const std::span<const std::byte> bytes = out.Data();
+        file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE(file.good());
+    }
+    ~TempPackage()
+    {
+        std::error_code ec;
+        std::filesystem::remove(_path, ec);
+    }
+    TempPackage(const TempPackage &) = delete;
+    TempPackage &operator=(const TempPackage &) = delete;
+
+    [[nodiscard]] const std::filesystem::path &Path() const { return _path; }
+
+private:
+    std::filesystem::path _path;
+};
+
+/// Reads content from a package for as long as it lives, as a shipped game does,
+/// and from the asset root again after.
+class PackageInUse
+{
+public:
+    explicit PackageInUse(const Core::PakProvider &package) { App::SetContentPackage(&package); }
+    ~PackageInUse() { App::SetContentPackage(nullptr); }
+    PackageInUse(const PackageInUse &) = delete;
+    PackageInUse &operator=(const PackageInUse &) = delete;
+};
 
 /// A transport for the fixture, or a failed test saying why there is none.
 std::unique_ptr<Net::NetTransport> MakeTransport()
@@ -609,9 +688,9 @@ TEST_CASE("Join: every target answers the host's level the same way")
     SUBCASE("a host running no level")
     {
         NetSync::LevelIdentity level;
-        const auto resolved = App::ResolveJoinLevel(level);
-        REQUIRE_FALSE(resolved.has_value());
-        CHECK(resolved.error() == App::JoinLevelError::NoLevel);
+        const std::expected<void, App::JoinLevelError> joinable = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(joinable.has_value());
+        CHECK(joinable.error() == App::JoinLevelError::NoLevel);
     }
 
     SUBCASE("a level this build does not have")
@@ -620,9 +699,9 @@ TEST_CASE("Join: every target answers the host's level the same way")
         level.addressing = NetSync::LevelAddressing::Virtual;
         level.path = "levels/NotHere.alvl";
 
-        const auto resolved = App::ResolveJoinLevel(level);
-        REQUIRE_FALSE(resolved.has_value());
-        CHECK(resolved.error() == App::JoinLevelError::Unresolvable);
+        const std::expected<void, App::JoinLevelError> joinable = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(joinable.has_value());
+        CHECK(joinable.error() == App::JoinLevelError::Unresolvable);
     }
 
     SUBCASE("a level whose bytes differ from the host's")
@@ -633,9 +712,9 @@ TEST_CASE("Join: every target answers the host's level the same way")
         // Whatever this file hashes to, it is not this.
         level.contentHash = 0xDEADBEEFu;
 
-        const auto resolved = App::ResolveJoinLevel(level);
-        REQUIRE_FALSE(resolved.has_value());
-        CHECK(resolved.error() == App::JoinLevelError::ContentMismatch);
+        const std::expected<void, App::JoinLevelError> joinable = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(joinable.has_value());
+        CHECK(joinable.error() == App::JoinLevelError::ContentMismatch);
     }
 
     SUBCASE("a play-in-editor snapshot outside the asset root resolves where it lies")
@@ -654,9 +733,7 @@ TEST_CASE("Join: every target answers the host's level the same way")
         level.addressing = NetSync::LevelAddressing::AbsolutePath;
         level.path = snapshot.string();
         level.contentHash = *hash;
-        const std::expected<std::filesystem::path, App::JoinLevelError> resolved = App::ResolveJoinLevel(level);
-        REQUIRE(resolved.has_value());
-        CHECK(*resolved == snapshot);
+        CHECK(App::CheckJoinLevel(level).has_value());
     }
     SUBCASE("a play-in-editor snapshot naming a system this build lacks is refused")
     {
@@ -672,11 +749,11 @@ TEST_CASE("Join: every target answers the host's level the same way")
         level.addressing = NetSync::LevelAddressing::AbsolutePath;
         level.path = snapshot.string();
         level.contentHash = *hash;
-        const std::expected<std::filesystem::path, App::JoinLevelError> resolved = App::ResolveJoinLevel(level);
-        REQUIRE_FALSE(resolved.has_value());
-        CHECK(resolved.error() == App::JoinLevelError::SystemsMissing);
+        const std::expected<void, App::JoinLevelError> joinable = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(joinable.has_value());
+        CHECK(joinable.error() == App::JoinLevelError::SystemsMissing);
     }
-    SUBCASE("a level that matches resolves to the file to load")
+    SUBCASE("a level that matches can be joined")
     {
         const std::optional<std::uint64_t> hash = App::HashLevelFile("car.abp");
         REQUIRE(hash.has_value());
@@ -686,9 +763,91 @@ TEST_CASE("Join: every target answers the host's level the same way")
         level.path = "car.abp";
         level.contentHash = *hash;
 
-        const auto resolved = App::ResolveJoinLevel(level);
-        REQUIRE(resolved.has_value());
-        CHECK(std::filesystem::exists(*resolved));
+        CHECK(App::CheckJoinLevel(level).has_value());
+    }
+}
+
+TEST_CASE("Package: a game running from its package lists, hashes and checks content from the pak index")
+{
+    // A shipped game has no asset tree. The car is still on disk here, because
+    // the systems check reads the level the way the loader would, but the
+    // package records a hash its text does not have: every answer below that
+    // matches the package and not the file came from the package.
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    const std::optional<std::uint64_t> sourceHash = Core::HashTextFileNormalized(root / "car.abp");
+    REQUIRE(sourceHash.has_value());
+    constexpr std::uint64_t kCarPackedHash = 0x0123456789ABCDEFULL;
+    REQUIRE(kCarPackedHash != *sourceHash);
+
+    const TempPackage packed("assisi_bpnet_package.pak", {{"car.abp", kCarPackedHash},
+                                 {"levels/a.alvl", 0xA1},
+                                 {"config/game.json", 0xC0}});
+    const std::expected<Core::PakProvider, Core::AssetError> package = Core::PakProvider::Mount(packed.Path());
+    REQUIRE(package.has_value());
+    const PackageInUse inUse(*package);
+
+    SUBCASE("the content set lists the package's levels and blueprints, sorted, not the asset root's")
+    {
+        const App::ContentSet set = App::BuildContentSet();
+        CHECK(set.paths == std::vector<std::string>{"car.abp", "levels/a.alvl"});
+        CHECK(App::ScanContentPaths() == set.paths);
+    }
+
+    SUBCASE("two packages with the same index agree, and one with a different blueprint does not")
+    {
+        const std::uint64_t ours = App::BuildContentSet().hash;
+
+        const TempPackage same("assisi_bpnet_same.pak", {{"car.abp", kCarPackedHash},
+                                   {"levels/a.alvl", 0xA1},
+                                   {"config/game.json", 0xC0}});
+        const std::expected<Core::PakProvider, Core::AssetError> twin = Core::PakProvider::Mount(same.Path());
+        REQUIRE(twin.has_value());
+        App::SetContentPackage(&*twin);
+        CHECK(App::BuildContentSet().hash == ours);
+
+        const TempPackage other("assisi_bpnet_other.pak", {{"car.abp", kCarPackedHash + 1},
+                                    {"levels/a.alvl", 0xA1},
+                                    {"config/game.json", 0xC0}});
+        const std::expected<Core::PakProvider, Core::AssetError> changed = Core::PakProvider::Mount(other.Path());
+        REQUIRE(changed.has_value());
+        App::SetContentPackage(&*changed);
+        CHECK(App::BuildContentSet().hash != ours);
+        App::SetContentPackage(&*package);
+    }
+
+    SUBCASE("a host advertises the level hash the package records")
+    {
+        CHECK(App::HashLevelFile("car.abp") == kCarPackedHash);
+        CHECK_FALSE(App::HashLevelFile("levels/NotPacked.alvl").has_value());
+    }
+
+    SUBCASE("a joiner accepts the package's hash and refuses the source text's")
+    {
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path = "car.abp";
+
+        level.contentHash = kCarPackedHash;
+        CHECK(App::CheckJoinLevel(level).has_value());
+
+        level.contentHash = *sourceHash;
+        const std::expected<void, App::JoinLevelError> differs = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(differs.has_value());
+        CHECK(differs.error() == App::JoinLevelError::ContentMismatch);
+    }
+
+    SUBCASE("a level on disk but not in the package cannot be joined")
+    {
+        Write(root, "loose.abp", CarFile());
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path = "loose.abp";
+        level.contentHash = Core::HashTextFileNormalized(root / "loose.abp").value_or(0);
+
+        const std::expected<void, App::JoinLevelError> joinable = App::CheckJoinLevel(level);
+        REQUIRE_FALSE(joinable.has_value());
+        CHECK(joinable.error() == App::JoinLevelError::Unresolvable);
     }
 }
 

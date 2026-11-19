@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/App/GameApp.hpp>
 
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/PhysicsSystems.hpp>
@@ -82,6 +83,10 @@ GameApp::~GameApp()
     if (_pak)
     {
         RemoveCookedReaders();
+        if (ContentPackage() == &*_pak)
+        {
+            SetContentPackage(nullptr);
+        }
     }
 }
 
@@ -110,6 +115,9 @@ bool GameApp::MountContent()
     (void)Render::SetAssetSource(&*_assetSource);
     LoadAssetsFrom(*_pak);
     InstallCookedReaders(*_pak);
+    // A network session asks what content this build holds, and there is no
+    // asset tree to ask.
+    SetContentPackage(&*_pak);
     return true;
 }
 

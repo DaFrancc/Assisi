@@ -31,7 +31,7 @@ PakProvider::PakProvider(RandomAccessFile file, std::vector<PakEntry> entries)
     for (std::size_t i = 0; i < _entries.size(); ++i)
     {
         _byId.emplace(_entries[i].id, i);
-        _byPath.emplace(_entries[i].pathId, i);
+        _byPath.emplace(DerivedAssetId(_entries[i].path), i);
     }
 }
 
@@ -62,7 +62,8 @@ std::expected<PakProvider, AssetError> PakProvider::Mount(const std::filesystem:
     // The index is the tail of the file, exactly: anything else means the file
     // was cut short, extended, or its header points somewhere invented.
     const std::uint64_t fileSize = file->Size();
-    const std::uint64_t indexBytes = static_cast<std::uint64_t>(header->entryCount) * kPakEntryBytes;
+    const std::uint64_t indexBytes =
+        static_cast<std::uint64_t>(header->entryCount) * kPakEntryBytes + header->pathBytes;
     if (header->indexOffset < kPakHeaderBytes || header->indexOffset > fileSize ||
         fileSize - header->indexOffset != indexBytes)
     {
@@ -76,29 +77,25 @@ std::expected<PakProvider, AssetError> PakProvider::Mount(const std::filesystem:
         return std::unexpected(AssetErrorCode::CorruptArchive);
     }
 
-    std::vector<PakEntry> entries;
-    entries.reserve(header->entryCount);
-    BitReader reader{indexData};
-    for (std::uint32_t i = 0; i < header->entryCount; ++i)
+    std::expected<std::vector<PakEntry>, PakFormatError> entries = ReadPakIndex(indexData, *header);
+    if (!entries)
     {
-        const std::expected<PakEntry, PakFormatError> entry = ReadPakEntry(reader);
-        if (!entry)
-        {
-            Log::Error("Pak: '{}' entry {}: {}.", path.string(), i, ToString(entry.error()));
-            return std::unexpected(AssetErrorCode::CorruptArchive);
-        }
+        Log::Error("Pak: '{}': {}.", path.string(), ToString(entries.error()));
+        return std::unexpected(AssetErrorCode::CorruptArchive);
+    }
+    for (const PakEntry &entry : *entries)
+    {
         // Slices live between the header and the index. One reaching outside
         // would read header or index bytes as asset data.
-        if (entry->archive == kThisArchive && (entry->offset < kPakHeaderBytes || entry->offset > header->indexOffset ||
-                                               entry->storedSize > header->indexOffset - entry->offset))
+        if (entry.archive == kThisArchive && (entry.offset < kPakHeaderBytes || entry.offset > header->indexOffset ||
+                                              entry.storedSize > header->indexOffset - entry.offset))
         {
-            Log::Error("Pak: '{}' entry {} points outside the slice region.", path.string(), i);
+            Log::Error("Pak: '{}' entry '{}' points outside the slice region.", path.string(), entry.path);
             return std::unexpected(AssetErrorCode::CorruptArchive);
         }
-        entries.push_back(*entry);
     }
 
-    PakProvider provider(std::move(*file), std::move(entries));
+    PakProvider provider(std::move(*file), std::move(*entries));
     if (provider._byId.size() != provider._entries.size() || provider._byPath.size() != provider._entries.size())
     {
         Log::Error("Pak: '{}' holds two slices under one id or one path.", path.string());
@@ -153,12 +150,18 @@ std::expected<std::vector<std::byte>, AssetError> PakProvider::Open(AssetId id) 
 
 std::expected<AssetId, AssetError> PakProvider::Resolve(std::string_view vpath) const
 {
-    const auto found = _byPath.find(DerivedAssetId(vpath));
-    if (found == _byPath.end())
+    const PakEntry *entry = Find(vpath);
+    if (entry == nullptr)
     {
         return std::unexpected(AssetErrorCode::UnknownAssetId);
     }
-    return _entries[found->second].id;
+    return entry->id;
+}
+
+const PakEntry *PakProvider::Find(std::string_view vpath) const
+{
+    const auto found = _byPath.find(DerivedAssetId(vpath));
+    return found == _byPath.end() ? nullptr : &_entries[found->second];
 }
 
 std::vector<PakEntry> PakProvider::EntriesOfKind(AssetKindId kind) const
