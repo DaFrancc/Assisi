@@ -45,7 +45,7 @@ enum class LevelError : std::uint8_t
     NameAlreadyLive,     ///< Placing would put two instances of one name in a world.
     MalformedBlob,       ///< A cooked scene whose framing is wrong, or that ran out of bytes mid-read.
     ProtocolMismatch,    ///< A cooked scene written against a component table this build no longer has.
-    CodecRefused,        ///< A component the codec will not carry losslessly to disk, so cooking refuses it.
+    CodecRefused,        ///< A component the codec cannot encode, so cooking refuses it.
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.

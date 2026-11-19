@@ -1,4 +1,5 @@
-# Components with requires/excludes rules, for the loaders' handling of them.
+# Components with requires/excludes rules, for the loaders' handling of them,
+# and one with a norep field, for the cook's.
 # Reflected through an INTERFACE library so the generated OBJECT library
 # inherits the include dir and Runtime deps, as the ECS test components are.
 add_library(Assisi-Runtime-TestComponents INTERFACE)
@@ -9,6 +10,7 @@ target_link_libraries(Assisi-Runtime-TestComponents INTERFACE Assisi::Runtime)
 assisi_reflect(
   TARGET Assisi-Runtime-TestComponents
   HEADERS
+    support/include/Assisi/Runtime/Tests/CookComponents.hpp
     support/include/Assisi/Runtime/Tests/RuleComponents.hpp
     support/include/Assisi/Runtime/Tests/SplineComponents.hpp
 )

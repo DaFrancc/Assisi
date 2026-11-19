@@ -62,7 +62,7 @@ std::string_view ToString(LevelError error) noexcept
     case LevelError::ProtocolMismatch:
         return "the cooked scene was written against a different component table";
     case LevelError::CodecRefused:
-        return "a component holds a field the codec would not carry to disk";
+        return "a component holds a field the codec cannot encode";
     }
     return "the file cannot be used";
 }

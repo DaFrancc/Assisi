@@ -738,6 +738,59 @@ TEST_CASE("BinaryCodec: a norep field occupies no mask bit and never leaves the 
     CHECK(destination.secret == -1);
 }
 
+TEST_CASE("BinaryCodec: a block for a file carries a norep field, and a block for the wire still does not")
+{
+    // norep means "to disk but never to the network". A cooked level is disk, so
+    // a block written for one keeps the field a snapshot leaves behind.
+    const ComponentMeta meta = MakeGatedMeta();
+    CHECK(Assisi::Core::Reflect::CountCodecFields(meta, Assisi::Core::Reflect::FieldSet::All) == 2);
+
+    Assisi::Core::Reflect::CodecContext forFile;
+    forFile.fields = Assisi::Core::Reflect::FieldSet::All;
+
+    const Gated source{7, 1234};
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields, &forFile));
+
+    Gated destination{0, -1};
+    BitReader reader(writer.Data());
+    REQUIRE(ReadComponentId(reader) == meta.id);
+    REQUIRE(ReadComponent(meta, &destination, reader, nullptr, &forFile));
+    CHECK(destination == source);
+
+    // A context that asks only for reference hooks still writes for the wire.
+    const Assisi::Core::Reflect::CodecContext hooksOnly;
+    BitWriter wire;
+    REQUIRE(WriteComponent(meta, &source, wire, kAllFields, &hooksOnly));
+    Gated received{0, -1};
+    BitReader wireReader(wire.Data());
+    REQUIRE(ReadComponentId(wireReader) == meta.id);
+    REQUIRE(ReadComponent(meta, &received, wireReader, nullptr, &hooksOnly));
+    CHECK(received.secret == -1);
+}
+
+TEST_CASE("BinaryCodec: the file layout hash moves with a norep field, where the protocol hash does not")
+{
+    // A cooked level is read back by a later build, so a norep field added,
+    // removed or reordered has to refuse it, though the wire never noticed.
+    const std::array<ComponentMeta, 1> baseline{MakeGatedMeta()};
+    const std::uint64_t base = Assisi::Core::Reflect::ComponentFileLayoutHash(baseline);
+
+    std::array<ComponentMeta, 1> withNorep{MakeGatedMeta()};
+    withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, /*norep=*/ true));
+    CHECK(Assisi::Core::Reflect::ComponentFileLayoutHash(withNorep) != base);
+    CHECK(ProtocolHash(withNorep) == ProtocolHash(baseline));
+
+    std::array<ComponentMeta, 1> retyped{MakeGatedMeta()};
+    retyped[0].fields[1].type = FieldType::UInt32;
+    CHECK(Assisi::Core::Reflect::ComponentFileLayoutHash(retyped) != base);
+
+    // Whether a component replicates says nothing about how a file holds it.
+    std::array<ComponentMeta, 1> local{MakeGatedMeta()};
+    local[0].replicable = false;
+    CHECK(Assisi::Core::Reflect::ComponentFileLayoutHash(local) == base);
+}
+
 TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the hash")
 {
     const std::array<ComponentMeta, 1> table{MakeAllTypesMeta()};

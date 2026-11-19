@@ -59,11 +59,11 @@
 namespace Assisi::Core::Reflect
 {
 
-/// @brief One bit per wire field, in declaration order.
+/// @brief One bit per encoded field, in declaration order.
 ///
-/// Bit N corresponds to the N-th field that survives the IsWireField filter —
-/// not to `meta.fields[N]`. Use FieldMaskBit()/CountCodecFields() rather than
-/// counting by hand.
+/// Bit N corresponds to the N-th field the block's FieldSet carries — not to
+/// `meta.fields[N]`. Use FieldMaskBit()/CountCodecFields() rather than counting
+/// by hand.
 using FieldMask = std::uint64_t;
 
 /// @brief Whether @p field occupies a slot in the wire's field mask.
@@ -74,6 +74,19 @@ using FieldMask = std::uint64_t;
 [[nodiscard]] constexpr bool IsWireField(const FieldMeta &field)
 {
     return !field.norep;
+}
+
+/// @brief Which of a component's fields a block carries.
+enum class FieldSet : std::uint8_t
+{
+    Wire, ///< Every field but a `norep` one: what the network sends.
+    All,  ///< Every field: what a file holds, a cooked level included.
+};
+
+/// @brief Whether @p field is one a block of @p set carries.
+[[nodiscard]] constexpr bool InFieldSet(const FieldMeta &field, FieldSet set)
+{
+    return set == FieldSet::All || IsWireField(field);
 }
 
 /// @brief Every field set — a full-state block (a delta against the empty
@@ -106,9 +119,14 @@ inline constexpr std::uint32_t kEntityRefBits = 64;
 /// the buffer really is that large.
 inline constexpr std::size_t kMaxVectorElements = 4096;
 
-/// @brief Optional per-call hooks the codec routes reference-typed fields through.
+/// @brief Optional per-call settings: which fields a block carries, and the hooks
+/// the codec routes reference-typed fields through.
 ///
-/// Two jobs: `EntityRef` and `InstanceRef` translation. The codec deliberately
+/// The field set is here rather than a parameter of its own because the callers
+/// that need it — the cook, writing a level to disk — already pass a context for
+/// their reference hooks.
+///
+/// The hooks have two jobs: `EntityRef` and `InstanceRef` translation. The codec deliberately
 /// does *not* know about NetIds: local `(index, generation)` handles and local
 /// instance ids are not stable across machines, but the map that fixes that is
 /// replication state (Stage 5), not codec state. Threading it as a hook means
@@ -131,11 +149,15 @@ struct CodecContext
     std::function<std::uint32_t(std::uint32_t)> instanceToWire;
     /// Decode side: `baseNetId` → local instance id. The inverse.
     std::function<std::uint32_t(std::uint32_t)> instanceFromWire;
+
+    /// Which fields a component block carries. Both ends must agree, as they
+    /// must about everything else in the block. A null context is Wire.
+    FieldSet fields = FieldSet::Wire;
 };
 
-/// @brief Number of fields the codec encodes for @p meta — the fields that pass
-/// IsWireField, which is also the bitmask's width.
-[[nodiscard]] std::size_t CountCodecFields(const ComponentMeta &meta);
+/// @brief Number of fields a block of @p set carries for @p meta, which is also
+/// the bitmask's width.
+[[nodiscard]] std::size_t CountCodecFields(const ComponentMeta &meta, FieldSet set = FieldSet::Wire);
 
 /// @brief Mask with only field @p codecIndex set. Returns 0 for an out-of-range
 /// index, so `mask & FieldMaskBit(i)` is safe to fold in a loop.
@@ -361,6 +383,22 @@ inline constexpr std::uint8_t kCodecVersion = 1;
 
 /// @brief ProtocolHash over the whole ComponentRegistry.
 [[nodiscard]] std::uint64_t ProtocolHash();
+
+/// @brief The layout a file of component blocks is written against: every
+/// component in id order with every field, `norep` ones included.
+///
+/// What a cooked level leads with, in place of ProtocolHash. The protocol hash
+/// leaves `norep` fields out because the wire does, so a field added to or taken
+/// from a level's component would pass it and every later field would decode
+/// into the wrong one. Whether a component replicates is left out: it changes
+/// nothing a file holds.
+[[nodiscard]] std::string ComponentFileLayoutDescription(std::span<const ComponentMeta> components);
+
+/// @brief FNV-1a 64 of ComponentFileLayoutDescription.
+[[nodiscard]] std::uint64_t ComponentFileLayoutHash(std::span<const ComponentMeta> components);
+
+/// @brief ComponentFileLayoutHash over the whole ComponentRegistry.
+[[nodiscard]] std::uint64_t ComponentFileLayoutHash();
 
 /// @brief Short human-readable protocol string sent alongside the hash, e.g.
 /// `"assisi-proto/1 components=37 hash=1a2b3c4d5e6f7081"`.

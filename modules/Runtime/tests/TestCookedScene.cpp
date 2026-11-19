@@ -112,6 +112,7 @@ void RebuildFrom(const CookedScene &cooked, ECS::Scene &scene)
     }
 
     Core::Reflect::CodecContext codec;
+    codec.fields = Core::Reflect::FieldSet::All;
     codec.entityFromWire = [&byNameIndex](std::uint64_t wire) -> std::uint64_t
                            {
                                const auto index = static_cast<std::size_t>(wire);
@@ -233,7 +234,7 @@ nlohmann::json CarFile()
 
 } // namespace
 
-TEST_CASE("A cooked scene is a Scene blob this build's protocol matches")
+TEST_CASE("A cooked scene is a Scene blob this build's component file layout matches")
 {
     ECS::Scene scene;
     FillScene(scene);
@@ -246,7 +247,7 @@ TEST_CASE("A cooked scene is a Scene blob this build's protocol matches")
     REQUIRE(kind.has_value());
     CHECK(*kind == Core::kSceneKind);
     CHECK(reader.ReadUInt8() == Runtime::kScenePayloadVersion);
-    CHECK(reader.ReadBits64(64) == Core::Reflect::ProtocolHash());
+    CHECK(reader.ReadBits64(64) == Core::Reflect::ComponentFileLayoutHash());
 }
 
 TEST_CASE("Every entity, component and value survives the cooked round trip")
@@ -424,7 +425,7 @@ TEST_CASE("A blob written against another component table is refused whole")
     Core::WriteCookedHeader(header, Core::kSceneKind);
     header.WriteUInt8(Runtime::kScenePayloadVersion);
     const std::size_t hashOffset = header.Data().size();
-    // Flip one bit of the stored protocol hash.
+    // Flip one bit of the stored layout hash.
     tampered[hashOffset] ^= std::byte{0x01};
 
     const auto cooked = DecodeCookedScene(tampered);
@@ -660,6 +661,46 @@ TEST_CASE("A cooked scene converts back to the document it was cooked from")
     REQUIRE(
         Runtime::SceneSerializer::Load(reloaded, *document, {.header = &reloadedHeader, .instances = &reloadedTable}));
     CHECK(Runtime::SceneSerializer::Save(reloaded, reloadedHeader, &reloadedTable) == saved);
+}
+
+TEST_CASE("A norep field keeps its value through the cook, on an entity and in an override")
+{
+    // norep keeps a field off the network, not out of the file. A level saves it,
+    // so a shipped level that lost it would start with the default instead.
+    const std::filesystem::path root = FreshRoot("norep");
+    Write(root, "tally.abp",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array({{{"name", "counter"},
+                                         {"components", {{"CookedTally", {{"shown", 1}, {"hostOnly", 2}}}}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "board"}, {"components", {{"CookedTally", {{"shown", 5}, {"hostOnly", 99}}}}}}})},
+              {"instances",
+               nlohmann::json::array({{{"name", "tally_1"},
+                                         {"source", "tally.abp"},
+                                         {"overrides", {{"counter", {{"CookedTally", {{"hostOnly", 7}}}}}}}}})}});
+
+    ECS::Scene scene;
+    Runtime::InstanceTable table;
+    Runtime::LevelHeader header;
+    REQUIRE(Runtime::SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
+    const nlohmann::json saved = Runtime::SceneSerializer::Save(scene, header, &table);
+
+    const auto bytes = SaveCookedScene(scene, header, &table, [](std::string_view source)
+                                       { return Core::DerivedAssetId(source); });
+    REQUIRE(bytes.has_value());
+    const auto cooked = DecodeCookedScene(*bytes);
+    REQUIRE(cooked.has_value());
+    const std::expected<nlohmann::json, LevelError> document = Runtime::CookedSceneToDocument(*cooked);
+    REQUIRE(document.has_value());
+    CHECK_MESSAGE(*document == saved, "cooked:\n" << document->dump(2) << "\nsaved:\n" << saved.dump(2));
+
+    // The override is still a patch: only the field the author set.
+    const nlohmann::json &claim = document->at("instances").at(0).at("overrides").at("counter").at("CookedTally");
+    CHECK(claim == nlohmann::json{{"hostOnly", 7}});
 }
 
 TEST_CASE("A cooked document reads from a provider by its path")
