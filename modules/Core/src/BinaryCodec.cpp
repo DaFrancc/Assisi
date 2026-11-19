@@ -1108,7 +1108,7 @@ FieldType LeafElementType(const FieldMeta &field)
 /// and a cooked asset — see IsWireField.
 using FieldFilter = bool (*)(const FieldMeta &);
 
-/// The cooked-asset filter: a document holds every field.
+/// The file filter: a cooked asset, and a cooked level's components, hold every field.
 constexpr bool IsAssetField(const FieldMeta &)
 {
     return true;
@@ -1184,12 +1184,16 @@ void AppendFields(std::string &text, const std::vector<FieldMeta> &fields, Field
 
 } // namespace
 
-std::size_t CountCodecFields(const ComponentMeta &meta)
+std::size_t CountCodecFields(const ComponentMeta &meta, FieldSet set)
 {
     std::size_t count = 0;
     for (const FieldMeta &field : meta.fields)
-        if (IsWireField(field))
+    {
+        if (InFieldSet(field, set))
+        {
             ++count;
+        }
+    }
     return count;
 }
 
@@ -1204,7 +1208,8 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
         return false;
     }
 
-    const std::size_t fieldCount = CountCodecFields(meta);
+    const FieldSet set = context != nullptr ? context->fields : FieldSet::Wire;
+    const std::size_t fieldCount = CountCodecFields(meta, set);
     if (fieldCount > kMaxCodecFields)
     {
         ASSISI_ASSERT(false, "WriteComponent: more wire fields than the change mask can address");
@@ -1224,8 +1229,10 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : meta.fields)
     {
-        if (!IsWireField(field))
+        if (!InFieldSet(field, set))
+        {
             continue;
+        }
 
         if ((mask & FieldMaskBit(codecIndex)) != 0)
         {
@@ -1381,7 +1388,8 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
     if (appliedMask)
         *appliedMask = 0;
 
-    const std::size_t fieldCount = CountCodecFields(meta);
+    const FieldSet set = context != nullptr ? context->fields : FieldSet::Wire;
+    const std::size_t fieldCount = CountCodecFields(meta, set);
     if (fieldCount > kMaxCodecFields)
     {
         Log::Error("BinaryCodec: '{}' has {} wire fields, over the {}-field limit", meta.name, fieldCount,
@@ -1396,8 +1404,10 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : meta.fields)
     {
-        if (!IsWireField(field))
+        if (!InFieldSet(field, set))
+        {
             continue;
+        }
 
         if ((mask & FieldMaskBit(codecIndex)) != 0)
         {
@@ -1615,6 +1625,39 @@ std::uint64_t ProtocolHash()
 {
     const std::string text = ProtocolLayoutDescription();
     return ContentHash64(std::as_bytes(std::span{text.data(), text.size()}));
+}
+
+std::string ComponentFileLayoutDescription(std::span<const ComponentMeta> components)
+{
+    std::string text;
+    text.reserve(components.size() * 128u);
+
+    text += "assisi-file codec=";
+    text += std::to_string(kCodecVersion);
+    text += " components=";
+    text += std::to_string(components.size());
+    text += '\n';
+
+    for (const ComponentMeta &meta : components)
+    {
+        text += std::to_string(meta.id.value); // hashed layout text
+        text += ' ';
+        text += meta.name;
+        text += '\n';
+        AppendFields(text, meta.fields, IsAssetField);
+    }
+    return text;
+}
+
+std::uint64_t ComponentFileLayoutHash(std::span<const ComponentMeta> components)
+{
+    const std::string text = ComponentFileLayoutDescription(components);
+    return ContentHash64(std::as_bytes(std::span{text.data(), text.size()}));
+}
+
+std::uint64_t ComponentFileLayoutHash()
+{
+    return ComponentFileLayoutHash(ComponentRegistry::Instance().All());
 }
 
 std::string ProtocolSummary(std::span<const ComponentMeta> components)

@@ -193,14 +193,12 @@ void EditorApp::BuildJoinedWorld()
     // The engine's join check, not the editor's: a dedicated server and a shipped
     // client have to refuse exactly what this refuses, or the same session is
     // playable in one target and not another.
-    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> resolved =
-        Assisi::App::ResolveJoinLevel(level);
-    if (!resolved)
+    const std::expected<void, Assisi::App::JoinLevelError> joinable = Assisi::App::CheckJoinLevel(level);
+    if (!joinable)
     {
-        FailJoin(Assisi::App::JoinLevelErrorMessage(resolved.error(), level.path));
+        FailJoin(Assisi::App::JoinLevelErrorMessage(joinable.error(), level.path));
         return;
     }
-    const std::filesystem::path file = *resolved;
 
     // --- Build it -----------------------------------------------------------
     // Straight into the play scene: the pre-play snapshot already holds the
@@ -211,7 +209,7 @@ void EditorApp::BuildJoinedWorld()
     const Assisi::App::LevelServices services{_assetCache, *_sceneRenderer};
     const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
     const Assisi::Runtime::LevelResult loaded = level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
-                                                    ? Assisi::App::LoadLevelFile(*_world, file, services, options)
+                                                    ? Assisi::App::LoadLevelFile(*_world, level.path, services, options)
                                                     : Assisi::App::LoadLevel(*_world, level.path, services, options);
     if (!loaded)
     {
@@ -226,7 +224,7 @@ void EditorApp::BuildJoinedWorld()
     // The world is the host's level for the duration; StopPlay puts the edited
     // world's path, systems and instance table back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    // ResolveJoinLevel already refused a level naming a system this build does not
+    // CheckJoinLevel already refused a level naming a system this build does not
     // declare, so this is the belt to that braces rather than the check itself.
     // Kept loud and not fatal: unwinding a half-built join is not something this
     // function can do, and a mismatch here means the two disagree about what the

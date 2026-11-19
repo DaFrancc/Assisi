@@ -9,8 +9,14 @@
 /// known once every slice before it has been written, and writing the index at
 /// the end lets the writer stream slices without seeking back.
 ///
-/// Every field is written at a fixed width, so the index is a flat array a reader
-/// takes in one read and addresses by position.
+/// Every entry field is written at a fixed width, so the entries are a flat array
+/// a reader takes in one read and addresses by position. Each entry's virtual
+/// path is the one thing that varies in length, so the paths sit after the
+/// entries in a table of their own, and each entry says where its path is.
+///
+/// The paths are kept as text so a shipped game can list what it holds: a
+/// network session compares every level and blueprint, and a hash of a path
+/// cannot be turned back into the path.
 ///
 /// Slices may sit in any order with gaps between them: a writer that keeps each
 /// slice where the previous release had it leaves holes where slices were removed.
@@ -19,7 +25,9 @@
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/BitStream.hpp>
@@ -34,20 +42,25 @@ namespace Assisi::Core
 inline constexpr std::uint32_t kPakMagic = 0x4B415041U;
 
 /// @brief Version of the layout below, bumped when any field changes.
-inline constexpr std::uint16_t kPakFormatVersion = 2;
+inline constexpr std::uint16_t kPakFormatVersion = 3;
 
 /// @brief Bytes the header occupies on disk.
 inline constexpr std::size_t kPakHeaderBytes = sizeof(std::uint32_t) + sizeof(std::uint16_t) +
-                                               sizeof(std::uint32_t) + sizeof(std::uint64_t);
+                                               sizeof(std::uint32_t) + sizeof(std::uint64_t) +
+                                               sizeof(std::uint32_t);
 
 /// @brief Bytes one index entry occupies on disk.
 inline constexpr std::size_t kPakEntryBytes =
-    sizeof(AssetId::bytes) + sizeof(AssetId::bytes) + // id, pathId
-    sizeof(std::uint64_t) + sizeof(std::uint64_t) +   // offset, storedSize
-    sizeof(std::uint64_t) + sizeof(std::uint64_t) +   // uncompressedSize, contentHash
-    sizeof(std::uint64_t) +                           // kind
-    sizeof(std::uint16_t) +                           // archive
-    sizeof(std::uint8_t) + sizeof(std::uint8_t);      // codec, flags
+    sizeof(AssetId::bytes) +                        // id
+    sizeof(std::uint32_t) + sizeof(std::uint16_t) + // path offset, path length
+    sizeof(std::uint64_t) + sizeof(std::uint64_t) + // offset, storedSize
+    sizeof(std::uint64_t) + sizeof(std::uint64_t) + // uncompressedSize, contentHash
+    sizeof(std::uint64_t) +                         // kind
+    sizeof(std::uint16_t) +                         // archive
+    sizeof(std::uint8_t) + sizeof(std::uint8_t);    // codec, flags
+
+/// @brief The longest virtual path an entry can hold: its length is written in 16 bits.
+inline constexpr std::size_t kPakMaxPathBytes = UINT16_MAX;
 
 /// @brief Bits in a slice's flags byte.
 enum class PakSliceFlag : std::uint8_t
@@ -63,14 +76,15 @@ struct PakHeader
     std::uint64_t indexOffset = 0; ///< Where the index begins.
     std::uint32_t magic       = kPakMagic;
     std::uint32_t entryCount  = 0;
+    std::uint32_t pathBytes   = 0; ///< Bytes of the path table after the entries.
     std::uint16_t version     = kPakFormatVersion;
 };
 
 /// @brief One slice's row in the index.
 struct PakEntry
 {
-    AssetId id;     ///< The asset this slice holds.
-    AssetId pathId; ///< DerivedAssetId of its virtual path, so a lookup by path needs no string.
+    std::string path; ///< The asset's virtual path, with forward slashes.
+    AssetId id;       ///< The asset this slice holds.
 
     std::uint64_t offset           = 0; ///< Where the stored bytes start in the archive.
     std::uint64_t storedSize       = 0; ///< Bytes on disk, after compression.
@@ -96,6 +110,7 @@ enum class PakFormatError : std::uint8_t
     NotAPak,            ///< The magic is wrong.
     UnsupportedVersion, ///< A layout version this build does not read.
     Truncated,          ///< Fewer bytes than the header or the index needs.
+    BadPath,            ///< An entry's path is empty or lies outside the path table.
 };
 
 /// @brief A short human-readable description, for a load failure's log line.
@@ -106,12 +121,19 @@ void WritePakHeader(BitWriter &writer, const PakHeader &header);
 /// @brief Reads and validates the header from the first kPakHeaderBytes of a pak.
 [[nodiscard]] std::expected<PakHeader, PakFormatError> ReadPakHeader(std::span<const std::byte> bytes);
 
-void WritePakEntry(BitWriter &writer, const PakEntry &entry);
+/// @brief Bytes the path table for @p entries takes: what PakHeader::pathBytes says.
+[[nodiscard]] std::uint32_t PakPathBytes(std::span<const PakEntry> entries) noexcept;
 
-/// @brief Reads one entry.
+/// @brief Writes the index: every entry, then the path table. Each path must be
+///        no longer than kPakMaxPathBytes.
+void WritePakIndex(BitWriter &writer, std::span<const PakEntry> entries);
+
+/// @brief Reads the index @p header describes from @p bytes, which hold exactly it.
 ///
 /// A codec value, flag or kind this build does not know is kept, because it
-/// describes one slice and only that slice's open should fail.
-[[nodiscard]] std::expected<PakEntry, PakFormatError> ReadPakEntry(BitReader &reader);
+/// describes one slice and only that slice's open should fail. A path outside the
+/// table is not: an index that wrong cannot be trusted about anything else.
+[[nodiscard]] std::expected<std::vector<PakEntry>, PakFormatError> ReadPakIndex(std::span<const std::byte> bytes,
+                                                                                const PakHeader &header);
 
 } // namespace Assisi::Core

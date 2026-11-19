@@ -45,22 +45,15 @@ constexpr std::string_view kNameComponent = "Name";
 /// reference to whichever entity happened to be written first.
 inline constexpr std::uint32_t kNullNameIndex = 0xFFFFFFFFu;
 
-/// Whether a component survives the codec with everything a *file* holds.
+/// A codec context for a cooked level's blocks, which carry every field.
 ///
-/// `norep` means "to disk but never over the network", so the wire codec skips
-/// such a field — right for replication and wrong here, where the destination is
-/// disk. Nothing in the engine declares one; if one appears, cooking refuses it
-/// rather than writing a level that loads and is quietly missing a value.
-bool IsCodecLossless(const Core::Reflect::ComponentMeta &meta)
+/// `norep` means "to disk but never over the network", and a cooked level is
+/// disk: a block written for the wire would load with that field at its default.
+Core::Reflect::CodecContext FileCodec()
 {
-    for (const Core::Reflect::FieldMeta &field : meta.fields)
-    {
-        if (field.norep)
-        {
-            return false;
-        }
-    }
-    return true;
+    Core::Reflect::CodecContext codec;
+    codec.fields = Core::Reflect::FieldSet::All;
+    return codec;
 }
 
 /// Assigns each distinct name an index, in insertion order.
@@ -142,12 +135,10 @@ std::expected<Core::Reflect::FieldMask, LevelError> MaskForClaim(const Core::Ref
     {
         std::size_t codecIndex = 0;
         bool found             = false;
+        // Every field counts, as in the block the mask is written into: a cooked
+        // level holds norep fields too.
         for (const Core::Reflect::FieldMeta &field : meta.fields)
         {
-            if (!Core::Reflect::IsWireField(field))
-            {
-                continue;
-            }
             if (field.name == key)
             {
                 mask |= Core::Reflect::FieldMaskBit(codecIndex);
@@ -245,7 +236,7 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
         }
     }
 
-    Core::Reflect::CodecContext codec;
+    Core::Reflect::CodecContext codec = FileCodec();
     codec.entityToWire = [&keyToNameIndex](std::uint64_t packed) -> std::uint64_t
                          {
                              const auto found = keyToNameIndex.find(packed);
@@ -278,11 +269,6 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
             if (component == nullptr)
             {
                 continue;
-            }
-            if (!IsCodecLossless(*meta))
-            {
-                Core::Log::Error("CookedScene: '{}' holds a field the codec would not carry to disk.", meta->name);
-                return std::unexpected(LevelError::CodecRefused);
             }
             present.emplace_back(meta, component);
         }
@@ -411,7 +397,7 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
                 return std::unexpected(LevelError::MalformedComponent);
             }
 
-            Core::Reflect::CodecContext identity;
+            Core::Reflect::CodecContext identity = FileCodec();
             identity.entityToWire = [](std::uint64_t packed) -> std::uint64_t
                                     {
                                         // The scratch entity's index is already the
@@ -432,7 +418,7 @@ std::expected<std::vector<std::byte>, LevelError> SaveCookedScene(ECS::Scene &sc
     Core::BitWriter out;
     Core::WriteCookedHeader(out, Core::kSceneKind);
     out.WriteUInt8(kScenePayloadVersion);
-    out.WriteUInt64(Core::Reflect::ProtocolHash());
+    out.WriteUInt64(Core::Reflect::ComponentFileLayoutHash());
     WriteStringList(out, names.Names());
     WriteStringList(out, componentNames.Names());
     WriteStringList(out, header.systems);
@@ -533,7 +519,7 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
     }
 
     CookedScene scene;
-    scene.protocolHash = reader.ReadBits64(64);
+    scene.layoutHash = reader.ReadBits64(64);
     if (reader.Failed())
     {
         return std::unexpected(LevelError::MalformedBlob);
@@ -543,10 +529,10 @@ std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::by
     // the registry assigns by sorting names, so a build whose component set has
     // moved would read every block into whichever component now holds its id —
     // values that are wrong rather than missing.
-    if (const std::uint64_t expected = Core::Reflect::ProtocolHash(); scene.protocolHash != expected)
+    if (const std::uint64_t expected = Core::Reflect::ComponentFileLayoutHash(); scene.layoutHash != expected)
     {
-        Core::Log::Error("CookedScene: written against protocol {:016x}, but this build's is {:016x}.",
-                         scene.protocolHash, expected);
+        Core::Log::Error("CookedScene: written against component layout {:016x}, but this build's is {:016x}.",
+                         scene.layoutHash, expected);
         return std::unexpected(LevelError::ProtocolMismatch);
     }
 
@@ -702,14 +688,10 @@ void UnqualifyClaim(const Core::Reflect::ComponentMeta &meta, nlohmann::json &cl
 void KeepAppliedFields(const Core::Reflect::ComponentMeta &meta, Core::Reflect::FieldMask applied,
                        nlohmann::json &claim)
 {
+    // Indexed over every field, as a cooked block is.
     std::size_t codecIndex = 0;
     for (const Core::Reflect::FieldMeta &field : meta.fields)
     {
-        if (!Core::Reflect::IsWireField(field))
-        {
-            claim.erase(field.name);
-            continue;
-        }
         if ((applied & Core::Reflect::FieldMaskBit(codecIndex)) == 0)
         {
             claim.erase(field.name);
@@ -787,7 +769,7 @@ std::expected<nlohmann::json, LevelError> CookedSceneToDocument(const CookedScen
     }
     const ScopedContext scoped(std::move(context));
 
-    Core::Reflect::CodecContext codec;
+    Core::Reflect::CodecContext codec = FileCodec();
     codec.entityFromWire = [nameCount](std::uint64_t wire) -> std::uint64_t
                            {
                                const auto index = static_cast<std::uint32_t>(wire & 0xFFFFFFFFull);

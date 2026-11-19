@@ -119,15 +119,22 @@ int main(int argc, char **argv)
     std::optional<Assisi::Core::PakProvider> previous;
     if (!previousPath.empty())
     {
-        std::expected<Assisi::Core::PakProvider, Assisi::Core::AssetError> mounted =
-            Assisi::Core::PakProvider::Mount(previousPath);
+        std::expected<std::optional<Assisi::Core::PakProvider>, Assisi::Core::AssetError> mounted =
+            Assisi::Cook::MountPreviousPak(previousPath);
         if (!mounted)
         {
             std::fprintf(stderr, "pack: %s: previous pak does not mount: %s\n", previousPath.generic_string().c_str(),
                          Assisi::Core::ToString(mounted.error()).c_str());
             return kExitFailed;
         }
-        previous.emplace(std::move(*mounted));
+        if (!mounted->has_value())
+        {
+            std::fprintf(stdout,
+                         "pack: %s was packed in another pak format version, so its layout can't be kept; "
+                         "laying out fresh\n",
+                         previousPath.generic_string().c_str());
+        }
+        previous = std::move(*mounted);
     }
 
     const std::expected<Assisi::Cook::PakReport, Assisi::Cook::CookError> report =

@@ -4,6 +4,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/PakProvider.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <system_error>
 
 namespace Assisi::App
@@ -19,21 +21,66 @@ namespace Assisi::App
 namespace
 {
 
-/// Whether a filename is content the set covers.
+/// What SetContentPackage named. Set and read on the main thread only: when a
+/// game mounts its package, and when a session starts.
+const Core::PakProvider *gPackage = nullptr;
+
+/// Whether a virtual path is content the set covers.
 ///
 /// Both extensions, because they are one format and the extension never gates
 /// behaviour — a `.alvl` instanced into another `.alvl` is legal, so a level is
 /// as load-bearing across the wire as a blueprint is.
-bool IsContentFile(const std::filesystem::path &path)
+bool IsContentFile(std::string_view path)
 {
-    const std::filesystem::path extension = path.extension();
-    return extension == ".alvl" || extension == ".abp";
+    return path.ends_with(".alvl") || path.ends_with(".abp");
+}
+
+/// The package's levels and blueprints, sorted.
+std::vector<std::string> PackagedContentPaths(const Core::PakProvider &package)
+{
+    std::vector<std::string> paths;
+    for (const Core::PakEntry &entry : package.Entries())
+    {
+        if (IsContentFile(entry.path))
+        {
+            paths.push_back(entry.path);
+        }
+    }
+    std::ranges::sort(paths);
+    return paths;
+}
+
+/// The hash a file is folded in with: its pak row's when running from a package,
+/// its normalized source text otherwise.
+std::optional<std::uint64_t> ContentHashOf(const std::string &virtualPath)
+{
+    if (gPackage != nullptr)
+    {
+        const Core::PakEntry *entry = gPackage->Find(virtualPath);
+        return entry != nullptr ? std::optional<std::uint64_t>{entry->contentHash} : std::nullopt;
+    }
+    return Core::HashTextFileNormalized(Core::AssetSystem::GetRoot() / virtualPath);
 }
 
 } // namespace
 
+void SetContentPackage(const Core::PakProvider *package)
+{
+    gPackage = package;
+}
+
+const Core::PakProvider *ContentPackage()
+{
+    return gPackage;
+}
+
 std::vector<std::string> ScanContentPaths()
 {
+    if (gPackage != nullptr)
+    {
+        return PackagedContentPaths(*gPackage);
+    }
+
     std::vector<std::string> paths;
 
     const std::filesystem::path root = Core::AssetSystem::GetRoot();
@@ -49,7 +96,7 @@ std::vector<std::string> ScanContentPaths()
             Core::Log::Warn("ContentSet: stopped scanning '{}': {}", root.string(), ec.message());
             break;
         }
-        if (!it->is_regular_file(ec) || !IsContentFile(it->path()))
+        if (!it->is_regular_file(ec) || !IsContentFile(it->path().filename().string()))
             continue;
 
         // Virtual, with forward slashes, so two platforms produce the same string
@@ -72,9 +119,9 @@ ContentSet BuildContentSet()
     ContentSet set;
     set.paths = ScanContentPaths();
 
-    const std::filesystem::path root = Core::AssetSystem::GetRoot();
-    if (set.paths.empty())
+    if (set.paths.empty() && gPackage == nullptr)
     {
+        const std::filesystem::path root = Core::AssetSystem::GetRoot();
         std::error_code ec;
         if (root.empty() || !std::filesystem::is_directory(root, ec))
             Core::Log::Warn("ContentSet: no asset root, so the content set is empty.");
@@ -95,10 +142,10 @@ ContentSet BuildContentSet()
         fold(Core::ContentHash64(
                  std::as_bytes(std::span{virtualPath.data(), virtualPath.size()})));
 
-        // Content, not bytes. A Windows checkout of the same file differs by its
-        // line endings alone, and hashing that difference refuses a join between
-        // two machines running identical content.
-        const std::optional<std::uint64_t> fileHash = Core::HashTextFileNormalized(root / virtualPath);
+        // From source, content rather than bytes: a Windows checkout of the same
+        // file differs by its line endings alone, and hashing that difference
+        // refuses a join between two machines running identical content.
+        const std::optional<std::uint64_t> fileHash = ContentHashOf(virtualPath);
         if (!fileHash)
         {
             // Folded in as zero rather than skipped: skipping would let two

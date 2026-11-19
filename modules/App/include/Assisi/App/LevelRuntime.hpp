@@ -190,6 +190,9 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, bool &
 ///
 /// Lives here rather than in any app because every target needs it: the editor
 /// hosting, a dedicated server hosting, and whatever renders a shipped build.
+///
+/// A game running from its package (SetContentPackage) has no file to read, so
+/// the level's hash is the content hash its pak index records instead.
 [[nodiscard]] std::optional<std::uint64_t> HashLevelFile(std::string_view virtualPath);
 
 /// @brief Why a joining peer cannot build the level the host named.
@@ -208,19 +211,18 @@ enum class JoinLevelError : std::uint8_t
 /// match", which is the sort of difference that makes a bug report unsearchable.
 [[nodiscard]] std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path);
 
-/// @brief The file a joining peer should load for @p level, or why it cannot.
+/// @brief Whether a joining peer can build the level the host named, or why not.
 ///
 /// Everything a join must be sure of before it touches the scene: that the host
-/// named a level, that this build has it, that the bytes match the host's, and
-/// that this build declares the systems the file asks for. Whichever target is
-/// joining — editor, dedicated server, or a shipped client — is asking the same
-/// question, so it is asked once here.
+/// named a level, that this build has it, that its content matches the host's,
+/// and that this build declares the systems the file asks for. Whichever target
+/// is joining — editor, dedicated server, or a shipped client — is asking the
+/// same question, so it is asked once here.
 ///
-/// Both addressings are handled. A virtual path resolves through the asset
-/// system; an absolute one is a play-in-editor snapshot on this machine and is
-/// read where it lies.
-[[nodiscard]] std::expected<std::filesystem::path, JoinLevelError>
-ResolveJoinLevel(const NetSync::LevelIdentity &level);
+/// Both addressings are handled. A virtual path is checked through HashLevelFile,
+/// against the asset root or the package; the caller loads it by that path. An
+/// absolute one is a play-in-editor snapshot on this machine, read where it lies.
+[[nodiscard]] std::expected<void, JoinLevelError> CheckJoinLevel(const NetSync::LevelIdentity &level);
 
 /// @brief How many entities a join stripped, and how many parent links it had to
 /// drop with them.

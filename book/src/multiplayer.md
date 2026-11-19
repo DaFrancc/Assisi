@@ -99,6 +99,16 @@ When two machines connect, they first compare a fingerprint of every replicable
 component's layout. If the builds differ, they refuse to connect rather than
 misreading each other's data. **Host and clients must run the same build.**
 
+They also compare their content: the level the host is running, and every level
+and blueprint file each machine has. If any of these differ, even a file neither
+machine loads, the client can't join. Copy the host's files and try again.
+
+A packaged game can host and join like the editor can. Its content is checked
+against its package, `assets.pak`, so give every player the same package. A
+packaged game and the editor never match each other, even with the same files:
+the editor checks your source files, and a package holds them cooked. To test a
+packaged game online, run the packaged game on every machine.
+
 ## Players
 
 Each person in a session controls their own character, and sees everyone

@@ -51,6 +51,10 @@ public:
     /// @brief The id packed under @p vpath, found by its DerivedAssetId.
     [[nodiscard]] std::expected<AssetId, AssetError> Resolve(std::string_view vpath) const override;
 
+    /// @brief The index row packed under @p vpath, or null when the pak has no such
+    ///        path. Valid as long as the provider is.
+    [[nodiscard]] const PakEntry *Find(std::string_view vpath) const;
+
     /// @brief Every entry of @p kind, ordered by id so the order is a property of
     ///        the pak rather than of how the index was hashed.
     [[nodiscard]] std::vector<PakEntry> EntriesOfKind(AssetKindId kind) const;

@@ -172,8 +172,10 @@ std::uint64_t CookKey(std::span<const std::byte> source, std::span<const std::ui
     key = MixHash(key, cooker.AssetKeyVariant(id, context));
     // The component table, which both the scene blocks and every asset block are
     // written against. A field added to a component changes what a cooked level
-    // means without changing one byte of the level file.
+    // means without changing one byte of the level file. The file layout covers
+    // norep fields, which a cooked level holds and the protocol leaves out.
     key = MixHash(key, Core::Reflect::ProtocolHash());
+    key = MixHash(key, Core::Reflect::ComponentFileLayoutHash());
     return key;
 }
 

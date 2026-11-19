@@ -14,11 +14,13 @@
 ///
 /// **Component blocks are the network codec's**, written through
 /// `WriteComponent` with no mask, so a component becomes cookable by being
-/// reflected. That reuse is why the blob leads with `ProtocolHash`: the codec
-/// identifies a component by a dense `ComponentId` the registry assigns by
-/// sorting names, which agrees across one build and nothing more. A cooked blob
-/// outlives its build, so the hash is what stops a later one from reading each
-/// block into whichever component now holds that id.
+/// reflected. They carry every field, `norep` ones included (FieldSet::All),
+/// because `norep` keeps a field off the network, not out of a file. The reuse is
+/// why the blob leads with `ComponentFileLayoutHash`: the codec identifies a
+/// component by a dense `ComponentId` the registry assigns by sorting names,
+/// which agrees across one build and nothing more. A cooked blob outlives its
+/// build, so the hash is what stops a later one from reading each block into
+/// whichever component now holds that id, or a field into its neighbour.
 ///
 /// **An override stays a patch.** It is written as a masked block naming only
 /// the fields the author actually set, because an override that became full
@@ -95,7 +97,7 @@ struct CookedOverride
 /// @brief Version of a scene blob's own layout, separate from the envelope's.
 ///
 /// Part of the scene cooker's cache key, so bumping it re-cooks every level.
-inline constexpr std::uint8_t kScenePayloadVersion = 3;
+inline constexpr std::uint8_t kScenePayloadVersion = 4;
 
 /// @brief The id of the blueprint a level names by path, or nil when there is none.
 ///
@@ -135,8 +137,8 @@ struct CookedScene
     std::vector<CookedEntity> entities;
     std::vector<CookedInstance> instances;
 
-    /// The `ProtocolHash` the blob was written against.
-    std::uint64_t protocolHash = 0;
+    /// The `ComponentFileLayoutHash` the blob was written against.
+    std::uint64_t layoutHash = 0;
 };
 
 /// @brief Encode @p scene and its instances as a cooked blob.
@@ -148,11 +150,9 @@ struct CookedScene
 ///
 /// @p idOf turns each instance's blueprint path into the id the blob stores.
 ///
-/// @return the bytes, or why the scene could not be encoded. A component whose
-///         fields the codec would drop (see the `norep` rule) is refused rather
-///         than written short: a cooked level missing a field is a level that
-///         loads and is quietly wrong. An instance whose blueprint @p idOf cannot
-///         name is BlueprintUnusable, for the same reason.
+/// @return the bytes, or why the scene could not be encoded: CodecRefused for a
+///         component the codec cannot encode, BlueprintUnusable for an instance
+///         whose blueprint @p idOf cannot name.
 [[nodiscard]] std::expected<std::vector<std::byte>, LevelError>
 SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances, const BlueprintIdOf &idOf);
 
@@ -163,7 +163,7 @@ SaveCookedScene(ECS::Scene &scene, const LevelHeader &header, InstanceTable *ins
 /// these blocks into components and comparing against the source level.
 ///
 /// @return the decoded scene, or why the bytes are not one. A blob whose
-///         `ProtocolHash` is not this build's is refused before any block is
+///         `ComponentFileLayoutHash` is not this build's is refused before any block is
 ///         read — every one of them would otherwise decode into whichever
 ///         component now holds its id.
 [[nodiscard]] std::expected<CookedScene, LevelError> DecodeCookedScene(std::span<const std::byte> bytes);

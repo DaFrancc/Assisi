@@ -96,16 +96,10 @@ std::vector<Assisi::Core::PakEntry> ReadIndex(const std::filesystem::path &path)
         Assisi::Core::ReadPakHeader(bytes);
     REQUIRE(header.has_value());
 
-    Assisi::Core::BitReader reader{bytes.subspan(static_cast<std::size_t>(header->indexOffset))};
-    std::vector<Assisi::Core::PakEntry> index;
-    for (std::uint32_t i = 0; i < header->entryCount; ++i)
-    {
-        const std::expected<Assisi::Core::PakEntry, Assisi::Core::PakFormatError> entry =
-            Assisi::Core::ReadPakEntry(reader);
-        REQUIRE(entry.has_value());
-        index.push_back(*entry);
-    }
-    return index;
+    const std::expected<std::vector<Assisi::Core::PakEntry>, Assisi::Core::PakFormatError> index =
+        Assisi::Core::ReadPakIndex(bytes.subspan(static_cast<std::size_t>(header->indexOffset)), *header);
+    REQUIRE(index.has_value());
+    return *index;
 }
 
 std::size_t NewChunks(const std::filesystem::path &before, const std::filesystem::path &after)

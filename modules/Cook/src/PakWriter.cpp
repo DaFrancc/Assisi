@@ -6,6 +6,7 @@
 #include <Assisi/Core/CookedBlob.hpp>
 #include <Assisi/Core/Format.hpp>
 #include <Assisi/Core/PakFormat.hpp>
+#include <Assisi/Core/RandomAccessFile.hpp>
 
 #include <algorithm>
 #include <array>
@@ -107,9 +108,17 @@ std::expected<PackedSlice, CookError> PackSlice(const std::filesystem::path &coo
             entry.vpath, Core::Format("has a cooked blob that does not read: {}", Core::ToString(kind.error()))));
     }
 
+    if (entry.vpath.empty() || entry.vpath.size() > Core::kPakMaxPathBytes)
+    {
+        return std::unexpected(Failure(entry.vpath,
+                                       Core::Format("has a path the pak index cannot hold: it must be 1 to {} "
+                                                    "bytes long",
+                                                    Core::kPakMaxPathBytes)));
+    }
+
     PackedSlice slice;
+    slice.row.path             = entry.vpath;
     slice.row.id               = *id;
-    slice.row.pathId           = Core::DerivedAssetId(entry.vpath);
     slice.row.uncompressedSize = blob->size();
     slice.row.contentHash      = entry.outputHash;
     slice.row.codec            = Core::PakCodec::None;
@@ -306,6 +315,35 @@ std::string_view ToString(PakLayout layout) noexcept
     return {};
 }
 
+std::expected<std::optional<Core::PakProvider>, Core::AssetError> MountPreviousPak(const std::filesystem::path &path)
+{
+    std::expected<Core::RandomAccessFile, Core::AssetError> file = Core::RandomAccessFile::Open(path);
+    if (!file)
+    {
+        return std::unexpected(file.error());
+    }
+    // The version is read before mounting, so an older pak is told apart from a
+    // broken one. Its header may be shorter than this build's, so only what the
+    // file holds is read; a short read leaves the rest to Mount to refuse.
+    std::vector<std::byte> headerBytes(
+        static_cast<std::size_t>(std::min<std::uint64_t>(file->Size(), Core::kPakHeaderBytes)));
+    if (file->ReadAt(0, headerBytes))
+    {
+        const std::expected<Core::PakHeader, Core::PakFormatError> header = Core::ReadPakHeader(headerBytes);
+        if (!header && header.error() == Core::PakFormatError::UnsupportedVersion)
+        {
+            return std::optional<Core::PakProvider>{};
+        }
+    }
+
+    std::expected<Core::PakProvider, Core::AssetError> mounted = Core::PakProvider::Mount(path);
+    if (!mounted)
+    {
+        return std::unexpected(mounted.error());
+    }
+    return std::optional<Core::PakProvider>{std::move(*mounted)};
+}
+
 std::expected<PakReport, CookError> WritePak(const std::filesystem::path &cookedRoot,
                                              std::span<const ManifestEntry> entries,
                                              const std::filesystem::path &outPath, Core::PakCodec codec,
@@ -382,16 +420,20 @@ std::expected<PakReport, CookError> WritePak(const std::filesystem::path &cooked
         }
 
         // In manifest order, so the index itself only changes where the slices did.
-        Core::BitWriter indexWriter;
+        std::vector<Core::PakEntry> rows;
+        rows.reserve(slices.size());
         for (const PackedSlice &slice : slices)
         {
-            Core::WritePakEntry(indexWriter, slice.row);
+            rows.push_back(slice.row);
         }
+        Core::BitWriter indexWriter;
+        Core::WritePakIndex(indexWriter, rows);
         WriteBytes(out, indexWriter.Data());
 
         Core::PakHeader header;
         header.entryCount  = static_cast<std::uint32_t>(slices.size());
         header.indexOffset = offset;
+        header.pathBytes   = Core::PakPathBytes(rows);
         Core::BitWriter headerWriter;
         Core::WritePakHeader(headerWriter, header);
         out.seekp(0);

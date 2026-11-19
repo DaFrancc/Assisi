@@ -93,6 +93,9 @@ textures is a download of three textures, not the whole game.
 - `--previous <path to a pak>` matches a pak you name instead, for one kept
   somewhere else.
 - A version is never overwritten; release 1.1 is a new folder.
+- When a new engine version changes how `assets.pak` is laid out, the newest
+  release can't be matched. The tool says so and packs from scratch, so players
+  download the whole package once.
 - `releases/` is never committed to git (the files are large), and cleaning
   builds never touches it. **Back it up** with your other release files: if it
   is lost, the next update is laid out from scratch and players download more.
