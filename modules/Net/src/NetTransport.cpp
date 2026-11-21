@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Only for the address-family probe behind HostSupportsIPv6(); see Listen().
@@ -110,6 +111,12 @@ struct NetTransport::Impl
     /// a Connected event always precedes that connection's first message.
     std::vector<NetEvent> pendingEvents;
 
+    /// Connections whose Connected event has gone out. A peer that speaks first
+    /// can have a message received before GNS's own Connected callback is
+    /// dispatched; that message announces the connection, and the callback,
+    /// when it comes, is not reported twice.
+    std::unordered_set<HSteamNetConnection> announced;
+
     std::string lastError;
 
     // ---- instance registry, for routing GNS's global callback -------------
@@ -179,11 +186,25 @@ struct NetTransport::Impl
 
     void Unregister(HSteamNetConnection handle)
     {
+        announced.erase(handle);
         const auto it = byHandle.find(handle);
         if (it == byHandle.end())
             return;
         byId.erase(it->second);
         byHandle.erase(it);
+    }
+
+    /// Appends @p id's Connected event to @p events, once per connection.
+    void Announce(HSteamNetConnection handle, ConnectionId id, std::vector<NetEvent> &events)
+    {
+        if (!announced.insert(handle).second)
+        {
+            return;
+        }
+        NetEvent event;
+        event.type = NetEvent::Type::Connected;
+        event.connection = id;
+        events.push_back(std::move(event));
     }
 
     /// Give a connection its poll group and lane configuration. Both are
@@ -201,6 +222,12 @@ struct NetTransport::Impl
     }
 
     void OnStatusChanged(const SteamNetConnectionStatusChangedCallback_t &info);
+
+    /// Appends every message waiting on @p handle to pendingEvents, as @p id's.
+    void DrainMessages(HSteamNetConnection handle, ConnectionId id);
+
+    /// One received message as an event, released afterwards.
+    static NetEvent MessageEvent(SteamNetworkingMessage_t &message, ConnectionId id);
 
     /// The one global callback GNS calls; fans out to whichever instance owns
     /// the connection. Registered once, on the first NetTransport construction.
@@ -269,10 +296,7 @@ void NetTransport::Impl::OnStatusChanged(const SteamNetConnectionStatusChangedCa
             info.m_info.m_hListenSocket == k_HSteamListenSocket_Invalid)
             Adopt(info.m_hConn);
 
-        NetEvent event;
-        event.type       = NetEvent::Type::Connected;
-        event.connection = it->second;
-        pendingEvents.push_back(std::move(event));
+        Announce(info.m_hConn, it->second, pendingEvents);
         break;
     }
 
@@ -282,12 +306,19 @@ void NetTransport::Impl::OnStatusChanged(const SteamNetConnectionStatusChangedCa
         const auto it = byHandle.find(info.m_hConn);
         if (it != byHandle.end())
         {
-            // Report a disconnect only for a connection the caller was told
-            // about. A connection that died during its handshake was never
+            // Report a disconnect for a connection the caller was told about,
+            // and for one it opened itself, which it holds a handle to. An
+            // incoming connection that died during its handshake was never
             // announced, so announcing its death would be the first the caller
             // ever heard of it.
-            if (info.m_eOldState == k_ESteamNetworkingConnectionState_Connected)
+            const bool outbound = info.m_info.m_hListenSocket == k_HSteamListenSocket_Invalid;
+            if (info.m_eOldState == k_ESteamNetworkingConnectionState_Connected || outbound)
             {
+                // What arrived before the close, first: the closing handle below
+                // discards it, and the last thing a peer says before it closes,
+                // such as why it refused, is the part worth hearing.
+                DrainMessages(info.m_hConn, it->second);
+
                 NetEvent event;
                 event.type        = NetEvent::Type::Disconnected;
                 event.connection  = it->second;
@@ -306,6 +337,36 @@ void NetTransport::Impl::OnStatusChanged(const SteamNetConnectionStatusChangedCa
     default:
         // None / FindingRoute / FinWait / Linger: nothing for us to do.
         break;
+    }
+}
+
+NetEvent NetTransport::Impl::MessageEvent(SteamNetworkingMessage_t &message, ConnectionId id)
+{
+    NetEvent event;
+    event.type = NetEvent::Type::Message;
+    event.connection = id;
+    event.lane = message.m_idxLane < LaneCount ? static_cast<Lane>(message.m_idxLane) : Lane::Control;
+    const auto *bytes = static_cast<const std::byte *>(message.m_pData);
+    event.payload.assign(bytes, bytes + message.m_cbSize);
+    message.Release();
+    return event;
+}
+
+void NetTransport::Impl::DrainMessages(HSteamNetConnection handle, ConnectionId id)
+{
+    constexpr int kBatchSize = 16;
+    std::array<SteamNetworkingMessage_t *, kBatchSize> batch{};
+    for (;;)
+    {
+        const int received = sockets->ReceiveMessagesOnConnection(handle, batch.data(), kBatchSize);
+        for (int i = 0; i < received; ++i)
+        {
+            pendingEvents.push_back(MessageEvent(*batch[static_cast<std::size_t>(i)], id));
+        }
+        if (received < kBatchSize)
+        {
+            break;
+        }
     }
 }
 
@@ -367,6 +428,30 @@ NetTransport::~NetTransport()
 }
 
 bool NetTransport::Listen(std::uint16_t port)
+{
+    if (port != 0)
+    {
+        return ListenOn(port);
+    }
+    // GNS will not let the system pick ("Must specify local port"), so this
+    // picks: the first free one in a short range a player can read and type.
+    for (std::uint16_t candidate = kAnyPortFirst; candidate < kAnyPortFirst + kAnyPortCount; ++candidate)
+    {
+        if (ListenOn(candidate))
+        {
+            return true;
+        }
+        if (_impl->listenSocket != k_HSteamListenSocket_Invalid)
+        {
+            return false; // already listening: no other port will change that
+        }
+    }
+    _impl->lastError = "no free port in " + std::to_string(kAnyPortFirst) + "-" +
+                       std::to_string(kAnyPortFirst + kAnyPortCount - 1);
+    return false;
+}
+
+bool NetTransport::ListenOn(std::uint16_t port)
 {
     if (_impl->listenSocket != k_HSteamListenSocket_Invalid)
     {
@@ -471,27 +556,57 @@ std::pair<ConnectionId, ConnectionId> NetTransport::CreateLoopbackPair(bool useN
     // A socket pair is born connected and GNS posts no callbacks for it. Emit
     // the Connected events ourselves so a caller driving both a loopback and a
     // real client sees one event stream, not two shapes of one.
-    for (const ConnectionId id : {firstId, secondId})
-    {
-        NetEvent event;
-        event.type       = NetEvent::Type::Connected;
-        event.connection = id;
-        _impl->pendingEvents.push_back(std::move(event));
-    }
+    _impl->Announce(first, firstId, _impl->pendingEvents);
+    _impl->Announce(second, secondId, _impl->pendingEvents);
 
     _impl->lastError.clear();
     return {firstId, secondId};
 }
 
-void NetTransport::Close(ConnectionId connection, bool linger)
+void NetTransport::Close(ConnectionId connection, bool linger, std::int32_t reason)
 {
     const auto it = _impl->byId.find(connection);
     if (it == _impl->byId.end())
         return;
 
     const HSteamNetConnection handle = it->second;
-    _impl->sockets->CloseConnection(handle, 0, nullptr, linger);
+    // GNS takes an application reason only inside its application range, and 0
+    // as "none".
+    const bool inRange = reason >= k_ESteamNetConnectionEnd_App_Min && reason <= k_ESteamNetConnectionEnd_App_Max;
+    _impl->sockets->CloseConnection(handle, inRange ? reason : 0, nullptr, linger);
     _impl->Unregister(handle);
+}
+
+std::string NetTransport::RemoteAddress(ConnectionId connection) const
+{
+    const auto it = _impl->byId.find(connection);
+    if (it == _impl->byId.end())
+    {
+        return {};
+    }
+    SteamNetConnectionInfo_t info{};
+    if (!_impl->sockets->GetConnectionInfo(it->second, &info) || info.m_addrRemote.IsIPv6AllZeros())
+    {
+        return {};
+    }
+    std::array<char, SteamNetworkingIPAddr::k_cchMaxString> text{};
+    info.m_addrRemote.ToString(text.data(), text.size(), /*bWithPort=*/ false);
+    return text.data();
+}
+
+std::uint16_t NetTransport::ListenPort() const
+{
+    if (_impl->listenSocket == k_HSteamListenSocket_Invalid)
+    {
+        return 0;
+    }
+    SteamNetworkingIPAddr bound{};
+    bound.Clear();
+    if (!_impl->sockets->GetListenSocketAddress(_impl->listenSocket, &bound))
+    {
+        return 0;
+    }
+    return bound.m_port;
 }
 
 bool NetTransport::Send(ConnectionId connection, std::span<const std::byte> data, SendMode mode, Lane lane)
@@ -567,17 +682,12 @@ void NetTransport::Poll(std::vector<NetEvent> &outEvents)
             const auto it = _impl->byHandle.find(message->m_conn);
             if (it != _impl->byHandle.end())
             {
-                NetEvent event;
-                event.type       = NetEvent::Type::Message;
-                event.connection = it->second;
-                event.lane       = message->m_idxLane < LaneCount ? static_cast<Lane>(message->m_idxLane)
-                                                                  : Lane::Control;
-
-                const auto *bytes = static_cast<const std::byte *>(message->m_pData);
-                event.payload.assign(bytes, bytes + message->m_cbSize);
-                outEvents.push_back(std::move(event));
+                // Its sender is connected, whether or not the callback that says
+                // so has been dispatched yet; see Impl::announced.
+                _impl->Announce(message->m_conn, it->second, outEvents);
+                outEvents.push_back(Impl::MessageEvent(*message, it->second));
+                continue;
             }
-
             message->Release();
         }
 

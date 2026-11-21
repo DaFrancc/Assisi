@@ -7,6 +7,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Math/WorldCell.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
+#include <Assisi/NetSync/SessionSecret.hpp>
 
 #include <format>
 #include <string>
@@ -197,6 +198,32 @@ bool ReadClientHello(Core::BitReader &reader, ClientHello &outHello)
         return false;
 
     outHello = hello;
+    return true;
+}
+
+void WriteClientAuth(const ClientAuth &auth, Core::BitWriter &writer)
+{
+    writer.WriteUInt64(auth.protocolHash);
+    writer.WriteString(auth.secret);
+}
+
+bool ReadClientAuth(Core::BitReader &reader, ClientAuth &outAuth)
+{
+    ClientAuth auth;
+    auth.protocolHash = reader.ReadUInt64();
+    if (!reader.Ok())
+    {
+        return false;
+    }
+    if (auth.protocolHash == NetProtocolHash())
+    {
+        auth.secret = reader.ReadString(kMaxSecretBytes);
+        if (!reader.Ok())
+        {
+            return false;
+        }
+    }
+    outAuth = std::move(auth);
     return true;
 }
 

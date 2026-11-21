@@ -34,6 +34,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <span>
 #include <unordered_set>
 #include <string>
@@ -72,11 +73,16 @@ inline constexpr std::size_t kPredictionHistoryTicks = 64;
 class ReplicationClient
 {
 public:
+    /// Sends its ClientAuth at once, carrying @p secret: the transport queues it
+    /// on a connection still connecting, and the server says nothing until it
+    /// has it.
+    ///
     /// @param physics The world this client simulates its mirrors in. Null means
     ///   no body is ever built and every mirror is rendered by interpolation —
     ///   what a headless convergence test with no physics world wants.
+    /// @param secret The session's password or code, as typed; empty for an open session.
     ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection,
-                      Physics::PhysicsWorld *physics = nullptr);
+                      Physics::PhysicsWorld *physics = nullptr, std::string_view secret = {});
 
     ReplicationClient(const ReplicationClient &)            = delete;
     ReplicationClient &operator=(const ReplicationClient &) = delete;
@@ -259,6 +265,10 @@ public:
 
     /// @brief Set when the server refused the connection, so a UI can say why.
     [[nodiscard]] const std::string &RejectMessage() const { return _rejectMessage; }
+
+    /// @brief Why the server refused the connection, once it has. A refusal
+    /// this build has no name for reads as ServerFull, the oldest reason.
+    [[nodiscard]] std::optional<RejectReason> Refusal() const { return _refusal; }
 
     /// @brief The clock feedback from the most recent snapshot, for NetClock.
     [[nodiscard]] const ClockFeedback &Feedback() const { return _feedback; }
@@ -764,6 +774,7 @@ private:
     bool ReadPredictedComponent(ECS::Entity entity, const Core::Reflect::ComponentMeta &meta, Confirmed &confirmed,
                                 Core::BitReader &reader, const Core::Reflect::CodecContext &context);
     void SendAck(std::uint64_t serverTick);
+    void SendAuth(std::string_view secret);
     void SendHello();
 
     /// A reference to a NetId that had not arrived when it was decoded. Component
@@ -1032,6 +1043,7 @@ private:
     ServerHello _handshake;
     CorrectionStats _corrections;
     std::string _rejectMessage;
+    std::optional<RejectReason> _refusal;
 
     std::uint64_t _lastAppliedTick    = 0;
     std::uint64_t _snapshotsApplied   = 0;

@@ -28,9 +28,11 @@
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/SessionSecret.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -45,6 +47,23 @@ enum class SessionRole : std::uint8_t
     Offline, ///< Not networked. The default, and the only state that costs nothing.
     Host,    ///< Authoritative. Simulates, and replicates to whoever connects.
     Client,  ///< Applies what a host sends and sends its input back.
+};
+
+/// @brief The close reason a host leaving gives every client, so each can tell
+/// it from a connection that dropped.
+inline constexpr std::int32_t kCloseHostLeft = Net::kCloseReasonAppMin + 1;
+/// @brief The close reason after a Reject, which the client has already read.
+inline constexpr std::int32_t kCloseRefused = Net::kCloseReasonAppMin + 2;
+
+/// @brief Why a client's session went Offline without being asked to.
+enum class SessionEnd : std::uint8_t
+{
+    None,           ///< It has not, or this is not a client.
+    Refused,        ///< The host refused it; LastRefusal() says why.
+    Unreachable,    ///< The connection never came up: nobody answered at that address.
+    HostLeft,       ///< The host ended the session.
+    ConnectionLost, ///< The connection dropped.
+    Count_
 };
 
 /// @brief A flat snapshot of session health, for a debug overlay.
@@ -131,15 +150,22 @@ public:
     NetSession(const NetSession &)            = delete;
     NetSession &operator=(const NetSession &) = delete;
 
-    /// @brief Start hosting on @p port. In a windowed process this is the
-    /// listen server: the scene being rendered is the one being replicated.
+    /// @brief Start hosting on @p port, or on any free port when it is 0
+    /// (BoundPort() says which). In a windowed process this is the listen
+    /// server: the scene being rendered is the one being replicated.
     ///
     /// @p level is what joining clients are told to load. Leaving it at its
     /// default advertises `LevelAddressing::None`, which an editor client
     /// refuses — correct for a host with no level file, since there is no way
     /// for the client to build the static half of the world.
-    /// @return false with LastError() set if the port could not be bound.
-    bool Host(std::uint16_t port, LevelIdentity level = {});
+    ///
+    /// @p access is who is let in, and how many.
+    /// @return false with LastError() set if the port could not be bound, or
+    ///   the game's config turns direct connections off.
+    bool Host(std::uint16_t port, LevelIdentity level = {}, SessionAccess access = {});
+
+    /// @brief The port a host listens on. 0 when not hosting.
+    [[nodiscard]] std::uint16_t BoundPort() const;
 
     /// @brief Connect to a host. @p address is an IP literal (no DNS).
     ///
@@ -148,7 +174,18 @@ public:
     /// snapshot is applied. A caller with nothing to build (the headless
     /// server's client mode, the tests) leaves it false and handshakes
     /// immediately.
-    bool Join(std::string_view address, std::uint16_t port, bool deferHandshake = false);
+    ///
+    /// @p secret is the session's password or code, as typed. Refused, like
+    /// Host(), when the game's config turns direct connections off.
+    bool Join(std::string_view address, std::uint16_t port, bool deferHandshake = false,
+              std::string_view secret = {});
+
+    /// @brief Why the last client session went Offline by itself, until the
+    /// next Host() or Join(). None while it is up, and after Disconnect().
+    [[nodiscard]] SessionEnd LastEnd() const { return _lastEnd; }
+
+    /// @brief Why the host refused, when LastEnd() is Refused.
+    [[nodiscard]] std::optional<RejectReason> LastRefusal() const { return _lastRefusal; }
 
     /// @brief True when a deferred join is waiting for the local world.
     [[nodiscard]] bool IsAwaitingLevel() const;
@@ -180,7 +217,7 @@ public:
 
     /// @brief Tear the session down and return to Offline. A client also drops
     /// the entities it was mirroring — they belonged to the session, not to the
-    /// scene.
+    /// scene. A host tells every client it left (kCloseHostLeft).
     void Disconnect();
 
     /// @brief Pump the wire: connection events and incoming messages.
@@ -332,6 +369,12 @@ private:
     /// when networking cannot start.
     [[nodiscard]] bool EnsureTransport();
 
+    /// Why a client's connection closed, from the event that says it did.
+    [[nodiscard]] SessionEnd EndOf(const Net::NetEvent &event) const;
+
+    /// Closes and forgets every connection the server refused this poll.
+    void CloseRefused();
+
     ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
     ReplicationConfig _config;
@@ -350,8 +393,11 @@ private:
     std::vector<Net::NetEvent>     _events;
     InputCommandBuffer _inputBuffer;
     std::string _lastError;
+    std::optional<RejectReason> _lastRefusal;
     std::uint64_t _simTick = 0; ///< The step's tick, from BeginStep.
+    SessionEnd _lastEnd = SessionEnd::None;
     bool _stepBegun = false;    ///< BeginStep ran and Tick has not yet.
+    bool _clientConnected = false; ///< A client's connection came up, so a close is not Unreachable.
 };
 
 } // namespace Assisi::NetSync

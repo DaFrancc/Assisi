@@ -1,6 +1,7 @@
 add_executable(Assisi-Net-Tests
   main.cpp
   TestNetTransport.cpp
+  TestUdpSocket.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Net-Tests)

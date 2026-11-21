@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "ReplicationInternal.hpp"
 
@@ -176,22 +177,21 @@ void ReplicationServer::AddConnection(Net::ConnectionId connection)
         _connectionByClient.emplace(entry.clientId.value, connection);
     }
 
-    // Registered, but silent until this host knows its own content set. A
-    // client answers a hello exactly once and never again, so a hello sent
-    // before the server can check the answer is a join with no correct outcome.
-    if (_contentSetHashReady)
-        SendHello(entry);
+    // Registered, and silent until its ClientAuth passes: a joiner with the
+    // wrong secret is told nothing about the session, its level included.
 }
+
+std::vector<Net::ConnectionId> ReplicationServer::TakeRefused() { return std::exchange(_refused, {}); }
 
 void ReplicationServer::SetContentSetHash(std::uint64_t hash)
 {
     _contentSetHash      = hash;
     _contentSetHashReady = true;
 
-    // Everyone who connected while the scan was running.
+    // Everyone let in while the scan was running.
     for (auto &[id, connection] : _connections)
     {
-        if (!connection.ready)
+        if (connection.authed && !connection.ready)
             SendHello(connection);
     }
 }

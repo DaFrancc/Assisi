@@ -15,6 +15,11 @@
 
 namespace Assisi::NetSync
 {
+namespace
+{
+constexpr const char *kDirectConnectionsOff =
+    "direct connections are turned off for this game (allowDirectConnections in config/network.json)";
+} // namespace
 
 NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, ReplicationConfig config)
     : _scene(scene), _physics(physics), _config(std::move(config))
@@ -58,9 +63,17 @@ bool NetSession::EnsureTransport()
     return true;
 }
 
-bool NetSession::Host(std::uint16_t port, LevelIdentity level)
+bool NetSession::Host(std::uint16_t port, LevelIdentity level, SessionAccess access)
 {
     Disconnect();
+    _lastEnd = SessionEnd::None;
+    _lastRefusal.reset();
+    if (!AllowDirectConnections())
+    {
+        _lastError = kDirectConnectionsOff;
+        Core::Log::Error("NetSession: not hosting - {}", _lastError);
+        return false;
+    }
     if (!EnsureTransport())
     {
         return false;
@@ -76,19 +89,31 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
 
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
     _server->SetDespawner(_despawner);
-    // Before any connection can arrive, since it is carried in every hello.
+    // Before any connection can arrive, since it is carried in every hello and
+    // decides who gets one.
     _server->SetLevelIdentity(std::move(level));
+    _server->SetAccess(std::move(access));
     _role = SessionRole::Host;
     _lastError.clear();
-    Core::Log::Info("NetSession: hosting on port {} (snapshots at {} Hz, level '{}').", port,
+    Core::Log::Info("NetSession: hosting on port {} (snapshots at {} Hz, level '{}').", BoundPort(),
                     _server->Config().snapshotHz,
                     _server->Level().path.empty() ? "<none>" : _server->Level().path);
     return true;
 }
 
-bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHandshake)
+std::uint16_t NetSession::BoundPort() const { return _server && _transport ? _transport->ListenPort() : 0; }
+
+bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHandshake, std::string_view secret)
 {
     Disconnect();
+    _lastEnd = SessionEnd::None;
+    _lastRefusal.reset();
+    if (!AllowDirectConnections())
+    {
+        _lastError = kDirectConnectionsOff;
+        Core::Log::Error("NetSession: not joining - {}", _lastError);
+        return false;
+    }
     if (!EnsureTransport())
     {
         return false;
@@ -103,7 +128,7 @@ bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHa
         return false;
     }
 
-    _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection, _physics);
+    _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection, _physics, secret);
     // Before the first Poll: a hello that arrives and is answered immediately
     // cannot be un-answered.
     _client->SetDeferHandshake(deferHandshake);
@@ -158,6 +183,16 @@ void NetSession::Disconnect()
         _client->Reset();
         _scene.FlushDestroyed();
     }
+    if (_server && _transport)
+    {
+        // Without lingering, so the close goes out now rather than after a
+        // flush the transport's destruction below would cut short; whatever a
+        // client was still to be sent no longer matters.
+        for (const Net::ConnectionId client : _clients)
+        {
+            _transport->Close(client, /*linger=*/ false, kCloseHostLeft);
+        }
+    }
 
     // Order matters — both halves hold a reference to the transport.
     _client.reset();
@@ -168,7 +203,32 @@ void NetSession::Disconnect()
     _clients.clear();
     _connection = Net::InvalidConnection;
     _role       = SessionRole::Offline;
+    _clientConnected = false;
     _inputBuffer.Clear();
+}
+
+SessionEnd NetSession::EndOf(const Net::NetEvent &event) const
+{
+    if (_client && _client->Refusal().has_value())
+    {
+        return SessionEnd::Refused;
+    }
+    if (!_clientConnected)
+    {
+        return SessionEnd::Unreachable;
+    }
+    return event.closeReason == kCloseHostLeft ? SessionEnd::HostLeft : SessionEnd::ConnectionLost;
+}
+
+void NetSession::CloseRefused()
+{
+    for (const Net::ConnectionId refused : _server->TakeRefused())
+    {
+        // Lingering, so the Reject already sent arrives ahead of the close.
+        _server->RemoveConnection(refused);
+        std::erase(_clients, refused);
+        _transport->Close(refused, /*linger=*/ true, kCloseRefused);
+    }
 }
 
 void NetSession::Poll()
@@ -188,6 +248,10 @@ void NetSession::Poll()
                 _server->AddConnection(event.connection);
                 Core::Log::Info("NetSession: client {} connected ({} total).", event.connection, _clients.size());
             }
+            else if (_client && event.connection == _connection)
+            {
+                _clientConnected = true;
+            }
             break;
 
         case Net::NetEvent::Type::Disconnected:
@@ -200,7 +264,16 @@ void NetSession::Poll()
             }
             else if (_client && event.connection == _connection)
             {
-                _lastError = event.closeDebug.empty() ? "connection closed by the host" : event.closeDebug;
+                _lastEnd = EndOf(event);
+                _lastRefusal = _client->Refusal();
+                if (!_client->RejectMessage().empty())
+                {
+                    _lastError = _client->RejectMessage();
+                }
+                else
+                {
+                    _lastError = event.closeDebug.empty() ? "connection closed by the host" : event.closeDebug;
+                }
                 Core::Log::Warn("NetSession: lost the host connection: {}", _lastError);
                 // Tear down rather than sit in a half-dead state. v1's reconnect
                 // is a full rejoin, so there is nothing here worth preserving.
@@ -216,6 +289,10 @@ void NetSession::Poll()
                 _client->HandleMessage(event.payload);
             break;
         }
+    }
+    if (_server)
+    {
+        CloseRefused();
     }
 }
 

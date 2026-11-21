@@ -162,6 +162,11 @@ enum class MessageType : std::uint8_t
     /// that a type sending at snapshot cadence belongs there or is state wearing
     /// an event costume.
     Announcement = 9,
+    /// Client → server, the moment the connection is up: the client's protocol
+    /// hash and the session's secret. The server sends no ServerHello until it
+    /// has checked this, so a joiner with the wrong secret learns nothing about
+    /// the session, not even its level.
+    ClientAuth = 10,
 
     Count_
 };
@@ -180,6 +185,11 @@ enum class RejectReason : std::uint8_t
     /// after a successful join, both machines are known to expand any blueprint
     /// identically.
     ContentMismatch = 3,
+    /// The password or code was wrong, or missing.
+    WrongSecret = 4,
+    /// This address sent too many wrong secrets lately, and must wait before
+    /// another is even compared.
+    RetryLater = 5,
 };
 
 /// @brief Framing version for the messages in this file.
@@ -230,7 +240,10 @@ enum class RejectReason : std::uint8_t
 ///    its ground state: its move, asked stance, sprint and speed scale.
 ///  - 16 → 17: ...and after those, the low bits of its jump and landing counts
 ///    and whether it has jumped since it last stood.
-inline constexpr std::uint32_t kNetProtocolVersion = 17;
+///  - 17 → 18: `MessageType::ClientAuth`, which the server waits for before its
+///    ServerHello, and `RejectReason::WrongSecret` and `RetryLater`. A v17 client
+///    never sends one and waits forever for a hello.
+inline constexpr std::uint32_t kNetProtocolVersion = 18;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
@@ -338,6 +351,18 @@ struct ClientHello
     std::uint64_t contentSetHash = 0;
 };
 
+/// @brief Client → server, first: who may come in.
+///
+/// The protocol hash leads, and the server checks it before reading further, so
+/// a build that frames the rest differently is refused as a mismatch rather than
+/// misread.
+struct ClientAuth
+{
+    std::uint64_t protocolHash = 0;
+    /// The password or code, as the player typed it. Empty for an open session.
+    std::string secret;
+};
+
 /// @brief The fixed part of a snapshot, before the entity data.
 struct SnapshotHeader
 {
@@ -379,6 +404,12 @@ bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello);
 
 void WriteClientHello(const ClientHello &hello, Core::BitWriter &writer);
 bool ReadClientHello(Core::BitReader &reader, ClientHello &outHello);
+
+void WriteClientAuth(const ClientAuth &auth, Core::BitWriter &writer);
+/// @brief Reads the protocol hash, and the secret only when the hash is this
+/// build's: a peer whose hash differs may frame the secret some other way. A
+/// secret longer than kMaxSecretBytes fails the read.
+bool ReadClientAuth(Core::BitReader &reader, ClientAuth &outAuth);
 
 void WriteSnapshotHeader(const SnapshotHeader &header, Core::BitWriter &writer);
 bool ReadSnapshotHeader(Core::BitReader &reader, SnapshotHeader &outHeader);

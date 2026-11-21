@@ -306,3 +306,106 @@ TEST_CASE("network-loopback pair under simulated lag and loss still converges")
     }
     CHECK(index == kMessages);
 }
+
+namespace
+{
+
+/// A server listening on any free port and a client connected to it, with each
+/// side's handle for the other.
+struct ConnectedPair
+{
+    std::unique_ptr<NetTransport> server = MakeTransport();
+    std::unique_ptr<NetTransport> client = MakeTransport();
+    ConnectionId toServer = InvalidConnection;
+    ConnectionId toClient = InvalidConnection;
+};
+
+bool BothConnected(const std::vector<std::vector<NetEvent>> &events)
+{
+    return CountOfType(events[0], NetEvent::Type::Connected) == 1 &&
+           CountOfType(events[1], NetEvent::Type::Connected) == 1;
+}
+
+void Connect(ConnectedPair &pair)
+{
+    REQUIRE(pair.server->Listen(0));
+    const std::uint16_t port = pair.server->ListenPort();
+    REQUIRE(port != 0);
+    pair.toServer = pair.client->Connect("127.0.0.1", port);
+    REQUIRE(pair.toServer != InvalidConnection);
+    std::vector<std::vector<NetEvent>> events;
+    REQUIRE(PumpUntil({pair.server.get(), pair.client.get()}, events, &BothConnected));
+    pair.toClient = events[0].front().connection;
+}
+
+} // namespace
+
+TEST_CASE("listening on port 0 binds a free port and says which")
+{
+    std::unique_ptr<NetTransport> first = MakeTransport();
+    std::unique_ptr<NetTransport> second = MakeTransport();
+    CHECK(first->ListenPort() == 0);
+    REQUIRE(first->Listen(0));
+    REQUIRE(second->Listen(0));
+    CHECK(first->ListenPort() != 0);
+    CHECK(second->ListenPort() != 0);
+    CHECK(first->ListenPort() != second->ListenPort());
+}
+
+TEST_CASE("a server knows a connection's remote address")
+{
+    ConnectedPair pair;
+    Connect(pair);
+    const std::string address = pair.server->RemoteAddress(pair.toClient);
+    CHECK((address == "::ffff:127.0.0.1" || address == "127.0.0.1"));
+    CHECK(pair.server->RemoteAddress(InvalidConnection).empty());
+}
+
+TEST_CASE("what a peer sends just before closing arrives before the close, with its reason")
+{
+    constexpr std::int32_t kReason = kCloseReasonAppMin + 7;
+    ConnectedPair pair;
+    Connect(pair);
+
+    // Sent and closed at once, as a host refusing a joiner does.
+    CHECK(pair.server->Send(pair.toClient, Bytes("refused"), SendMode::Reliable, Lane::Control));
+    pair.server->Close(pair.toClient, /*linger=*/ true, kReason);
+
+    // The client is not polled until both have reached it, so the message and
+    // the close are waiting together, as they are for a joiner whose frame was
+    // slow: the case where the close used to throw the message away.
+    std::vector<std::vector<NetEvent>> serverOnly;
+    (void)PumpUntil({pair.server.get()}, serverOnly, [](const auto &) { return false; },
+                    std::chrono::milliseconds{500});
+
+    std::vector<std::vector<NetEvent>> events;
+    REQUIRE(PumpUntil({pair.client.get()}, events,
+                      [](const auto &e) { return CountOfType(e[0], NetEvent::Type::Disconnected) == 1; }));
+    const std::vector<NetEvent> &seen = events[0];
+    REQUIRE(seen.size() >= 2);
+    CHECK(seen[seen.size() - 2].type == NetEvent::Type::Message);
+    CHECK(Text(seen[seen.size() - 2].payload) == "refused");
+    CHECK(seen.back().type == NetEvent::Type::Disconnected);
+    CHECK(seen.back().closeReason == kReason);
+}
+
+TEST_CASE("a connection to a port nobody listens on is reported closed")
+{
+    std::unique_ptr<NetTransport> listener = MakeTransport();
+    REQUIRE(listener->Listen(0));
+    const std::uint16_t port = listener->ListenPort();
+    listener.reset(); // the port was free a moment ago, and nobody listens on it now
+
+    std::unique_ptr<NetTransport> client = MakeTransport();
+    const ConnectionId connection = client->Connect("127.0.0.1", port);
+    REQUIRE(connection != InvalidConnection);
+
+    // GNS gives up on a connection that is never answered after its initial
+    // timeout, ten seconds by default.
+    std::vector<std::vector<NetEvent>> events;
+    REQUIRE(PumpUntil({client.get()}, events,
+                      [](const auto &e) { return CountOfType(e[0], NetEvent::Type::Disconnected) == 1; },
+                      std::chrono::milliseconds{15000}));
+    CHECK(events[0].back().connection == connection);
+    CHECK(CountOfType(events[0], NetEvent::Type::Connected) == 0);
+}

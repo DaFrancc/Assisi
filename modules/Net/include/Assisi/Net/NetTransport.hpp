@@ -94,13 +94,27 @@ enum class Lane : std::uint8_t
 /// @brief Number of lanes configured on every connection. Keep in sync with Lane.
 inline constexpr std::uint32_t LaneCount = 3;
 
+/// @brief The range of close reasons a caller may give Close(), for its peer to
+/// read off its Disconnected event. GNS's own application range.
+inline constexpr std::int32_t kCloseReasonAppMin = 1000;
+inline constexpr std::int32_t kCloseReasonAppMax = 1999;
+
+/// @brief Where NetTransport::Listen(0) starts looking for a free port: the
+/// usual game port, so a session on its own machine gets the one players expect.
+inline constexpr std::uint16_t kAnyPortFirst = 27015;
+/// @brief How many ports from kAnyPortFirst Listen(0) tries.
+inline constexpr std::uint16_t kAnyPortCount = 100;
+
 /// @brief One thing that happened on the wire since the last Poll().
 struct NetEvent
 {
     enum class Type : std::uint8_t
     {
         Connected,    ///< A connection completed its handshake and can carry messages.
-        Disconnected, ///< A connection closed (peer closed, timed out, or was rejected).
+        /// A connection closed: the peer closed it, it timed out, or, for one
+        /// this side opened, it never connected at all. Whatever the peer sent
+        /// before closing comes first.
+        Disconnected,
         Message,      ///< A payload arrived.
     };
 
@@ -184,10 +198,21 @@ public:
     NetTransport &operator=(NetTransport &&)      = delete;
 
     /// @brief Bind a listen socket on @p port (all interfaces, IPv6 with IPv4
-    /// mapping). Incoming connections are accepted automatically and surface as
-    /// NetEvent::Type::Connected once their handshake completes.
+    /// mapping), or, when @p port is 0, on the first free one of the
+    /// kAnyPortCount ports from kAnyPortFirst. Incoming connections are
+    /// accepted automatically and surface as NetEvent::Type::Connected once
+    /// their handshake completes.
     /// @return false if the port could not be bound; call LastError() for why.
     bool Listen(std::uint16_t port);
+
+    /// @brief The port the listen socket is bound to, which is how a Listen(0)
+    /// learns which one it got. 0 when not listening.
+    [[nodiscard]] std::uint16_t ListenPort() const;
+
+    /// @brief The IP address at the other end of @p connection, without its
+    /// port, as text. Empty for an unknown handle or a socket pair. An IPv4 peer
+    /// of a dual-stack listen socket reads as `::ffff:a.b.c.d`.
+    [[nodiscard]] std::string RemoteAddress(ConnectionId connection) const;
 
     /// @brief Connect to @p address (an IPv4/IPv6 literal, no DNS) on @p port.
     /// @return the new connection's handle, or InvalidConnection on immediate
@@ -215,7 +240,10 @@ public:
     /// side — the caller already knows. Unknown handles are ignored.
     /// @param linger If true, queued reliable data is given a chance to flush
     ///   before the connection actually goes away.
-    void Close(ConnectionId connection, bool linger = true);
+    /// @param reason What the peer's Disconnected event carries as its
+    ///   `closeReason`: one in kCloseReasonAppMin..kCloseReasonAppMax, or 0 for
+    ///   none. Anything else is sent as 0.
+    void Close(ConnectionId connection, bool linger = true, std::int32_t reason = 0);
 
     /// @brief Queue @p data for delivery on @p lane with @p mode.
     /// @return false if the handle is unknown/closed or GNS rejected the send.
@@ -270,6 +298,9 @@ private:
     struct Impl;
 
     NetTransport();
+
+    /// Listen() on exactly @p port.
+    bool ListenOn(std::uint16_t port);
 
     std::unique_ptr<Impl> _impl;
 };

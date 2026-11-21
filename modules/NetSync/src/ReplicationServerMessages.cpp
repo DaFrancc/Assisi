@@ -47,6 +47,79 @@ void ReplicationServer::SendReject(Connection &connection, RejectReason reason)
     _transport.Send(connection.id, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
 }
 
+void ReplicationServer::Refuse(Connection &connection, RejectReason reason)
+{
+    SendReject(connection, reason);
+    if (std::find(_refused.begin(), _refused.end(), connection.id) == _refused.end())
+    {
+        _refused.push_back(connection.id);
+    }
+}
+
+void ReplicationServer::HandleClientAuth(Connection &connection, Core::BitReader &reader)
+{
+    if (connection.authed)
+    {
+        return; // once is the whole conversation
+    }
+    ClientAuth auth;
+    if (!ReadClientAuth(reader, auth) || auth.protocolHash != NetProtocolHash())
+    {
+        // Two builds that disagree on component layout would corrupt each
+        // other's state silently, which is far worse than not connecting.
+        Core::Log::Warn("NetSync: refusing connection {} - protocol hash mismatch.", connection.id);
+        Refuse(connection, RejectReason::ProtocolMismatch);
+        return;
+    }
+
+    const std::string address = _transport.RemoteAddress(connection.id);
+    if (_access.rule != AccessRule::Open)
+    {
+        // Not compared while waiting, the right secret included: a guesser who
+        // kept going would learn the answer from which reply came back.
+        if (_limiter.IsWaiting(address))
+        {
+            Core::Log::Warn("NetSync: refusing connection {} from {} - too many wrong secrets lately.",
+                            connection.id, address);
+            Refuse(connection, RejectReason::RetryLater);
+            return;
+        }
+        if (!SecretAdmits(_access.rule, _access.secret, auth.secret))
+        {
+            _limiter.RecordFailure(address);
+            Core::Log::Warn("NetSync: refusing connection {} from {} - wrong secret.", connection.id, address);
+            Refuse(connection, RejectReason::WrongSecret);
+            return;
+        }
+        _limiter.RecordSuccess(address);
+    }
+
+    // Counted among everyone let in, ready or still loading the level, so two
+    // joiners cannot both take the last place.
+    if (_access.maxClients > 0)
+    {
+        std::uint32_t admitted = 0;
+        for (const auto &[id, other] : _connections)
+        {
+            admitted += other.authed ? 1u : 0u;
+        }
+        if (admitted >= _access.maxClients)
+        {
+            Core::Log::Info("NetSync: refusing connection {} - the session is full.", connection.id);
+            Refuse(connection, RejectReason::ServerFull);
+            return;
+        }
+    }
+
+    connection.authed = true;
+    // A client answers a hello exactly once and never again, so a hello sent
+    // before the server can check the answer is a join with no correct outcome.
+    if (_contentSetHashReady)
+    {
+        SendHello(connection);
+    }
+}
+
 void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<const std::byte> payload)
 {
     const auto it = _connections.find(connection);
@@ -60,7 +133,12 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
 
     switch (type)
     {
-    case MessageType::ClientHello: HandleClientHello(it->second, reader); break;
+    case MessageType::ClientAuth:  HandleClientAuth(it->second, reader); break;
+    case MessageType::ClientHello:
+        // Only an answer to a hello this server sent.
+        if (it->second.authed)
+            HandleClientHello(it->second, reader);
+        break;
     case MessageType::Ack:         HandleAck(it->second, reader); break;
     case MessageType::Input:       HandleInput(it->second, reader); break;
     case MessageType::Intent:
@@ -96,7 +174,7 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
         // Two builds that disagree on component layout would corrupt each
         // other's state silently, which is far worse than not connecting.
         Core::Log::Warn("NetSync: rejecting connection {} - protocol hash mismatch.", connection.id);
-        SendReject(connection, RejectReason::ProtocolMismatch);
+        Refuse(connection, RejectReason::ProtocolMismatch);
         return;
     }
 
@@ -107,7 +185,7 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
         Core::Log::Warn("NetSync: rejecting connection {} - content set mismatch (ours {:016x}, theirs "
                         "{:016x}).",
                         connection.id, _contentSetHash, hello.contentSetHash);
-        SendReject(connection, RejectReason::ContentMismatch);
+        Refuse(connection, RejectReason::ContentMismatch);
         return;
     }
 

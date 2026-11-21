@@ -117,7 +117,9 @@ struct Fixture
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
         server.AddConnection(pair.first);
-        Step(6);
+        // One step for the client's auth to earn its hello, then as many as a
+        // connection needs to be ready with its first snapshots acked.
+        Step(7);
     }
 
     /// While set, the client's acks are buffered instead of delivered. The only

@@ -94,6 +94,14 @@ struct NetworkConfig
     /// wide: after the scalars it starts on an offset its own two-byte alignment
     /// already satisfies, so the struct carries no interior padding.
     AFIELD() Assisi::Core::ShortString relevancyProvider{"all"};
+
+    /// Whether this game hosts and joins by IP address and LAN discovery. Off
+    /// for a game on Steam that must not let a copy join without Steam's
+    /// ownership check: it then neither listens for nor makes a direct
+    /// connection. Not hashed: it decides whether two machines talk at all.
+    ///
+    /// Last, as the one byte-wide field, so nothing after it needs padding.
+    AFIELD() bool allowDirectConnections = true;
 };
 
 /// @brief Apply @p config to this process: quantization, smoothing, the
@@ -123,5 +131,9 @@ void LoadNetworkConfig(std::string_view assetPath = "config/network.json");
 
 /// @brief The ownership settings this game uses, as applied.
 [[nodiscard]] const OwnershipConfig &Ownership();
+
+/// @brief Whether this game hosts and joins by IP address and LAN discovery, as
+/// applied. True until a config says otherwise.
+[[nodiscard]] bool AllowDirectConnections();
 
 } // namespace Assisi::NetSync
