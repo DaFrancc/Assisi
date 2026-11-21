@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -30,10 +31,11 @@ enum class AccessRule : std::uint8_t
 struct SessionAccess
 {
     /// The password, or the code in its normalized form. Unused by an open session.
-    std::string secret;
-    /// The most connections admitted at once; 0 admits any number. A listen
-    /// server's own player is not a connection, so its caller counts it out.
-    std::uint32_t maxClients = 0;
+    std::string secret{};
+    /// The most connections admitted at once; the default admits any number,
+    /// and 0 admits nobody. A listen server's own player is not a connection, so
+    /// its caller counts it out.
+    std::uint32_t maxClients = std::numeric_limits<std::uint32_t>::max();
     AccessRule rule = AccessRule::Open;
 };
 

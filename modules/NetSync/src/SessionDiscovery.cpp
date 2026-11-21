@@ -231,7 +231,8 @@ bool IsLocalNetworkAddress(std::string_view address)
     constexpr std::string_view kMapped = "::ffff:";
     if (lower.starts_with(kMapped))
     {
-        const std::optional<std::array<std::uint8_t, 4>> mapped = ParseIpv4(std::string_view(lower).substr(kMapped.size()));
+        const std::optional<std::array<std::uint8_t, 4>> mapped =
+            ParseIpv4(std::string_view(lower).substr(kMapped.size()));
         return mapped.has_value() && IsLocalIpv4(*mapped);
     }
     if (lower == "::1")

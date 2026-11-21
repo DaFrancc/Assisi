@@ -29,11 +29,13 @@ NetworkedPlay::~NetworkedPlay()
     _players.Detach(_world);
 }
 
-bool NetworkedPlay::Host(std::uint16_t port, NetSync::LevelIdentity level, HostRole role)
+bool NetworkedPlay::Host(std::uint16_t port, NetSync::LevelIdentity level, HostRole role,
+                         NetSync::SessionAccess access)
 {
     _players.Attach(_session, _world, role == HostRole::Player);
-    if (!_session.Host(port, std::move(level)))
+    if (!_session.Host(port, std::move(level), std::move(access)))
     {
+        _players.Detach(_world);
         return false;
     }
     // Here, before any step: until a host holds the content set it cannot name a
@@ -44,14 +46,15 @@ bool NetworkedPlay::Host(std::uint16_t port, NetSync::LevelIdentity level, HostR
     return true;
 }
 
-bool NetworkedPlay::Join(std::string_view address, std::uint16_t port)
+bool NetworkedPlay::Join(std::string_view address, std::uint16_t port, std::string_view secret)
 {
     _players.Attach(_session, _world, /*hostPlays=*/ false);
     // Deferred: the ClientHello waits until the host's level is built, because a
     // snapshot applied against a world that does not exist yet maps NetIds onto
     // whatever is in those slots.
-    if (!_session.Join(address, port, /*deferHandshake=*/ true))
+    if (!_session.Join(address, port, /*deferHandshake=*/ true, secret))
     {
+        _players.Detach(_world);
         return false;
     }
     ApplyContentSet(_session, _world, BuildContentSet());
@@ -69,6 +72,13 @@ std::uint64_t NetworkedPlay::BeginStep(std::uint64_t localTick, bool stepping)
     if (stepping && _session.IsActive())
     {
         _players.BeginStep(_session, _world, tick);
+    }
+    else if (!_session.IsActive())
+    {
+        // The session ended under us, the host gone or the connection lost:
+        // the world is played alone from this step, so no character waits on
+        // a session for its controls.
+        _players.Detach(_world);
     }
     _tick = tick;
     return tick;

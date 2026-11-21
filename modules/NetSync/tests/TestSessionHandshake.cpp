@@ -90,7 +90,8 @@ void Join(Machine &client, std::uint16_t port, std::string_view secret)
 /// Pumps until @p client is synchronized or has gone Offline; true when synchronized.
 bool Joined(Machine &host, Machine &client)
 {
-    (void)PumpUntil({&host, &client}, [&] { return client.session.Stats().synchronized || !client.session.IsActive(); });
+    (void)PumpUntil({&host, &client},
+                    [&] { return client.session.Stats().synchronized || !client.session.IsActive(); });
     INFO("client: ", client.session.StatusText(), " end ", static_cast<std::int32_t>(client.session.LastEnd()));
     return client.session.IsActive() && client.session.Stats().synchronized;
 }
@@ -138,7 +139,7 @@ void ReadRaw(Net::NetTransport &transport, RawOutcome &outcome)
     }
 }
 
-SessionAccess Password(std::string password, std::uint32_t maxClients = 0)
+SessionAccess Password(std::string password, std::uint32_t maxClients = SessionAccess{}.maxClients)
 {
     return SessionAccess{.secret = std::move(password), .maxClients = maxClients, .rule = AccessRule::Password};
 }
@@ -189,7 +190,7 @@ TEST_CASE("a code session takes the code however it is typed")
     Machine host;
     Machine client;
     const std::uint16_t port =
-        Host(host, SessionAccess{.secret = "K7MQ4X", .maxClients = 0, .rule = AccessRule::Code});
+        Host(host, SessionAccess{.secret = "K7MQ4X", .rule = AccessRule::Code});
     Join(client, port, "k7m-q4x ");
     CHECK(Joined(host, client));
 }
@@ -213,6 +214,15 @@ TEST_CASE("a full session refuses the next joiner, and only one with the right s
 
     // The one already in stays in.
     CHECK(first.session.IsActive());
+}
+
+TEST_CASE("a session with room for nobody refuses everyone")
+{
+    Machine host;
+    Machine client;
+    const std::uint16_t port = Host(host, SessionAccess{.maxClients = 0});
+    Join(client, port, "");
+    CHECK(Refusal(host, client) == RejectReason::ServerFull);
 }
 
 TEST_CASE("an address that keeps guessing waits, and even the right secret is refused meanwhile")

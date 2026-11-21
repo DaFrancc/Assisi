@@ -210,8 +210,8 @@ std::optional<UdpDatagram> UdpSocket::Receive()
     for (;;)
     {
         const std::int64_t received = static_cast<std::int64_t>(
-            ::recvfrom(Native(_handle), reinterpret_cast<char *>(buffer.data()), static_cast<BufferLength>(buffer.size()), 0,
-                       reinterpret_cast<sockaddr *>(&from), &fromLength));
+            ::recvfrom(Native(_handle), reinterpret_cast<char *>(buffer.data()),
+                       static_cast<BufferLength>(buffer.size()), 0, reinterpret_cast<sockaddr *>(&from), &fromLength));
         if (received >= 0)
         {
             UdpDatagram datagram;

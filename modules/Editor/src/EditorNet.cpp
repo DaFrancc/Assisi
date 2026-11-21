@@ -131,7 +131,22 @@ std::string LevelStem(const std::string &virtualPath)
 
 bool EditorApp::IsNetSessionActive() const
 {
-    return _networkedPlay && _networkedPlay->Session().IsActive();
+    return _sessions && _sessions->Play() != nullptr && _sessions->Play()->Session().IsActive();
+}
+
+Assisi::NetSync::NetSession *EditorApp::NetSessionOrNull()
+{
+    Assisi::App::NetworkedPlay *play = _sessions ? _sessions->Play() : nullptr;
+    return play != nullptr ? &play->Session() : nullptr;
+}
+
+Assisi::App::SessionHooks EditorApp::MakeSessionHooks()
+{
+    return Assisi::App::SessionHooks{
+        .currentLevel = [this] { return HostLevelIdentity(); },
+        .buildJoinedLevel = [this](const Assisi::NetSync::LevelIdentity &level) { return BuildJoinedWorld(level); },
+        // Out through Stop, at the frame's safe point, which puts the edited world back.
+        .restoreAlone = [this] { _pendingStopPlay = true; }};
 }
 
 Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
@@ -152,18 +167,6 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
     return identity;
 }
 
-void EditorApp::FailJoin(std::string reason)
-{
-    _netError = reason;
-    Assisi::Core::Log::Error("Editor: join failed - {}", reason);
-    if (_networkedPlay)
-        _networkedPlay->Session().AbortJoin(std::move(reason));
-    _joinPhase = JoinPhase::None;
-    // Out through the same door as everything else: leaving a bad join is Stop,
-    // not a second mechanism.
-    _pendingStopPlay = true;
-}
-
 void EditorApp::StripReplicatedEntities()
 {
     if (_scene == nullptr || _physics == nullptr)
@@ -181,13 +184,12 @@ void EditorApp::StripReplicatedEntities()
     }
 }
 
-void EditorApp::BuildJoinedWorld()
+std::expected<void, std::string> EditorApp::BuildJoinedWorld(const Assisi::NetSync::LevelIdentity &level)
 {
-    if (!_networkedPlay || !_networkedPlay->Session().IsAwaitingLevel() || _scene == nullptr)
-        return;
-
-    const Assisi::NetSync::ServerHello *hello = _networkedPlay->Session().Handshake();
-    const Assisi::NetSync::LevelIdentity level = hello->level;
+    if (_scene == nullptr || _world == nullptr)
+    {
+        return std::unexpected(std::string("the editor has no world to build it in"));
+    }
 
     // --- Which file, and is it the same file? -------------------------------
     // The engine's join check, not the editor's: a dedicated server and a shipped
@@ -196,8 +198,7 @@ void EditorApp::BuildJoinedWorld()
     const std::expected<void, Assisi::App::JoinLevelError> joinable = Assisi::App::CheckJoinLevel(level);
     if (!joinable)
     {
-        FailJoin(Assisi::App::JoinLevelErrorMessage(joinable.error(), level.path));
-        return;
+        return std::unexpected(Assisi::App::JoinLevelErrorMessage(joinable.error(), level.path));
     }
 
     // --- Build it -----------------------------------------------------------
@@ -213,12 +214,10 @@ void EditorApp::BuildJoinedWorld()
                                                     : Assisi::App::LoadLevel(*_world, level.path, services, options);
     if (!loaded)
     {
-        // The reason, not just the fact: this string is what the host is told and
-        // what the player sees, and "failed to load" has never helped anyone work
-        // out which of a dozen things the level file did wrong.
-        FailJoin("'" + level.path + "' failed to load: " + std::string(Assisi::Runtime::ToString(loaded.error())) +
-                 ".");
-        return;
+        // The reason, not just the fact: this string is what the player sees, and
+        // "failed to load" has never helped anyone work out which of a dozen
+        // things the level file did wrong.
+        return std::unexpected("it failed to load: " + std::string(Assisi::Runtime::ToString(loaded.error())));
     }
 
     // The world is the host's level for the duration; StopPlay puts the edited
@@ -248,11 +247,11 @@ void EditorApp::BuildJoinedWorld()
     _assetBrowserEntity = Assisi::ECS::NullEntity;
     _assetBrowserMeta = nullptr;
 
-    // Only now, because from here a NetId has somewhere to land.
-    _networkedPlay->ConfirmLevelReady();
-    _joinPhase = JoinPhase::Live;
+    // The driver answers the handshake now, because from here a NetId has
+    // somewhere to land.
     _netError.clear();
-    Assisi::Core::Log::Info("Editor: joined - built '{}' and answered the handshake.", level.path);
+    Assisi::Core::Log::Info("Editor: joining - built '{}'.", level.path);
+    return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -360,59 +359,26 @@ void EditorApp::ShutdownPieClients()
 
 void EditorApp::ShutdownNetSession()
 {
-    if (!_networkedPlay)
+    if (!_sessions || !_sessions->InSession())
         return;
 
     // Leaving takes a client's mirrors with it, flushed before anything walks the
-    // scene again.
-    _networkedPlay.reset();
+    // scene again. Quietly: Stop is putting the edited world back by itself.
+    _sessions->Shutdown();
     Assisi::Core::Log::Info("Editor: network session closed.");
 }
 
-void EditorApp::PollNetSession(float dt)
+void EditorApp::PollNetSession()
 {
-    if (!_networkedPlay)
-        return;
-
     // Whether or not anything steps: the wire is read either way, and the tick
-    // it decides is what every system and the end-of-step send agree on.
-    _stepTick = _networkedPlay->BeginStep(GetSimTick(), IsSimulating());
-
-    if (_netIntent == NetIntent::Standalone)
-        return;
-
-    // A host that went away, a rejected handshake, a transport fault: Poll turns
-    // all of them into an Offline session, and the play session goes with it. The
-    // client's world *was* the host's world — there is nothing left to look at
-    // once the stream stops.
-    if (!_networkedPlay->Session().IsActive())
-    {
-        if (_netError.empty())
-            _netError = _networkedPlay->Session().LastError().empty() ? "the session ended" : _networkedPlay->Session().LastError();
-        _pendingStopPlay = true;
-        return;
-    }
-
-    if (_joinPhase == JoinPhase::Connecting)
-    {
-        if (_networkedPlay->Session().IsAwaitingLevel())
-        {
-            // Marshalled, not done here: building the world frees and re-resolves
-            // GPU assets this frame's draws may already reference.
-            _joinPhase = JoinPhase::Building;
-            _pendingJoinBuild = true;
-            return;
-        }
-
-        _joinElapsed += dt;
-        if (_joinElapsed >= kJoinTimeoutSeconds)
-            FailJoin("no answer from the host - check the address and that it is hosting.");
-    }
+    // it decides is what every system and the end-of-step send agree on. A host
+    // that went away or a refused join is noticed at the frame's safe point.
+    _stepTick = _sessions->BeginStep(GetSimTick(), IsSimulating());
 }
 
 double EditorApp::SimulationSeconds(double frameSeconds)
 {
-    return _networkedPlay ? frameSeconds * _networkedPlay->TimeScale() : frameSeconds;
+    return _sessions ? frameSeconds * _sessions->TimeScale() : frameSeconds;
 }
 
 void EditorApp::SmoothNetView()
@@ -420,8 +386,8 @@ void EditorApp::SmoothNetView()
     // Must run from OnRender, after the physics writeback: it decays a bodied
     // mirror's visual offset onto the pose the writeback just wrote, so running
     // first means writing an offset the writeback then erases.
-    if (_networkedPlay)
-        _networkedPlay->Session().SmoothView(ImGui::GetIO().DeltaTime);
+    if (_sessions)
+        _sessions->SmoothView(ImGui::GetIO().DeltaTime);
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +538,8 @@ void EditorApp::DrawNetworkWindow()
     const auto active = [this] { return IsNetSessionActive(); };
 
     // ---- status line -------------------------------------------------------
-    ImGui::TextUnformatted(_networkedPlay ? _networkedPlay->Session().StatusText().c_str() : "Offline");
+    const Assisi::NetSync::NetSession *shown = NetSessionOrNull();
+    ImGui::TextUnformatted(shown != nullptr ? shown->StatusText().c_str() : "Offline");
     ImGui::Separator();
 
     // ---- controls ----------------------------------------------------------
@@ -623,19 +590,20 @@ void EditorApp::DrawNetworkWindow()
     }
 
     // ---- live stats --------------------------------------------------------
-    const Assisi::NetSync::SessionStats stats = _networkedPlay->Session().Stats();
+    // Taken after the buttons, which may have ended the session this frame.
+    Assisi::NetSync::NetSession &session = *NetSessionOrNull();
+    const Assisi::NetSync::SessionStats stats = session.Stats();
 
     ImGui::Separator();
 
     // Which level the two ends agreed on. Worth a line of its own: everything
     // that goes wrong with a join goes wrong here first, and it is otherwise
     // unanswerable from inside the editor.
-    if (const Assisi::NetSync::ServerHello *hello = _networkedPlay->Session().Handshake();
-        hello != nullptr && _networkedPlay->Session().IsClient())
+    if (const Assisi::NetSync::ServerHello *hello = session.Handshake(); hello != nullptr && session.IsClient())
     {
         LabelledValue("Level", hello->level.path.empty() ? "<none>" : hello->level.path);
     }
-    else if (_networkedPlay->Session().IsHost())
+    else if (session.IsHost())
     {
         LabelledValue("Level", _world != nullptr && !_world->levelPath.empty() ? _world->levelPath : "<unsaved>");
     }
@@ -643,10 +611,10 @@ void EditorApp::DrawNetworkWindow()
     // Where this session actually is. "It says Hosting" and "a client can reach
     // it at this address" are different claims, and only the second is what
     // someone on the other machine types into their Join field.
-    LabelledValue("Endpoint", _networkedPlay->Session().IsHost() ? Core::Format("listening on :{}", _netPort)
+    LabelledValue("Endpoint", session.IsHost() ? Core::Format("listening on :{}", session.BoundPort())
                                                     : Core::Format("{}:{}", _netAddress.data(), _netPort));
 
-    if (_networkedPlay->Session().IsHost())
+    if (session.IsHost())
         DrawHostAuthoringWarnings();
 
     ImGui::TextUnformatted("Ping");
@@ -656,7 +624,7 @@ void EditorApp::DrawNetworkWindow()
     LabelledValue("Bandwidth in", Core::Format("{:.1f} kB/s", stats.inBytesPerSec / 1024.f));
     LabelledValue("Bandwidth out", Core::Format("{:.1f} kB/s", stats.outBytesPerSec / 1024.f));
 
-    if (_networkedPlay->Session().IsHost())
+    if (session.IsHost())
     {
         // A minimal authoritative disturbance, so "does the correction stream
         // work" is one click rather than a level built for the purpose. Host-side
@@ -814,7 +782,7 @@ void EditorApp::DrawNetworkWindow()
                       "The host's word was older than any tick this client kept, so it was snapped to with "
                       "nothing replayed on top.");
 
-        if (Assisi::NetSync::ReplicationClient *client = _networkedPlay->Session().Client(); client != nullptr)
+        if (Assisi::NetSync::ReplicationClient *client = session.Client(); client != nullptr)
         {
             DrawPredictedEntities(*client);
 
@@ -855,7 +823,7 @@ void EditorApp::DrawNetworkWindow()
         // mirror, one to heal it. A resync button with nothing broken to heal
         // proves nothing about whether it works.
         if (ImGui::Button("Force full resync"))
-            _networkedPlay->Session().RequestKeyframe();
+            session.RequestKeyframe();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Ask the host to re-send everything from scratch, without waiting for the "
                               "periodic sweep.");
@@ -901,11 +869,8 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Clock corrections", Core::Format("{}", stats.clockCorrections));
         LabelledValue("Clock rate", Core::Format("{:.3f}x", stats.clockRate));
 
-        if (_joinPhase == JoinPhase::Connecting)
-            // %f takes a double through varargs, so the float promotes either
-            // way; saying so silences -Wdouble-promotion.
-            ImGui::TextColored(kWarnColor, "Joining — waiting for the host (%.0f s)...",
-                               static_cast<double>(_joinElapsed));
+        if (!stats.synchronized)
+            ImGui::TextColored(kWarnColor, "Joining — waiting for the host...");
         else if (!stats.worldComplete)
             ImGui::TextColored(kWarnColor, "Still receiving the initial world...");
     }

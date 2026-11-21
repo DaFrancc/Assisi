@@ -12,6 +12,7 @@
 #include <doctest/doctest.h>
 
 #include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/Net/UdpSocket.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -391,10 +392,14 @@ TEST_CASE("what a peer sends just before closing arrives before the close, with 
 
 TEST_CASE("a connection to a port nobody listens on is reported closed")
 {
-    std::unique_ptr<NetTransport> listener = MakeTransport();
-    REQUIRE(listener->Listen(0));
-    const std::uint16_t port = listener->ListenPort();
-    listener.reset(); // the port was free a moment ago, and nobody listens on it now
+    // A port the system picked, outside the range Listen(0) hands out, so a
+    // session another suite hosts beside this one cannot be listening on it.
+    std::uint16_t port = 0;
+    {
+        std::expected<UdpSocket, std::string> probe = UdpSocket::Open(0, UdpPortUse::Own);
+        REQUIRE(probe.has_value());
+        port = probe->Port();
+    }
 
     std::unique_ptr<NetTransport> client = MakeTransport();
     const ConnectionId connection = client->Connect("127.0.0.1", port);

@@ -96,19 +96,16 @@ void ReplicationServer::HandleClientAuth(Connection &connection, Core::BitReader
 
     // Counted among everyone let in, ready or still loading the level, so two
     // joiners cannot both take the last place.
-    if (_access.maxClients > 0)
+    std::uint32_t admitted = 0;
+    for (const auto &[id, other] : _connections)
     {
-        std::uint32_t admitted = 0;
-        for (const auto &[id, other] : _connections)
-        {
-            admitted += other.authed ? 1u : 0u;
-        }
-        if (admitted >= _access.maxClients)
-        {
-            Core::Log::Info("NetSync: refusing connection {} - the session is full.", connection.id);
-            Refuse(connection, RejectReason::ServerFull);
-            return;
-        }
+        admitted += other.authed ? 1u : 0u;
+    }
+    if (admitted >= _access.maxClients)
+    {
+        Core::Log::Info("NetSync: refusing connection {} - the session is full.", connection.id);
+        Refuse(connection, RejectReason::ServerFull);
+        return;
     }
 
     connection.authed = true;

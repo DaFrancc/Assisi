@@ -38,7 +38,9 @@ struct UdpDatagram
 enum class UdpPortUse : std::uint8_t
 {
     Own,    ///< This socket alone, as a joiner's ephemeral one is.
-    Shared, ///< Every socket on this machine bound shared to the port hears its broadcasts, so two hosts on one machine both answer.
+    /// Every socket on this machine bound shared to the port hears its
+    /// broadcasts, so two hosts on one machine both answer.
+    Shared,
     Count_
 };
 
