@@ -14,6 +14,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/NetSync/NetworkConfig.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -123,6 +124,10 @@ bool GameApp::MountContent()
 
 void GameApp::OnStart()
 {
+    // Before any session can exist: the quantization is inside the handshake
+    // hash, and the config says whether this game connects directly at all.
+    NetSync::LoadNetworkConfig();
+
     // What a travel needs to turn a level file into a running world. Captured by
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
