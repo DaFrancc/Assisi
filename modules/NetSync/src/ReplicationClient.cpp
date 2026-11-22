@@ -298,9 +298,11 @@ bool CommandEcho::Applied(std::uint64_t tick) const
 }
 
 ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection,
-                                     Physics::PhysicsWorld *physics)
+                                     Physics::PhysicsWorld *physics, std::string_view secret)
     : _transport(transport), _scene(scene), _physics(physics), _connection(connection)
 {
+    SendAuth(secret);
+
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
     _colliderComponentId                           = registry.IdOf(typeid(Physics::Collider));
     _characterComponentId                           = registry.IdOf(typeid(Physics::Character));
@@ -326,6 +328,14 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
     {
         _physics->SetBreaksJoints(false);
     }
+}
+
+void ReplicationClient::SendAuth(std::string_view secret)
+{
+    Core::BitWriter writer;
+    WriteMessageType(MessageType::ClientAuth, writer);
+    WriteClientAuth(ClientAuth{.protocolHash = NetProtocolHash(), .secret = std::string(secret)}, writer);
+    _transport.Send(_connection, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
 }
 
 void ReplicationClient::SendHello()
@@ -665,14 +675,25 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
         switch (static_cast<RejectReason>(reason))
         {
         case RejectReason::ProtocolMismatch:
+            _refusal = RejectReason::ProtocolMismatch;
             _rejectMessage = "server rejected the connection: protocol mismatch";
             break;
         case RejectReason::ContentMismatch:
+            _refusal = RejectReason::ContentMismatch;
             _rejectMessage = "server rejected the connection: content sets differ - remove stray .alvl/.abp "
                              "files or sync assets";
             break;
+        case RejectReason::WrongSecret:
+            _refusal = RejectReason::WrongSecret;
+            _rejectMessage = "server rejected the connection: wrong password or code";
+            break;
+        case RejectReason::RetryLater:
+            _refusal = RejectReason::RetryLater;
+            _rejectMessage = "server rejected the connection: too many wrong tries - wait and try again";
+            break;
         case RejectReason::ServerFull:
         default:
+            _refusal = RejectReason::ServerFull;
             _rejectMessage = "server rejected the connection: full";
             break;
         }

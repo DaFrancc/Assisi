@@ -59,6 +59,55 @@ void Network::Deliver(Core::EventQueue &events)
     }
 }
 
+void Network::Host(HostOptions options)
+{
+    SessionRequest request;
+    request.host = std::move(options);
+    request.kind = SessionRequest::Kind::Host;
+    _request = std::move(request);
+}
+
+void Network::Join(const SessionEntry &entry, std::string secret)
+{
+    SessionRequest request;
+    request.entry = entry;
+    request.secret = std::move(secret);
+    request.kind = SessionRequest::Kind::JoinEntry;
+    _request = std::move(request);
+}
+
+void Network::Join(std::string_view address, std::string secret)
+{
+    SessionRequest request;
+    request.address = std::string(address);
+    request.secret = std::move(secret);
+    request.kind = SessionRequest::Kind::JoinAddress;
+    _request = std::move(request);
+}
+
+void Network::Leave()
+{
+    SessionRequest request;
+    request.kind = SessionRequest::Kind::Leave;
+    _request = std::move(request);
+}
+
+void Network::FindSessions(SearchParams params)
+{
+    (void)params; // nothing to filter on yet
+    _searchRequested = true;
+}
+
+std::optional<SessionRequest> Network::TakeSessionRequest() { return std::exchange(_request, std::nullopt); }
+
+bool Network::TakeSearchRequest() { return std::exchange(_searchRequested, false); }
+
+void Network::Publish(std::optional<SessionInfo> session, std::vector<SessionEntry> sessions)
+{
+    _sessionInfo = std::move(session);
+    _sessions = std::move(sessions);
+}
+
 void Network::Attach(NetSync::NetSession &session) { _session = &session; }
 
 void Network::Detach() { _session = nullptr; }

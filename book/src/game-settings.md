@@ -63,9 +63,11 @@ The audio buses your game adds to the default ones. See
 ## `network.json`
 
 Multiplayer settings: which components are never sent, how precisely
-positions and velocities are sent, and how far the host may disagree with a
-player's own machine before it wins. You don't need to touch it for a
-single-player game. See [Multiplayer basics](multiplayer.md).
+positions and velocities are sent, how far the host may disagree with a
+player's own machine before it wins, and whether players can connect by address
+at all (`allowDirectConnections`). You don't need to touch it for a
+single-player game. See [Multiplayer basics](multiplayer.md) and its
+[Session settings](multiplayer.md#session-settings).
 
 ## What the player can change
 

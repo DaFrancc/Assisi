@@ -20,6 +20,182 @@ The **Game** panel has a network mode dropdown next to **Run**:
 
 Pause isn't available during a networked session.
 
+The editor's host is a listed, open session called "Assisi editor", so a game
+on the same network can find it (see [Browsing](#browsing)).
+
+## Hosting and joining from your game
+
+A **session** is one game that others can join. It has:
+
+- **A name** you choose, and an id the engine makes up when it starts.
+- **A visibility.** A *listed* session shows up when players browse the local
+  network. A *hidden* one doesn't: players join it by typing its address.
+- **An access rule.** *Open* lets anyone in. *Password* lets in whoever types the
+  password you chose. *Code* makes up a short code, like `K7MQ4X`, when the
+  session starts; players who type it get in, and it stops working when the
+  session ends.
+- **A most players**, and **the level** being played.
+
+Visibility and access don't depend on each other: a listed session can need a
+code, and a hidden one can be open.
+
+Your systems host, join and leave through `ctx.net`. Each call only asks; the
+engine does it between frames, and an event says what happened.
+
+### Hosting
+
+```cpp
+ctx.net.Host({
+    .name       = "Lodge",
+    .visibility = Assisi::App::Visibility::Listed, // or Hidden
+    .access     = Assisi::App::Access::Code,       // Open, Password or Code
+    .password   = "",                              // only read with Access::Password
+    .maxPlayers = 4,                               // the host counts
+    .port       = 0,                               // 0: the first free port from 27015
+});
+```
+
+You can leave out any field. Hosting always hosts the level you are playing,
+and the machine that hosts plays too. Then one of two events arrives:
+
+- **`SessionStarted`**. `ctx.net.Session()` now has the session's `id`,
+  `name`, `port`, `players` and, with `Access::Code`, the `code` to show your
+  friends. The code is a plain string; show it as `K7M-Q4X` if you like.
+- **`SessionFailed`**, with a `reason`:
+
+| Reason | What it means |
+|---|---|
+| `PortUnavailable` | Something else is using the port, or no port from 27015 to 27114 was free. |
+| `NoLevel` | The level isn't saved in a file, so joiners couldn't load it. |
+| `TooMuchData` | The name is over 64 bytes, or the game data is over its limits (below). |
+| `BadPassword` | `Access::Password` with no password, or one over 64 bytes. |
+| `AlreadyInSession` | This machine is already hosting or joined. Call `Leave()` first. |
+| `DirectConnectionsForbidden` | Your `network.json` turns direct connections off (see [Settings](#session-settings)). |
+
+### Joining
+
+```cpp
+ctx.net.Join(entry);                           // a session from the browse list
+ctx.net.Join(entry, "hunter2");                // one that needs a password or code
+ctx.net.Join("192.168.1.20:27015", "K7MQ4X"); // by address; the port defaults to 27015
+```
+
+You never say whether the secret is a password or a code: the host knows which.
+A code can be typed any way: `k7m q4x`, `K7M-Q4X` and `K7MQ4X` all work.
+
+Joining loads the host's level. Then one of two events arrives:
+
+- **`SessionJoined`**: you are in, and the host's world is arriving.
+- **`SessionRefused`**, with a `reason`. Most refusals come before the host's
+  level is loaded, and your world stays as it was. Two can come after: a
+  `Content` refusal, and a `Level` refusal because the host's level failed to
+  load. Then your machine loads the level you were playing again, fresh from
+  its file: anything that happened in it since it was loaded is gone.
+
+| Reason | What it means |
+|---|---|
+| `WrongSecret` | The password or code was wrong or missing. |
+| `Full` | The session already has its most players. |
+| `TooManyTries` | Too many wrong passwords or codes from this machine. Wait a few seconds and try again; the wait doubles with each wrong try, up to five minutes. |
+| `Version` | The host runs a different build of the game. |
+| `Content` | The host has different level or blueprint files. |
+| `Level` | This machine couldn't load the host's level. The log says why. |
+| `NotFound` | The browse entry doesn't name a session. |
+| `Unreachable` | Nobody answered at that address. |
+| `AlreadyInSession` | This machine is already hosting or joined. Call `Leave()` first. |
+| `DirectConnectionsForbidden` | Your `network.json` turns direct connections off. |
+
+### Leaving
+
+`ctx.net.Leave()` ends it. A host ends the session for everyone. A player who
+joined goes back to the level they were playing before, with their own
+character. Then **`SessionEnded`** arrives with a `reason`:
+
+| Reason | What it means |
+|---|---|
+| `Left` | This machine called `Leave()`. |
+| `HostLeft` | The host ended the session. |
+| `ConnectionLost` | The connection to the host dropped. |
+
+Travelling to another level also ends the session; changing level together
+isn't built yet.
+
+Each reason has a name for your log or a placeholder menu:
+`Assisi::App::Name(refused.reason)` gives `"WrongSecret"`, and so on.
+
+### Browsing
+
+`ctx.net.FindSessions()` asks the local network who is hosting. Every listed
+session answers; a hidden one stays quiet. The answers arrive one at a time, so
+your list fills in as they come:
+
+- **`SessionFound`**, with an `entry`: a session you didn't know, or one whose
+  details changed. Use `entry.id` as the row's key.
+- **`SessionLost`**, with an `id`: a session that didn't answer this time.
+- **`SessionSearchDone`**: the search is over, two seconds after it started.
+
+Searching again updates the list in place: sessions that answer keep their rows,
+and only the ones that stopped answering are lost. That is how a "Refresh"
+button should work. `ctx.net.Sessions()` gives the whole list at any time, if
+you'd rather read it than keep your own.
+
+Each entry has the session's `name`, `players` and `maxPlayers`, `level`,
+`pingMs`, its `gameData`, and `needsSecret`: when it's true, ask the player for
+the password or code before calling `Join`. `compatible` is false for a host
+running a different build, so you can grey it out.
+
+**Game data** is up to 16 key/value strings you set when hosting, for your own
+list to show:
+
+```cpp
+ctx.net.Host({.name = "Lodge", .gameData = {{"mode", "coop"}, {"map", "valley"}}});
+```
+
+Keys can be 32 bytes long and values 128. The engine never reads them.
+
+A small menu, with the events read in a `Ui` system:
+
+```cpp
+void SessionMenuSystem(Assisi::App::SystemContext &ctx)
+{
+    for (const Assisi::App::SessionFound &found : ctx.events.Read<Assisi::App::SessionFound>())
+    {
+        ShowRow(found.entry.id, found.entry.name, found.entry.players, found.entry.maxPlayers);
+    }
+    for (const Assisi::App::SessionLost &lost : ctx.events.Read<Assisi::App::SessionLost>())
+    {
+        RemoveRow(lost.id);
+    }
+    for (const Assisi::App::SessionRefused &refused : ctx.events.Read<Assisi::App::SessionRefused>())
+    {
+        ShowError(Assisi::App::Name(refused.reason));
+    }
+}
+```
+
+`ShowRow`, `RemoveRow` and `ShowError` stand for your own menu code.
+
+### Playing over the internet
+
+Browsing only finds sessions on the local network. Over the internet, a player
+joins by address: the host's public IP and port, and the code or password if it
+has one. Show the port on the host's screen (`ctx.net.Session()->port`), or host
+on a fixed one, so players know what to type. The host's router has to forward
+that port. Joining by code alone, without an address, needs an online service
+such as Steam, which isn't built yet.
+
+### Session settings
+
+One setting in `assets/config/network.json` is about sessions:
+
+| Key | What it does |
+|---|---|
+| `allowDirectConnections` | `true` (the default) lets your game host and join by address and find sessions on the local network. `false` turns all of that off: nothing listens for players, `Host` and `Join` refuse with `DirectConnectionsForbidden`, and `FindSessions` finds nothing, raising `SessionSearchDone` straight away. The dedicated server reads the same file. |
+
+Turn it off for a game sold on Steam that must only be played through Steam:
+a direct connection skips Steam's check that the player owns the game. Until a
+Steam session backend exists, that game has no multiplayer at all.
+
 ## What gets sent over the network
 
 Sending a whole world every frame would be far too much data, so nothing is sent
@@ -610,6 +786,17 @@ The editor binary can also run as a server with no window:
 
 `--connect` takes an IP address, not a host name. `--server` runs the same
 headless simulation with no networking at all.
+
+The server's session is listed, so players on the local network find it. Three
+more flags set it up:
+
+| Flag | What it does |
+|---|---|
+| `--name <text>` | The name players see when they browse. "Assisi server" by default. |
+| `--max-players <n>` | The most players who can join, 8 by default. The server has no player of its own. |
+| `--password <text>` | With `--host`, only players who send this password get in. With `--connect`, the password to send. |
+
+A test client that can't join exits with an error code, so a script can tell.
 
 A headless process runs the level's systems in every phase but `Ui`, which is
 for screens it doesn't have, and it plays no sounds. It plays no animation

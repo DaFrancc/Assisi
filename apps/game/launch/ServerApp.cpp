@@ -85,6 +85,17 @@ void ServerApp::OnStart()
     // hash too, and a windowed peer has published it.
     Assisi::App::PublishPlayerActions();
 
+    NetSync::ReplicationConfig config;
+    config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
+    _sessions = std::make_unique<Assisi::App::SessionDriver>(
+        GetUniversalEvents(),
+        Assisi::App::SessionHooks{
+            .currentLevel = [this] { return ServedLevel(); },
+            .buildJoinedLevel = [this](const NetSync::LevelIdentity &level) { return BuildJoinedWorld(level); },
+            // A headless client exists to mirror a host; with none, it is done.
+            .restoreAlone = [this] { RequestClose(); }},
+        config);
+
     if (!_options.level.empty())
     {
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,
@@ -128,74 +139,70 @@ void ServerApp::OnStart()
         return;
     }
 
-    NetSync::ReplicationConfig config;
-    config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _play             = std::make_unique<Assisi::App::NetworkedPlay>(_world, config);
-
     if (_options.role == ServerRole::Host)
     {
-        // What joining clients are told to load. A host with no level file
-        // advertises None, which a client treats as a clean abort — it has no
-        // way to build the static half of the world.
-        NetSync::LevelIdentity level;
-        if (!_options.level.empty())
-        {
-            if (const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_options.level))
-            {
-                level.addressing  = NetSync::LevelAddressing::Virtual;
-                level.path        = _options.level;
-                level.contentHash = *hash;
-            }
-        }
-
-        // Host logs its own reason (the port is taken, the transport would not come
-        // up). What it cannot do is reach the exit code, and a supervisor restarting
-        // a server that cannot bind is watching for exactly this.
+        // A host with no level file advertises None, which the driver refuses:
+        // a client has no way to build the static half of the world.
+        //
+        // The driver logs why it could not host (the port is taken, direct
+        // connections are off). What it cannot do is reach the exit code, and a
+        // supervisor restarting a server that cannot bind is watching for that.
         // Dedicated: the players who join get characters, and the server none.
-        if (!_play->Host(_options.port, std::move(level), Assisi::App::HostRole::Dedicated))
+        const Assisi::App::HostOptions options{
+            .name = _options.name,
+            .access = _options.password.empty() ? Assisi::App::Access::Open : Assisi::App::Access::Password,
+            .password = _options.password,
+            .maxPlayers = _options.maxPlayers,
+            .port = _options.port};
+        _sessions->Host(_world, options, ServedLevel(), Assisi::App::HostRole::Dedicated);
+        if (!_sessions->InSession())
         {
             RefuseStart();
             return;
         }
 
         SpawnDemoMovers();
-        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _options.spawnCount);
+        Log::Info("Server: listening on port {} ({} replicated entities).", _sessions->Info()->port,
+                  _options.spawnCount);
+        return;
     }
-    else if (!_play->Join(_options.address, _options.port))
+
+    _sessions->Join(_world, _options.address, _options.port, _options.password);
+    if (!_sessions->InSession())
     {
         RefuseStart();
     }
 }
 
-void ServerApp::BuildJoinedWorld()
+NetSync::LevelIdentity ServerApp::ServedLevel() const
 {
-    const NetSync::ServerHello *hello = _play->Session().Handshake();
-    if (hello == nullptr)
-        return;
+    NetSync::LevelIdentity level;
+    if (_options.level.empty())
+    {
+        return level;
+    }
+    if (const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_options.level))
+    {
+        level.addressing  = NetSync::LevelAddressing::Virtual;
+        level.path        = _options.level;
+        level.contentHash = *hash;
+    }
+    return level;
+}
 
-    // Every way a join can be refused funnels through here, so the exit code is
-    // set once rather than at each caller. A client that could not join never
-    // started, whatever the reason.
-    const auto fail = [this](std::string reason)
-                      {
-                          Log::Error("Client: join failed - {}", reason);
-                          _play->Session().AbortJoin(std::move(reason));
-                          RefuseStart();
-                      };
-
+std::expected<void, std::string> ServerApp::BuildJoinedWorld(const NetSync::LevelIdentity &level)
+{
     // Every question a join has to answer before touching the scene, asked in the
     // one place every target asks it.
-    const std::expected<void, Assisi::App::JoinLevelError> joinable = Assisi::App::CheckJoinLevel(hello->level);
+    const std::expected<void, Assisi::App::JoinLevelError> joinable = Assisi::App::CheckJoinLevel(level);
     if (!joinable)
     {
-        fail(Assisi::App::JoinLevelErrorMessage(joinable.error(), hello->level.path));
-        return;
+        return std::unexpected(Assisi::App::JoinLevelErrorMessage(joinable.error(), level.path));
     }
 
-    if (!Assisi::App::LoadLevelSim(_world, hello->level.path) || !InstallLevelSystems(hello->level.path))
+    if (!Assisi::App::LoadLevelSim(_world, level.path) || !InstallLevelSystems(level.path))
     {
-        fail("'" + hello->level.path + "' failed to load.");
-        return;
+        return std::unexpected("'" + level.path + "' failed to load.");
     }
 
     // The host owns these; they arrive as mirrors. The file's copies are the
@@ -208,10 +215,9 @@ void ServerApp::BuildJoinedWorld()
     BeginWorld(WorldStartContext(), Assisi::App::SimulateFrom::Begin);
     SettleWorld(WorldStartContext(), /*assetsPending=*/ false);
 
-    _play->ConfirmLevelReady();
-    Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
-              "handshake.",
-              hello->level.path, stripped.entities, stripped.orphans);
+    Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped).", level.path,
+              stripped.entities, stripped.orphans);
+    return {};
 }
 
 bool ServerApp::InstallLevelSystems(std::string_view level)
@@ -258,45 +264,15 @@ void ServerApp::OnPreUpdate(float dt)
 
 void ServerApp::OnFixedUpdate(float dt)
 {
-    std::uint64_t stepTick = GetSimTick();
-
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
-    if (_play)
-    {
-        stepTick = _play->BeginStep(stepTick, /*stepping=*/ true);
-
-        // The handshake named a level; build it before answering. Nothing here
-        // is GPU-bound, so unlike the editor this needs no marshalling.
-        if (_play->Session().IsAwaitingLevel())
-            BuildJoinedWorld();
-
-        // A host that went away, or a rejected handshake: the read turns both
-        // into an Offline session, and a client with no stream has nothing to do.
-        if (_options.role == ServerRole::Client && !_play->Session().IsActive())
-        {
-            Log::Warn("Client: session ended ({}).",
-                      _play->Session().LastError().empty() ? "closed by the host" : _play->Session().LastError());
-            RequestClose();
-            return;
-        }
-    }
-    _stepTick = stepTick;
-
-    if (_play)
-    {
-        _play->StepWorld(WorldContext(dt, stepTick));
-    }
-    else
-    {
-        Assisi::App::StepWorld(WorldContext(dt, stepTick));
-    }
+    _stepTick = _sessions->BeginStep(GetSimTick(), /*stepping=*/ true);
+    _sessions->StepWorld(WorldContext(dt, _stepTick));
 
     // After the simulation: a snapshot describes the world at the end of the
     // tick it is stamped with. A headless client with no player sends an empty
     // command, enough to give the host something to measure its buffer by.
-    if (_play)
-        _play->EndStep();
+    _sessions->EndStep();
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
@@ -304,13 +280,38 @@ void ServerApp::OnFixedUpdate(float dt)
 
 double ServerApp::SimulationSeconds(double frameSeconds)
 {
-    if (_play)
-        return frameSeconds * _play->TimeScale();
-    return frameSeconds;
+    return _sessions ? frameSeconds * _sessions->TimeScale() : frameSeconds;
 }
 
 void ServerApp::OnUpdate(float dt)
 {
+    // Joined once the host's first snapshot has landed: the host let it in.
+    if (Assisi::App::NetworkedPlay *play = _sessions->Play();
+        play != nullptr && play->Session().Client() != nullptr && play->Session().Client()->SnapshotsApplied() > 0)
+    {
+        _joined = true;
+    }
+
+    // The join moves along here, building the host's level when its hello
+    // names it, and a session that ended is noticed.
+    _sessions->Update(_world, dt);
+    // A client with no stream has nothing to do. A join that never got in is a
+    // start that failed, which a supervisor watching the exit code should see;
+    // a host that left after letting it in is an ordinary end.
+    if (_options.role == ServerRole::Client && !_sessions->InSession())
+    {
+        if (_joined)
+        {
+            Log::Warn("Client: the session ended.");
+            RequestClose();
+        }
+        else
+        {
+            Log::Error("Client: could not join - {}.", _sessions->LastProblem());
+            RefuseStart();
+        }
+    }
+
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
     // one — and it is the only place a bug in it would show up in a soak.
@@ -318,8 +319,7 @@ void ServerApp::OnUpdate(float dt)
     // Its *convergence* assertions must never read these Transforms, though:
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
-    if (_play)
-        _play->Session().SmoothView(dt);
+    _sessions->SmoothView(dt);
 
     // Not PresentWorld: a server shows and plays nothing, so its Ui systems and
     // sounds would have nowhere to go.
@@ -344,14 +344,15 @@ void ServerApp::ReportStatus()
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 
-    if (!_play || !_play->Session().IsActive())
+    const Assisi::App::NetworkedPlay *play = _sessions->Play();
+    if (play == nullptr || !play->Session().IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
         return;
     }
 
-    const NetSync::SessionStats stats = _play->Session().Stats();
-    if (_play->Session().IsHost())
+    const NetSync::SessionStats stats = play->Session().Stats();
+    if (play->Session().IsHost())
     {
         Log::Info("Server: tick {} ({:.1f} Hz), {} client(s), {} snapshots, {} bytes sent", tick, tickRate,
                   stats.clientCount, stats.snapshotsSent, stats.bytesSent);
@@ -359,7 +360,7 @@ void ServerApp::ReportStatus()
     else
     {
         Log::Info("Client: tick {} ({:.1f} Hz), {}, {} entities, {} applied, {} rejected, server tick {}", tick,
-                  tickRate, _play->Session().StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
+                  tickRate, play->Session().StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
 }
@@ -410,9 +411,10 @@ Assisi::App::SystemContext ServerApp::WorldContext(float dt, std::uint64_t tick)
 
 void ServerApp::OnShutdown()
 {
-    if (_play && _play->Session().IsClient())
+    const Assisi::App::NetworkedPlay *play = _sessions ? _sessions->Play() : nullptr;
+    if (play != nullptr && play->Session().IsClient())
     {
-        const NetSync::SessionStats stats = _play->Session().Stats();
+        const NetSync::SessionStats stats = play->Session().Stats();
         Log::Info("Client: stopped after {} ticks - {} snapshots applied, {} rejected, {} entities mirrored.",
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
@@ -422,7 +424,7 @@ void ServerApp::OnShutdown()
     }
 
     // Before the scene and physics world it holds a reference to.
-    _play.reset();
+    _sessions.reset();
 }
 
 } // namespace Game

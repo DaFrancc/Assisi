@@ -32,6 +32,9 @@ add_executable(Assisi-NetSync-Tests
   TestMessages.cpp
   TestRelevancy.cpp
   TestReplication.cpp
+  TestSessionAccess.cpp
+  TestSessionDiscovery.cpp
+  TestSessionHandshake.cpp
   TestWorldPosition.cpp
 )
 

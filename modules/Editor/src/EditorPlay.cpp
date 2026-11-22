@@ -179,8 +179,6 @@ void EditorApp::StartPlay(NetIntent intent)
     }
 
     _netIntent = intent;
-    _joinPhase = JoinPhase::None;
-    _joinElapsed = 0.f;
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 
     if (intent == NetIntent::Standalone)
@@ -207,36 +205,35 @@ void EditorApp::StartPlay(NetIntent intent)
         return;
     }
 
-    // The session binds the world it replicates by reference at construction, and
-    // that world's scene is now the play scene — the one the editor already treats
-    // as disposable.
-    _networkedPlay = std::make_unique<Assisi::App::NetworkedPlay>(*_world);
-
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
     _netVetoedComponentNames = Assisi::NetSync::NeverReplicate();
 
+    // The session binds the world it replicates by reference, and that world's
+    // scene is now the play scene — the one the editor already treats as
+    // disposable. The level the clients load is the editor's own choice.
     const auto port = static_cast<std::uint16_t>(_netPort);
-    const bool started =
-        intent == NetIntent::Host
-            ? _networkedPlay->Host(port, std::move(hostLevel), Assisi::App::HostRole::Player)
-            : _networkedPlay->Join(_netAddress.data(), port);
-    if (!started)
+    if (intent == NetIntent::Host)
     {
-        // Copy the reason out before dropping the session that holds it.
-        _netError = _networkedPlay->Session().LastError();
-        _networkedPlay.reset();
+        Assisi::App::HostOptions options;
+        options.name = "Assisi editor";
+        options.port = port;
+        _sessions->Host(*_world, options, std::move(hostLevel), Assisi::App::HostRole::Player);
+    }
+    else
+    {
+        _sessions->Join(*_world, _netAddress.data(), port, /*secret=*/ {});
+    }
+    if (!_sessions->InSession())
+    {
+        _netError = _sessions->LastProblem();
         StopPlay();
         return;
     }
 
     _netError.clear();
-    if (intent == NetIntent::Join)
-    {
-        _joinPhase = JoinPhase::Connecting;
-    }
-    else if (playInEditor)
+    if (playInEditor)
     {
         // After Host() succeeded, never before: a client that connects to a
         // port nothing is listening on fails immediately and confusingly.
@@ -317,10 +314,8 @@ void EditorApp::StopPlay()
     // needing no level-transfer protocol; a viewer left running against a dead
     // server is the worst way to pay it.
     ShutdownPieClients();
-    _pendingJoinBuild = false;
     _pendingStopPlay = false;
     _netIntent = NetIntent::Standalone;
-    _joinPhase = JoinPhase::None;
 
     // Whatever the pause let you undo dies with the pause. The editing history is
     // deliberately NOT cleared: the restore below rebuilds entities at their exact

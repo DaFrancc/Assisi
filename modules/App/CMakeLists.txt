@@ -26,6 +26,8 @@ target_sources(Assisi-App
     "include/Assisi/App/PlayerSystems.hpp"
     "include/Assisi/App/ResourceStore.hpp"
     "include/Assisi/App/SceneCamera.hpp"
+    "include/Assisi/App/SessionDriver.hpp"
+    "include/Assisi/App/SessionTypes.hpp"
     "include/Assisi/App/StepWorld.hpp"
     "include/Assisi/App/PhysicsSystems.hpp"
     "include/Assisi/App/MotionSystems.hpp"
@@ -60,6 +62,8 @@ target_sources(Assisi-App
     "src/PlayerSettings.cpp"
     "src/PlayerSystems.cpp"
     "src/SceneCamera.cpp"
+    "src/SessionDriver.cpp"
+    "src/SessionTypes.cpp"
     "src/StartupScene.cpp"
     "src/StepWorld.cpp"
     "src/PerfCapture.cpp"
@@ -130,6 +134,7 @@ assisi_reflect(
     include/Assisi/App/PlayerComponents.hpp
     include/Assisi/App/PlayerSystems.hpp
     include/Assisi/App/MotionSystems.hpp
+    include/Assisi/App/SessionTypes.hpp
     include/Assisi/App/SystemRegistry.hpp
 )
 

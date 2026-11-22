@@ -37,6 +37,7 @@
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -47,8 +48,16 @@ namespace Assisi::Runtime
 class SceneRenderer;
 } // namespace Assisi::Runtime
 
+namespace Assisi::NetSync
+{
+struct LevelIdentity;
+} // namespace Assisi::NetSync
+
 namespace Assisi::App
 {
+
+class SessionDriver;
+struct SessionHooks;
 
 /// @brief The name of the content package a game reads, beside its executable.
 inline constexpr const char *kDefaultPakName = "assets.pak";
@@ -177,6 +186,14 @@ class GameApp : public Application
     /// Logs what each animation step cost per frame over the measured run.
     void ReportAnimationCost() const;
 
+    /// What the session driver does the game's way: host the level being
+    /// played, build the host's level into the main world, and go back to the
+    /// level played before a join.
+    [[nodiscard]] SessionHooks MakeSessionHooks();
+    [[nodiscard]] NetSync::LevelIdentity HostedLevel() const;
+    [[nodiscard]] std::expected<void, std::string> BuildJoinedLevel(const NetSync::LevelIdentity &level);
+    void PlayAloneAgain();
+
     // Largest first, so the object carries no interior padding.
 
     /// GPU-side meshes, materials and textures, and the bindless table the mesh
@@ -199,6 +216,13 @@ class GameApp : public Application
 
     WorldManager _worlds{_collisionSource};
 
+    /// Hosting, joining and browsing, and the session every fixed step runs
+    /// inside. After the worlds, so it goes first: a session holds the world it plays.
+    std::unique_ptr<SessionDriver> _sessions;
+
+    /// The level played before a join, travelled back to when the session ends.
+    std::string _aloneLevel;
+
     /// Where the game looks from when the scene nominates no camera. A level
     /// that has not composed one renders from the origin rather than not at all,
     /// which is the difference between a scene that looks wrong and a window
@@ -213,6 +237,10 @@ class GameApp : public Application
 
     /// The benchmark run clock the simulation has been advanced to.
     double _simulatedRunSeconds = 0.0;
+
+    /// The tick the last fixed step was, which every phase is told: the
+    /// process's own count, or a session's, which is the same on every machine.
+    std::uint64_t _stepTick = 0;
 
     /// Where a measured run's pose stage spent its time: steps the game calls
     /// itself rather than through a system.

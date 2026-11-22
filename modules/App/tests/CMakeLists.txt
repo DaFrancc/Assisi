@@ -43,6 +43,7 @@ add_executable(Assisi-App-Tests
   TestPoseStage.cpp
   TestJointAttachment.cpp
   TestSceneCamera.cpp
+  TestSessionDriver.cpp
   TestShippedLevels.cpp
   TestStartupScene.cpp
   TestStepWorld.cpp

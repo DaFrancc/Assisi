@@ -24,7 +24,12 @@
 /// intent from the host, and an event unless it is addressed to another player,
 /// who is not there. Played alone, nothing is checked against who controls
 /// what: the one player controls everything.
+///
+/// It is also where a game hosts, browses, joins and leaves sessions. Like
+/// travel, each of those queues a request the app applies between frames, and
+/// what happened arrives as an event (SessionTypes.hpp).
 
+#include <Assisi/App/SessionTypes.hpp>
 #include <Assisi/Core/ClientId.hpp>
 #include <Assisi/Core/Reflect/MessageInbox.hpp>
 #include <Assisi/Core/Reflect/MessageMeta.hpp>
@@ -32,8 +37,12 @@
 #include <Assisi/ECS/Entity.hpp>
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <typeindex>
 #include <unordered_set>
+#include <vector>
 
 namespace Assisi::Core
 {
@@ -54,6 +63,25 @@ enum class NetRole : std::uint8_t
     Host,    ///< The authority others joined, played or dedicated.
     Client,  ///< Joined to a host, whose word the world is.
     Count_
+};
+
+/// @brief What a system asked of the session, waiting for the app to apply it.
+struct SessionRequest
+{
+    enum class Kind : std::uint8_t
+    {
+        Host,
+        JoinEntry,
+        JoinAddress,
+        Leave,
+        Count_
+    };
+
+    HostOptions host;    ///< Host.
+    SessionEntry entry;  ///< JoinEntry.
+    std::string address; ///< JoinAddress, as written: an IP with an optional `:port`.
+    std::string secret;  ///< Either join.
+    Kind kind = Kind::Leave;
 };
 
 class Network
@@ -128,6 +156,51 @@ public:
                          Audience{.entity = ECS::NullEntity, .client = instigator, .to = To::AllBut});
     }
 
+    // --- Sessions ----------------------------------------------------------
+    // Each call queues a request; the app applies it between frames, because
+    // joining replaces the world's level and hosting starts the session every
+    // step runs inside. The most recent request wins, as with travel.
+
+    /// @brief Hosts the level this world is playing, as a listen server: this
+    /// machine plays too. SessionStarted or SessionFailed follows.
+    void Host(HostOptions options);
+
+    /// @brief Joins a session a browse found, with its password or code when
+    /// `entry.needsSecret`. SessionJoined or SessionRefused follows.
+    void Join(const SessionEntry &entry, std::string secret = {});
+
+    /// @brief Joins the session at @p address, an IP address with an optional
+    /// `:port` (27015 when it has none), such as `192.168.1.20:27015`. The
+    /// secret is the session's password or code; the joiner never says which.
+    void Join(std::string_view address, std::string secret = {});
+
+    /// @brief Leaves the session: a host ends it for everyone, a client goes
+    /// back to playing its own level. SessionEnded{Left} follows.
+    void Leave();
+
+    /// @brief Asks the local network who is hosting. A SessionFound arrives as
+    /// each listed session answers, a SessionLost for each known one that did
+    /// not, then a SessionSearchDone. Searching again updates the list in place.
+    void FindSessions(SearchParams params = {});
+
+    /// @brief The session this machine is in, or nothing when it plays alone.
+    [[nodiscard]] const std::optional<SessionInfo> &Session() const { return _sessionInfo; }
+
+    /// @brief Every session the searches so far know of, for a game that polls
+    /// rather than keeps its own list from the events.
+    [[nodiscard]] const std::vector<SessionEntry> &Sessions() const { return _sessions; }
+
+    // --- For the app's SessionDriver -----------------------------------------
+
+    /// @brief The request queued since the last call, if any.
+    [[nodiscard]] std::optional<SessionRequest> TakeSessionRequest();
+
+    /// @brief Whether a search was asked for since the last call.
+    [[nodiscard]] bool TakeSearchRequest();
+
+    /// @brief What Session() and Sessions() answer from now on.
+    void Publish(std::optional<SessionInfo> session, std::vector<SessionEntry> sessions);
+
     /// @brief Pushes every message that has arrived for this world since the
     /// last call into @p events, as Received<T>. StepWorld calls it at the start
     /// of each live tick.
@@ -183,6 +256,10 @@ private:
     /// What a world played alone sent itself.
     Core::Reflect::MessageInbox _toSelf;
     std::unordered_set<std::type_index> _refused;
+    std::optional<SessionRequest> _request;
+    std::optional<SessionInfo> _sessionInfo;
+    std::vector<SessionEntry> _sessions;
+    bool _searchRequested = false;
 };
 
 } // namespace Assisi::App

@@ -4,8 +4,10 @@ Assisi_apply_defaults(Assisi-Net)
 target_sources(Assisi-Net
   PUBLIC
     "include/Assisi/Net/NetTransport.hpp"
+    "include/Assisi/Net/UdpSocket.hpp"
   PRIVATE
     "src/NetTransport.cpp"
+    "src/UdpSocket.cpp"
 )
 
 target_include_directories(Assisi-Net
@@ -23,6 +25,11 @@ target_link_libraries(Assisi-Net
   PRIVATE
     GameNetworkingSockets::static
 )
+
+# UdpSocket calls Winsock itself, for LAN discovery's broadcasts.
+if (WIN32)
+  target_link_libraries(Assisi-Net PRIVATE ws2_32)
+endif()
 
 add_library(Assisi::Net ALIAS Assisi-Net)
 

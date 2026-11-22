@@ -74,6 +74,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/PakProvider.hpp"
     "include/Assisi/Core/RandomAccessFile.hpp"
     "include/Assisi/Core/ClientId.hpp"
+    "include/Assisi/Core/SessionId.hpp"
     "include/Assisi/Core/Diagnostics.hpp"
     "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/JobSystem.hpp"

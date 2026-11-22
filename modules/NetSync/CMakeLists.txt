@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-NetSync)
 
 target_sources(Assisi-NetSync
   PUBLIC
+    "include/Assisi/NetSync/AttemptLimiter.hpp"
     "include/Assisi/NetSync/BodyOwnership.hpp"
     "include/Assisi/NetSync/BodyReport.hpp"
     "include/Assisi/NetSync/BodyState.hpp"
@@ -18,8 +19,11 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/ReplicationConfig.hpp"
     "include/Assisi/NetSync/ReplicationProviders.hpp"
     "include/Assisi/NetSync/ReplicationServer.hpp"
+    "include/Assisi/NetSync/SessionDiscovery.hpp"
+    "include/Assisi/NetSync/SessionSecret.hpp"
     "include/Assisi/NetSync/WorldPosition.hpp"
   PRIVATE
+    "src/AttemptLimiter.cpp"
     "src/BodyOwnership.cpp"
     "src/BodyReport.cpp"
     "src/BodyState.cpp"
@@ -38,6 +42,8 @@ target_sources(Assisi-NetSync
     "src/ReplicationServerOwnership.cpp"
     "src/ReplicationServerSnapshot.cpp"
     "src/ReplicationServerState.cpp"
+    "src/SessionDiscovery.cpp"
+    "src/SessionSecret.cpp"
     "src/WorldPosition.cpp"
 )
 

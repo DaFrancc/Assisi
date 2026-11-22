@@ -44,7 +44,7 @@
 #include <Assisi/Math/Color.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/App/NetworkedPlay.hpp>
+#include <Assisi/App/SessionDriver.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
@@ -75,6 +75,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <string>
@@ -497,7 +498,7 @@ class EditorApp : public Assisi::App::Application
     /// each predicted component, how often the host's word corrected it.
     void DrawPredictedEntities(const Assisi::NetSync::ReplicationClient &client);
     void ShutdownNetSession();     // tear down and forget; safe to call with no session
-    void PollNetSession(float dt); // top of the fixed step: the wire, the step's tick, players, join progress
+    void PollNetSession();         // top of the fixed step: the wire, the step's tick, players
     void SmoothNetView();          // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 
     // --- Networked play -----------------------------------------------------
@@ -517,19 +518,11 @@ class EditorApp : public Assisi::App::Application
         Join,       ///< Play as a client of someone else's world.
     };
 
-    /// @brief How far a joining client has got. Distinct from the session's own
-    /// state because "connected" and "has a world to put the snapshots in" are
-    /// two different things, and only the editor knows the second.
-    enum class JoinPhase : std::uint8_t
-    {
-        None,       ///< Not joining.
-        Connecting, ///< Transport up, waiting for the host's ServerHello.
-        Building,   ///< Hello received; loading and stripping the host's level.
-        Live,       ///< Handshake answered; snapshots are being applied.
-    };
-
     /// @brief True while a session exists and is not Offline.
     [[nodiscard]] bool IsNetSessionActive() const;
+
+    /// @brief The session, for the panels that show it. Null when there is none.
+    [[nodiscard]] Assisi::NetSync::NetSession *NetSessionOrNull();
 
     /// @brief What this editor would advertise as its level: the edited world's
     /// saved path plus a content hash of the file as it currently sits on disk.
@@ -537,22 +530,22 @@ class EditorApp : public Assisi::App::Application
     /// makes "save the level to host" a check rather than a suggestion.
     [[nodiscard]] Assisi::NetSync::LevelIdentity HostLevelIdentity() const;
 
-    /// @brief Build the joined world from the host's handshake: resolve the
-    /// level, verify its content hash, load it into the play scene, strip the
-    /// entities the host owns, then answer the handshake. Marshalled to the
-    /// frame's safe point — it frees and re-resolves GPU assets.
-    void BuildJoinedWorld();
+    /// @brief Build the host's @p level as the joined world: resolve it, verify
+    /// its content hash, load it into the play scene and strip the entities the
+    /// host owns. The session driver calls it at the frame's safe point, since
+    /// it frees and re-resolves GPU assets, and answers the handshake after.
+    [[nodiscard]] std::expected<void, std::string> BuildJoinedWorld(const Assisi::NetSync::LevelIdentity &level);
+
+    /// @brief The session driver's hooks: what the editor hosts, how it builds
+    /// a joined world, and that a joined session ending stops play, whose
+    /// restore puts the edited world back.
+    [[nodiscard]] Assisi::App::SessionHooks MakeSessionHooks();
 
     /// @brief Destroy every entity carrying `Replicated` and clear the dangling
     /// `Parent` of anything that was under one. Those entities are the host's;
     /// they arrive as mirrors, and keeping the file's copies too would double
     /// the world.
     void StripReplicatedEntities();
-
-    /// @brief Abort a join in progress with a reason a human can act on: the
-    /// panel shows it, the log keeps it, and the session ends through the same
-    /// Stop as everything else.
-    void FailJoin(std::string reason);
 
     // --- Play in editor -----------------------------------------------------
     // "Host + N clients" launches N more copies of this executable, each of
@@ -1612,22 +1605,21 @@ class EditorApp : public Assisi::App::Application
     Assisi::Physics::PhysicsWorld *_physics = nullptr; ///< == &_world->physics.
 
     // --- Networked play ---
-    // `_netIntent` is the role this play session was entered for; `_joinPhase`
-    // tracks a client through connect -> build -> live. Unguarded for the same
-    // reason the enums are: Standalone is ordinary Play.
+    // `_netIntent` is the role this play session was entered for. Unguarded for
+    // the same reason the enum is: Standalone is ordinary Play.
     NetIntent _netIntent = NetIntent::Standalone;
-    JoinPhase _joinPhase = JoinPhase::None;
 
     /// The tick the current fixed step is, which every system sees: the
     /// process's own count, or a network session's, which is the same tick on
     /// every machine in it.
     std::uint64_t _stepTick = 0;
 
-    /// The world played over the network, when it is: its session and its
-    /// players. Created on Host/Join and destroyed on Disconnect (and before any
-    /// level load), because it holds a reference to the world it replicates and
-    /// a level load replaces that world's scene wholesale.
-    std::unique_ptr<Assisi::App::NetworkedPlay> _networkedPlay;
+    /// Hosting, joining and browsing, shared with the game and the server: it
+    /// runs the join and the session every fixed step runs inside. Its session
+    /// is ended on Stop and before any level load, because it holds the world
+    /// it replicates and a level load replaces that world's scene wholesale.
+    /// After the worlds, so it goes first.
+    std::unique_ptr<Assisi::App::SessionDriver> _sessions;
     /// UI state for the network panel, kept here rather than in statics so two
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};
@@ -1636,15 +1628,7 @@ class EditorApp : public Assisi::App::Application
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
 
-    /// Seconds spent waiting for a host's ServerHello. A join that never gets
-    /// one would otherwise sit in Play forever with an empty world and no
-    /// explanation.
-    float _joinElapsed = 0.f;
-    static constexpr float kJoinTimeoutSeconds = 10.f;
-    /// Marshalled to OnUpdate: BuildJoinedWorld frees and re-resolves GPU
-    /// assets, which must not happen from the fixed step mid-frame.
-    bool _pendingJoinBuild = false;
-    /// Marshalled likewise: a host that vanished, or a failed join, ends the
+    /// Marshalled to OnUpdate: a host that vanished, or a failed join, ends the
     /// play session at the frame's safe point rather than under the pump.
     bool _pendingStopPlay = false;
     /// The unsaved-edits host prompt: a modal, not a warning, because the

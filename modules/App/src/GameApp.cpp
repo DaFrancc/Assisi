@@ -4,8 +4,10 @@
 #include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/App/SessionDriver.hpp>
 #include <Assisi/App/StartupScene.hpp>
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
@@ -14,6 +16,8 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/NetSync/NetworkConfig.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -123,6 +127,11 @@ bool GameApp::MountContent()
 
 void GameApp::OnStart()
 {
+    // Before any session can exist: the quantization is inside the handshake
+    // hash, and the config says whether this game connects directly at all.
+    NetSync::LoadNetworkConfig();
+    _sessions = std::make_unique<SessionDriver>(GetUniversalEvents(), MakeSessionHooks());
+
     // What a travel needs to turn a level file into a running world. Captured by
     // pointer; every one of these outlives the manager. The renderer is null in a
     // headless run, and WorldManager takes the render-free path when it is.
@@ -214,6 +223,96 @@ void GameApp::OnStart()
         const std::int32_t shots = _launch.benchmark->shotsDirectory.empty() ? 0 : _launch.benchmark->shotCount;
         _benchmark.emplace(std::move(route), _launch.benchmark->seconds, shots);
     }
+}
+
+SessionHooks GameApp::MakeSessionHooks()
+{
+    return SessionHooks{
+        .currentLevel = [this] { return HostedLevel(); },
+        .buildJoinedLevel = [this](const NetSync::LevelIdentity &level) { return BuildJoinedLevel(level); },
+        .restoreAlone = [this] { PlayAloneAgain(); }};
+}
+
+NetSync::LevelIdentity GameApp::HostedLevel() const
+{
+    NetSync::LevelIdentity identity;
+    if (_world == nullptr || _world->levelPath.empty())
+    {
+        return identity; // addressing None: nothing a joiner could load
+    }
+    // The engine's spelling of the hash, which a joiner compares its own against.
+    const std::optional<std::uint64_t> hash = HashLevelFile(_world->levelPath);
+    if (!hash)
+    {
+        return identity;
+    }
+    identity.addressing = NetSync::LevelAddressing::Virtual;
+    identity.path = _world->levelPath;
+    identity.contentHash = *hash;
+    return identity;
+}
+
+std::expected<void, std::string> GameApp::BuildJoinedLevel(const NetSync::LevelIdentity &level)
+{
+    // Empty until this join changes the world, so a join refused before then
+    // travels nowhere when the driver asks to play alone again.
+    _aloneLevel.clear();
+    if (const std::expected<void, JoinLevelError> joinable = CheckJoinLevel(level); !joinable)
+    {
+        return std::unexpected(JoinLevelErrorMessage(joinable.error(), level.path));
+    }
+
+    // Into the world the session plays, in place: the session holds that world,
+    // so a travel, which makes a new one, would leave it holding nothing.
+    _aloneLevel = _world->levelPath;
+    Runtime::LevelHeader header;
+    Runtime::LevelResult loaded;
+    if (HasPresentation())
+    {
+        const AssetCacheReset reset = _worlds.Count() > 1 ? AssetCacheReset::Keep : AssetCacheReset::ClearFirst;
+        loaded = LoadLevel(*_world, level.path, {_assetCache, *_sceneRenderer}, {.reset = reset, .header = &header});
+    }
+    else
+    {
+        loaded = LoadLevelSim(*_world, level.path);
+        if (loaded)
+        {
+            std::expected<std::vector<std::string>, Runtime::LevelError> systems =
+                Runtime::SceneSerializer::ReadLevelSystems(level.path);
+            header.systems = systems ? std::move(*systems) : std::vector<std::string>{};
+        }
+    }
+    if (!loaded)
+    {
+        return std::unexpected("it failed to load (" + std::string(Runtime::ToString(loaded.error())) + ")");
+    }
+    _world->levelPath = level.path;
+    if (!WorldManager::ApplySystems(*_world, header.systems, level.path))
+    {
+        return std::unexpected(std::string("it names a system this build does not declare"));
+    }
+
+    // The host's own; they arrive as mirrors, and the file's copies would double them.
+    const StrippedEntities stripped = StripReplicatedEntities(_world->scene);
+    Core::Log::Info("Game: joining - built '{}' and stripped {} replicated entities.", level.path, stripped.entities);
+
+    // The level starts as any level the game opens does.
+    _world->start = StartProgress::NotBegun;
+    BeginWorld(WorldStartContext(*_world), GetConfig().simulateFrom);
+    return {};
+}
+
+void GameApp::PlayAloneAgain()
+{
+    // The world held the host's level, less what the host owned: a fresh copy of
+    // the level played before is the only one this machine can play alone. A
+    // travel the game asked for itself goes ahead instead. Used once: the next
+    // join records its own.
+    if (!_worlds.HasTravelRequest() && !_aloneLevel.empty())
+    {
+        _worlds.RequestTravel(_aloneLevel);
+    }
+    _aloneLevel.clear();
 }
 
 void GameApp::ApplyBenchmarkSettings(const GameBenchmark &benchmark)
@@ -432,10 +531,12 @@ SystemContext GameApp::WorldStartContext(World &world)
 void GameApp::StepWorlds(float dt)
 {
     // The UI reports; the world is what carries it, so a system can see that it
-    // is paused rather than only noticing that it stopped being run.
+    // is paused rather than only noticing that it stopped being run. Never in a
+    // session: a host that stopped would stop everyone's game, and a client
+    // that stopped would fall behind a host that did not.
     if (World *const active = _worlds.Active(); active != nullptr)
     {
-        active->paused = GetUi() != nullptr && GetUi()->PausesWorld();
+        active->paused = GetUi() != nullptr && GetUi()->PausesWorld() && !_sessions->InSession();
     }
 
     _worlds.ForEach(
@@ -446,7 +547,7 @@ void GameApp::StepWorlds(float dt)
                 return;
             }
 
-            StepWorld(WorldContext(world, dt, GetSimTick()));
+            _sessions->StepWorld(WorldContext(world, dt, _stepTick));
         });
 }
 
@@ -454,7 +555,9 @@ double GameApp::SimulationSeconds(double frameSeconds)
 {
     if (!_benchmark)
     {
-        return frameSeconds;
+        // A client's clock steers its lead on the host by running a little fast
+        // or slow; 1 otherwise.
+        return _sessions ? frameSeconds * _sessions->TimeScale() : frameSeconds;
     }
     // Only forward: a shots run can step its clock back a little between the
     // approaches to two close stops, and a simulation cannot un-happen.
@@ -479,7 +582,7 @@ void GameApp::OnPreUpdate(float dt)
             {
                 return;
             }
-            BeginWorldFrame(WorldContext(world, dt, GetSimTick()));
+            BeginWorldFrame(WorldContext(world, dt, _stepTick));
         });
 }
 
@@ -490,7 +593,12 @@ void GameApp::OnFixedUpdate(float dt)
         return;
     }
 
+    // The wire is read first, so a command that arrived for this tick is
+    // applied on it, and the session says which tick this step is.
+    _stepTick = _sessions->BeginStep(GetSimTick(), /*stepping=*/ true);
     StepWorlds(dt);
+    // Last: a snapshot describes the world at the end of the tick it is stamped with.
+    _sessions->EndStep();
 
     // A run with a tick budget ends when it is spent. Checked after the step, so
     // `--ticks 1` means one tick actually ran rather than none.
@@ -508,11 +616,21 @@ void GameApp::OnUpdate(float dt)
     }
 
     // --- The frame's safe point ---------------------------------------------
+    // What systems asked of ctx.net, applied here for the reason travel is: a
+    // join loads the host's level, freeing assets this frame's draws reference.
+    _sessions->Update(*_world, dt);
+
     // Travel frees GPU assets that draws already recorded still reference, and the
     // system that asked for it runs inside the walk over the worlds. So game code
     // requests and this applies, outside the walk and before this frame's draws.
     if (_worlds.HasTravelRequest())
     {
+        // A travel replaces the world a session plays, so it ends the session
+        // first; changing level inside one is not built yet.
+        if (_sessions->InSession())
+        {
+            _sessions->Leave();
+        }
         if (World *const arrived = _worlds.ProcessTravelRequest())
         {
             _world = arrived;
@@ -574,6 +692,10 @@ void GameApp::OnUpdate(float dt)
             BlendWorld(world, stepping, GetInterpolationAlpha());
         });
 
+    // After the blend writes each body's pose and before anything places from
+    // it: a mirrored body's visual offset goes on top of that pose.
+    _sessions->SmoothView(dt);
+
     // Game logic, out of each world's own registry. Systems that consume input
     // opt out of the non-active worlds by declaring ActiveWorldOnly(): one
     // InputContext, N worlds.
@@ -585,7 +707,7 @@ void GameApp::OnUpdate(float dt)
                 return;
             }
 
-            const SystemContext ctx = WorldContext(world, dt, GetSimTick());
+            const SystemContext ctx = WorldContext(world, dt, _stepTick);
             UpdateWorld(ctx);
             // The drawn world keeps its characters' posed vertices in the same pass.
             const bool drawn = &world == _world;

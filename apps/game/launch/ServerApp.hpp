@@ -22,10 +22,11 @@
 /// the editor/game integration, which is separate work.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/SessionDriver.hpp>
 #include <Assisi/App/World.hpp>
-#include <Assisi/App/NetworkedPlay.hpp>
 
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -49,12 +50,18 @@ struct ServerOptions
     ServerRole role = ServerRole::Offline;
     std::string level;                    ///< Virtual path; empty for an empty world.
     std::string address = "127.0.0.1";    ///< Client only.
+    std::string name = "Assisi server";   ///< Host only: the session's name in a browse.
+    /// Host: let in only those who send it; empty for an open session.
+    /// Client: what to send.
+    std::string password;
     std::uint16_t port    = 27015;
     std::uint64_t tickLimit = 0;          ///< 0 = run until interrupted.
     /// Host only: spawn this many replicated, moving entities. A world that
     /// changes every tick is what actually exercises delta replication; a static
     /// level would converge once and prove very little.
     std::uint32_t spawnCount = 0;
+    /// Host only: the most players who can join. The server has no player of its own.
+    std::uint32_t maxPlayers = Assisi::App::kDefaultMaxPlayers;
 };
 
 class ServerApp final : public Assisi::App::Application
@@ -98,12 +105,15 @@ private:
     /// proves nothing for the rest of the run.
     void SpawnDemoMovers();
 
-    /// Client only: build the world the host's handshake names — resolve the
-    /// level, check its content hash, load it, and strip the entities the host
-    /// owns — then answer the handshake. The headless twin of the editor's
-    /// join (EditorNet.cpp), and the reason a headless client is worth having:
-    /// it exercises the whole hello-gated sequence with no window in the way.
-    void BuildJoinedWorld();
+    /// Client only: build the world the host's handshake names — check the
+    /// level, load it, and strip the entities the host owns. The headless twin
+    /// of the editor's join (EditorNet.cpp), and the reason a headless client is
+    /// worth having: it exercises the whole hello-gated sequence with no window
+    /// in the way.
+    [[nodiscard]] std::expected<void, std::string> BuildJoinedWorld(const Assisi::NetSync::LevelIdentity &level);
+
+    /// The level a host serves: the one it loaded, or none for an empty world.
+    [[nodiscard]] Assisi::NetSync::LevelIdentity ServedLevel() const;
 
     ServerOptions _options;
 
@@ -116,15 +126,17 @@ private:
     /// instances should arrive as instances rather than as loose entities.
     Assisi::App::World _world;
 
-    /// Constructed only in a networked role, so offline mode never initializes
-    /// GameNetworkingSockets.
-    std::unique_ptr<Assisi::App::NetworkedPlay> _play;
+    /// The session, hosted or joined, shared with every other program. Made in
+    /// every role and idle offline, which opens no socket.
+    std::unique_ptr<Assisi::App::SessionDriver> _sessions;
 
     double _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;
     /// The tick the last fixed step simulated: the process's own count, or the
     /// session's in a networked role. What the per-frame phases are told.
     std::uint64_t _stepTick = 0;
+    /// Client only: the host let this machine in, so an end is not a failed start.
+    bool _joined = false;
 };
 
 } // namespace Game

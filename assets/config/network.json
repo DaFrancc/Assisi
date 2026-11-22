@@ -31,5 +31,6 @@
   "ownershipTouchDwellTicks": 10,
   "ownershipHoldTicks": 60,
   "reportTimeoutTicks": 90,
-  "ownershipMaxBodies": 8
+  "ownershipMaxBodies": 8,
+  "allowDirectConnections": true
 }

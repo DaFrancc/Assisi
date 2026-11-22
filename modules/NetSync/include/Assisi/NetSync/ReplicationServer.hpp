@@ -7,8 +7,10 @@
 /// Sender and receiver are one design: a change to either one's wire handling
 /// is a change to both.
 
+#include <Assisi/NetSync/AttemptLimiter.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/SessionSecret.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -80,13 +82,29 @@ public:
 
     [[nodiscard]] const LevelIdentity &Level() const { return _level; }
 
-    /// @brief Register a connection the transport has reported as Connected,
-    /// allocate its `ClientId`, and send the handshake carrying it.
+    /// @brief Who this server lets in, and how many. Set before the first
+    /// connection arrives; an open session with no limit by default.
+    void SetAccess(SessionAccess access) { _access = std::move(access); }
+
+    [[nodiscard]] const SessionAccess &Access() const { return _access; }
+
+    /// @brief Register a connection the transport has reported as Connected and
+    /// allocate its `ClientId`. Nothing is sent until its ClientAuth passes;
+    /// then the handshake carrying the id goes out.
     ///
     /// The client is not eligible for snapshots until it answers with a matching
     /// protocol hash. ClientIds are monotonic from kFirstRemoteClientId and never
     /// reused within a session, so a rejected joiner leaves a gap.
     void AddConnection(Net::ConnectionId connection);
+
+    /// @brief The connections refused since the last call. Each has been sent
+    /// its Reject and is still registered; the caller closes it, lingering so
+    /// the Reject arrives, and removes it.
+    [[nodiscard]] std::vector<Net::ConnectionId> TakeRefused();
+
+    /// @brief The limiter wrong secrets are counted against, for a test that
+    /// moves its clock.
+    [[nodiscard]] AttemptLimiter &Limiter() { return _limiter; }
 
     /// @brief Tell the server which content set it is running, so it can check a
     /// joiner's against it. Flushes every hello that was waiting.
@@ -439,6 +457,7 @@ private:
         /// Assigned at AddConnection, monotonic, never reused. What
         /// `ControlledBy` names and what directed messages address.
         ClientId clientId;
+        bool authed = false;                 ///< Its ClientAuth passed, so it is sent the hello.
         bool ready = false;                  ///< Handshake completed.
         std::deque<SentSnapshot> inFlight;
 
@@ -551,6 +570,8 @@ private:
 
     void SendHello(Connection &connection);
     void SendReject(Connection &connection, RejectReason reason);
+    /// Sends @p reason and queues the connection for its owner to close.
+    void Refuse(Connection &connection, RejectReason reason);
     void SendSnapshot(Connection &connection);
 
     /// This connection's `live ∩ R(c)`, computed once per snapshot and used by
@@ -623,6 +644,10 @@ private:
     /// resets what the client has *seen*, not what it *holds*, and clearing the
     /// sets would turn every entity into a spawn and break despawn detection.
     static void ResetBaselines(Connection &connection);
+    /// Checks, in order, the protocol hash, whether the address must wait, the
+    /// secret and the room left, refusing at the first that fails. A wrong
+    /// secret is never told whether the session is full.
+    void HandleClientAuth(Connection &connection, Core::BitReader &reader);
     void HandleClientHello(Connection &connection, Core::BitReader &reader);
     void HandleAck(Connection &connection, Core::BitReader &reader);
     void HandleInput(Connection &connection, Core::BitReader &reader);
@@ -893,6 +918,13 @@ private:
     /// SetContentSetHash.
     std::uint64_t _contentSetHash      = 0;
     bool _contentSetHashReady = false;
+
+    /// Who is let in; see SetAccess.
+    SessionAccess _access;
+    /// Wrong secrets, per remote address.
+    AttemptLimiter _limiter;
+    /// Refused, not yet taken by TakeRefused.
+    std::vector<Net::ConnectionId> _refused;
 
     /// Who decides what each connection is told about. Null — the default —
     /// means everyone is told everything, on today's exact code path.

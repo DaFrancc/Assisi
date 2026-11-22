@@ -427,6 +427,7 @@ void EditorApp::OnStart()
     // Before any session can exist: quantization is inside the handshake hash, so
     // it has to be settled before the first hello is written.
     Assisi::NetSync::LoadNetworkConfig();
+    _sessions = std::make_unique<Assisi::App::SessionDriver>(GetUniversalEvents(), MakeSessionHooks());
 
     // What the manager needs to turn a level file into a running world on travel.
     // Captured by pointer; every one of these outlives the manager.
@@ -1251,9 +1252,8 @@ void EditorApp::OnFixedUpdate(float dt)
     // handshake it is waiting for, and a session whose host vanished must notice.
     //
     // First in the tick, so a command that arrived for this tick is applied on this
-    // tick rather than the next. It also advances the join state machine, which is
-    // why it takes dt.
-    PollNetSession(dt);
+    // tick rather than the next.
+    PollNetSession();
 
     // **The play state is a flat switch: while it is not Playing, nothing steps
     // anywhere.** Pause freezes the whole session — logic and physics, in every
@@ -1287,21 +1287,13 @@ void EditorApp::OnFixedUpdate(float dt)
                 if (world.state != Assisi::App::WorldState::Active || !world.simulate || world.paused)
                     return;
 
-                if (_networkedPlay)
-                {
-                    _networkedPlay->StepWorld(WorldContext(world, dt, _stepTick));
-                    return;
-                }
-                Assisi::App::StepWorld(WorldContext(world, dt, _stepTick));
+                _sessions->StepWorld(WorldContext(world, dt, _stepTick));
             });
     }
 
     // Last: a snapshot describes the world at the *end* of the tick it is stamped
     // with, so it has to be built after everything that moves it.
-    if (_networkedPlay)
-    {
-        _networkedPlay->EndStep();
-    }
+    _sessions->EndStep();
 }
 
 std::optional<std::int64_t> EditorApp::SourceStamp(std::string_view vpath)
@@ -1391,13 +1383,18 @@ void EditorApp::OnUpdate(float dt)
     // this frame's draws are recorded, and outside any walk over the resident
     // worlds. Do not move this work back to its caller.
 
-    // A joining client builds the host's level; the fixed step that noticed the
-    // handshake runs mid-frame. A failure inside raises _pendingStopPlay, which the
-    // next block picks up on this same frame.
-    if (_pendingJoinBuild)
+    // What game systems asked of ctx.net, and the join: a joining client builds
+    // the host's level here. A joined session that ends raises _pendingStopPlay,
+    // which the next block picks up on this same frame; so does a session the
+    // Game panel started that is gone.
+    _sessions->Update(*_world, dt);
+    if (_netIntent != NetIntent::Standalone && _playState != PlayState::Editing && !_sessions->InSession())
     {
-        _pendingJoinBuild = false;
-        BuildJoinedWorld();
+        if (_netError.empty())
+        {
+            _netError = _sessions->LastProblem().empty() ? "the session ended" : _sessions->LastProblem();
+        }
+        _pendingStopPlay = true;
     }
     if (_pendingStopPlay)
     {
@@ -1519,9 +1516,9 @@ void EditorApp::OnUpdate(float dt)
     // Ordinary mirrored entities only. A blueprint instance's members resolve as
     // the expander places them — they have to, because that path has to work in a
     // build with no editor in it, and this loop is one.
-    if (_networkedPlay != nullptr && _networkedPlay->Session().Client() != nullptr)
+    if (Assisi::NetSync::NetSession *session = NetSessionOrNull(); session != nullptr && session->Client() != nullptr)
     {
-        if (const std::uint64_t revision = _networkedPlay->Session().Client()->StructureRevision();
+        if (const std::uint64_t revision = session->Client()->StructureRevision();
             revision != _netStructureRevision)
         {
             _netStructureRevision = revision;

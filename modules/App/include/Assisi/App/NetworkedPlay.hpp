@@ -52,19 +52,21 @@ public:
     NetworkedPlay(const NetworkedPlay &) = delete;
     NetworkedPlay &operator=(const NetworkedPlay &) = delete;
 
-    /// @brief Hosts on @p port, telling joiners to load @p level.
+    /// @brief Hosts on @p port (0 for the first free one), telling joiners to
+    /// load @p level and letting in whom @p access says.
     ///
     /// The content set is built and applied before this returns, so a blueprint
     /// spawned on the first step, such as the host's own player, goes out as an
     /// instance.
     /// @return false with Session().LastError() set if the port could not be bound.
-    [[nodiscard]] bool Host(std::uint16_t port, NetSync::LevelIdentity level, HostRole role);
+    [[nodiscard]] bool Host(std::uint16_t port, NetSync::LevelIdentity level, HostRole role,
+                            NetSync::SessionAccess access = {});
 
-    /// @brief Joins the host at @p address. The handshake waits for
-    /// ConfirmLevelReady(), once the caller has built the level the host names
-    /// (Session().Handshake()).
+    /// @brief Joins the host at @p address with the session's @p secret. The
+    /// handshake waits for ConfirmLevelReady(), once the caller has built the
+    /// level the host names (Session().Handshake()).
     /// @return false with Session().LastError() set if the connection could not start.
-    [[nodiscard]] bool Join(std::string_view address, std::uint16_t port);
+    [[nodiscard]] bool Join(std::string_view address, std::uint16_t port, std::string_view secret = {});
 
     /// @brief The start of a fixed step: reads the wire, decides which tick this
     /// step is, and, when @p stepping, gives the world's players their controls.

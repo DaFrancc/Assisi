@@ -72,6 +72,12 @@ constexpr const char *kUsage = "Usage: Assisi-GameEditor [options]\n"
                                "  --pie-client            play-in-editor client: a windowed editor that joins\n"
                                "                          --connect at startup and writes nothing the editor\n"
                                "                          that spawned it also owns. Launched by \"Host + N\"\n"
+                               "  --name <text>           --host only: the session's name in a LAN browse\n"
+                               "                          (default \"Assisi server\")\n"
+                               "  --max-players <n>       --host only: the most players who can join\n"
+                               "                          (default 8)\n"
+                               "  --password <text>       --host: let in only those who send it;\n"
+                               "                          --connect: send it to the host\n"
                                "  --spawn <n>             --host only: spawn n moving replicated entities\n"
                                "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
                                "                          until interrupted, the default)\n"
@@ -311,6 +317,29 @@ bool ParseSessionArg(std::string_view arg, int32_t argc, char **argv, int32_t &i
         {
             ReportBadValue("--connect", value, "addr, addr:port or :port");
         }
+        return true;
+    }
+    if (arg == "--name")
+    {
+        ok = TakeValue(argc, argv, i, "--name", value);
+        out.serverOptions.name = std::string(value);
+        return true;
+    }
+    if (arg == "--password")
+    {
+        ok = TakeValue(argc, argv, i, "--password", value);
+        out.serverOptions.password = std::string(value);
+        return true;
+    }
+    if (arg == "--max-players")
+    {
+        int32_t players = 0;
+        ok = TakeValue(argc, argv, i, "--max-players", value) && Game::ParsePositive(value, players);
+        if (!ok && !value.empty())
+        {
+            ReportBadValue("--max-players", value, "a positive integer");
+        }
+        out.serverOptions.maxPlayers = static_cast<std::uint32_t>(players);
         return true;
     }
     if (arg == "--spawn")

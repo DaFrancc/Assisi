@@ -25,6 +25,7 @@ constexpr const char *kProviderDistance = "distance";
 std::vector<std::string> gNeverReplicate;
 RelevancyConfig gRelevancy;
 OwnershipConfig gOwnership;
+bool gAllowDirectConnections = true;
 
 [[nodiscard]] bool BitsInRange(std::uint32_t bits)
 {
@@ -137,6 +138,12 @@ void ApplyPolicy(const NetworkConfig &config)
     relevancy.exitRadius = config.relevancyExitRadius;
     relevancy.dwellTicks = config.relevancyDwellTicks;
     gRelevancy           = relevancy;
+
+    gAllowDirectConnections = config.allowDirectConnections;
+    if (!gAllowDirectConnections)
+    {
+        Core::Log::Info("NetSync: direct connections are off - this game hosts and joins only through a service.");
+    }
 }
 
 /// @brief Whether @p config's ownership settings hand bodies out and back
@@ -201,5 +208,7 @@ const std::vector<std::string> &NeverReplicate() { return gNeverReplicate; }
 const RelevancyConfig &Relevancy() { return gRelevancy; }
 
 const OwnershipConfig &Ownership() { return gOwnership; }
+
+bool AllowDirectConnections() { return gAllowDirectConnections; }
 
 } // namespace Assisi::NetSync
