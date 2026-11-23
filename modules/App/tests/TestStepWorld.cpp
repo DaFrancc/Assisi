@@ -148,21 +148,23 @@ TEST_CASE("A tick stepped live and then replayed runs a system once and a predic
     CHECK(predicted == 2);
 }
 
-TEST_CASE("The engine's command and eye systems step again in a replay, and the rest of its systems do not")
+TEST_CASE("The engine's own systems run once per tick: none of them steps again in a replay")
 {
-    const App::SystemCatalog &catalog = App::SystemCatalog::Instance();
-    for (const std::string_view name : {"CharacterCommand", "CharacterEye"})
+    // The engine drives no character itself, so nothing of its own changes
+    // predicted state; a game marks its own systems predicted. This binary
+    // holds the engine's systems and the tests' own, and of those only the
+    // tests' stand-in for a game's player code is predicted.
+    std::size_t predicted = 0;
+    for (const App::SystemDefinition &definition : App::SystemCatalog::Instance().All())
     {
-        const App::SystemDefinition *definition = catalog.Find(name);
-        REQUIRE(definition != nullptr);
-        CHECK(definition->predicted);
+        if (definition.predicted)
+        {
+            CAPTURE(definition.name);
+            CHECK(definition.name == "TestDrive");
+            ++predicted;
+        }
     }
-    for (const std::string_view name : {"LocalPlayer", "Oscillate", "TimeOfDay"})
-    {
-        const App::SystemDefinition *definition = catalog.Find(name);
-        REQUIRE(definition != nullptr);
-        CHECK_FALSE(definition->predicted);
-    }
+    CHECK(predicted == 1);
 }
 
 TEST_CASE("A replayed step moves only the characters it is given")

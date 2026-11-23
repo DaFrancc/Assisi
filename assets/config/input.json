@@ -19,6 +19,7 @@
     "UiLeft":       ["LeftArrow"],
     "UiNext":       ["Tab"],
     "UiRight":      ["RightArrow"],
-    "UiUp":         ["UpArrow"]
+    "UiUp":         ["UpArrow"],
+    "Walk":         ["LeftAlt"]
   }
 }

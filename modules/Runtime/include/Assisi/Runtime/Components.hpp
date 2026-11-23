@@ -487,10 +487,8 @@ struct Camera
 /// Set each frame by whatever moves the view. The engine applies it when it
 /// draws through the camera and changes nothing else: the Transform, what is
 /// simulated and what is sent stay as they are. The camera still stands where
-/// the blend between fixed steps puts it, `offset` from there. On this
-/// machine's player's camera it takes the place of the turning the engine
-/// draws ahead of the step. Remove it to draw the camera as its Transform has
-/// it again.
+/// the blend between fixed steps puts it, `offset` from there. Remove it to
+/// draw the camera as its Transform has it again.
 ACOMP(transient)
 struct CameraDrawPose
 {

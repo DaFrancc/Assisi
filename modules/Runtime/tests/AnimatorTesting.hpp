@@ -28,6 +28,9 @@ namespace Assisi::Runtime::Testing
 
 inline constexpr std::string_view kModel = "quaternius/UAL1/UAL1.glb";
 inline constexpr std::string_view kSpace = "quaternius/UAL1/Locomotion.ablnd";
+/// The same blend space as the first-person template ships it, beside its
+/// animator, which is the one the sample game's player plays.
+inline constexpr std::string_view kTemplateSpace = "animation/Locomotion.ablnd";
 inline constexpr std::string_view kMaterial = "quaternius/UAL1/UAL1_M_Joints.amat";
 inline constexpr std::string_view kClips = "quaternius/UAL1/UAL1_animations/";
 
@@ -53,6 +56,7 @@ class TestTree final : public Core::AssetCookContext
         REQUIRE(Core::AssetSystem::SetRoot(std::filesystem::path{ASSISI_SOURCE_ASSET_ROOT}).has_value());
         Name(std::string{kModel}, "mesh");
         Name(std::string{kSpace}, "blend space");
+        Name(std::string{kTemplateSpace}, "blend space");
         Name(std::string{kMaterial}, "reflected");
         for (const std::string_view clip : {"Idle_Loop", "Walk_Loop", "Jump_Start", "Jump_Loop", "Jump_Land",
                                             "Pistol_Aim_Neutral", "Hit_Chest", "Crouch_Idle_Loop", "Crouch_Fwd_Loop",

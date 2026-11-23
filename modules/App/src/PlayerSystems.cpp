@@ -7,16 +7,12 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/EnumLabels.hpp>
-#include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Mondrian/Ui.hpp>
-#include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
 #include <Assisi/NetSync/NetComponents.hpp>
 
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -87,77 +83,7 @@ glm::vec2 MoveFromKeys(const Window::ActionMap &actions, const Window::InputCont
     return move;
 }
 
-/// Tilts every camera parented to @p character up by @p radians, within
-/// kMaxPitchDegrees of level.
-void PitchCameras(ECS::Scene &scene, ECS::Entity character, float radians)
-{
-    for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
-    {
-        (void)camera;
-        if (parent.parent != character)
-        {
-            continue;
-        }
-        ECS::Transform *transform = scene.GetMut<ECS::Transform>(child);
-        if (transform == nullptr)
-        {
-            continue;
-        }
-        transform->rotation = Tilted(transform->rotation, radians);
-    }
-}
-
-/// Turns @p character left by @p radians.
-void TurnCharacter(ECS::Scene &scene, ECS::Entity character, float radians)
-{
-    ECS::Transform *transform = scene.GetMut<ECS::Transform>(character);
-    if (transform == nullptr)
-    {
-        return;
-    }
-    transform->rotation = Turned(transform->rotation, radians);
-}
-
-/// @p move, in the character's frame, as a world direction along the ground of
-/// the same length: looking down must not walk a character into the floor.
-glm::vec3 WorldMove(const ECS::Scene &scene, ECS::Entity character, glm::vec2 move)
-{
-    const float length = glm::min(glm::length(move), 1.f);
-    if (length <= 0.f)
-    {
-        return glm::vec3{0.f};
-    }
-    glm::vec3 world{move.x, 0.f, -move.y};
-    if (const ECS::Transform *transform = scene.Get<ECS::Transform>(character))
-    {
-        world = transform->rotation * world;
-    }
-    world.y = 0.f;
-    if (glm::dot(world, world) <= 0.f)
-    {
-        return glm::vec3{0.f};
-    }
-    return glm::normalize(world) * length;
-}
-
 } // namespace
-
-glm::quat Turned(const glm::quat &facing, float radians)
-{
-    return glm::normalize(glm::angleAxis(radians, glm::vec3(0.f, 1.f, 0.f)) * facing);
-}
-
-glm::quat Tilted(const glm::quat &eye, float radians)
-{
-    // Rebuilt from an accumulated angle rather than multiplied in, so the clamp
-    // is a clamp: composing a delta each step and then limiting the result lets
-    // it creep past the limit and stick there.
-    const glm::vec3 forward = eye * glm::vec3(0.f, 0.f, -1.f);
-    const float current = std::asin(glm::clamp(forward.y, -1.f, 1.f));
-    const float limit = glm::radians(kMaxPitchDegrees);
-    const float pitch = glm::clamp(current + radians, -limit, limit);
-    return glm::normalize(glm::angleAxis(pitch, glm::vec3(1.f, 0.f, 0.f)));
-}
 
 std::vector<std::string> PlayerActionNames()
 {
@@ -290,47 +216,6 @@ void PlayerGatherSystem(SystemContext &ctx)
     }
 }
 
-void CharacterCommandSystem(SystemContext &ctx)
-{
-    ECS::Scene &scene = ctx.world.scene;
-
-    // Collected first: turning writes Transforms, which a query over these
-    // components does not walk, but pitching walks another query inside.
-    std::vector<ECS::Entity> commanded;
-    for (auto [entity, controls, intent] : scene.Query<PlayerInput, Physics::CharacterIntent>())
-    {
-        (void)controls;
-        (void)intent;
-        commanded.push_back(entity);
-    }
-
-    for (const ECS::Entity entity : commanded)
-    {
-        PlayerInput &controls = *scene.GetMut<PlayerInput>(entity);
-        if (controls.lookYaw != 0.f)
-        {
-            TurnCharacter(scene, entity, controls.lookYaw);
-        }
-        if (controls.lookPitch != 0.f)
-        {
-            PitchCameras(scene, entity, controls.lookPitch);
-        }
-
-        Physics::CharacterIntent &intent = *scene.GetMut<Physics::CharacterIntent>(entity);
-        intent.move = WorldMove(scene, entity, controls.move);
-        intent.stance =
-            controls.held.Has(PlayerAction::Crouch) ? Physics::Stance::Crouching : Physics::Stance::Standing;
-        intent.sprint = controls.held.Has(PlayerAction::Sprint);
-        // OR rather than assign: the step clears the request once it has taken
-        // it, and a press must survive steps that could not jump yet.
-        intent.jump = intent.jump || controls.pressed.Has(PlayerAction::Jump);
-
-        controls.lookYaw = 0.f;
-        controls.lookPitch = 0.f;
-        controls.pressed = PlayerButtons{};
-    }
-}
-
 void ClearUsedControls(ECS::Scene &scene)
 {
     for (auto [entity, controls] : scene.Query<Mut<PlayerInput>>())
@@ -339,24 +224,6 @@ void ClearUsedControls(ECS::Scene &scene)
         controls.lookYaw = 0.f;
         controls.lookPitch = 0.f;
         controls.pressed = PlayerButtons{};
-    }
-}
-
-void PlayerCameraSystem(SystemContext &ctx)
-{
-    ECS::Scene &scene = ctx.world.scene;
-    for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
-    {
-        if (!scene.Has<Player>(parent.parent))
-        {
-            continue;
-        }
-        const bool active = scene.Has<LocalPlayer>(parent.parent);
-        // Compared first: a write stamps the camera as changed every frame.
-        if (camera.isActive != active)
-        {
-            scene.GetMut<Runtime::Camera>(child)->isActive = active;
-        }
     }
 }
 

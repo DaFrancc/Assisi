@@ -520,8 +520,8 @@ public:
     ///
     /// A replayed step runs only predicted systems, so a value another system
     /// wrote into the intent, such as a speed scale, would otherwise be
-    /// stepped again as it is now rather than as it was then.
-    /// What CharacterCommand writes it writes again over this, the same.
+    /// stepped again as it is now rather than as it was then. What a
+    /// predicted system writes into it is written again over this, the same.
     void RestoreIntentsAt(std::uint64_t tick);
 
     /// @brief How every kinematic body moved through the step of @p tick, for

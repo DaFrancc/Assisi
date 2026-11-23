@@ -1,10 +1,10 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "AnimatorKeys.hpp"
 
-#include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AnimatorParams.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -50,13 +50,14 @@ void AnimatorKeysSystem(Assisi::App::SystemContext &ctx)
     static Assisi::Runtime::AnimatorParam<bool> groundedParam{"grounded"};
     static Assisi::Runtime::AnimatorTrigger jump{"jump"};
 
-    // The params live in each Animator's run, which is never sent. A player's
-    // body is PlayerAnimation's, which follows what the character does.
+    // The params live in each Animator's run, which is never sent. A
+    // character's body is the template's BodyAnimation's, which follows what
+    // the character does: the same test it makes, so no body is fed by both.
     Assisi::ECS::Scene &scene = ctx.world.scene;
     for (auto [entity, run] : scene.Query<Mut<Assisi::Runtime::AnimatorRun>>())
     {
         if (const Assisi::ECS::Parent *parent = scene.Get<Assisi::ECS::Parent>(entity);
-            parent != nullptr && scene.Has<Assisi::App::Player>(parent->parent))
+            parent != nullptr && scene.Has<Assisi::Physics::CharacterState>(parent->parent))
         {
             continue;
         }

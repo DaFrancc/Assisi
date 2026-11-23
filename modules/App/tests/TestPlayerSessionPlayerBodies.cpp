@@ -6,9 +6,10 @@
 ///        state it was sent.
 ///
 /// The players' bodies run an animator shaped like the sample game's player,
-/// on a skeleton built in code, fed from CharacterState the way the sample's
-/// PlayerAnimation system feeds it. The sample's own system lives in the game,
-/// which tests don't link, so this feeds the same params from the same state.
+/// on a skeleton built in code, fed from CharacterState the way the
+/// first-person template's BodyAnimation system feeds it. That system is game
+/// code, which engine tests don't link, so this feeds the same params from the
+/// same state.
 
 #include "PlayerSessionTesting.hpp"
 
@@ -108,7 +109,7 @@ constexpr float kClipDegrees = 20.f;
 /// What the GPU would have given the mesh; any id but the unbound one.
 constexpr uint32_t kMeshId = 1;
 
-/// As the sample's PlayerAnimation: how long speed eases (s), and how long a
+/// As the template's BodyAnimation: how long speed eases (s), and how long a
 /// character is off the ground before it counts as airborne (s).
 constexpr float kSpeedEase = 0.1f;
 constexpr float kStairFlicker = 0.1f;
@@ -210,7 +211,7 @@ void BindMeshes(Machine &machine, const Character &character)
 }
 
 /// Sets every player's body's params on @p machine from its character's state,
-/// as the sample's PlayerAnimation system does.
+/// as the template's BodyAnimation system does.
 void FeedPlayers(Machine &machine)
 {
     static Runtime::AnimatorParam<float> speed{"speed"};
@@ -309,7 +310,7 @@ void Drive(Machine &machine, glm::vec2 move, App::PlayerButtons held)
 }
 
 /// Gives every machine in @p session the mesh and its players' params, as its
-/// GPU cache and PlayerAnimation would, once a frame.
+/// GPU cache and BodyAnimation would, once a frame.
 void Animate(Session &session, const Character &character)
 {
     for (const std::unique_ptr<Machine> &machine : session.machines)

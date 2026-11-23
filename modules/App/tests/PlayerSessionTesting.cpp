@@ -81,7 +81,8 @@ void WritePlayerBlueprint(const std::filesystem::path &root, std::string_view mo
 
 Machine::Machine(NetSync::ReplicationConfig config, std::vector<std::string> extra) : play(world, std::move(config))
 {
-    std::vector<std::string> systems{"LocalPlayer", "CharacterCommand"};
+    // TestDrive stands in for a game's own player code (TestSystems.hpp).
+    std::vector<std::string> systems{"LocalPlayer", "TestDrive"};
     systems.insert(systems.end(), extra.begin(), extra.end());
     REQUIRE(App::WorldManager::ApplySystems(world, systems, "players"));
 }

@@ -108,7 +108,7 @@ TEST_CASE("Animator compile: the sample game's player compiles against the model
     const std::expected<Runtime::AnimatorGraph, std::string> compiled = Compile(source);
     REQUIRE_MESSAGE(compiled.has_value(), compiled.error());
     REQUIRE(compiled->layers.size() == 1);
-    // A jump and a landing, from counts, and a gesture, from the bell.
+    // A jump and a landing, from counts, and a gesture, which the game fires.
     CHECK(compiled->triggerSlots.size() == 3);
 }
 

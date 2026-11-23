@@ -238,8 +238,8 @@ void PlayerSession::GivePlayers(NetSync::NetSession &session, World &world)
         {
             if (_warned.insert(client.value).second)
             {
-                Core::Log::Warn("Players: no character for client {}: the level has no unclaimed Player and no "
-                                "PlayerStart to make one at.",
+                Core::Log::Warn("Players: no character for client {}: the level has no unclaimed Player, and no "
+                                "PlayerStart whose blueprint makes one.",
                                 client.value);
             }
             continue;

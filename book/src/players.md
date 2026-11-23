@@ -1,26 +1,85 @@
 # Players
 
 A **player** is a character that a person controls with a keyboard and mouse,
-as against one an AI or a script moves. The engine drives a player's character
-from the person's **controls**, the same way whether the game is played alone or
-over a network.
+as against one an AI or a script moves.
+
+The engine gives every game the parts it can't do without:
+- which character is the player on this machine
+- the player's **controls**, read from the keyboard and mouse
+- the [character controller](physics-character.md) that moves the capsule
+- the cursor
+
+What a game does with the controls, such as turning, walking, which camera to
+look through and how the body animates, is the game's own code.
+
+You don't have to write that code from nothing. The **first-person template**,
+in `templates/first-person/`, is a complete first-person player you copy into
+your game and then change as you like. Assisi's sample game plays it.
+
+## The first-person template
+
+| File | What it does |
+|---|---|
+| `src/Player/Look.hpp`, `Look.cpp` | Turns the character left and right and tilts its camera up and down, and draws the view following the mouse every frame. |
+| `src/Player/Movement.hpp`, `Movement.cpp` | Turns the controls into where the character goes, and whether it jumps, crouches or sprints. Holding Walk walks instead of jogging. |
+| `src/Player/CameraRig.hpp`, `CameraRig.cpp` | Keeps the camera at the character's eye height, and makes this machine's player's camera the one drawn. |
+| `src/Player/BodyAnimation.hpp`, `BodyAnimation.cpp` | Feeds the body's animator from what the character does, and plays a gesture when your game asks. |
+| `src/Player/PlayerActions.hpp` | The Walk button, and where your own buttons go. |
+| `assets/blueprints/Player.abp` | The player: the character, its camera and its body. |
+| `assets/animation/Player.sgl`, `Locomotion.ablnd` | The body's animator and the blend space it walks and runs on. |
+| `README.md` | What to copy where. |
+
+Every file opens with a comment saying what it is for and what to change.
+
+### Starting a project from it
+
+1. Copy `templates/first-person/src/Player/` into your game's `src/`, so you
+   have `src/Player/Look.hpp` and the rest. The game's build picks up every file
+   under `src/`.
+2. Copy everything under `templates/first-person/assets/` into your game's
+   `assets/`, keeping the folders.
+3. Add the Walk button to the `actions` in your `assets/config/input.json`:
+
+   ```json
+   "Walk": ["LeftAlt"]
+   ```
+
+4. Get the character model. The player's body is the `UAL1` character from
+   Quaternius's **Universal Animation Library**, which is free to download from
+   Quaternius but isn't part of the engine or the template. Put `UAL1.glb` in
+   `assets/quaternius/UAL1/`. Then, in the asset browser, right-click it and
+   choose **Extract animations** (see [Playing a clip](animation.md#playing-a-clip)).
+
+   Then point the template at what you imported. The blueprint and the blend
+   space name the model and its clips by the ids they had where the template
+   was made, and your import gives them new ones:
+   - In `blueprints/Player.abp`, set the `Body` entity's `MeshRenderer` `mesh`
+     to `quaternius/UAL1/UAL1.glb`.
+   - In `animation/Locomotion.ablnd`, set each point's `Clip` to the extracted
+     clip of the same name.
+
+   The animator names its clips by path and needs nothing. Until the model is
+   set up, the body is drawn as the
+   [ERROR sign](rendering-models.md#the-error-sign) and everything else works.
+   This is a manual step for now: the model is a stand-in, and once we replace
+   it with one of our own, the template will carry everything it needs.
+5. Place `blueprints/Player.abp` in a level, or for a networked game, give a
+   `PlayerStart` that blueprint (see [Players](multiplayer.md#players)).
+
+Press Play: the mouse is captured as soon as the level has loaded, W, A, S and
+D walk, Left Alt held walks slowly, the mouse looks around, Space jumps, Left
+Control crouches and Left Shift sprints.
+
+From then on the copy is yours. The engine never changes your copy when the
+template changes.
 
 ## The player blueprint
 
-`blueprints/Player.abp` is a complete player. Place it in a level and press Play:
-the mouse is captured as soon as the level has loaded, W, A, S and D walk, the
-mouse looks around, Space jumps, Left Control crouches and Left Shift sprints.
-
-`blueprints/TestPlayer.abp` is the same player without the two systems that
-capture the mouse, so the cursor stays free. The engine's test levels use it,
-for example to run several players in one editor without every window grabbing
-the pointer. Use `Player.abp` in your own levels.
-
-It holds three entities:
+`blueprints/Player.abp` holds three entities:
 
 | Entity | Components |
 |---|---|
-| `Player` | `Character`, `CharacterLocomotion`, `ArcadeMovement`, `Player`, `Replicated` |
+| `Player` | `Character`, `CharacterLocomotion`, `ArcadeMovement`, `Player`, `Look`, `Movement`, `ViewRig`, `Replicated` |
 | `Camera` | `Camera`, `Parent` (the `Player`), `Replicated` |
 | `Body` | `MeshRenderer`, `SkinnedMesh`, `AnimationPlayer`, `Animator`, `Parent` (the `Player`), `Replicated` |
 
@@ -29,8 +88,12 @@ It holds three entities:
   and jumps, and how it speeds up and slows down. Swap `ArcadeMovement` for
   `SourceMovement` to move like Half-Life 2 instead.
 - **`Player`** marks the character as one a person controls. A character
-  without it is never driven by the keyboard, so put it on your player and leave
-  it off your NPCs.
+  without it is never given controls, so put it on your player and leave it off
+  your NPCs.
+- **`Look`**, **`Movement`** and **`ViewRig`** are the template's own:
+  - `Look` sets how far up and down the view may tilt.
+  - `Movement` sets how much Walk slows a full move.
+  - `ViewRig` names the camera that tilts and sits at eye height.
 - **`Body`** is what other players see: an animated character, standing in the
   capsule and facing where the player faces. Its `Animator` runs
   `animation/Player.sgl`, which walks, runs, crouches, jumps and lands as the
@@ -38,10 +101,8 @@ It holds three entities:
   [Players' bodies animate on every machine](multiplayer.md#players-bodies-animate-on-every-machine)).
   Its `MeshRenderer` has **`hiddenFromOwnCamera`** set, so it isn't drawn
   through a camera from the same blueprint. You don't see the inside of your
-  own body, but everyone else sees you, and your shadow is still cast. The
-  model is a test character that isn't kept in the repository; without it the
-  body is drawn as the [ERROR sign](rendering-models.md#the-error-sign). To use
-  your own, set the `MeshRenderer`'s `mesh` to your model and the `Animator`'s
+  own body, but everyone else sees you, and your shadow is still cast. To use
+  your own model, set the `MeshRenderer`'s `mesh` to it and the `Animator`'s
   `machine` to a `.sgl` file written for its skeleton.
 - **`Replicated`** sends the entities to the other machines in a
   [networked game](multiplayer.md). It does nothing in a game played alone.
@@ -49,17 +110,24 @@ It holds three entities:
 The blueprint lists the systems that drive it, so any level it is placed in runs
 them:
 
-| System | What it does |
-|---|---|
-| `LocalPlayer` | Decides which player is this machine's: every `Player` in a game played alone, the one this machine controls in a networked game. |
-| `PlayerGather` | Fills in this machine's player's controls from the keyboard and mouse, in `PreUpdate`, so the frame's fixed steps use what this frame read. |
-| `CharacterCommand` | Turns each player's controls into where its character faces and what it is asked to do. |
-| `PlayerCamera` | Makes this machine's player's camera the active one. |
-| `CharacterEye` | Keeps the camera at the character's eye height. |
-| `PlayerAnimation` | Sets each player's body's animator params from what its character does. A system of the sample game's, in `apps/game/src/PlayerAnimation.cpp`. |
-| `Animators`, `AnimationPlayers` | Run each body's animator and play what it chooses (see [Animators](animator.md)). |
-| `CaptureCursor` | Captures the mouse once the level has loaded (see [Capturing the cursor](input.md#capturing-the-cursor)). Not in `TestPlayer.abp`. |
-| `CursorToggle` | Captures the mouse again on a left click after a menu let it go. Not in `TestPlayer.abp`. |
+| System | Whose | What it does |
+|---|---|---|
+| `LocalPlayer` | Engine | Decides which player is this machine's: every `Player` in a game played alone, the one this machine controls in a networked game. |
+| `PlayerGather` | Engine | Fills in this machine's player's controls from the keyboard and mouse, in `PreUpdate`, so the frame's fixed steps use what this frame read. |
+| `Look` | Template | Turns the character and tilts its camera, in `FixedUpdate`. |
+| `LookAhead` | Template | Draws this machine's player's view turned as far as the mouse has moved, every frame. |
+| `Movement` | Template | Fills in the character's `CharacterIntent` from the controls, in `FixedUpdate`. |
+| `EyeHeight` | Template | Keeps the camera at the character's eye height. |
+| `PlayerView` | Template | Makes this machine's player's camera the active one. |
+| `BodyAnimation` | Template | Sets each body's animator params from what its character does. |
+| `Animators`, `AnimationPlayers` | Engine | Run each body's animator and play what it chooses (see [Animators](animator.md)). |
+| `CaptureCursor` | Engine | Captures the mouse once the level has loaded (see [Capturing the cursor](input.md#capturing-the-cursor)). |
+| `CursorToggle` | Engine | Captures the mouse again on a left click after a menu let it go. |
+
+The sample game also has `blueprints/TestPlayer.abp`, the same player without
+`CaptureCursor` and `CursorToggle`, so the cursor stays free. Its test levels
+use it, for example to run several players in one editor without every window
+grabbing the pointer.
 
 ## A player's controls
 
@@ -90,6 +158,10 @@ The machine whose player it is fills `PlayerInput` in. In a networked game the
 host fills in a remote player's from what that player's machine sends, so the
 same code reads every player's controls on the host.
 
+After every system of a fixed step has run, the engine clears the turning and
+the presses, so every system of the step sees the same ones and a press is seen
+by exactly one step. What is held stays: it is what the keyboard says now.
+
 The `LocalPlayer` component marks this machine's player, for a system of your
 own that should only act on it, such as a heads-up display.
 
@@ -113,24 +185,29 @@ the character owned can't be found from it any more, so have the screen say
 which one it is (see
 [Screens an entity owns](ui-run-time.md#screens-an-entity-owns)).
 
-Turning is applied by the fixed step, 60 times a second, but your player's
-camera doesn't wait for it: each frame it is drawn turned as far as the mouse
-has moved so far, so aiming keeps up with the frame rate however fast that is.
-Only the camera is drawn ahead. Where the character faces, what the host is
-sent, and what everyone else sees all come from the step.
+### Looking ahead of the step
+
+Turning is applied by the fixed step, 60 times a second. A view turned only
+there would turn in steps on a faster screen. The template's `LookAhead`
+draws your player's camera turned on by the turning the step hasn't used yet,
+every frame, by setting its `CameraDrawPose` (see
+[Moving the view every frame](rendering-camera.md#moving-the-view-every-frame)).
+Only the drawing turns. Where the character faces, what the host is sent, and
+what everyone else sees all come from the step.
 
 ## Your own actions
 
 There are 32 player actions. The engine uses the first three; the other 29 belong
-to your game. Take one with `GameAction` and give it the name of the input
-action that presses it, in a header under your game's `src/`:
+to your game. The template's `src/Player/PlayerActions.hpp` takes the first of
+them for Walk. Add yours beside it, each with the name of the input action that
+presses it:
 
 ```cpp
-#include <Assisi/App/PlayerComponents.hpp>
-
-inline constexpr Assisi::App::PlayerAction Aim = Assisi::App::GameAction(0);
+inline constexpr Assisi::App::PlayerAction Walk = Assisi::App::GameAction(0);
+inline constexpr Assisi::App::PlayerAction Aim = Assisi::App::GameAction(1);
 
 inline constexpr Assisi::App::PlayerActionName kPlayerActions[] = {
+    {"Walk", Walk},
     {"Aim", Aim},
 };
 ASSISI_PLAYER_ACTIONS(kPlayerActions);
@@ -140,7 +217,7 @@ ASSISI_PLAYER_ACTIONS(kPlayerActions);
 the engine's own:
 
 ```cpp
-ASYSTEM(FixedUpdate, name = "Aiming", before = "CharacterCommand")
+ASYSTEM(FixedUpdate, name = "Aiming", predicted, after = "LocalPlayer")
 void AimingSystem(Assisi::App::SystemContext &ctx)
 {
     for (auto [entity, controls] : ctx.world.scene.Query<Assisi::App::PlayerInput>())
@@ -154,14 +231,11 @@ void AimingSystem(Assisi::App::SystemContext &ctx)
 The build fails if two actions share a slot or a name, or if `GameAction` is
 given a number past the last slot.
 
-Read controls in a **`FixedUpdate`** system that runs `before = "CharacterCommand"`.
-`CharacterCommand` clears `pressed` and the turning once the step has used them,
-so a press is seen by exactly one step, and a system after it would never see
-one.
+Read controls in a **`FixedUpdate`** or **`PostFixedUpdate`** system that runs
+`after = "LocalPlayer"`, so a character that has just become this machine's
+player has its controls before the step that first reads them.
 
 In a networked game a client sometimes runs a step again, to correct what it
-predicted (see [Your systems in multiplayer](multiplayer.md#your-systems-in-multiplayer)).
-Your controls system does not run again: it runs once per step, live. What it
-wrote into a character's `CharacterIntent` is put back for each step that runs
-again, so a system that steers a character through its intent needs nothing
-more.
+predicted. A system that changes what the player's machine predicts, as
+`Look` and `Movement` do, is marked `predicted` so that it runs again too (see
+[Your systems in multiplayer](multiplayer.md#your-systems-in-multiplayer)).

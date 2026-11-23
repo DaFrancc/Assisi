@@ -1,0 +1,10 @@
+{
+  "guid": "47bb7700-e440-48a5-b785-66f319ac8162",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "blend space"
+    }
+  ],
+  "version": 1
+}

@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Bell.hpp"
 
-#include "PlayerAnimation.hpp"
+#include "Player/BodyAnimation.hpp"
 
 #include <Assisi/App/AudioSystems.hpp>
 #include <Assisi/App/Network.hpp>

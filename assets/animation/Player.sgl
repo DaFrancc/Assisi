@@ -1,7 +1,11 @@
-// The sample game's player: it walks, runs and sprints on the locomotion blend
-// space, crouches, jumps, falls and lands, and plays a gesture when it rings
-// the bell on the ground. The game's PlayerAnimation system sets the params
-// from the character's CharacterState on every machine.
+// The first-person template's player: it walks, runs and sprints on the
+// locomotion blend space, crouches, jumps, falls and lands, and plays a gesture
+// when the game fires `interact`. The template's BodyAnimation system sets the
+// other params from the character's CharacterState on every machine.
+//
+// It plays the clips extracted from Quaternius's Universal Animation Library,
+// which is not part of the template: the template's README says where to get
+// it and where it goes.
 use animation;
 skeleton "quaternius/UAL1/UAL1.glb";
 
@@ -14,7 +18,7 @@ param jump: trigger;
 param land: trigger;
 param interact: trigger;
 
-const locomotion_space = "quaternius/UAL1/Locomotion.ablnd";
+const locomotion_space = "animation/Locomotion.ablnd";
 const crouch_idle_clip = "quaternius/UAL1/UAL1_animations/Crouch_Idle_Loop.glb";
 const crouch_walk_clip = "quaternius/UAL1/UAL1_animations/Crouch_Fwd_Loop.glb";
 const jump_clip = "quaternius/UAL1/UAL1_animations/Jump_Start.glb";
