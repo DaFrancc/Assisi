@@ -69,9 +69,9 @@ struct SystemDefinition
     /// apply the same keypresses in every one.
     bool activeWorldOnly = false;
 
-    /// Steps again when a client steps a tick again. Only on the engine's own
-    /// FixedUpdate and PostFixedUpdate systems, which reflectgen enforces.
-    bool replayed = false;
+    /// Steps again when a client steps a tick again. Only on FixedUpdate and
+    /// PostFixedUpdate systems, which reflectgen enforces.
+    bool predicted = false;
 
     /// Where in its phase the system runs: `first`, `last`, or neither.
     SystemPlacement placement = SystemPlacement::Middle;

@@ -126,26 +126,26 @@ struct RemoteWatch
 
 } // namespace
 
-TEST_CASE("A tick stepped live and then replayed runs a game's systems once and a Replayed one twice")
+TEST_CASE("A tick stepped live and then replayed runs a system once and a predicted one twice")
 {
     App::World world{Physics::NoCollisionAssets()};
     Core::EventQueue universal{Core::EventScope::Universal};
 
     std::int32_t before = 0;
     std::int32_t after = 0;
-    std::int32_t replayed = 0;
+    std::int32_t predicted = 0;
     world.systems.Register(App::SystemPhase::FixedUpdate, "Before", [&before](App::SystemContext &) { ++before; });
     world.systems.Register(App::SystemPhase::PostFixedUpdate, "After", [&after](App::SystemContext &) { ++after; });
-    world.systems.Register(App::SystemPhase::FixedUpdate, "Replayed", [&replayed](App::SystemContext &)
-                           { ++replayed; })
-    .Replayed();
+    world.systems.Register(App::SystemPhase::FixedUpdate, "Predicted", [&predicted](App::SystemContext &)
+                           { ++predicted; })
+    .Predicted();
 
     App::StepWorld(ContextFor(world, universal, /*replaying=*/ false));
     App::StepWorld(ContextFor(world, universal, /*replaying=*/ true));
 
     CHECK(before == 1);
     CHECK(after == 1);
-    CHECK(replayed == 2);
+    CHECK(predicted == 2);
 }
 
 TEST_CASE("The engine's command and eye systems step again in a replay, and the rest of its systems do not")
@@ -155,13 +155,13 @@ TEST_CASE("The engine's command and eye systems step again in a replay, and the 
     {
         const App::SystemDefinition *definition = catalog.Find(name);
         REQUIRE(definition != nullptr);
-        CHECK(definition->replayed);
+        CHECK(definition->predicted);
     }
     for (const std::string_view name : {"LocalPlayer", "Oscillate", "TimeOfDay"})
     {
         const App::SystemDefinition *definition = catalog.Find(name);
         REQUIRE(definition != nullptr);
-        CHECK_FALSE(definition->replayed);
+        CHECK_FALSE(definition->predicted);
     }
 }
 
@@ -215,7 +215,7 @@ TEST_CASE("A replay steps only what it replays, and a system still reads the res
     RemoteWatch watch{.remote = remote};
     world.systems.Register(App::SystemPhase::FixedUpdate, "Watch",
                            [&watch](App::SystemContext &ctx) { watch.Step(ctx); })
-    .Replayed();
+    .Predicted();
 
     for (std::int32_t i = 0; i < kSettleSteps; ++i)
     {

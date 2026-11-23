@@ -185,9 +185,9 @@ struct SystemContext
     bool animates = true;
 
     /// True while a client steps again a tick it has already stepped, to bring
-    /// what it predicted in line with what the host sent. Only the engine's own
-    /// fixed-step systems marked `replayed` run then; every other system runs
-    /// once per tick, live. Always false in the per-frame and one-shot phases.
+    /// what it predicted in line with what the host sent. Only the fixed-step
+    /// systems marked `predicted` run then; every other system runs once per
+    /// tick, live. Always false in the per-frame and one-shot phases.
     bool replaying = false;
 
     /// Where a system pushes and reads events: `world`'s own queue, or
@@ -341,11 +341,10 @@ class SystemRegistry
         /// @brief Run this system on a replayed step (SystemContext::replaying)
         /// too; every other system is skipped there.
         ///
-        /// For the engine's own systems that step the predicted character again
-        /// from its recorded controls, whose every effect a replay puts back.
-        /// Meaningless outside FixedUpdate and PostFixedUpdate, which are all a
-        /// replay runs.
-        SystemHandle &Replayed();
+        /// For systems that change predicted state, which a replay puts back
+        /// and then needs stepped again. Meaningless outside FixedUpdate and
+        /// PostFixedUpdate, which are all a replay runs.
+        SystemHandle &Predicted();
 
         /// @brief Skip this system while the scene holds none of @p Ts.
         ///
@@ -381,17 +380,17 @@ class SystemRegistry
         /// Non-template half of RequireAny, so the fold above stays a one-liner.
         void Require(Core::Reflect::ComponentId id);
 
-        SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setReplayed,
+        SystemHandle(AddDependency addDependency, SetFlag setActiveOnly, SetFlag setPredicted,
                      SetPlacement setPlacement, AddRequirement addRequirement)
             : _addDependency(std::move(addDependency)), _setActiveOnly(std::move(setActiveOnly)),
-            _setReplayed(std::move(setReplayed)), _setPlacement(std::move(setPlacement)),
+            _setPredicted(std::move(setPredicted)), _setPlacement(std::move(setPlacement)),
             _addRequirement(std::move(addRequirement))
         {
         }
 
         AddDependency _addDependency;
         SetFlag _setActiveOnly;
-        SetFlag _setReplayed;
+        SetFlag _setPredicted;
         SetPlacement _setPlacement;
         AddRequirement _addRequirement;
     };
@@ -503,8 +502,8 @@ class SystemRegistry
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool activeOnly = false;
-            /// Set by SystemHandle::Replayed(). Always false for render entries.
-            bool replayed = false;
+            /// Set by SystemHandle::Predicted(). Always false for render entries.
+            bool predicted = false;
             /// Set by SystemHandle::First() and Last().
             SystemPlacement placement = SystemPlacement::Middle;
             /// Cleared by SetEnabled to skip this system at dispatch while leaving
@@ -552,11 +551,11 @@ class SystemRegistry
 
     /// @brief Append a system to @p phase and return a handle bound to its slot.
     /// @p supportsActiveOnly is false for the render phase, whose handles reject
-    /// ActiveWorldOnly(); @p supportsReplayed is true only for the fixed-step
-    /// phases, whose handles alone take Replayed().
+    /// ActiveWorldOnly(); @p supportsPredicted is true only for the fixed-step
+    /// phases, whose handles alone take Predicted().
     template <typename Ctx>
     SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn, bool supportsActiveOnly,
-                     bool supportsReplayed);
+                     bool supportsPredicted);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with
     /// name/after/before/placement.

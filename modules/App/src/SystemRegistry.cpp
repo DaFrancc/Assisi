@@ -239,17 +239,17 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
     return *this;
 }
 
-SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Replayed()
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Predicted()
 {
-    if (!_setReplayed)
+    if (!_setPredicted)
     {
         // Only the fixed-step phases are ever run again for a tick, so anywhere
         // else the author expected a second run that can never happen.
-        Core::Log::Error("SystemRegistry: Replayed() means something only on a FixedUpdate or "
+        Core::Log::Error("SystemRegistry: Predicted() means something only on a FixedUpdate or "
                          "PostFixedUpdate system and was ignored.");
         return *this;
     }
-    _setReplayed();
+    _setPredicted();
     return *this;
 }
 
@@ -294,7 +294,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                                                  std::string_view name,
                                                  std::function<void(Ctx &)> fn,
                                                  bool supportsActiveOnly,
-                                                 bool supportsReplayed)
+                                                 bool supportsPredicted)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -320,7 +320,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
                              .after      = {},
                              .before     = {},
                              .activeOnly = false,
-                             .replayed   = false,
+                             .predicted  = false,
                              .placement  = SystemPlacement::Middle,
                              .enabled    = true,
                              .ran        = false,
@@ -342,9 +342,9 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
             [phasePtr, entryIndex]
             { phasePtr->entries[entryIndex].activeOnly = true; })
                            : SystemHandle::SetFlag{},
-        supportsReplayed ? SystemHandle::SetFlag([phasePtr, entryIndex]
-                                                 { phasePtr->entries[entryIndex].replayed = true; })
-                         : SystemHandle::SetFlag{},
+        supportsPredicted ? SystemHandle::SetFlag([phasePtr, entryIndex]
+                                                  { phasePtr->entries[entryIndex].predicted = true; })
+                          : SystemHandle::SetFlag{},
         [phasePtr, entryIndex](SystemPlacement placement)
         {
             Place(phasePtr->entries[entryIndex], placement);
@@ -374,7 +374,7 @@ bool Replaying(const RenderContext &) { return false; }
 struct Skips
 {
     bool activeOnly = false; ///< The world is not the active one.
-    bool replaying = false;  ///< The step is a replay, which runs only replayed entries.
+    bool replaying = false;  ///< The step is a replay, which runs only predicted entries.
 };
 
 /// Whether @p entry runs this dispatch: not muted, not gated out by the world
@@ -391,7 +391,7 @@ bool ShouldRun(const Entry &entry, Skips skips, const ECS::Scene &gateScene)
     {
         return false;
     }
-    if ((skips.activeOnly && entry.activeOnly) || (skips.replaying && !entry.replayed))
+    if ((skips.activeOnly && entry.activeOnly) || (skips.replaying && !entry.predicted))
     {
         return false;
     }
@@ -485,13 +485,13 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,
 {
     const bool fixedStep = phase == SystemPhase::FixedUpdate || phase == SystemPhase::PostFixedUpdate;
     return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/ true,
-               /*supportsReplayed=*/ fixedStep);
+               /*supportsPredicted=*/ fixedStep);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false, /*supportsReplayed=*/ false);
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false, /*supportsPredicted=*/ false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)

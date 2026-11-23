@@ -441,14 +441,13 @@ public:
     // is compared with that record, section by section. Within the tolerances
     // the client's result stands and nothing moves.
     //
-    // A predicted component the host disagrees with takes the host's value at
-    // once. A physics frame or a Transform it disagrees with is stepped again,
-    // since a step moves and turns them from controls: every predicted entity's
-    // are put back to that tick, the one the host disagreed with to the host's
-    // word and every other to its own record, and the caller steps them all
-    // again to the present: BeginRollback, then for each tick CommandAppliedAt,
-    // one replayed step and RecordHistory, then EndRollback. A replayed step
-    // runs only the engine's own systems that steer a character.
+    // A physics frame or a predicted component the host disagrees with is
+    // stepped again, since the steps since built on the wrong value: every
+    // predicted entity is put back to that tick, the one the host disagreed
+    // with to the host's word and every other to its own record, and the
+    // caller steps them all again to the present: BeginRollback, then for each
+    // tick CommandAppliedAt, one replayed step and RecordHistory, then
+    // EndRollback. A replayed step runs only the systems marked predicted.
 
     /// @brief What a step stepped again runs on: the command the host applied
     /// for its tick, or none when the host had none and held or released the
@@ -474,9 +473,8 @@ public:
 
     /// @brief How often one section of a predicted entity was compared with the
     /// host's word and how often the host's word corrected it, with the first
-    /// field that differed the last time it did, and both its values. The
-    /// physics frame is corrected by a rollback, a component by taking the
-    /// host's value.
+    /// field that differed the last time it did, and both its values. Either
+    /// section is corrected by a rollback from the host's value.
     ///
     /// A correction at a tick the host stepped without this client's command
     /// is counted apart: the host stepped this client's player on what it held,
@@ -520,9 +518,9 @@ public:
     /// @brief Puts back into every predicted character's CharacterIntent what
     /// its live step of @p tick consumed, before that step is stepped again.
     ///
-    /// A replayed step runs only the engine's own systems, so a value the
-    /// game's systems wrote into the intent, such as a speed scale, would
-    /// otherwise be stepped again as it is now rather than as it was then.
+    /// A replayed step runs only predicted systems, so a value another system
+    /// wrote into the intent, such as a speed scale, would otherwise be
+    /// stepped again as it is now rather than as it was then.
     /// What CharacterCommand writes it writes again over this, the same.
     void RestoreIntentsAt(std::uint64_t tick);
 
@@ -680,17 +678,9 @@ private:
     /// replay leaves each where its last step left it.
     void PlaceFollowersNow();
 
-    /// What Record takes of each predicted entity.
-    enum class RecordedPart : std::uint8_t
-    {
-        Everything, ///< A live step: the physics frame and every predicted component.
-        Stepped,    ///< A replayed step: the physics frame and the Transform, which it steps again.
-        Count_,
-    };
-
-    /// Records @p part of @p tick for every predicted entity; RecordStep and
-    /// RecordHistory both come here.
-    void Record(std::uint64_t tick, RecordedPart part);
+    /// Records @p tick for every predicted entity: its physics frame and every
+    /// predicted component. RecordStep and RecordHistory both come here.
+    void Record(std::uint64_t tick);
 
     /// Compares every predicted entity the snapshot of @p serverTick spoke of
     /// with what this client recorded for that tick.
@@ -698,10 +688,9 @@ private:
 
     /// Compares @p confirmed, the host's word about @p entity at @p serverTick,
     /// with what @p history recorded for that tick, counting into it. Appends
-    /// each section a rollback corrects that disagrees to @p differing, and
-    /// writes the host's value over each other predicted component that does.
-    /// @return Whether it wrote any.
-    bool CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+    /// each section that disagrees, the physics frame or a predicted
+    /// component, to @p differing, for a rollback to correct.
+    void CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
                        PredictionHistory &history, std::vector<PredictionCounts *> &differing);
 
     /// What differs between a character's physics frame as the host had it and
@@ -712,9 +701,9 @@ private:
     /// host's word is older than anything this client kept.
     void HardSnap(NetId netId, ECS::Entity entity, const Confirmed &confirmed);
 
-    /// Puts what a replay steps of @p entity, its Transform and its physics
-    /// frame, back as @p record has it, with the host's word in @p host taking
-    /// the place of each it carries for that tick.
+    /// Puts what a replay steps of @p entity, its predicted components and its
+    /// physics frame, back as @p record has it, with the host's word in
+    /// @p host taking the place of each it carries for that tick.
     void Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host);
 
     /// Writes the host's copy of each predicted component in @p confirmed over

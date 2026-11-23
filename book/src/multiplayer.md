@@ -423,9 +423,17 @@ struct Ammo
 ```
 
 When the host's value disagrees with what your machine had at that step, for
-example because the host refused a shot you fired, the host's value is written
-over yours. Your ammo can then show the host's older count for a moment, until
-the host's answers about your later steps arrive.
+example because the host refused a shot you fired, your machine **rolls back**,
+as it does when the host puts your character somewhere else: it goes back to
+that step, takes the host's value, and steps forward again to now. Every
+predicted component of the entity is put back to that step too, so whatever
+your steps since built on the wrong value is worked out again from the right
+one.
+
+Stepping forward again runs only the systems marked `predicted` (see [Your
+systems in multiplayer](#your-systems-in-multiplayer)). A predicted component
+that a system changes every step must be changed by a predicted system, or the
+rollback puts it back and nothing moves it on again.
 
 A predicted component has to be a plain value: no lists or maps, no
 `AFIELD(norep)` field, no entity references, and no member without `AFIELD`.
@@ -501,11 +509,33 @@ the host, to feel the difference.
 
 ### Your systems in multiplayer
 
-Your systems run once per step, as in a game with no network: a rollback never
-runs them again, so a sound you push from `FixedUpdate` plays once and a value
-you count down is counted down once. While a rollback runs, events pushed are
-dropped and physics reports no contacts; none of your systems are running then
-anyway.
+Your systems run once per step, as in a game with no network: a rollback
+doesn't run them again, so a sound you push from `FixedUpdate` plays once and a
+value you count down is counted down once.
+
+A `FixedUpdate` or `PostFixedUpdate` system that changes predicted state, such
+as one that turns your player's controls into movement or counts down a
+predicted cooldown, is marked **`predicted`**:
+
+```cpp
+ASYSTEM(FixedUpdate, name = "Cooldowns", predicted)
+void CooldownSystem(Assisi::App::SystemContext &ctx);
+```
+
+A rollback runs it again for every step it goes back over, with your player's
+controls as they were at that step, and only on what is being rolled back:
+your own character, what is in its blueprint, and what the host has given you
+to predict. `ctx.replaying` is true while it does. While a rollback runs, the
+events a system pushes are dropped and physics reports no contacts, since they
+were all seen the first time the step ran. Mark only the systems that need it:
+everything else stays once per step.
+
+After every system of a step has run, the engine clears the turning and the
+presses in each player's `PlayerInput`, so every system of the step reads the
+same ones in any order and none of yours has to clear them. The engine's
+`CharacterCommand` system, which the sample player's blueprint names, also
+clears them as it uses them, so a system that runs after it in the same step
+sees none.
 
 A predicted component works best when your machine can work it out from your
 own player alone. Ammo that goes down when your own player fires is fine. A
@@ -514,9 +544,9 @@ disagree with the host often, since your machine can't know where the zone is
 going: the network panel shows how often the host corrects it.
 
 A system that moves your character itself, say a dash that sets its velocity,
-runs once, live. When a rollback runs over the step the dash happened in, the
-dash isn't run again, and the host's next answers bring your character back in
-line over a moment.
+should be `predicted` too. Without the flag it runs once, live: when a rollback
+runs over the step the dash happened in, the dash isn't run again, and the
+host's next answers bring your character back in line over a moment.
 
 What your systems write into a character's `CharacterIntent`, such as a slowing
 effect's `speedScale`, is different: a rollback steps each step again with the
@@ -525,8 +555,9 @@ intent that step had, so it comes out as it did live.
 The network panel's **Sync test** checkbox, on a client, checks rollbacks while
 you develop: it runs every step a second time and compares the two. Each value
 that comes out different is written to the log with both versions. The count
-should stay at zero; anything else means the engine's movement doesn't put
-something back.
+should stay at zero. Anything else usually means a system that changes
+predicted state isn't marked `predicted`, or reads something a rollback doesn't
+put back, such as a plain component another player's machine changes.
 
 Every machine runs the level's systems, and every machine numbers its steps the
 host's way: `ctx.simTick` is the same on every machine for the same step. A

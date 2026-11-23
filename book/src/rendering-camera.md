@@ -104,6 +104,42 @@ A camera can be the child of another entity through a `Parent`, such as a
 camera on a car's bonnet. It follows the car and is drawn from where the car is
 that frame.
 
+### Moving the view every frame
+
+A camera's `Transform` moves with the fixed step, and between steps the camera
+is drawn where the blend between them puts it. To move the view every frame
+without moving anything the game simulates, for head bob, a screen shake or a
+look of your own that follows the mouse between steps, give the camera a
+**`CameraDrawPose`** and set it each frame:
+
+| Field | Meaning |
+|---|---|
+| `rotation` | The rotation in the world the camera is drawn with, in place of the one its `Transform` gives it. |
+| `offset` | Added to where the camera stands, in the world, in metres. |
+
+```cpp
+// In an Update system: bob the view while keeping the way the camera faces.
+using namespace Assisi;
+
+const ECS::WorldMatrix &world = *scene.Get<ECS::WorldMatrix>(camera);
+Runtime::CameraDrawPose *pose = scene.GetMut<Runtime::CameraDrawPose>(camera);
+if (pose == nullptr)
+{
+    pose = scene.Add<Runtime::CameraDrawPose>(camera);
+}
+pose->rotation = glm::quat_cast(glm::mat3(world.inCell));
+pose->offset = glm::vec3{0.f, 0.02f * std::sin(bobPhase), 0.f};
+```
+
+Only the drawing changes. The `Transform`, what the game simulates and what is
+sent over the network stay as they are. Remove the component to draw the camera
+as its `Transform` has it again. It is never saved with a level.
+
+On the camera of the player playing on this machine, the engine draws the
+player turning as far as the mouse has moved before the next step uses it. A
+`CameraDrawPose` there takes the place of that turning, so a game that draws its
+own look isn't turned twice.
+
 ## Camera paths for benchmarks
 
 A **benchmark** measures how fast a level draws by flying the camera along the

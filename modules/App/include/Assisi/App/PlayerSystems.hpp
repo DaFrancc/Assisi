@@ -12,6 +12,7 @@
 /// player, and PlayerCamera looks through its camera.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::App
@@ -92,10 +93,22 @@ void PlayerGatherSystem(SystemContext &ctx);
 /// Every machine runs it on every character with controls, which is what makes
 /// a host move a remote player exactly as that player's own machine does.
 ///
-/// `replayed`: a client stepping its character again turns and moves it from
+/// `predicted`: a client stepping its character again turns and moves it from
 /// the controls it recorded for each tick.
-ASYSTEM(FixedUpdate, name = "CharacterCommand", replayed)
+ASYSTEM(FixedUpdate, name = "CharacterCommand", predicted)
 void CharacterCommandSystem(SystemContext &ctx);
+
+/// @brief Clears what a step used of every player's controls in @p scene: the
+/// turning and the presses, which add up until a step uses them. What is held
+/// stays, since it is what the devices say now.
+///
+/// Not a system: StepWorld calls it once every system of the step has run,
+/// live or replayed, so every system reads the same turning and presses in any
+/// order, none of them has to be the one that clears them, and no level or
+/// blueprint has to name it. CharacterCommand also clears what it uses, as it
+/// uses it, so where it runs, a system after it in the step sees no turning or
+/// presses.
+void ClearUsedControls(ECS::Scene &scene);
 
 /// @brief Makes the camera of this machine's player the active one, and every
 /// other player's camera inactive.

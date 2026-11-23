@@ -20,6 +20,7 @@
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/PlayerSystems.hpp>
 #include <Assisi/App/ResourceStore.hpp>
+#include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
@@ -154,6 +155,73 @@ TEST_CASE("A jump press asks for one jump, however long it is held")
     world.scene.GetMut<Assisi::Physics::CharacterIntent>(entity)->jump = false;
     CharacterCommandSystem(ctx);
     CHECK_FALSE(world.scene.Get<Assisi::Physics::CharacterIntent>(entity)->jump);
+}
+
+TEST_CASE("A step's turning and presses are cleared once every system of the step has read them")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+
+    // A player with no character to command, so nothing but the clearing
+    // system uses its controls up.
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    (void)world.scene.Add<Player>(entity);
+    PlayerInput &input = Controls(world, entity);
+    input.lookYaw = 0.5f;
+    input.lookPitch = 0.25f;
+    input.pressed = PlayerButtons::Of(PlayerAction::Jump);
+    input.held = PlayerButtons::Of(PlayerAction::Sprint);
+
+    float earlyYaw = 0.f;
+    float lateYaw = 0.f;
+    PlayerButtons latePressed;
+    world.systems.Register(SystemPhase::FixedUpdate, "Early",
+                           [&earlyYaw, entity](SystemContext &step)
+                           { earlyYaw = step.world.scene.Get<PlayerInput>(entity)->lookYaw; });
+    // The last system a game can place still reads them: the step clears them
+    // after its systems, not as one of them.
+    world.systems.Register(SystemPhase::PostFixedUpdate, "Late",
+                           [&lateYaw, &latePressed, entity](SystemContext &step)
+                           {
+                               const PlayerInput &seen = *step.world.scene.Get<PlayerInput>(entity);
+                               lateYaw = seen.lookYaw;
+                               latePressed = seen.pressed;
+                           })
+    .Last();
+
+    StepWorld(ctx);
+
+    CHECK(earlyYaw == doctest::Approx(0.5f));
+    CHECK(lateYaw == doctest::Approx(0.5f));
+    CHECK(latePressed == PlayerButtons::Of(PlayerAction::Jump));
+    const PlayerInput &after = *world.scene.Get<PlayerInput>(entity);
+    CHECK(after.lookYaw == 0.f);
+    CHECK(after.lookPitch == 0.f);
+    CHECK(after.pressed == PlayerButtons{});
+    // What is held is what the devices say now, which a step does not use up.
+    CHECK(after.held == PlayerButtons::Of(PlayerAction::Sprint));
+}
+
+TEST_CASE("A replayed step clears the turning and presses it used, as the live step did")
+{
+    WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
+    World &world = worlds.Create("Players");
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    SystemContext ctx = Context(world, universal);
+    ctx.replaying = true;
+
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    (void)world.scene.Add<Player>(entity);
+    PlayerInput &input = Controls(world, entity);
+    input.lookYaw = 0.5f;
+    input.pressed = PlayerButtons::Of(PlayerAction::Jump);
+
+    StepWorld(ctx);
+
+    CHECK(world.scene.Get<PlayerInput>(entity)->lookYaw == 0.f);
+    CHECK(world.scene.Get<PlayerInput>(entity)->pressed == PlayerButtons{});
 }
 
 TEST_CASE("Holding crouch asks the character to crouch")
