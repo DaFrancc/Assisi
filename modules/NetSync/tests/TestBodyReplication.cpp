@@ -1580,6 +1580,11 @@ struct PredictionRig
     /// the tick after every live step it takes: the rig's FixedUpdate system,
     /// a game's, which a replay does not run.
     std::function<void(ECS::Scene &, ECS::Entity, std::uint64_t)> afterStep;
+    /// Called with each machine's scene, one of its copies of the client's
+    /// characters and the tick after every step, live or replayed: the rig's
+    /// predicted FixedUpdate system, which a replay runs again on the
+    /// characters it steps again and no others.
+    std::function<void(ECS::Scene &, ECS::Entity, std::uint64_t)> predictedStep;
     /// The newest tick the client stepped.
     std::uint64_t clientTick = 0;
     /// Replays run, and steps they took.
@@ -1695,6 +1700,13 @@ struct PredictionRig
             }
             harness.clientPhysics.StepCharacters(replay->characters, harness.client.FollowersAt(tick), kFixedStep,
                                                  replay->bodies);
+            if (predictedStep)
+            {
+                for (const ECS::Entity entity : replay->characters)
+                {
+                    predictedStep(harness.clientScene, entity, tick);
+                }
+            }
             harness.client.RecordHistory(tick);
             ++replayedSteps;
         }
@@ -1757,6 +1769,13 @@ struct PredictionRig
         {
             afterStep(harness.clientScene, mirror, tick);
         }
+        if (predictedStep)
+        {
+            for (const ECS::Entity entity : ClientCharacters())
+            {
+                predictedStep(harness.clientScene, entity, tick);
+            }
+        }
         harness.client.RecordStep(command);
         if (!loseCommands)
         {
@@ -1784,6 +1803,13 @@ struct PredictionRig
         if (afterStep)
         {
             afterStep(harness.serverScene, character, harness.tick);
+        }
+        if (predictedStep)
+        {
+            for (const ECS::Entity entity : HostCharacters())
+            {
+                predictedStep(harness.serverScene, entity, harness.tick);
+            }
         }
         harness.server.Tick(harness.tick++);
     }
@@ -2060,13 +2086,13 @@ TEST_CASE("an answer from before every tick the client kept snaps the character 
     CHECK(glm::length(rig.ClientPosition() - glm::vec3(host->body.position)) < kMatchedUnmoved);
 }
 
-TEST_CASE("a predicted component is not stepped again, and keeps what the live steps made it")
+TEST_CASE("a predicted component a predicted system changes is put back and stepped again in a rollback")
 {
-    // A FixedUpdate system drains the second character's charge every live
+    // A predicted FixedUpdate system drains the second character's charge every
     // step from one tick on, on both machines. A rollback for the first
-    // character steps characters again, not the game's systems: the second's
-    // charge keeps what the live steps left, and its history what they
-    // recorded, so the host's later answers agree with it. The host answers
+    // character puts the second's charge back too and runs the system again:
+    // the charge comes out as the live steps left it, and its history as they
+    // recorded it, so the host's later answers agree with it. The host answers
     // every tick, so each tick the rollback stepped again is compared.
     constexpr std::int32_t kFullCharge = 1000;
     ReplicationConfig everyTick;
@@ -2085,11 +2111,13 @@ TEST_CASE("a predicted component is not stepped again, and keeps what the live s
 
     // From a tick neither machine has stepped yet.
     Drain drain{.from = rig.harness.tick + kLeadTicks};
-    rig.afterStep = [&rig, &drain](ECS::Scene &scene, ECS::Entity entity, std::uint64_t tick)
-                    {
-                        (void)entity;
-                        drain.Step(rig, scene, tick);
-                    };
+    rig.predictedStep = [&rig, &drain](ECS::Scene &scene, ECS::Entity entity, std::uint64_t tick)
+                        {
+                            if (entity == rig.second || entity == rig.secondMirror)
+                            {
+                                drain.Step(rig, scene, tick);
+                            }
+                        };
     for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
     {
         rig.StepBoth();
@@ -2163,11 +2191,12 @@ TEST_CASE("a tick the host stepped without the client's command is stepped again
     CHECK(after.command != nullptr);
 }
 
-TEST_CASE("a predicted component the host disagrees with takes the host's value without a replay, and is named")
+TEST_CASE("a predicted component the host disagrees with rolls back from the host's value, and is named")
 {
     // The client's charge never changes and the host's changes every tick: a
-    // disagreement on every snapshot. Each is a correction to the host's
-    // value, and none steps anything again.
+    // disagreement on every snapshot. Each rolls the client back to the host's
+    // value, as a disagreement about where its character is does, so whatever
+    // was built on the wrong value is stepped again from the right one.
     PredictionRig rig;
     for (std::uint32_t i = 0; i < kAgreeingTicks; ++i)
     {
@@ -2191,7 +2220,7 @@ TEST_CASE("a predicted component the host disagrees with takes the host's value 
         rig.ReplayPending();
     }
 
-    CHECK(rig.replays == replaysBefore);
+    CHECK(rig.replays > replaysBefore);
     const NetId netId = rig.harness.server.NetIdOf(rig.character);
     const ReplicationClient::EntityPredictionCounts *counts = rig.harness.client.PredictionCountsOf(netId);
     REQUIRE(counts != nullptr);
@@ -2199,11 +2228,12 @@ TEST_CASE("a predicted component the host disagrees with takes the host's value 
         counts->components.find(Core::Reflect::ComponentIdOf<Test::Charge>());
     REQUIRE(charge != counts->components.end());
     CHECK(charge->second.compares >= 2);
-    CHECK(charge->second.corrections >= 2);
+    CHECK(charge->second.corrections >= 1);
     CHECK(charge->second.firstDifference.find("level") != std::string::npos);
     CHECK(counts->physics.corrections == 0);
 
-    // The host's charge, which only the host raises, as of its newest answer.
+    // The client's charge is the host's as of a tick it rolled back to: raised
+    // from nothing, and no further than the host's newest answer.
     const ReplicationClient::Confirmed *host = rig.harness.client.ConfirmedOf(netId);
     REQUIRE(host != nullptr);
     const ReplicationClient::Confirmed::Components::const_iterator sent =
@@ -2212,8 +2242,9 @@ TEST_CASE("a predicted component the host disagrees with takes the host's value 
     REQUIRE(sent->second.size() == sizeof(Test::Charge));
     Test::Charge hostCharge;
     std::memcpy(&hostCharge, sent->second.data(), sizeof(Test::Charge));
-    CHECK(hostCharge.level > 0);
-    CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.mirror)->level == hostCharge.level);
+    const std::int32_t clientCharge = rig.harness.clientScene.Get<Test::Charge>(rig.mirror)->level;
+    CHECK(clientCharge > 0);
+    CHECK(clientCharge <= hostCharge.level);
 }
 
 namespace
@@ -2930,6 +2961,33 @@ TEST_CASE("a predicted crate the host moves where the client did not is put wher
     // where it was than where it went.
     rig.harness.client.SmoothView(0.0, kFixedStep);
     CHECK(glm::length(RenderedPosition(rig.harness.clientScene, rig.crateMirrors[0]) - before) < kHostShove / 2.f);
+}
+
+TEST_CASE("a predicted component on a predicted crate the host disagrees with rolls back to the host's value")
+{
+    // A body's pose is put back by its own path in a rollback; its predicted
+    // components must be put back and take the host's word all the same, or
+    // the client keeps its own value and rolls back again every snapshot.
+    constexpr std::int32_t kHostCharge = 5;
+    PredictionRig rig(RigLevel{.crates = {kCrateAside}});
+    rig.move = glm::vec3{0.f};
+    (void)rig.harness.serverScene.Add<Test::Charge>(rig.crates[0], Test::Charge{});
+    GiveCrate(rig);
+    RunFed(rig, kAgreeingTicks);
+    REQUIRE(rig.harness.clientScene.Get<Test::Charge>(rig.crateMirrors[0]) != nullptr);
+    REQUIRE(rig.harness.clientScene.Get<Test::Charge>(rig.crateMirrors[0])->level == 0);
+
+    rig.harness.serverScene.GetMut<Test::Charge>(rig.crates[0])->level = kHostCharge;
+    const std::uint32_t replaysBefore = rig.replays;
+    RunFed(rig, kAgreeingTicks);
+    CHECK(rig.replays > replaysBefore);
+    CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.crateMirrors[0])->level == kHostCharge);
+
+    // Agreed with now, so nothing more rolls back.
+    const std::uint32_t replaysAgreed = rig.replays;
+    RunFed(rig, kAgreeingTicks);
+    CHECK(rig.replays == replaysAgreed);
+    CHECK(rig.harness.clientScene.Get<Test::Charge>(rig.crateMirrors[0])->level == kHostCharge);
 }
 
 TEST_CASE("a rollback of the client's character leaves a predicted crate the host agreed with where it was")

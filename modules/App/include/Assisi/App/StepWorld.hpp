@@ -17,7 +17,8 @@ struct SystemContext;
 
 /// @brief Steps `ctx.world` by `ctx.dt` at tick `ctx.simTick`: its FixedUpdate
 /// systems, the physics step, then its PostFixedUpdate systems, all inside one
-/// ECS::FixedStepScope and all under @p ctx.
+/// ECS::FixedStepScope and all under @p ctx. Last, it clears the turning and
+/// presses the step used of every player's controls (ClearUsedControls).
 ///
 /// What a step does around this belongs to the host that calls it: polling the
 /// network and handing players their controls before, sending a snapshot or
@@ -31,7 +32,7 @@ struct SystemContext;
 /// empty. Replaying, it steps only the characters of @p replayedCharacters and
 /// solves only the bodies of @p replayedBodies, as a live step would, with each
 /// of @p followers moving as it did live and everything else as it stands
-/// (PhysicsWorld::StepCharacters), and only the systems marked `replayed` run.
+/// (PhysicsWorld::StepCharacters), and only the systems marked `predicted` run.
 void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCharacters = {},
                std::span<const Physics::FollowerStep> followers = {},
                std::span<const ECS::Entity> replayedBodies = {});

@@ -119,9 +119,9 @@ void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition
         {
             handle.ActiveWorldOnly();
         }
-        if (definition->replayed)
+        if (definition->predicted)
         {
-            handle.Replayed();
+            handle.Predicted();
         }
         if (definition->placement == SystemPlacement::First)
         {

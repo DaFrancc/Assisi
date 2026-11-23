@@ -188,7 +188,7 @@ class SystemInfo:
     before:          list   # system names this must run before
     placement:       str    # First | Middle | Last: where in its phase, before after/before apply
     active_world_only: bool
-    replayed:        bool   # steps again on a replayed step; engine fixed-step systems only
+    predicted:       bool   # steps again when a client replays a tick; fixed-step systems only
     header:          str    # source header, for diagnostics
 
     @property
@@ -399,17 +399,14 @@ _DEFINE_LINE_RE   = re.compile(r'\s*#\s*define\s*$')
 
 _ASYSTEM_PHASES =('Begin', 'Loaded', 'PreUpdate', 'FixedUpdate', 'PostFixedUpdate', 'Update',
                    'Ui', 'Render')
-_ASYSTEM_FLAGS  = {'activeWorldOnly', 'replayed', 'first', 'last'}
+_ASYSTEM_FLAGS  = {'activeWorldOnly', 'predicted', 'first', 'last'}
 # The flag for each placement but the ordinary one, which needs none. In run
 # order: SystemPlacement's enumerators, and the order the whole-tree check holds
 # after/before to.
 SYSTEM_PLACEMENTS = ('First', 'Middle', 'Last')
 _ASYSTEM_PLACEMENT_FLAGS = {'first': 'First', 'last': 'Last'}
-# The phases a replay runs again, and so the only ones replayed can mean anything on.
+# The phases a replay runs again, and so the only ones predicted can mean anything on.
 _ASYSTEM_FIXED_STEP_PHASES = ('FixedUpdate', 'PostFixedUpdate')
-# The namespace whose systems may be replayed: the engine's own, whose every
-# effect a replay knows how to put back.
-_ASYSTEM_REPLAYED_NAMESPACE = ['Assisi', 'App']
 _ASYSTEM_KEYS   = {'name', 'after', 'before'}
 
 # Both AMSG positional arguments, in the order the grammar fixes.
@@ -1062,7 +1059,7 @@ def find_systems(text: str, path: Path) -> list:
             flags.add(arg)
 
         active_world_only = 'activeWorldOnly' in flags
-        replayed          = 'replayed' in flags
+        predicted         = 'predicted' in flags
         namespaces        = _namespaces_at(text, match.start())
 
         placed = sorted(flags & set(_ASYSTEM_PLACEMENT_FLAGS))
@@ -1077,17 +1074,11 @@ def find_systems(text: str, path: Path) -> list:
                 f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
                 f"being drawn and nothing else, so the flag would say nothing.")
 
-        if replayed and phase not in _ASYSTEM_FIXED_STEP_PHASES:
+        if predicted and phase not in _ASYSTEM_FIXED_STEP_PHASES:
             raise ValueError(
-                f"{where} is a {phase} system with replayed. Only "
+                f"{where} is a {phase} system with predicted. Only "
                 f"{' and '.join(_ASYSTEM_FIXED_STEP_PHASES)} run again when a client replays a "
                 f"tick, so the flag would say nothing anywhere else.")
-
-        if replayed and namespaces != _ASYSTEM_REPLAYED_NAMESPACE:
-            raise ValueError(
-                f"{where} is marked replayed, which only the engine's own systems in "
-                f"{'::'.join(_ASYSTEM_REPLAYED_NAMESPACE)} may be. A game's systems run once per tick, "
-                f"live; the engine steps the player's movement again for them.")
 
         # Mandatory, with no default derived from the function name. The name is
         # what a level file says, so it is part of the content format: deriving it
@@ -1106,7 +1097,7 @@ def find_systems(text: str, path: Path) -> list:
                                   namespaces=namespaces,
                                   name=name, phase=phase, after=after, before=before,
                                   placement=placement,
-                                  active_world_only=active_world_only, replayed=replayed,
+                                  active_world_only=active_world_only, predicted=predicted,
                                   header=str(path)))
     return systems
 

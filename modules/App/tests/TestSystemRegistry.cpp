@@ -279,31 +279,31 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
     CHECK(order[2] == "Last");
 }
 
-TEST_CASE("SystemRegistry: only a Replayed system runs on a replayed step")
+TEST_CASE("SystemRegistry: only a Predicted system runs on a replayed step")
 {
-    // A replay steps a tick the world has already stepped. A system the engine
-    // has not marked to step again runs once per tick, live.
+    // A replay steps a tick the world has already stepped. A system not marked
+    // to step again runs once per tick, live.
     WorldManager worlds{Assisi::Physics::NoCollisionAssets()};
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
     SystemRegistry systems;
 
     int32_t plain = 0;
-    int32_t replayedRuns = 0;
+    int32_t predictedRuns = 0;
 
     systems.Register(SystemPhase::FixedUpdate, "Plain", [&](SystemContext &) { ++plain; });
-    systems.Register(SystemPhase::FixedUpdate, "Replayed", [&](SystemContext &) { ++replayedRuns; }).Replayed();
+    systems.Register(SystemPhase::FixedUpdate, "Predicted", [&](SystemContext &) { ++predictedRuns; }).Predicted();
 
     SystemContext live = MakeGameCtx(world, universal, /*isActiveWorld=*/ true);
     systems.Run(SystemPhase::FixedUpdate, live);
     CHECK(plain == 1);
-    CHECK(replayedRuns == 1);
+    CHECK(predictedRuns == 1);
 
     SystemContext replayed = MakeGameCtx(world, universal, /*isActiveWorld=*/ true);
     replayed.replaying = true;
     systems.Run(SystemPhase::FixedUpdate, replayed);
     CHECK(plain == 1);
-    CHECK(replayedRuns == 2);
+    CHECK(predictedRuns == 2);
 }
 
 TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist")

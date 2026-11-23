@@ -230,6 +230,10 @@ void ShootSystem(Assisi::App::SystemContext &ctx);
 - **`activeWorldOnly`** only runs the system in the world that's being shown and
   played. Use it for anything that reads input or controls the camera or HUD.
   When several worlds are loaded, only one should react to the player's keys.
+- **`predicted`** runs a `FixedUpdate` or `PostFixedUpdate` system again when a
+  client in a network game rolls back. Use it on a system that changes what a
+  player's machine predicts, such as its movement. See
+  [Your systems in multiplayer](multiplayer.md#your-systems-in-multiplayer).
 
 ## Tips
 

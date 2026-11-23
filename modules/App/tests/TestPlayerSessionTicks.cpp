@@ -235,10 +235,10 @@ TEST_CASE("An event pushed in a tick a client steps again is delivered once, by 
     Machine &client = session.Add();
     JoinOnFloor(session, host, client);
 
-    // Replayed, so it runs in every step the sync test takes again.
+    // Predicted, so it runs in every step the sync test takes again.
     client.world.systems.Register(App::SystemPhase::FixedUpdate, "PushStepped",
                                   [](App::SystemContext &ctx) { ctx.events.Push(Stepped{.tick = ctx.simTick}); })
-    .Replayed();
+    .Predicted();
     NetSync::ReplicationClient &replication = *client.play.Session().Client();
     replication.SetSyncTest(true);
     const std::size_t stepsBefore = client.stepTicks.size();

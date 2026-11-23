@@ -1909,41 +1909,47 @@ class SystemTest(unittest.TestCase):
             self._systems("ASYSTEM(Update) void TickSystem(SystemContext &ctx);\n")
         self.assertIn("name", str(caught.exception))
 
-    ENGINE_SYSTEM = ("namespace Assisi::App {\n"
-                     "ASYSTEM(%s, name = \"Tick\", replayed) void TickSystem(SystemContext &ctx);\n"
-                     "}\n")
+    PREDICTED_SYSTEM = ("namespace Assisi::App {\n"
+                        "ASYSTEM(%s, name = \"Tick\", predicted) void TickSystem(SystemContext &ctx);\n"
+                        "}\n")
 
-    def test_an_engine_fixed_step_system_may_be_replayed(self):
+    def test_a_fixed_step_system_may_be_predicted(self):
         for phase in ("FixedUpdate", "PostFixedUpdate"):
             with self.subTest(phase=phase):
-                found = self._systems(self.ENGINE_SYSTEM % phase)
-                self.assertTrue(found[0].replayed)
+                found = self._systems(self.PREDICTED_SYSTEM % phase)
+                self.assertTrue(found[0].predicted)
                 self.assertFalse(found[0].active_world_only)
 
-    def test_a_system_is_not_replayed_unless_it_says_so(self):
+    def test_a_system_is_not_predicted_unless_it_says_so(self):
         found = self._systems("ASYSTEM(FixedUpdate, name = \"Tick\") void TickSystem(SystemContext &ctx);\n")
-        self.assertFalse(found[0].replayed)
+        self.assertFalse(found[0].predicted)
 
-    def test_replayed_is_refused_outside_the_fixed_step(self):
+    def test_predicted_is_refused_outside_the_fixed_step(self):
         # Only a fixed step is ever run again for a tick it already ran, so the
         # flag anywhere else says nothing and reads as though it did.
         for phase in ("Begin", "Loaded", "PreUpdate", "Update", "Ui"):
             with self.subTest(phase=phase):
                 with self.assertRaises(ValueError) as caught:
-                    self._systems(self.ENGINE_SYSTEM % phase)
-                self.assertIn("replayed", str(caught.exception))
+                    self._systems(self.PREDICTED_SYSTEM % phase)
+                self.assertIn("predicted", str(caught.exception))
 
-    def test_replayed_is_refused_outside_the_engine(self):
-        # A game's systems run once per tick: stepping one again would run code
-        # the engine cannot vouch for twice.
+    def test_a_games_system_may_be_predicted(self):
+        # A game's system that changes predicted state has to step again when a
+        # client replays a tick, or a rollback puts that state back and nothing
+        # moves it on again.
         for namespace in ("", "namespace Game {\n", "namespace Assisi::Game {\n"):
             with self.subTest(namespace=namespace):
                 closing = "}\n" if namespace else ""
-                with self.assertRaises(ValueError) as caught:
-                    self._systems(namespace +
-                                  "ASYSTEM(FixedUpdate, name = \"Tick\", replayed) "
-                                  "void TickSystem(SystemContext &ctx);\n" + closing)
-                self.assertIn("engine", str(caught.exception))
+                found = self._systems(namespace +
+                                      "ASYSTEM(FixedUpdate, name = \"Tick\", predicted) "
+                                      "void TickSystem(SystemContext &ctx);\n" + closing)
+                self.assertTrue(found[0].predicted)
+
+    def test_replayed_is_no_longer_a_flag(self):
+        # Renamed to predicted, the word components use for the same thing.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(FixedUpdate, name = \"Tick\", replayed) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("replayed", str(caught.exception))
 
     def test_live_only_is_no_longer_a_flag(self):
         with self.assertRaises(ValueError) as caught:

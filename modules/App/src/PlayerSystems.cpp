@@ -331,6 +331,17 @@ void CharacterCommandSystem(SystemContext &ctx)
     }
 }
 
+void ClearUsedControls(ECS::Scene &scene)
+{
+    for (auto [entity, controls] : scene.Query<Mut<PlayerInput>>())
+    {
+        (void)entity;
+        controls.lookYaw = 0.f;
+        controls.lookPitch = 0.f;
+        controls.pressed = PlayerButtons{};
+    }
+}
+
 void PlayerCameraSystem(SystemContext &ctx)
 {
     ECS::Scene &scene = ctx.world.scene;

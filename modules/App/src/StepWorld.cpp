@@ -2,6 +2,7 @@
 
 #include <Assisi/App/StepWorld.hpp>
 
+#include <Assisi/App/PlayerSystems.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Chiara/Profile.hpp>
@@ -50,6 +51,9 @@ void StepWorld(const SystemContext &ctx, std::span<const ECS::Entity> replayedCh
     }
 
     world.systems.Run(SystemPhase::PostFixedUpdate, ctx);
+    // After every system of the step, so each read the same turning and
+    // presses; a replayed step uses them up the same way.
+    ClearUsedControls(world.scene);
     if (!ctx.replaying)
     {
         ctx.events.EndTick(world.eventTicks);

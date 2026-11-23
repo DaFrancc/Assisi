@@ -71,7 +71,7 @@ void ReplicationClient::RecordStep(const InputCommand &command)
         _newestRecordedTick = 0;
     }
     _sentCommands[command.tick % kPredictionHistoryTicks] = command;
-    Record(command.tick, RecordedPart::Everything);
+    Record(command.tick);
     RecordReports(command.tick);
 }
 
@@ -105,10 +105,10 @@ void ReplicationClient::RecordReports(std::uint64_t tick)
 void ReplicationClient::RecordHistory(std::uint64_t tick)
 {
     ASSISI_ASSERT(_rollingBack, "ReplicationClient::RecordHistory outside a rollback");
-    Record(tick, RecordedPart::Stepped);
+    Record(tick);
 }
 
-void ReplicationClient::Record(std::uint64_t tick, RecordedPart part)
+void ReplicationClient::Record(std::uint64_t tick)
 {
     _recordedTicks[tick % kPredictionHistoryTicks] = tick;
     _newestRecordedTick = std::max(_newestRecordedTick, tick);
@@ -121,25 +121,16 @@ void ReplicationClient::Record(std::uint64_t tick, RecordedPart part)
             continue;
         }
         PredictedRecord &record = _history[netId].records[tick % kPredictionHistoryTicks];
-        // A replay steps only the Transform and the physics frame. The rest of
-        // the record stays what the live step had, which is what the host's
-        // answers about the tick are compared with.
-        const bool whole = part == RecordedPart::Everything || record.tick != tick;
+        // Every predicted component, live or replayed: a replay steps them all
+        // again, and the host's answers about the tick are compared with what
+        // the latest stepping of it made.
         record.tick = tick;
-        if (whole)
-        {
-            record.present = 0;
-            record.components.resize(_predictedBytes);
-        }
+        record.present = 0;
+        record.components.resize(_predictedBytes);
         for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
         {
             const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
-            if (!whole && meta.id != _transformComponentId)
-            {
-                continue;
-            }
             const std::uint64_t bit = std::uint64_t{1} << i;
-            record.present &= ~bit;
             const void *live = meta.getByEntity(&_scene, entity.index, entity.generation);
             if (live == nullptr)
             {
@@ -316,13 +307,10 @@ void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
         }
 
         differing.clear();
-        const bool componentsCorrected = CompareRecord(entity, confirmed, serverTick, history, differing);
+        CompareRecord(entity, confirmed, serverTick, history, differing);
         if (differing.empty())
         {
-            if (!componentsCorrected)
-            {
-                ++_corrections.predictionsKept;
-            }
+            ++_corrections.predictionsKept;
             continue;
         }
 
@@ -346,7 +334,7 @@ void ReplicationClient::ComparePredicted(std::uint64_t serverTick)
     }
 }
 
-bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
+void ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confirmed, std::uint64_t serverTick,
                                       PredictionHistory &history, std::vector<PredictionCounts *> &differing)
 {
     const PredictedRecord &record = history.records[serverTick % kPredictionHistoryTicks];
@@ -377,13 +365,12 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
 
     if (confirmed.componentTick != serverTick)
     {
-        return false;
+        return;
     }
     // A character's or a body's Transform is its body's pose, which its
     // physics frame compares; the host sends that Transform only when the
     // entity first arrives, so the confirmed copy of it is that old.
     const bool framed = _scene.Has<Physics::Character>(entity) || record.hasBody;
-    bool corrected = false;
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
     {
         const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
@@ -403,23 +390,12 @@ bool ReplicationClient::CompareRecord(ECS::Entity entity, const Confirmed &confi
         {
             continue;
         }
+        // Rolled back rather than overwritten: the steps since built on the
+        // wrong value, and only stepping them again from the host's puts right
+        // what they built.
         section.firstDifference = meta.predictedDifference(mine, host->second.data());
-        // A replay steps the Transform again, from controls whose turning
-        // adds up; every other component no replay steps takes the host's
-        // value now.
-        if (meta.id == _transformComponentId)
-        {
-            differing.push_back(&section);
-            continue;
-        }
-        if (void *live = meta.getMutable(&_scene, entity.index, entity.generation); live != nullptr)
-        {
-            std::memcpy(live, host->second.data(), meta.size);
-            CountCorrection(section, _echo, serverTick);
-            corrected = true;
-        }
+        differing.push_back(&section);
     }
-    return corrected;
 }
 
 std::string ReplicationClient::PhysicsDifference(const BodyState &host, const PredictedRecord &record) const
@@ -502,19 +478,13 @@ void ReplicationClient::HardSnap(NetId netId, ECS::Entity entity, const Confirme
 
 void ReplicationClient::Restore(ECS::Entity entity, const PredictedRecord &record, const Confirmed *host)
 {
-    // A body's Transform is its pose.
-    if (record.hasBody)
-    {
-        PlaceBody(entity, host != nullptr && host->physicsTick == record.tick ? host->body : record.body);
-        return;
-    }
-
-    // Only what a replay steps again goes back: the Transform here and the
-    // physics frame below. Every other predicted component stays as it is.
+    // Everything a replay steps again goes back: every predicted component
+    // here, and the physics frame below. A body's Transform is its pose,
+    // which PlaceBody puts back instead.
     for (std::size_t i = 0; i < _predictedComponents.size(); ++i)
     {
         const Core::Reflect::ComponentMeta &meta = *_predictedComponents[i];
-        if (meta.id != _transformComponentId || (record.present & (std::uint64_t{1} << i)) == 0)
+        if ((record.present & (std::uint64_t{1} << i)) == 0 || (record.hasBody && meta.id == _transformComponentId))
         {
             continue;
         }
@@ -524,9 +494,18 @@ void ReplicationClient::Restore(ECS::Entity entity, const PredictedRecord &recor
             std::memcpy(live, record.components.data() + _predictedOffsets[i], meta.size);
         }
     }
-    if (host != nullptr && host->componentTick == record.tick && !_scene.Has<Physics::Character>(entity))
+    // The host disagreed with this entity: it starts again from the host's
+    // word. A character's or a body's Transform is its pose, which the physics
+    // frame below places.
+    if (host != nullptr && host->componentTick == record.tick)
     {
-        WriteHostComponent(entity, *host, _transformComponentId);
+        WriteHostComponents(entity, *host, _scene.Has<Physics::Character>(entity) || record.hasBody);
+    }
+
+    if (record.hasBody)
+    {
+        PlaceBody(entity, host != nullptr && host->physicsTick == record.tick ? host->body : record.body);
+        return;
     }
 
     if (!record.hasCharacter)

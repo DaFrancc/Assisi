@@ -929,7 +929,7 @@ static const bool _reflectgen_system_{system.function} = []() -> bool
         {names(system.after)},
         {names(system.before)},
         {str(system.active_world_only).lower()},
-        {str(system.replayed).lower()},
+        {str(system.predicted).lower()},
         Assisi::App::SystemPlacement::{system.placement},
     }});
     return true;
