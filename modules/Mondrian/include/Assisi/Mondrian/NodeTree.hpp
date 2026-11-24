@@ -239,6 +239,12 @@ class NodeTree
     /// @brief The id of the live node in slot @p index.
     [[nodiscard]] NodeId IdOf(uint32_t index) const { return {.index = index, .generation = _slots[index].generation}; }
 
+    /// @brief A count that moves whenever any node is made, changed or
+    /// destroyed, and at no other time: what tells the UI a screen it drew
+    /// before needs drawing again. Taking a node to change counts as changing
+    /// it.
+    [[nodiscard]] uint64_t Revision() const { return _revision; }
+
   private:
     Node *GetMutable(NodeId id);
     void Unlink(NodeId id);
@@ -251,6 +257,7 @@ class NodeTree
     std::vector<uint32_t> _free;
     ThemeView _theme;
     NodeId _root;
+    uint64_t _revision = 0;
 };
 
 } // namespace Assisi::Mondrian

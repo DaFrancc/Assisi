@@ -8,6 +8,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
@@ -100,6 +101,7 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
     // asked is what a programmer has to go and fix.
     const std::string context(screen->Name());
     world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
+                                              .target = {},
                                               .screen = std::move(screen),
                                               .id = ScreenId{++world.lastScreenId}});
     if (!world.screenStack.back().systems.empty())
@@ -167,6 +169,41 @@ void RemoveOrphanedScreens(World &world)
 {
     std::erase_if(world.screenStack, [&world](const World::Screen &held)
                   { return held.owner != ECS::NullEntity && !world.scene.IsAlive(held.owner); });
+}
+
+Mondrian::TargetId DrawScreenInto(World &world, Mondrian::Ui &ui, ScreenId id, Mondrian::Extent size)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    if (at == world.screenStack.end() || at->screen == nullptr)
+    {
+        return Mondrian::kWindowTarget;
+    }
+    const Mondrian::TargetId target = ui.AddTarget(size);
+    at->screen->SetTarget(target);
+    at->target = OwnedTarget{ui, target};
+    return target;
+}
+
+OwnedTarget &OwnedTarget::operator=(OwnedTarget &&other) noexcept
+{
+    if (this != &other)
+    {
+        if (_ui != nullptr)
+        {
+            _ui->RemoveTarget(_target);
+        }
+        _ui = std::exchange(other._ui, nullptr);
+        _target = std::exchange(other._target, Mondrian::kWindowTarget);
+    }
+    return *this;
+}
+
+OwnedTarget::~OwnedTarget()
+{
+    if (_ui != nullptr)
+    {
+        _ui->RemoveTarget(_target);
+    }
 }
 
 Mondrian::Screen *FindScreen(World &world, std::string_view name)
@@ -871,7 +908,8 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
     for (const ECS::Entity entity : entities)
     {
         if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
-            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache);
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache,
+                                               world.scene.Get<Runtime::SurfaceTexture>(entity));
     }
 }
 

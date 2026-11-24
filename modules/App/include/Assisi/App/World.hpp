@@ -55,6 +55,31 @@ class SceneRenderer;
 namespace Assisi::App
 {
 
+/// @brief A UI target that is taken away with whatever holds it: a screen's own
+/// target, which goes with the screen.
+class OwnedTarget
+{
+public:
+    OwnedTarget() = default;
+    /// @brief Holds @p target, made on @p ui, which must outlive this.
+    OwnedTarget(Mondrian::Ui &ui, Mondrian::TargetId target) : _ui(&ui), _target(target) {}
+    OwnedTarget(const OwnedTarget &) = delete;
+    OwnedTarget &operator=(const OwnedTarget &) = delete;
+    OwnedTarget(OwnedTarget &&other) noexcept
+        : _ui(std::exchange(other._ui, nullptr)), _target(std::exchange(other._target, Mondrian::kWindowTarget))
+    {
+    }
+    OwnedTarget &operator=(OwnedTarget &&other) noexcept;
+    ~OwnedTarget();
+
+    /// @brief The target held, or the window for none.
+    [[nodiscard]] Mondrian::TargetId Id() const { return _target; }
+
+private:
+    Mondrian::Ui *_ui = nullptr;
+    Mondrian::TargetId _target = Mondrian::kWindowTarget;
+};
+
 /// @brief Where a world is in its lifecycle. Only worlds that are Active or
 /// Dormant are usable; the other two states are transitions.
 enum class WorldState : std::uint8_t
@@ -254,6 +279,9 @@ struct World
     struct Screen
     {
         std::vector<std::string> systems;
+        /// The target the screen draws into when it has one of its own. Before
+        /// the screen, so the screen goes first.
+        OwnedTarget target;
         std::unique_ptr<Mondrian::Screen> screen;
         ScreenId id;
         /// The entity the screen belongs to, such as the character a nameplate
@@ -396,6 +424,12 @@ void SetScreenOwner(World &world, ScreenId id, ECS::Entity owner);
 /// @brief Takes away every screen whose owner is no longer alive. Run each
 /// frame before the Ui systems, and by WorldWidgets.
 void RemoveOrphanedScreens(World &world);
+
+/// @brief Draws the screen @p id into a new target of @p size made on @p ui,
+/// which the world takes away with the screen: a monitor's screen and the
+/// picture it draws into go together. A target it already had goes. The
+/// target, or the window when there is no screen of that id.
+Mondrian::TargetId DrawScreenInto(World &world, Mondrian::Ui &ui, ScreenId id, Mondrian::Extent size);
 
 /// @brief Destroys @p screen and takes its claim on the systems it asked for.
 /// Nothing is uninstalled: a system already running costs almost nothing idle,

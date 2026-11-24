@@ -13,9 +13,29 @@ namespace Assisi::Runtime
 
 namespace
 {
-/// The mesh @p meshRenderer names, with its materials written to @p materials.
-const Render::MeshBuffer *ResolvedAssets(const MeshRenderer &meshRenderer, Render::AssetCache &cache,
-                                         std::vector<const Render::Material *> &materials)
+/// Shows @p shown's texture in the slot of @p materials it names. A primitive,
+/// with no slot table, has the one slot 0, over its override or the fallback.
+void ShowSurfaceTexture(const MeshRenderer &meshRenderer, const SurfaceTexture &shown, Render::AssetCache &cache,
+                        std::vector<const Render::Material *> &materials)
+{
+    if (materials.empty() && shown.materialSlot == 0)
+    {
+        const bool hasOverride = !meshRenderer.materialOverrides.empty() && !meshRenderer.materialOverrides[0].IsNil();
+        materials.push_back(hasOverride ? cache.ResolveMaterial(meshRenderer.materialOverrides[0])
+                                        : cache.FallbackMaterial());
+    }
+    if (shown.materialSlot < materials.size())
+    {
+        const Render::Material *base = materials[shown.materialSlot];
+        materials[shown.materialSlot] =
+            cache.ResolveShownMaterial(base != nullptr ? *base : *cache.FallbackMaterial(), shown.textureSlot);
+    }
+}
+
+/// The mesh @p meshRenderer names, with its materials written to @p materials,
+/// showing @p shown's texture where it says when there is one.
+const Render::MeshBuffer *ResolvedAssets(const MeshRenderer &meshRenderer, const SurfaceTexture *shown,
+                                         Render::AssetCache &cache, std::vector<const Render::Material *> &materials)
 {
     const Render::MeshBuffer *mesh = cache.ResolveMesh(meshRenderer.mesh);
 
@@ -37,13 +57,18 @@ const Render::MeshBuffer *ResolvedAssets(const MeshRenderer &meshRenderer, Rende
         // material still renders.
         materials.push_back(cache.ResolveMaterial(materialId));
     }
+    // Only once the mesh has loaded: before then nothing draws its slots.
+    if (shown != nullptr && mesh != nullptr)
+    {
+        ShowSurfaceTexture(meshRenderer, *shown, cache, materials);
+    }
     return mesh;
 }
 } // namespace
 
-void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache)
+void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache, const SurfaceTexture *shown)
 {
-    meshRenderer.meshBuffer = ResolvedAssets(meshRenderer, cache, meshRenderer.materials);
+    meshRenderer.meshBuffer = ResolvedAssets(meshRenderer, shown, cache, meshRenderer.materials);
 }
 
 void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
@@ -55,7 +80,8 @@ void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
     std::vector<ECS::Entity> changed;
     for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
     {
-        const Render::MeshBuffer *mesh = ResolvedAssets(meshRenderer, cache, materials);
+        const Render::MeshBuffer *mesh =
+            ResolvedAssets(meshRenderer, scene.Get<SurfaceTexture>(entity), cache, materials);
         if (mesh != meshRenderer.meshBuffer || materials != meshRenderer.materials)
         {
             changed.push_back(entity);
@@ -63,7 +89,7 @@ void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache)
     }
     for (const ECS::Entity entity : changed)
     {
-        ResolveMeshRendererAssets(*scene.GetMut<MeshRenderer>(entity), cache);
+        ResolveMeshRendererAssets(*scene.GetMut<MeshRenderer>(entity), cache, scene.Get<SurfaceTexture>(entity));
     }
 
     // Bound here as well as before each evaluation, so a freshly loaded skinned

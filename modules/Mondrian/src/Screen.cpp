@@ -116,6 +116,11 @@ void Screen::Hide()
     _ui.Hide(*this);
 }
 
+void Screen::SetTarget(TargetId target)
+{
+    _ui.Retarget(*this, target);
+}
+
 void Screen::SetAnchor(Point at, bool keepOnScreen)
 {
     _anchor.at = at;

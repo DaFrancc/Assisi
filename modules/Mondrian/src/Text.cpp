@@ -81,9 +81,12 @@ void BreakLines(const ShapedText &shaped, float scale, std::optional<float> wrap
     uint32_t breakBefore = 0;
     float widthAtBreak = 0.f;
 
-    const auto endLine = [&](uint32_t end, float width)
+    // A line broken by wrapping ends where it is measured: the whitespace it
+    // ends on belongs to the next line as far as a caret goes. One ended by a
+    // newline or by the text's end ends at the pen, its whitespace included.
+    const auto endLine = [&](uint32_t end, float width, float penEnd)
     {
-        layout.lines.push_back(TextLine{.width = width, .first = first, .count = end - first});
+        layout.lines.push_back(TextLine{.width = width, .end = penEnd, .first = first, .count = end - first});
         first = end;
         pen = 0.f;
         inkEnd = 0.f;
@@ -101,7 +104,7 @@ void BreakLines(const ShapedText &shaped, float scale, std::optional<float> wrap
             if (breakBefore > first)
             {
                 const uint32_t restart = breakBefore;
-                endLine(restart, widthAtBreak);
+                endLine(restart, widthAtBreak, widthAtBreak);
                 i = restart;
                 continue;
             }
@@ -115,7 +118,8 @@ void BreakLines(const ShapedText &shaped, float scale, std::optional<float> wrap
             }
             if (split > first)
             {
-                endLine(split, split == i ? inkEnd : layout.glyphs[split].x);
+                const float width = split == i ? inkEnd : layout.glyphs[split].x;
+                endLine(split, width, width);
                 i = split;
                 continue;
             }
@@ -136,11 +140,11 @@ void BreakLines(const ShapedText &shaped, float scale, std::optional<float> wrap
             break;
         case GlyphClass::Newline:
         case GlyphClass::Count_:
-            endLine(i, inkEnd);
+            endLine(i, inkEnd, pen);
             break;
         }
     }
-    endLine(total, inkEnd);
+    endLine(total, inkEnd, pen);
 }
 
 } // namespace
@@ -278,13 +282,14 @@ CaretPlace PlaceCaret(const TextLayout &layout, std::string_view shown, uint32_t
     }
 
     // Past every glyph: the end of the last line, which is where the next
-    // character will go.
+    // character will go. Its pen, not its measured width, so spaces typed at
+    // the end move the caret on as they are typed.
     if (layout.lines.empty())
     {
         return {};
     }
     const TextLine &last = layout.lines.back();
-    return {.x = last.x + last.width, .line = static_cast<uint32_t>(layout.lines.size() - 1)};
+    return {.x = last.x + last.end, .line = static_cast<uint32_t>(layout.lines.size() - 1)};
 }
 
 uint32_t CharacterAt(const TextLayout &layout, std::string_view shown, Point local)

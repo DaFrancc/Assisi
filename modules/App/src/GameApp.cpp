@@ -78,6 +78,9 @@ GameApp::GameApp(GameLaunch launch)
 
 GameApp::~GameApp()
 {
+    // The cache goes with this object; pictures released after it have no slot
+    // to give back.
+    ShowUiSurfacesThrough(nullptr);
     // The readers reach members of this object; nothing may call them after it.
     if (_assetSource && Render::GetAssetSource() == &*_assetSource)
     {
@@ -475,6 +478,8 @@ bool GameApp::SetupRenderer()
     // Creating a block-compressed texture on a device that did not enable the
     // feature is invalid, so the cache is told before it loads anything.
     _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
+    // Screens shown on surfaces in the world are read by materials through it.
+    ShowUiSurfacesThrough(&_assetCache);
 
     if (!_sceneRenderer->Initialize({.device = device,
                                      .framebufferInfo = GetSceneFramebufferInfo(),

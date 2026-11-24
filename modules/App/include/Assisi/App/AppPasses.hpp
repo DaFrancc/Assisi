@@ -26,6 +26,8 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <span>
+
 namespace Assisi::Mondrian
 {
 class DrawList;
@@ -121,6 +123,17 @@ protected:
     FrameHooks &operator=(const FrameHooks &) = default;
 };
 
+/// @brief One picture a screen on a surface in the world draws into, to draw
+/// again this frame.
+struct UiSurfaceDraw
+{
+    nvrhi::ITexture *texture = nullptr;
+    nvrhi::IFramebuffer *framebuffer = nullptr;
+    /// What to draw into it after clearing it; null to only clear it, for a
+    /// picture whose screens have not been drawn yet.
+    const Mondrian::DrawList *drawList = nullptr;
+};
+
 /// @brief What every pass of the frame sees.
 struct AppFrame
 {
@@ -128,6 +141,9 @@ struct AppFrame
     const Render::TonemapSettings &tonemap;
     /// The game UI to draw, or null while it is hidden.
     const Mondrian::DrawList *gameUi = nullptr;
+    /// The pictures of screens on surfaces whose screens changed: only those
+    /// are drawn, the rest keep the picture they have.
+    std::span<const UiSurfaceDraw> uiSurfaces;
     /// What the scene target clears to, decoded to radiance.
     Math::Color4<Math::ColorSpace::Linear> clearColor;
     /// How long since the last frame, which the automatic exposure adapts over.
@@ -167,6 +183,16 @@ APASS(name = "clear-targets", base)
 struct ClearPass
 {
     void Record(Recorder &rec, const AppFrame &frame, Writes<SceneTarget> out);
+};
+
+/// @brief The game's screens shown on surfaces in the world, each into its own
+/// picture, before the scene reads them. Only pictures whose screens changed
+/// are drawn: an idle monitor keeps the picture it has.
+APASS(name = "ui-surfaces", before = "scene")
+struct UiSurfacesPass
+{
+    bool Wanted(const AppFrame &frame) const { return !frame.uiSurfaces.empty(); }
+    void Record(Recorder &rec, const AppFrame &frame, Writes<QuadPass> out);
 };
 
 /// @brief The app's scene, drawn by its OnRender. The scene's own passes run

@@ -15,6 +15,7 @@
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Pattern.hpp>
 #include <Assisi/Mondrian/ScreenWorld.hpp>
+#include <Assisi/Mondrian/Target.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
@@ -135,6 +136,8 @@ struct ScreenAnchor
     /// Whether the screen is slid back inside the window where the point
     /// would put any of it outside.
     bool keepOnScreen = false;
+
+    bool operator==(const ScreenAnchor &) const = default;
 };
 
 class Screen
@@ -202,6 +205,13 @@ class Screen
     /// its nodes says: what fades a nameplate with its distance.
     void SetOpacity(float opacity) { _opacity = opacity; }
     [[nodiscard]] float Opacity() const { return _opacity; }
+
+    /// @brief Draws this screen into @p target from the next sync on: laid out
+    /// against that target's size, ordered and hidden among the screens on it,
+    /// and never given the keys or the pointer unless the UI is told to use it.
+    /// kWindowTarget puts it back on the window.
+    void SetTarget(TargetId target);
+    [[nodiscard]] TargetId Target() const { return _target; }
 
     /// @brief The queue this screen's controls push every world event into.
     [[nodiscard]] Core::EventQueue &Events() const { return _world.Events(); }
@@ -678,6 +688,7 @@ class Screen
     int32_t _sortKey = kSortMenu;
     float _scale = 1.f;
     float _opacity = 1.f;
+    TargetId _target = kWindowTarget;
     ScreenTraits _traits;
     bool _shown = false;
     bool _anchored = false;

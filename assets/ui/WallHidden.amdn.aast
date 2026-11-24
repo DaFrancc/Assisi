@@ -1,0 +1,10 @@
+{
+  "guid": "bee1f4c0-4295-4669-93f4-2619c5ce04d8",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "screen"
+    }
+  ],
+  "version": 1
+}
