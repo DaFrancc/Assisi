@@ -64,6 +64,8 @@ void EnsurePosed(World &world, Render::AssetCache *cache)
 
 void PresentWorld(const SystemContext &ctx)
 {
+    // Before the Ui systems, so none of them reaches a screen whose entity has gone.
+    RemoveOrphanedScreens(ctx.world);
     ctx.world.systems.Run(SystemPhase::Ui, ctx);
     PlayWorldSounds(ctx);
 }

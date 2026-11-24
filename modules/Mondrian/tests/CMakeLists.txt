@@ -16,6 +16,7 @@ assisi_reflect(
 add_executable(Assisi-Mondrian-Tests
   main.cpp
   TestReflectedStructs.cpp
+  TestAnchoredScreens.cpp
   TestAttributeBindings.cpp
   TestBindings.cpp
   TestContexts.cpp

@@ -116,6 +116,13 @@ void Screen::Hide()
     _ui.Hide(*this);
 }
 
+void Screen::SetAnchor(Point at, bool keepOnScreen)
+{
+    _anchor.at = at;
+    _anchor.keepOnScreen = keepOnScreen;
+    _anchored = true;
+}
+
 void Screen::OnActivate(NodeId node, std::function<void(Screen &)> act)
 {
     // The route is ignored: this is the half of a screen's behaviour that

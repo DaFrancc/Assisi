@@ -27,6 +27,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -120,6 +121,22 @@ enum class ContextMoment : uint8_t
 
 inline constexpr std::size_t kContextMomentCount = static_cast<std::size_t>(ContextMoment::Count_);
 
+/// @brief Where a screen placed at a point sits this frame, as against one laid
+/// across the whole window: the point, in device pixels from the window's
+/// top-left corner, and which point of the screen lands on it.
+///
+/// What the engine moves a screen that follows something in the world with,
+/// every frame, having worked the point out from a camera Mondrian never sees.
+struct ScreenAnchor
+{
+    Point at;
+    /// Across, then down: Start, Center, End of the screen's own box.
+    std::array<Alignment, kAxisCount> attach{Alignment::Center, Alignment::Center};
+    /// Whether the screen is slid back inside the window where the point
+    /// would put any of it outside.
+    bool keepOnScreen = false;
+};
+
 class Screen
 {
   public:
@@ -158,6 +175,33 @@ class Screen
     [[nodiscard]] int32_t SortKey() const { return _sortKey; }
     [[nodiscard]] std::string_view Name() const { return _name; }
     [[nodiscard]] bool IsShown() const { return _shown; }
+
+    /// @brief Places this screen at @p at, in device pixels, from the next sync
+    /// on: its root is sized by its own width and height rather than the
+    /// window's, and the point of it its attach names lands on @p at. With
+    /// @p keepOnScreen it is slid back inside the window wherever it would
+    /// leave it. What a screen following something in the world is moved by.
+    void SetAnchor(Point at, bool keepOnScreen);
+    /// @brief Lays the screen across the whole window again.
+    void ClearAnchor() { _anchored = false; }
+    /// @brief Which point of the screen lands on its anchor, across then down.
+    void SetAttach(const std::array<Alignment, kAxisCount> &attach) { _anchor.attach = attach; }
+    /// @brief Where the screen sits this frame, or nothing for one laid across
+    /// the window.
+    [[nodiscard]] std::optional<ScreenAnchor> Anchor() const
+    {
+        return _anchored ? std::optional<ScreenAnchor>{_anchor} : std::nullopt;
+    }
+
+    /// @brief How large this screen is drawn, times the UI's own scale: what
+    /// shrinks a nameplate with its distance. One is as laid out.
+    void SetScale(float scale) { _scale = scale; }
+    [[nodiscard]] float Scale() const { return _scale; }
+
+    /// @brief How much of this screen shows, from 0 to 1, over what each of
+    /// its nodes says: what fades a nameplate with its distance.
+    void SetOpacity(float opacity) { _opacity = opacity; }
+    [[nodiscard]] float Opacity() const { return _opacity; }
 
     /// @brief The queue this screen's controls push every world event into.
     [[nodiscard]] Core::EventQueue &Events() const { return _world.Events(); }
@@ -629,9 +673,14 @@ class Screen
     /// What had focus when this screen last gave the keys up, restored when it
     /// takes them back.
     NodeId _focused;
+    /// Where it sits when anchored; its attach is kept while it is not.
+    ScreenAnchor _anchor;
     int32_t _sortKey = kSortMenu;
+    float _scale = 1.f;
+    float _opacity = 1.f;
     ScreenTraits _traits;
     bool _shown = false;
+    bool _anchored = false;
 };
 
 } // namespace Assisi::Mondrian

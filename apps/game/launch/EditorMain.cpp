@@ -586,15 +586,31 @@ CompileSourceSpriteSheet(std::string_view vpath)
     return std::move(*sheet);
 }
 
-/// The file the dedicated server reads a collision model from. Its asset index
-/// is built on the first read, since the asset root is only known once the
-/// server has initialised, and read-only, since the editor may share the tree.
-std::optional<std::string> ServerAssetPath(Assisi::Core::AssetId id)
+/// The source file an asset id names: what the dedicated server reads a
+/// collision model from, and where a screen a component names is compiled
+/// from. Its asset index is built on the first read, since the asset root is
+/// only known once the process has initialised, and read-only, since the
+/// editor may share the tree.
+std::optional<std::string> SourceAssetPath(Assisi::Core::AssetId id)
 {
     static Assisi::Core::AssetDatabase database;
     static std::once_flag built;
     std::call_once(built, [] { (void)database.Rebuild(Assisi::Core::RebuildMode::ReadOnly); });
     return database.PathFor(id);
+}
+
+/// The screen @p id names, compiled from its source file as one named by its
+/// path is.
+std::expected<Assisi::Mondrian::ScreenDocument, Assisi::Mondrian::ScreenReadError> CompileSourceScreenById(
+    Assisi::Core::AssetId id)
+{
+    const std::optional<std::string> vpath = SourceAssetPath(id);
+    if (!vpath)
+    {
+        Assisi::Core::Log::Error("Editor: no file in the asset tree is the screen {}.", id.ToString());
+        return std::unexpected(Assisi::Mondrian::ScreenReadError::Missing);
+    }
+    return CompileSourceScreen(*vpath);
 }
 
 } // namespace
@@ -613,6 +629,7 @@ int main(int argc, char **argv)
     // those, so what an author sees is what a player gets, and a file that
     // would fail the cook fails here too.
     (void)Assisi::Mondrian::SetScreenReader(&CompileSourceScreen);
+    (void)Assisi::Mondrian::SetScreenIdReader(&CompileSourceScreenById);
     // String tables the same way: compiled from the file an author edits into
     // the bytes the cook would write, and read back.
     (void)Assisi::Mondrian::SetStringTableReader(&CompileSourceStringTable);
@@ -684,7 +701,7 @@ int main(int argc, char **argv)
     if (args.server)
     {
         args.serverOptions.level = args.startupLevel;
-        const Assisi::Editor::SourceCollisionSource collision{ServerAssetPath};
+        const Assisi::Editor::SourceCollisionSource collision{SourceAssetPath};
         Game::ServerApp serverApp(args.serverOptions, collision);
         if (!serverApp.Initialize())
         {

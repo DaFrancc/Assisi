@@ -158,6 +158,12 @@ class Ui
     /// draw list from scratch. Must follow ProcessInput.
     void Sync(Extent viewport);
 
+    /// @brief The viewport the last Sync laid screens out against, in device
+    /// pixels; empty before the first. What the engine places a screen that
+    /// follows something in the world against, a frame ahead of the Sync that
+    /// draws it, so a resize lands a frame late.
+    [[nodiscard]] Extent Viewport() const { return _viewport; }
+
     /// @brief What the last Sync produced, finalized: every shown screen's
     /// quads, lowest sort key first. Stays valid until the next Sync, so a
     /// redraw between frames shows the same thing without laying out again.
@@ -374,6 +380,9 @@ class Ui
     /// still held once it has been held long enough.
     void Navigate(Screen &screen, const UiInput &input);
     void DrawFocusRing(const Screen &screen);
+    /// Lays @p screen out against @p viewport at @p scale: across the whole of
+    /// it, or at its own size where its anchor puts it.
+    void LayOut(Screen &screen, Extent viewport, float scale);
 
     /// Every screen that exists, in the order it was made. Not owned: a screen
     /// puts itself here and takes itself away, and whatever owns it outlives
@@ -413,6 +422,7 @@ class Ui
     Point _lastPointer;
     TextureId _fontAtlas = kWhiteTexture;
     TextureId _placeholderTexture = kWhiteTexture;
+    Extent _viewport;
     float _userScale = 1.f;
     FrameStep _nextStep = FrameStep::AwaitingInput;
     NavWrap _navWrap = NavWrap::Around;

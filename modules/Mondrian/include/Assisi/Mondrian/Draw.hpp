@@ -21,6 +21,8 @@ inline constexpr float kMinBorderDevicePixels = 1.f;
 /// @brief Adds @p tree's quads to @p list as @p layout placed them, with text
 /// from the font atlas registered as @p fontAtlas. Each control draws its own
 /// parts over its node's, told by @p interaction which one is pressed or hovered.
+/// The whole tree is faded by the opacity @p list holds when this is called,
+/// and the list is left at full opacity.
 void DrawTree(const NodeTree &tree, const LayoutResult &layout, DrawList &list, TextureId fontAtlas,
               const Interaction &interaction);
 

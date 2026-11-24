@@ -42,6 +42,8 @@ void InstallCookedReaders(const Core::AssetProvider &provider)
                                   { return Mondrian::ReadCookedFont(provider, vpath); });
     (void)Mondrian::SetScreenReader([&provider](std::string_view vpath)
                                     { return Mondrian::ReadCookedScreen(provider, vpath); });
+    (void)Mondrian::SetScreenIdReader([&provider](Core::AssetId id)
+                                      { return Mondrian::ReadCookedScreen(provider, id); });
     (void)Mondrian::SetStringTableReader([&provider](std::string_view vpath)
                                          { return Mondrian::ReadCookedStringTable(provider, vpath); });
     (void)Mondrian::SetThemeReader([&provider](std::string_view vpath)
@@ -56,6 +58,7 @@ void RemoveCookedReaders()
     (void)Core::SetConfigReader({});
     (void)Mondrian::SetFontReader({});
     (void)Mondrian::SetScreenReader({});
+    (void)Mondrian::SetScreenIdReader({});
     (void)Mondrian::SetStringTableReader({});
     (void)Mondrian::SetThemeReader({});
     (void)Mondrian::SetSpriteSheetReader({});

@@ -351,6 +351,10 @@ struct ScreenDocument
 
     AFIELD() ScreenTraits traits;
 
+    /// Which point of the screen lands on its anchor when code places it at
+    /// one, across then down. Unused while it is laid across the window.
+    AFIELD() std::array<Alignment, kAxisCount> attach{Alignment::Center, Alignment::Center};
+
     /// Whether players never see this screen, which exempts its text from a
     /// project's requirement that text come from string tables.
     AFIELD() bool debugOnly = false;

@@ -10,6 +10,7 @@ The attributes on the `<screen>` element describe the screen as a whole:
 | `sort` | `hud`, `menu`, `popup`, `overlay`, or a number | Where the screen draws relative to others. |
 | `needs` | system names, separated by spaces | Systems the world installs when the screen is loaded. |
 | `debug_only` | `true`, `false` | Whether players never see the screen, which lets it write text as it is when keys are required (see [String tables](ui-string-tables.md#requiring-keys)). |
+| `attach` | two alignment words | For a screen shown over something in the world, which of its points sits on that spot. See [UI in the world](ui-world.md#where-it-sits). |
 
 A screen has no `name` attribute. It is identified by the path of its file,
 such as `ui/Pause.amdn`, so renaming or moving the file is all it takes to

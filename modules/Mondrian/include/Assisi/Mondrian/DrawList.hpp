@@ -303,6 +303,7 @@ class DrawList
     /// border by. What fades a node with everything drawn inside it, the
     /// parts a control paints included.
     void SetOpacity(float opacity) { _opacity = opacity; }
+    [[nodiscard]] float Opacity() const { return _opacity; }
 
     [[nodiscard]] bool IsFinalized() const { return _finalized; }
     [[nodiscard]] std::span<const QuadInstance> Instances() const { return _instances; }

@@ -96,6 +96,13 @@ Rect Intersect(const Rect &a, const Rect &b)
     return Rect{.x = left, .y = top, .width = std::max(0.f, right - left), .height = std::max(0.f, bottom - top)};
 }
 
+/// Moves @p rect by @p by.
+void MoveRect(Rect &rect, Point by)
+{
+    rect.x += by.x;
+    rect.y += by.y;
+}
+
 /// @p rect with each edge rounded on its own, so neighbours that share an edge
 /// keep sharing it.
 Rect SnapEdges(const Rect &rect)
@@ -113,9 +120,9 @@ Rect SnapEdges(const Rect &rect)
 class Layouter
 {
   public:
-    Layouter(const NodeTree &tree, LayoutResult &out, const Font *font, Extent viewport)
+    Layouter(const NodeTree &tree, LayoutResult &out, const Font *font, Extent viewport, RootSize rootSize)
         : _slots(tree.Slots()), _widgets(&tree.Widgets()), _out(out), _font(font), _root(tree.Root()),
-          _viewport(viewport), _scale(out.scale)
+          _viewport(viewport), _scale(out.scale), _rootSize(rootSize)
     {
     }
 
@@ -217,7 +224,7 @@ class Layouter
 
         float &length = Span(result.rect, axis);
         float &least = Component(result.minSize, axis);
-        if (index == _root.index)
+        if (index == _root.index && _rootSize == RootSize::Viewport)
         {
             length = ViewportSide(_viewport, axis);
             least = length;
@@ -775,6 +782,7 @@ class Layouter
     NodeId _root;
     Extent _viewport;
     float _scale;
+    RootSize _rootSize;
 };
 
 } // namespace
@@ -830,7 +838,8 @@ const LayoutNode *LayoutResult::Get(NodeId id) const
     return node.placed && node.generation == id.generation ? &node : nullptr;
 }
 
-void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out)
+void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out,
+                   RootSize root)
 {
     ASSISI_ASSERT(scale > 0.f && Math::IsFinite(scale), "ComputeLayout needs a positive, finite scale");
 
@@ -838,7 +847,22 @@ void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Fon
     out.texts.clear();
     out.scale = scale;
 
-    Layouter(tree, out, font, viewport).Run();
+    Layouter(tree, out, font, viewport, root).Run();
+}
+
+void MoveLayout(LayoutResult &layout, Point by)
+{
+    // Whole pixels, so the edges layout snapped stay snapped.
+    const Point whole{.x = std::round(by.x), .y = std::round(by.y)};
+    for (LayoutNode &node : layout.nodes)
+    {
+        if (node.placed)
+        {
+            MoveRect(node.rect, whole);
+            MoveRect(node.clip, whole);
+            MoveRect(node.outerClip, whole);
+        }
+    }
 }
 
 } // namespace Assisi::Mondrian
