@@ -715,16 +715,37 @@ std::expected<void, MarkupError> ApplyStyleName(const Walk &walk, ScreenNode &no
     return {};
 }
 
+/// The binding @p node holds for @p attribute, or null.
+const AttributeBinding *BindingFor(const ScreenNode &node, BoundAttribute attribute)
+{
+    const std::vector<AttributeBinding>::const_iterator found =
+        std::ranges::find(node.boundAttributes, attribute, &AttributeBinding::attribute);
+    return found != node.boundAttributes.end() ? &*found : nullptr;
+}
+
+/// What names @p node's picture other than @p picture, which is Sprite or
+/// Texture: the other's value or binding as written, or empty for nothing.
+std::string OtherPicture(const Walk &walk, const ScreenNode &node, BoundAttribute picture)
+{
+    const bool sprite = picture == BoundAttribute::Sprite;
+    const Core::InternedString &written = sprite ? node.texture : node.sprite;
+    if (!written.Empty())
+    {
+        return std::string{written.View()};
+    }
+    const AttributeBinding *const bound = BindingFor(node, sprite ? BoundAttribute::Texture : BoundAttribute::Sprite);
+    return bound != nullptr ? std::string{walk.document.Text(bound->binding)} : std::string{};
+}
+
 /// Refuses @p attribute giving a node a picture when it already names @p other
 /// the other way: a node shows one.
-std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute,
-                                                     const Core::InternedString &other)
+std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute, const std::string &other)
 {
-    if (!attribute.value.empty() && !other.Empty())
+    if (!attribute.value.empty() && !other.empty())
     {
         return std::unexpected(At(attribute, "a node shows one picture, named by a sprite or by a texture; this one "
                                              "already names '" +
-                                                 std::string{other.View()} + "'."));
+                                                 other + "'."));
     }
     return {};
 }
@@ -732,7 +753,9 @@ std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attr
 /// `sprite`, which a sheet the project lists must have.
 std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
 {
-    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.texture); !refused)
+    if (const std::expected<void, MarkupError> refused =
+            RefuseSecondPicture(attribute, OtherPicture(walk, node, BoundAttribute::Sprite));
+        !refused)
     {
         return refused;
     }
@@ -750,7 +773,9 @@ std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node,
 /// `texture`, which must be an image the project has.
 std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
 {
-    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.sprite); !refused)
+    if (const std::expected<void, MarkupError> refused =
+            RefuseSecondPicture(attribute, OtherPicture(walk, node, BoundAttribute::Texture));
+        !refused)
     {
         return refused;
     }
@@ -773,6 +798,68 @@ std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node
         }
     }
     node.texture = Core::InternedString{attribute.value};
+    return {};
+}
+
+/// What stands for a bound size's value while what follows its binding is read
+/// as a length is: a number, so the unit after it and the limits read as they
+/// do in `width="50% max 400"`.
+constexpr std::string_view kBoundSizeStandIn = "0";
+
+/// `background="{Team.colour}"`, `width="{Bar.fill}% max 400"` and the other
+/// attributes a binding can drive: the binding kept beside the node, with the
+/// unit and limits of a bound size.
+std::expected<void, MarkupError> ApplyAttributeBinding(Walk &walk, ScreenNode &node, BoundAttribute bound,
+                                                       const MarkupAttribute &attribute)
+{
+    const bool size = bound == BoundAttribute::Width || bound == BoundAttribute::Height;
+    MarkupAttribute binding = attribute;
+    std::string after;
+    if (size)
+    {
+        const std::size_t close = attribute.value.find(kBindingClose);
+        if (!attribute.value.starts_with(kBindingOpen) || close == std::string::npos)
+        {
+            return std::unexpected(At(attribute, "'" + attribute.name +
+                                      "' holds a binding, which comes first, such as " + attribute.name +
+                                      "=\"{Bar.fill}% max 400\"."));
+        }
+        binding.value = attribute.value.substr(0, close + 1);
+        after = attribute.value.substr(close + 1);
+    }
+    if (bound == BoundAttribute::Sprite || bound == BoundAttribute::Texture)
+    {
+        if (const std::expected<void, MarkupError> refused =
+                RefuseSecondPicture(attribute, OtherPicture(walk, node, bound));
+            !refused)
+        {
+            return refused;
+        }
+    }
+    const std::expected<Core::PooledString, MarkupError> handle = KeepBinding(walk, binding, AttributeUse(bound));
+    if (!handle)
+    {
+        return std::unexpected(handle.error());
+    }
+    AttributeBinding kept{.size = Sizing::Fixed(Px(0.f)), .binding = *handle, .attribute = bound};
+    if (size)
+    {
+        const std::optional<Sizing> sizing = ParseSizing(std::string{kBoundSizeStandIn} + after);
+        if (!sizing)
+        {
+            return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
+                                      "' after its binding, and only a unit, such as %, then min and "
+                                      "max can follow one, as they follow a length."));
+        }
+        kept.size = *sizing;
+    }
+    // Not written until the binding reads, so a named style shows until then,
+    // even over what a control's own call writes.
+    if (const std::optional<StyleProperty> property = PropertyOf(bound))
+    {
+        node.written &= ~PropertyBit(*property);
+    }
+    node.boundAttributes.push_back(kept);
     return {};
 }
 
@@ -1054,6 +1141,22 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         if (const std::expected<void, MarkupError> refused = RefuseMisspelling(node, attribute); !refused)
         {
             return refused;
+        }
+        const std::optional<BoundAttribute> bindable = BoundAttributeNamed(attribute.name);
+        if (bindable && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (*state)
+            {
+                return std::unexpected(At(attribute, "'" + written.name +
+                                          "' holds a binding, and a state's look is written out: "
+                                          "bind the attribute with no state."));
+            }
+            if (const std::expected<void, MarkupError> bound = ApplyAttributeBinding(walk, node, *bindable, attribute);
+                !bound)
+            {
+                return bound;
+            }
+            continue;
         }
         if (attribute.name == kVisibleAttribute && attribute.value.find(kBindingOpen) != std::string::npos)
         {

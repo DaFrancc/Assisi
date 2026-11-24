@@ -19,9 +19,10 @@ namespace
 {
 
 /// Rebuilds the pool from what the nodes point at, in node order: text, then
-/// placeholder, then pattern, then visible's binding. The walk adds text as it
-/// settles it, and a text resolved twice leaves its first spelling behind; this
-/// drops those, so a screen cooks to the same bytes however the walk got there.
+/// placeholder, then pattern, then the bindings of visible, the value and each
+/// attribute. The walk adds text as it settles it, and a text resolved twice
+/// leaves its first spelling behind; this drops those, so a screen cooks to the
+/// same bytes however the walk got there.
 void PackText(ScreenDocument &document)
 {
     Core::StringPool packed;
@@ -32,6 +33,10 @@ void PackText(ScreenDocument &document)
         node.pattern = packed.Add(document.Text(node.pattern));
         node.visibleBinding = packed.Add(document.Text(node.visibleBinding));
         node.valueBinding = packed.Add(document.Text(node.valueBinding));
+        for (AttributeBinding &bound : node.boundAttributes)
+        {
+            bound.binding = packed.Add(document.Text(bound.binding));
+        }
     }
     document.pool = std::move(packed);
 }

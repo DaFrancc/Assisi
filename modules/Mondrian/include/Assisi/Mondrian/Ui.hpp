@@ -27,6 +27,7 @@
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
 
@@ -210,6 +211,19 @@ class Ui
     /// no known size, when it cannot be loaded.
     [[nodiscard]] Sprite TextureSprite(std::string_view vpath);
 
+    /// @brief Uploads the image an asset id names and registers it, as the
+    /// loader above does for a path; nullopt, logged, when it cannot.
+    using AssetTextureLoader = std::function<std::optional<Sprite>(Core::AssetId id)>;
+
+    /// @brief What a picture named by its asset id, as a bound texture is, is
+    /// loaded through. Until set, every such picture is the placeholder.
+    void SetAssetTextureLoader(AssetTextureLoader loader) { _assetTextureLoader = std::move(loader); }
+
+    /// @brief All of the image @p id names as one picture: loaded the first time
+    /// it is asked for, and kept until the UI goes. The placeholder, of no known
+    /// size, when it cannot be loaded.
+    [[nodiscard]] Sprite TextureSprite(Core::AssetId id);
+
     /// @brief How the UI reaches the system clipboard. Until set, it reads as
     /// empty and writes go nowhere.
     void SetClipboard(Clipboard clipboard) { _clipboard = std::move(clipboard); }
@@ -389,6 +403,9 @@ class Ui
     /// by that path, the placeholder standing in for one that did not load.
     std::unordered_map<Core::InternedString, Sprite> _textures;
     TextureLoader _textureLoader;
+    /// The same for pictures named by asset id.
+    std::unordered_map<Core::AssetId, Sprite> _assetTextures;
+    AssetTextureLoader _assetTextureLoader;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;

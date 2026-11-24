@@ -98,6 +98,7 @@ assisi_reflect(
     include/Assisi/Mondrian/Theme.hpp
     include/Assisi/Mondrian/Sprite.hpp
     include/Assisi/Mondrian/Widget.hpp
+    include/Assisi/Mondrian/Binding.hpp
     include/Assisi/Mondrian/Screen.hpp
     include/Assisi/Mondrian/ScreenDocument.hpp
 )

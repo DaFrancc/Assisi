@@ -13,6 +13,8 @@
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Render/Texture.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
+
 #include <nvrhi/nvrhi.h>
 
 #include <cstdint>
@@ -104,5 +106,10 @@ void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device);
 /// cannot be loaded.
 [[nodiscard]] std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device,
                                                     std::string_view vpath);
+
+/// @brief The same for the image @p id names, such as a field a texture is
+/// bound to holds.
+[[nodiscard]] std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device,
+                                                    Core::AssetId id);
 
 } // namespace Assisi::Mondrian::Engine

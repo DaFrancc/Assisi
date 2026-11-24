@@ -142,6 +142,23 @@ enum class ScreenVerb : uint8_t
     return held != Core::EventValueKind::None && (event == held || event == Core::EventValueKind::None);
 }
 
+/// @brief An attribute a node's file binds to a field, such as
+/// `background="{Team.colour}"`.
+ASTRUCT()
+struct AttributeBinding
+{
+    /// For a width or height, the size it becomes, whose value the field
+    /// replaces: the unit and the limits written after the binding. Kept here
+    /// rather than in the node's style, which shows what the node would have
+    /// unbound until the binding first reads. Unused for other attributes.
+    AFIELD() Sizing size = Sizing::Fixed(Px(0.f));
+    /// The binding alone, as written, such as `{Team.colour}`.
+    AFIELD() Core::PooledString binding;
+    AFIELD() BoundAttribute attribute = BoundAttribute::Background;
+
+    [[nodiscard]] friend bool operator==(const AttributeBinding &, const AttributeBinding &) = default;
+};
+
 /// @brief One node of a screen, as the file described it.
 ///
 /// Its text lives in the document's pool, so a node alone names its words but
@@ -160,6 +177,11 @@ struct ScreenNode
     /// The resting properties the file took from the theme's tokens. Each is in
     /// written too, and its value in style is a default until a theme fills it.
     AFIELD() std::vector<TokenUse> tokens;
+
+    /// The attributes that follow fields, at most one binding each. A bound
+    /// style property is not in written: until its binding reads, the node
+    /// looks as though the file had not written it.
+    AFIELD() std::vector<AttributeBinding> boundAttributes;
 
     /// What a slider's ends mean, and how far one press moves it. A stepped
     /// slider moves a whole step at a time and ignores the step here.

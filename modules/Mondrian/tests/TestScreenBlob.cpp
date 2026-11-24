@@ -77,6 +77,10 @@ ScreenDocument Everything()
     panel.style.scrollBarDrag = ScrollBarDrag::Smoothed;
     panel.style.textAlign = TextAlign::Right;
     panel.style.textColor = Color{0.9f, 0.8f, 0.7f, 0.6f};
+    panel.boundAttributes = {
+        AttributeBinding{.size = Sizing{.value = Em(0.f), .min = Px(4.f), .max = Vw(30.f), .kind = SizingKind::Fixed},
+                         .binding = document.AddText("{Gauge.fill}"),
+                         .attribute = BoundAttribute::Height}};
     panel.style.textSize = Em(1.5f);
     panel.written = PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::BorderColor);
     panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::BorderColor}};
@@ -233,10 +237,52 @@ TEST_CASE("ScreenBlob: a text handle past the pool is refused")
     {
         document.nodes[0].valueBinding = past;
     }
+    SUBCASE("an attribute's binding")
+    {
+        document.nodes[0].boundAttributes = {AttributeBinding{.binding = past, .attribute = BoundAttribute::Tint}};
+    }
 
     const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
     REQUIRE_FALSE(read.has_value());
     CHECK(read.error() == CookedScreenError::Invalid);
+}
+
+TEST_CASE("ScreenBlob: attribute bindings that no cook writes are refused")
+{
+    ScreenDocument document;
+    document.nodes.emplace_back();
+    const Assisi::Core::PooledString binding = document.AddText("{Gauge.icon}");
+    ScreenNode &node = document.nodes[0];
+
+    SUBCASE("one attribute bound twice")
+    {
+        node.boundAttributes = {AttributeBinding{.binding = binding, .attribute = BoundAttribute::Sprite},
+                                AttributeBinding{.binding = binding, .attribute = BoundAttribute::Sprite}};
+    }
+    SUBCASE("a bound sprite on a node naming a texture")
+    {
+        node.texture = InternedString{"ui/logo.png"};
+        node.boundAttributes = {AttributeBinding{.binding = binding, .attribute = BoundAttribute::Sprite}};
+    }
+    SUBCASE("a bound sprite and a bound texture")
+    {
+        node.boundAttributes = {AttributeBinding{.binding = binding, .attribute = BoundAttribute::Sprite},
+                                AttributeBinding{.binding = binding, .attribute = BoundAttribute::Texture}};
+    }
+
+    const std::expected<ScreenDocument, CookedScreenError> read = ReadCookedScreen(Cook(document));
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == CookedScreenError::Invalid);
+}
+
+TEST_CASE("ScreenBlob: one picture, bound or named, with other attributes bound beside it, is read")
+{
+    ScreenDocument document;
+    document.nodes.emplace_back();
+    const Assisi::Core::PooledString binding = document.AddText("{Gauge.icon}");
+    document.nodes[0].boundAttributes = {AttributeBinding{.binding = binding, .attribute = BoundAttribute::Sprite},
+                                         AttributeBinding{.binding = binding, .attribute = BoundAttribute::Background}};
+    CHECK(ReadCookedScreen(Cook(document)).has_value());
 }
 
 TEST_CASE("ScreenBlob: an unbounded maximum comes back unbounded")

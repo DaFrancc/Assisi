@@ -3,8 +3,11 @@
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Math/Color.hpp>
 
 #include <doctest/doctest.h>
 
@@ -51,6 +54,15 @@ FieldMeta StanceField()
     return stance;
 }
 
+/// A component with a field for each attribute a binding drives.
+struct Banner
+{
+    Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> colour{0.f, 0.f, 0.f, 0.f};
+    Assisi::Core::AssetId portrait;
+    Assisi::Core::ShortString icon;
+    float fill = 0.f;
+};
+
 const std::vector<ComponentMeta> &Components()
 {
     static const std::vector<ComponentMeta> components{
@@ -58,7 +70,13 @@ const std::vector<ComponentMeta> &Components()
                       .fields = {Field("owner", FieldType::EntityRef, offsetof(Health, owner)),
                                  Field("current", FieldType::Float, offsetof(Health, current)), StanceField(),
                                  Field("alive", FieldType::Bool, offsetof(Health, alive))},
-                      .typeIndex = typeid(Health)}};
+                      .typeIndex = typeid(Health)},
+        ComponentMeta{.name = "Banner",
+                      .fields = {Field("colour", FieldType::SrgbColor4, offsetof(Banner, colour)),
+                                 Field("portrait", FieldType::AssetId, offsetof(Banner, portrait)),
+                                 Field("icon", FieldType::String, offsetof(Banner, icon)),
+                                 Field("fill", FieldType::Float, offsetof(Banner, fill))},
+                      .typeIndex = typeid(Banner)}};
     return components;
 }
 
@@ -302,4 +320,107 @@ TEST_CASE("ScreenBindings: a template checked alone may name a context the scree
     CHECK(Says(RefusedInside(R"amdn(<template name="boss_bar"><text>{boss:Health.current}</text></template>
 <boss_bar />)amdn"),
                "does not declare"));
+}
+
+namespace
+{
+
+/// What @p node keeps for @p attribute, or null.
+const AttributeBinding *Kept(const ScreenNode &node, BoundAttribute attribute)
+{
+    for (const AttributeBinding &bound : node.boundAttributes)
+    {
+        if (bound.attribute == attribute)
+        {
+            return &bound;
+        }
+    }
+    return nullptr;
+}
+
+/// The binding @p node keeps for @p attribute, or empty.
+std::string_view BindingOf(const ScreenDocument &document, const ScreenNode &node, BoundAttribute attribute)
+{
+    const AttributeBinding *const bound = Kept(node, attribute);
+    return bound != nullptr ? document.Text(bound->binding) : std::string_view{};
+}
+
+} // namespace
+
+TEST_CASE("ScreenBindings: a colour, a picture and a size can each follow a field")
+{
+    const ScreenDocument document = Bound(R"amdn(<screen>
+    <column name="c" background="{Banner.colour}" tint="{Banner.colour}" width="{Banner.fill}% max 400" />
+    <text name="x" border_color="{Banner.colour}" text_color="{Banner.colour}" height="{Banner.fill}">x</text>
+    <image name="i" sprite="{Banner.icon}" />
+    <image name="t" texture="{Banner.portrait}" background_image="{Banner.icon}" />
+</screen>)amdn");
+    const ScreenNode &column = NodeNamed(document, "c");
+    CHECK(BindingOf(document, column, BoundAttribute::Background) == "{Banner.colour}");
+    CHECK(BindingOf(document, column, BoundAttribute::Tint) == "{Banner.colour}");
+    CHECK(BindingOf(document, column, BoundAttribute::Width) == "{Banner.fill}");
+    // Not written until the binding reads, so a style it names shows until then.
+    CHECK((column.written & PropertyBit(StyleProperty::Background)) == 0);
+    CHECK((column.written & PropertyBit(StyleProperty::Width)) == 0);
+    // The unit and the limits wait beside the binding; the style keeps its own.
+    const Sizing &width = Kept(column, BoundAttribute::Width)->size;
+    CHECK(width.kind == SizingKind::Fixed);
+    CHECK(width.value == Percent(0.f));
+    CHECK(width.max == Px(400.f));
+    CHECK(column.style.sizing[static_cast<std::size_t>(Axis::X)] == Sizing::Fit());
+
+    const ScreenNode &text = NodeNamed(document, "x");
+    CHECK(BindingOf(document, text, BoundAttribute::BorderColor) == "{Banner.colour}");
+    CHECK(BindingOf(document, text, BoundAttribute::TextColor) == "{Banner.colour}");
+    CHECK(BindingOf(document, text, BoundAttribute::Height) == "{Banner.fill}");
+    CHECK(Kept(text, BoundAttribute::Height)->size.value == Px(0.f));
+
+    CHECK(BindingOf(document, NodeNamed(document, "i"), BoundAttribute::Sprite) == "{Banner.icon}");
+    const ScreenNode &texture = NodeNamed(document, "t");
+    CHECK(BindingOf(document, texture, BoundAttribute::Texture) == "{Banner.portrait}");
+    CHECK(BindingOf(document, texture, BoundAttribute::BackgroundImage) == "{Banner.icon}");
+}
+
+TEST_CASE("ScreenBindings: an attribute bound to a field of the wrong type fails the cook")
+{
+    CHECK(Says(RefusedInside(R"amdn(<column background="{Banner.fill}" />)amdn"), "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<column width="{Banner.colour}" />)amdn"), "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<image texture="{Banner.icon}" />)amdn"), "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<image sprite="{Banner.portrait}" />)amdn"), "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<column background="{Banner.colur}" />)amdn"), "'colur'"));
+}
+
+TEST_CASE("ScreenBindings: an attribute's binding is the whole value, with no format and no state")
+{
+    CHECK(Says(RefusedInside(R"amdn(<column width="{Banner.fill:.1f}" />)amdn"), "format"));
+    CHECK(Says(RefusedInside(R"amdn(<column background="a {Banner.colour}" />)amdn"), "one binding"));
+    CHECK(Says(RefusedInside(R"amdn(<button hover:background="{Banner.colour}">x</button>)amdn"), "state"));
+    CHECK(Says(RefusedInside(R"amdn(<column width="{Banner.fill}px" />)amdn"), "after its binding"));
+    CHECK(Says(RefusedInside(R"amdn(<column width="grow max {Banner.fill}" />)amdn"), "comes first"));
+}
+
+TEST_CASE("ScreenBindings: a node bound to one picture names no other")
+{
+    CHECK(Says(RefusedInside(R"amdn(<image sprite="{Banner.icon}" texture="{Banner.portrait}" />)amdn"),
+               "one picture"));
+}
+
+TEST_CASE("ScreenBindings: what an instance writes for an attribute wins over its template's, bound or not")
+{
+    const ScreenDocument document = Bound(R"amdn(<screen>
+    <template name="bound"><column background="{Banner.colour}" width="{Banner.fill}" /></template>
+    <template name="plain"><column background="#ffffff" width="20" /></template>
+    <bound name="b" background="#000000" />
+    <plain name="p" width="{Banner.fill}%" />
+</screen>)amdn");
+    const ScreenNode &bound = NodeNamed(document, "b");
+    CHECK(BindingOf(document, bound, BoundAttribute::Background).empty());
+    CHECK((bound.written & PropertyBit(StyleProperty::Background)) != 0);
+    CHECK(BindingOf(document, bound, BoundAttribute::Width) == "{Banner.fill}");
+
+    const ScreenNode &plain = NodeNamed(document, "p");
+    CHECK(BindingOf(document, plain, BoundAttribute::Width) == "{Banner.fill}");
+    CHECK((plain.written & PropertyBit(StyleProperty::Width)) == 0);
+    CHECK(Kept(plain, BoundAttribute::Width)->size.value == Percent(0.f));
+    CHECK((plain.written & PropertyBit(StyleProperty::Background)) != 0);
 }

@@ -538,6 +538,13 @@ private:
     /// Uploads the image at @p vpath for the UI and registers it: all of it as
     /// one picture of its size, or nullopt, logged, when it cannot be loaded.
     [[nodiscard]] std::optional<Mondrian::Sprite> LoadUiTexture(std::string_view vpath);
+    /// The same for the image @p id names.
+    [[nodiscard]] std::optional<Mondrian::Sprite> LoadUiTexture(Core::AssetId id);
+    /// Registers @p texture, uploaded at @p size, and keeps it for as long as
+    /// the UI may draw it: all of it as one picture, or nullopt when the upload
+    /// failed and there is no size.
+    [[nodiscard]] std::optional<Mondrian::Sprite> KeepUiTexture(Render::Texture texture,
+                                                                std::optional<Mondrian::Extent> size);
     /// Builds the mixer from the game's bus declarations and starts a device on
     /// it. A game that cannot open a sound device still runs, silently, with
     /// sounds starting and finishing as they would.

@@ -411,6 +411,7 @@ bool Application::InitializePresentation()
         // The UI and the pass are both this Application's, and the UI goes
         // first.
         _ui->SetTextureLoader([this](std::string_view vpath) { return LoadUiTexture(vpath); });
+        _ui->SetAssetTextureLoader([this](Core::AssetId id) { return LoadUiTexture(id); });
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -1518,6 +1519,25 @@ std::optional<Mondrian::Sprite> Application::LoadUiTexture(std::string_view vpat
     Render::Texture texture;
     const std::optional<Mondrian::Extent> size =
         Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), vpath);
+    return KeepUiTexture(std::move(texture), size);
+}
+
+std::optional<Mondrian::Sprite> Application::LoadUiTexture(Core::AssetId id)
+{
+    Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (vulkanContext == nullptr)
+    {
+        return std::nullopt;
+    }
+    Render::Texture texture;
+    const std::optional<Mondrian::Extent> size =
+        Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), id);
+    return KeepUiTexture(std::move(texture), size);
+}
+
+std::optional<Mondrian::Sprite> Application::KeepUiTexture(Render::Texture texture,
+                                                           std::optional<Mondrian::Extent> size)
+{
     if (!size)
     {
         return std::nullopt;
