@@ -128,6 +128,7 @@ enum class ScreenVerb : uint8_t
     case BuiltinWidget::Button:
     case BuiltinWidget::Scroll:
     case BuiltinWidget::TextField:
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::Count_:
         break;
     }
@@ -213,6 +214,13 @@ struct ScreenNode
 
     /// The style this node names in whichever theme the UI has, or empty.
     AFIELD() Core::InternedString styleName;
+
+    /// Which part of its parent, a control, this node is, or empty for a node
+    /// of its own. A part is made with its control, so the loader dresses that
+    /// one, each of them where two share the name, rather than making another;
+    /// what it holds goes inside it. It carries only how it looks, whether it
+    /// shows, and its attribute bindings.
+    AFIELD() Core::InternedString part;
 
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;

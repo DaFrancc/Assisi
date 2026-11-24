@@ -121,10 +121,9 @@ struct Node
     bool takesKeyboard = false; ///< while focused, has the keyboard even when the game has it
     /// Which scroll bar is being dragged, while one is.
     ScrollGrab scrollGrab = ScrollGrab::None;
-    /// Whether a slider carries a button at each end.
-    SliderButtons sliderButtons = SliderButtons::Hidden;
-    /// Whether a slider's held press began on its track rather than a button.
-    bool slidingTrack = false;
+    /// Which of its parent's parts this node is, by the parent's WidgetType,
+    /// or kNoPart. A part is made with its control and goes with it.
+    uint8_t part = kNoPart;
 };
 
 class NodeTree
@@ -183,6 +182,9 @@ class NodeTree
     void SetImage(NodeId id, const Sprite &sprite);
     void ClearImage(NodeId id);
     void SetScrollOffset(NodeId id, Point offset);
+    /// @brief Makes @p id the control @p behaviour names, with a child node
+    /// for each of its parts. The parts of whatever it was before go, with
+    /// anything put in them.
     void SetBehaviour(NodeId id, uint32_t behaviour);
     void SetFocusable(NodeId id, bool focusable);
     void SetEnabled(NodeId id, bool enabled);
@@ -208,8 +210,6 @@ class NodeTree
     void SetSteps(NodeId id, int32_t steps);
     /// @brief What the ends of the slider on @p id mean.
     void SetRange(NodeId id, SliderRange range);
-    /// @brief Whether the slider on @p id carries a button at each end.
-    void SetSliderButtons(NodeId id, SliderButtons buttons);
 
     /// @brief The kinds of control this tree's nodes may name. Every tree has
     /// the built-ins; a game registers its own beside them.
@@ -217,6 +217,11 @@ class NodeTree
     [[nodiscard]] const WidgetRegistry &Widgets() const { return _widgets; }
     /// @brief The type @p id's behaviour names, or null when it is no control.
     [[nodiscard]] const WidgetType *WidgetOf(NodeId id) const;
+
+    /// @brief The first of @p control's parts called @p name, or a null id.
+    [[nodiscard]] NodeId Part(NodeId control, std::string_view name) const;
+    /// @brief The part of @p control at @p part in its type's list, or a null id.
+    [[nodiscard]] NodeId Part(NodeId control, uint8_t part) const;
 
     /// @brief @p id for a control to change, or null when it names none.
     ///
@@ -248,9 +253,12 @@ class NodeTree
   private:
     Node *GetMutable(NodeId id);
     void Unlink(NodeId id);
-    /// Resolves @p node's look against the tree's theme, and has it wear the
-    /// result at rest until the UI next restyles it.
+    /// Resolves @p node's look against the tree's theme, over what its kind of
+    /// control, or the part of one it is, looks like by default and under the
+    /// theme, and has it wear the result at rest until the UI next restyles it.
     void Relook(Node &node) const;
+    /// Relooks @p id's parts, whose looks follow the style it names.
+    void RelookParts(NodeId id);
 
     WidgetRegistry _widgets;
     std::vector<Node> _slots;

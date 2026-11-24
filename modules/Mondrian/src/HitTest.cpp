@@ -34,7 +34,9 @@ class HitTester
     }
 
     /// The reverse of drawing @p index: its floating children last to first,
-    /// then its in-flow ones, then itself.
+    /// then its parts, then its in-flow ones, then itself. A part, and anything
+    /// in one, is its control's to be pressed: the control is what a stopping
+    /// hit there lands on.
     NodeId Hit(uint32_t index) const
     {
         // The layout is a frame old, so a node made since has no place in it
@@ -59,17 +61,17 @@ class HitTester
             }
         }
 
-        for (const bool floating : {true, false})
+        for (const Among among : {Among::Floating, Among::Parts, Among::InFlow})
         {
             NodeId found;
             for (NodeId child = node.firstChild; child; child = _slots[child.index].nextSibling)
             {
-                if (_slots[child.index].style.floating.enabled != floating)
+                if (AmongOf(_slots[child.index]) != among)
                 {
                     continue;
                 }
                 // Later siblings draw over earlier ones, so the last hit wins.
-                if (const NodeId hit = Hit(child.index))
+                if (const NodeId hit = among == Among::Parts ? HitPart(child.index, index) : Hit(child.index))
                 {
                     found = hit;
                 }
@@ -89,6 +91,37 @@ class HitTester
     }
 
   private:
+    /// Which of a node's children a pass of hit testing looks through.
+    enum class Among : uint8_t
+    {
+        InFlow,
+        Parts,
+        Floating,
+        Count_
+    };
+
+    [[nodiscard]] static Among AmongOf(const Node &node)
+    {
+        if (node.part != kNoPart)
+        {
+            return Among::Parts;
+        }
+        return node.style.floating.enabled ? Among::Floating : Among::InFlow;
+    }
+
+    /// What a hit on the part in slot @p index of the control in slot
+    /// @p control lands on: whatever in it the pointer is over, when any node
+    /// will do, and otherwise the control, for anything in the part.
+    [[nodiscard]] NodeId HitPart(uint32_t index, uint32_t control) const
+    {
+        const NodeId any = HitTester(_tree, _layout, _point, Lands::OnAny).Hit(index);
+        if (!any || _lands == Lands::OnAny)
+        {
+            return any;
+        }
+        return _tree.IdOf(control);
+    }
+
     const NodeTree &_tree;
     std::span<const Node> _slots;
     const LayoutResult &_layout;

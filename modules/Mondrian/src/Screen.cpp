@@ -74,6 +74,9 @@ void PutAttribute(Style &style, BoundAttribute attribute, const AttributeValue &
     }
 }
 
+/// The part of a slider its value is drawn on, which GetThumbRect reports.
+constexpr std::string_view kThumbPart = "thumb";
+
 } // namespace
 
 Style TextFieldStyle()
@@ -783,7 +786,7 @@ void Screen::SetSelectable(NodeId id, bool selectable)
         return;
     }
     node->edit.editing = selectable ? TextEditing::Selectable : TextEditing::None;
-    _tree.SetBehaviour(id, selectable ? static_cast<uint32_t>(BuiltinWidget::TextField) : 0);
+    _tree.SetBehaviour(id, selectable ? static_cast<uint32_t>(BuiltinWidget::SelectableText) : 0);
     // Copying needs somewhere for Ctrl+C to land, and that is focus.
     _tree.SetFocusable(id, selectable);
 }
@@ -805,16 +808,6 @@ void Screen::SetRange(ContinuousSliderId slider, SliderRange range)
 void Screen::SetRange(SteppedSliderId slider, SliderRange range)
 {
     _tree.SetRange(slider.node, range);
-}
-
-void Screen::SetButtons(ContinuousSliderId slider, SliderButtons buttons)
-{
-    _tree.SetSliderButtons(slider.node, buttons);
-}
-
-void Screen::SetButtons(SteppedSliderId slider, SliderButtons buttons)
-{
-    _tree.SetSliderButtons(slider.node, buttons);
 }
 
 SliderRange Screen::GetRange(ContinuousSliderId slider) const
@@ -874,16 +867,18 @@ int32_t Screen::GetValue(SteppedSliderId slider) const
 
 Rect Screen::GetThumbRect(ContinuousSliderId slider) const
 {
-    const Node *node = _tree.Get(slider.node);
-    return node != nullptr ? SliderThumbRect(*node, _layout.Get(slider.node), _layout.scale, GetFraction(slider))
-                           : Rect{};
+    return ThumbRect(slider.node);
 }
 
 Rect Screen::GetThumbRect(SteppedSliderId slider) const
 {
-    const Node *node = _tree.Get(slider.node);
-    return node != nullptr ? SliderThumbRect(*node, _layout.Get(slider.node), _layout.scale, GetFraction(slider))
-                           : Rect{};
+    return ThumbRect(slider.node);
+}
+
+Rect Screen::ThumbRect(NodeId slider) const
+{
+    const LayoutNode *placed = _layout.Get(_tree.Part(slider, kThumbPart));
+    return placed != nullptr ? placed->rect : Rect{};
 }
 
 void Screen::SetValue(ContinuousSliderId slider, float value)

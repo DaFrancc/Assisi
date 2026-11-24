@@ -640,7 +640,7 @@ TEST_CASE("ScreenCompiler: a state's prefix the markup does not have, or cannot 
                                           "      hover:pressed:background=\"#ffffff\">Quit</button>\n"
                                           "</screen>\n");
         CHECK(error.line == 3);
-        CHECK(error.message.find("one state") != std::string::npos);
+        CHECK(error.message.find("at most a part, then a state") != std::string::npos);
     }
 
     SUBCASE("a state on what the node does rather than how it looks")
@@ -1404,9 +1404,15 @@ TEST_CASE("ScreenCompiler: a control holds what it can hold")
         CHECK(Refused(R"(<screen><toggle>on</toggle></screen>)").message.find("text") != std::string::npos);
     }
 
-    SUBCASE("a slider holding elements")
+    SUBCASE("a slider holding elements other than its parts")
     {
-        CHECK(Refused(R"(<screen><slider step="1"><text /></slider></screen>)").message.find("elements") !=
+        CHECK(Refused(R"(<screen><slider step="1"><text /></slider></screen>)").message.find("not a part of slider") !=
+              std::string::npos);
+    }
+
+    SUBCASE("an image holding elements")
+    {
+        CHECK(Refused(R"(<screen><image sprite="a:b"><text /></image></screen>)").message.find("elements") !=
               std::string::npos);
     }
 

@@ -415,6 +415,18 @@ class Ui
     /// a slot in one screen's tree, and the same slot in another screen holds
     /// an unrelated node. Kept in one struct and cleared by assigning a fresh
     /// one, so a field added here later cannot be the one somebody forgets.
+    /// Where a caret is: its field, the caret and the other end of any
+    /// selection, and how much text there is. Any change restarts the blink.
+    struct CaretSeen
+    {
+        std::size_t length = 0;
+        NodeId field;
+        uint32_t caret = 0;
+        uint32_t anchor = 0;
+
+        [[nodiscard]] friend bool operator==(const CaretSeen &, const CaretSeen &) = default;
+    };
+
     struct InputSession
     {
         Interaction interaction;
@@ -424,6 +436,10 @@ class Ui
         NodeId lastPressed;               ///< what it landed on
         NodeId focusedLast;               ///< what had focus when the last frame ended
         uint32_t clicks = 0;              ///< presses in the run the last one belongs to
+        /// Where the focused node's caret was last frame, and since when it
+        /// has been there, which its blink is counted from.
+        CaretSeen caretSeen;
+        double caretSince = 0.0;
     };
 
     /// A struct on no entity that bindings can reach. Not owned.
@@ -497,7 +513,9 @@ class Ui
     /// Moves focus for the directions pressed this frame, and again for one
     /// still held once it has been held long enough.
     void Navigate(Screen &screen, const UiInput &input);
-    void DrawFocusRing(const Screen &screen, DrawList &list);
+    /// Starts the caret's blink again when its field or where it stands
+    /// changed since last frame, and says whether it shows at @p now.
+    void Blink(const Screen *screen, double now);
     /// Lays @p screen out against @p viewport at @p scale: across the whole of
     /// it, or at its own size where its anchor puts it.
     void LayOut(Screen &screen, Extent viewport, float scale);

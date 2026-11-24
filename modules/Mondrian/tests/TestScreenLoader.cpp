@@ -591,11 +591,60 @@ TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes"
 
     const Node *resume = loaded->screen->Tree().Get(loaded->screen->Find("resume"));
     REQUIRE(resume != nullptr);
-    REQUIRE(resume->states.size() == 2);
+    // With the focus ring every button has of itself.
+    REQUIRE(resume->states.size() == 3);
     CHECK(std::ranges::find(resume->states, hover) != resume->states.end());
     CHECK(std::ranges::find(resume->states, off) != resume->states.end());
     // Nothing holds yet, so it wears its resting look.
     CHECK(resume->style == resume->resting.values);
+}
+
+TEST_CASE("ScreenLoader: a part's node dresses the control's own part, and what it holds goes inside it")
+{
+    EventQueue events;
+    TestWorld world{events};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document;
+    document.nodes.push_back(ScreenNode{});
+    ScreenNode slider;
+    slider.parent = 0;
+    slider.widget = BuiltinWidget::ContinuousSlider;
+    slider.range = SliderRange{.min = 0.f, .max = 1.f, .step = 0.1f};
+    slider.name = InternedString{"volume"};
+    document.nodes.push_back(slider);
+    ScreenNode thumb;
+    thumb.parent = 1;
+    thumb.part = InternedString{"thumb"};
+    thumb.style.background = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.9f, 0.7f, 0.1f, 1.f};
+    thumb.written = PropertyBit(StyleProperty::Background);
+    document.nodes.push_back(thumb);
+    ScreenNode label;
+    label.parent = 2;
+    label.name = InternedString{"value"};
+    document.nodes.push_back(label);
+    ScreenNode track;
+    track.parent = 1;
+    track.part = InternedString{"track"};
+    track.visible = false;
+    document.nodes.push_back(track);
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
+    REQUIRE(loaded.has_value());
+    const NodeTree &tree = loaded->screen->Tree();
+    const NodeId volume = loaded->screen->Find("volume");
+    const NodeId part = tree.Part(volume, "thumb");
+    REQUIRE(part);
+    CHECK(tree.Get(part)->style.background == thumb.style.background);
+    CHECK(tree.Get(loaded->screen->Find("value"))->parent == part);
+    CHECK_FALSE(tree.Get(tree.Part(volume, "track"))->visible);
+
+    // A part its control does not have is a document no cook wrote.
+    document.nodes[2].part = InternedString{"knob"};
+    CHECK(InstantiateScreen(ui, world, kScreenPath, document, catalog).error() == ScreenLoadError::MisplacedNode);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")

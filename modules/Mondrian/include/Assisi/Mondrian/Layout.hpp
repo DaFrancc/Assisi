@@ -55,7 +55,7 @@ struct LayoutNode
     Rect rect;           ///< device pixels, edges whole
     Rect clip = kNoClip; ///< what the node's own quads are clipped to
     /// What holds the node clips it to, before any clip of its own: what its
-    /// shadow and focus ring are clipped to, which lie outside its box.
+    /// shadow and outline are clipped to, which lie outside its box.
     Rect outerClip = kNoClip;
     Insets padding;
     Point contentSize; ///< the extent of its content, which exceeds rect where it scrolls
@@ -78,6 +78,8 @@ struct LayoutNode
     float scrollBarMinLength = 0.f;
     float shadowBlur = 0.f;
     float shadowSpread = 0.f;
+    float outlineWidth = 0.f;
+    float outlineGap = 0.f;
     /// How far a single line of text is shifted left to keep its caret in
     /// sight, in device pixels. Zero for everything that is not a field.
     float textScroll = 0.f;
@@ -127,6 +129,11 @@ void MoveLayout(LayoutResult &layout, Point by);
 /// Anything asking what text would do in a node goes through this, so that the
 /// answer cannot differ from what layout itself used.
 [[nodiscard]] float TextWrapWidth(const LayoutNode &placed);
+
+/// @brief Where each part of @p control was placed in @p layout, by part: what a
+/// WidgetView carries. Empty for a part that was not placed.
+[[nodiscard]] std::array<Rect, kMaxWidgetParts> PartRects(const NodeTree &tree, const LayoutResult &layout,
+                                                          NodeId control);
 
 /// @brief Where @p placed's text begins, in device pixels: inside its padding,
 /// on whole pixels so the layout's own whole-pixel lines land on them, and

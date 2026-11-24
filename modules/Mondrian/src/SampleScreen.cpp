@@ -168,8 +168,12 @@ void BuildControls(Screen &screen, NodeId panel)
     row.childAlign = {Alignment::Start, Alignment::Center};
     const NodeId controls = Named(screen.Add(panel, row, "controls"));
     screen.AddToggle(controls, true);
+    // Buttons beside a slider step it, as its arrow keys do.
+    const ButtonId down = screen.AddButton(controls, "-");
     const ContinuousSliderId volume = screen.AddContinuousSlider(controls, kSliderRange, kSliderStart);
-    screen.SetButtons(volume, SliderButtons::Shown);
+    const ButtonId up = screen.AddButton(controls, "+");
+    screen.OnActivate(down.node, [slider = volume.node](Screen &self) { self.Step(slider, -1); });
+    screen.OnActivate(up.node, [slider = volume.node](Screen &self) { self.Step(slider, 1); });
     screen.AddSteppedSlider(controls, kStepRange, kSliderSteps, kSliderStep);
 
     Style fields = row;

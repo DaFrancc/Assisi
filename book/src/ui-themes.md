@@ -59,15 +59,57 @@ What the element writes itself wins over its style. The panel above takes its
 background, border and corners from `panel`, and its width and padding from
 its own attributes. In full, weakest first:
 
-1. The style's attributes.
-2. The element's own attributes.
-3. The style's attributes for a state that holds, such as `hover:background`.
-4. The element's own attributes for that state.
+1. The control's own look, for a built-in control.
+2. The style named after its kind of control, such as `slider` (see
+   [below](#styles-for-each-kind-of-control)).
+3. The style it names.
+4. The element's own attributes.
+5. Each of those again for a state that holds, such as `hover:background`, in
+   the same order.
 
 So a style's hover look shows over an element's own background, and an
 element's own `hover:background` wins over both. When several states hold, they
 still stack as [States](ui-layout.md#states) describes: a disabled look always
 shows.
+
+## Styles for each kind of control
+
+A style named after a kind of control is worn by every control of that kind,
+with no `style` attribute needed. The names are the elements' own: `button`,
+`toggle`, `slider`, `stepped_slider`, `scroll` and `text_field`.
+
+A style can style a control's [parts](ui-controls.md#parts) with the same
+prefixes an element uses:
+
+```xml
+<style name="slider" thumb:background="$accent" thumb:hover:background="$accent_hover"
+       track:height="4" fill:background="$accent" />
+<style name="toggle" track:on:background="$accent" />
+```
+
+A slider that names a style of its own, such as `style="big_slider"`, still
+wears `slider` under it, and its own attributes on top. A theme with no style
+for a kind of control leaves that control its built-in look.
+
+This is also how you give every control the same focus ring. Write it once and
+build each control's style on it:
+
+```xml
+<style name="focus_ring" focused:outline_width="2" focused:outline_color="$focus"
+       focused:outline_gap="4" />
+<style name="button" extends="focus_ring" />
+<style name="slider" extends="focus_ring" thumb:background="$accent" />
+<style name="toggle" extends="focus_ring" />
+<style name="text_field" extends="focus_ring" />
+```
+
+The game's default theme, `assets/ui/Default.amth`, has a style for each kind
+of control, holding the look each has when nothing says otherwise. Read it to
+see every part of every control, or copy it as a starting point.
+
+A style named after a control may only style that control's parts. Any other
+style may style the parts of any control, and an element that names it uses
+the parts it has.
 
 `row` and `column` count as writing `direction` themselves, so a style can't
 turn a column into a row.
@@ -88,7 +130,8 @@ come from [string tables](ui-string-tables.md).
 
 ## Building a style on another
 
-`extends` starts a style from another and changes only what it writes:
+`extends` starts a style from another and changes only what it writes, parts
+included:
 
 ```xml
 <style name="menu_button" padding="28 10 28 10" text_size="28" corner_radius="10" />
@@ -154,3 +197,6 @@ writes, the style it names and the tokens it uses.
 
 `NodeTree::SetStyle` counts every property as the node's own, so a node styled
 that way looks exactly as its `Style` says, whatever the theme.
+
+A control's parts are its child nodes. `NodeTree::Part(control, "thumb")` finds
+one, which you can style like any node or put nodes in.

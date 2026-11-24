@@ -17,10 +17,6 @@ namespace Assisi::Mondrian
 namespace
 {
 
-/// The field's own look, until themes decide it.
-constexpr Math::Color4<Math::ColorSpace::Srgb> kCaretColor{0.95f, 0.96f, 0.98f, 1.f};
-constexpr Math::Color4<Math::ColorSpace::Srgb> kSelectionColor{0.22f, 0.38f, 0.72f, 1.f};
-
 /// Whether @p codepoint is a space, a tab or a line break: what separates one
 /// word from the next when the caret moves by words.
 bool Separates(uint32_t codepoint)
@@ -412,7 +408,7 @@ void DrawSelection(const WidgetView &view, DrawList &list)
         if (box.width > 0.f)
         {
             list.Quad({.x = origin.x + box.x, .y = origin.y + box.y, .width = box.width, .height = box.height})
-                .Fill(kSelectionColor);
+                .Fill(node.style.selectionColor);
         }
     }
 }
@@ -427,11 +423,11 @@ Core::CursorShape FieldCursor(const WidgetView &view, Point /*point*/)
 void DrawCaret(const WidgetView &view, DrawList &list)
 {
     const Node &node = *view.node;
-    if (view.text == nullptr || !view.focused || node.edit.editing != TextEditing::Editable)
+    if (view.text == nullptr || !view.focused || !view.caretShown || node.edit.editing != TextEditing::Editable)
     {
         return;
     }
-    list.Quad(CaretRect(node, view.layout, view.text, view.scale)).Fill(kCaretColor);
+    list.Quad(CaretRect(node, view.layout, view.text, view.scale)).Fill(node.style.caretColor);
 }
 
 /// Where Home and End go: the ends of the line the caret is on, or of the whole

@@ -3,14 +3,23 @@
 Every one of these fails the cook with the file, line and column:
 
 - An unknown element, attribute or value.
-- A state that isn't `focused`, `hover`, `pressed` or `disabled`, two states on
-  one attribute, a state on an attribute about what an element is or does such
-  as `on_click`, or a `:` with no name on one side of it.
+- A state that isn't `on`, `focused`, `hover`, `pressed` or `disabled`, two
+  states on one attribute, a state on an attribute about what an element is or
+  does such as `on_click`, or a `:` with no name on one side of it.
+- A prefix that is neither a state nor one of the control's
+  [parts](ui-controls.md#parts), a part's name after a state rather than before
+  it, or more than a part and a state on one attribute. The message lists the
+  states and the control's parts.
+- An attribute on a part, prefixed or on its tag, about what it is or does
+  rather than how it looks: anything but the looks and `visible`.
+- A tag inside a toggle or a slider that isn't one of its parts, a part's tag
+  inside a scroll, words in a part's tag, or a control such as a button inside a
+  part.
 - Text or child elements inside an element that can't hold them.
 - A length with an unknown unit, a `px` suffix, or a space before its unit.
 - A colour written as bare numbers, or with a channel outside its call's range.
-- An `opacity` below 0 or above 1, a negative `shadow_blur`, or a
-  `shadow_offset` that isn't two lengths.
+- An `opacity` below 0 or above 1, a negative `shadow_blur` or `outline_width`,
+  or a `shadow_offset` that isn't two lengths.
 - A `slider` without a `step`, or with `step="0"`.
 - A pattern name that doesn't exist, or an expression that isn't valid.
 - Two nodes with the same name, or a name containing `.`.
@@ -101,6 +110,8 @@ These fail the cook of a theme, with the line:
 - A style with no `name`, two styles with one name, or a style holding anything.
 - A style's attribute that is unknown, belongs to one kind of control, or says
   what a node is or does, or a value the attribute can't hold.
+- A part no control has, or, in a style named after a kind of control such as
+  `slider`, a part that control doesn't have.
 - A style's `$token` the palettes don't give, or give a value in some mode its
   attribute can't hold.
 - An `extends` naming a style the theme doesn't declare, or a chain of them

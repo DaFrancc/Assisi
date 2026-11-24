@@ -88,6 +88,18 @@ bool OnField(StyleProperty property, From &a, To &b, const Visit &visit)
         return visit(a.shadowBlur, b.shadowBlur);
     case StyleProperty::ShadowSpread:
         return visit(a.shadowSpread, b.shadowSpread);
+    case StyleProperty::OutlineColor:
+        return visit(a.outlineColor, b.outlineColor);
+    case StyleProperty::OutlineWidth:
+        return visit(a.outlineWidth, b.outlineWidth);
+    case StyleProperty::OutlineGap:
+        return visit(a.outlineGap, b.outlineGap);
+    case StyleProperty::CaretColor:
+        return visit(a.caretColor, b.caretColor);
+    case StyleProperty::SelectionColor:
+        return visit(a.selectionColor, b.selectionColor);
+    case StyleProperty::PlaceholderColor:
+        return visit(a.placeholderColor, b.placeholderColor);
     case StyleProperty::Count_:
         break;
     }

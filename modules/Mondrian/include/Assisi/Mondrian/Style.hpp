@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <vector>
 
 namespace Assisi::Mondrian
 {
@@ -238,6 +239,16 @@ struct Style
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> tint { 1.f, 1.f, 1.f, 1.f };
     /// The shadow under the node, following its corners. Clear draws none.
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> shadowColor { 0.f, 0.f, 0.f, 0.f };
+    /// The line drawn around the node, outside its edge and over everything
+    /// else on the screen, taking no room: what a focus ring is.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> outlineColor { 1.f, 1.f, 1.f, 1.f };
+    /// A field's caret.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> caretColor { 0.95f, 0.96f, 0.98f, 1.f };
+    /// The box behind selected text.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> selectionColor { 0.22f, 0.38f, 0.72f, 1.f };
+    /// The words an empty field shows in place of its text. Left clear, they
+    /// are the text colour, faded.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> placeholderColor { 0.f, 0.f, 0.f, 0.f };
     AFIELD() std::array<Sizing, kAxisCount> sizing {};
     AFIELD() Padding padding;
     AFIELD() Floating floating;
@@ -254,6 +265,11 @@ struct Style
     AFIELD() Length textSize = Em(1.f);
     AFIELD() Length borderWidth; ///< at least one device pixel once resolved, unless zero
     AFIELD() Length cornerRadius;
+    /// How thick the outline is; none while zero. At least one device pixel
+    /// once resolved, unless zero.
+    AFIELD() Length outlineWidth;
+    /// How far outside the node's edge the outline starts.
+    AFIELD() Length outlineGap;
     /// The sprite drawn over the background colour, across the whole node, as
     /// `sheet:name`; empty for none. One with borders draws as a nine-slice.
     AFIELD() Core::InternedString backgroundImage;
@@ -287,10 +303,12 @@ struct Style
 ///
 /// In the order they stack, weakest first: where two hold and both say
 /// something about one property, the later one's wins. A disabled control
-/// always looks disabled, and a press shows over a hover.
+/// always looks disabled, a press shows over a hover, and both show over a
+/// toggle being on. A control's parts are in whichever states their control is.
 AENUM()
 enum class StyleState : uint8_t
 {
+    On,       ///< a toggle switched on
     Focused,  ///< has the keys, while they were used last or on a node that takes the keyboard
     Hover,    ///< under the pointer, or holding what is
     Pressed,  ///< the control held down, or holding it
@@ -339,6 +357,12 @@ enum class StyleProperty : uint8_t
     ShadowOffset,
     ShadowBlur,
     ShadowSpread,
+    OutlineColor,
+    OutlineWidth,
+    OutlineGap,
+    CaretColor,
+    SelectionColor,
+    PlaceholderColor,
     Count_
 };
 
@@ -394,6 +418,16 @@ struct StylePatch
     [[nodiscard]] static StylePatch Changes(StyleState state, const Style &resting, const Style &look);
 
     [[nodiscard]] friend bool operator==(const StylePatch &, const StylePatch &) = default;
+};
+
+/// @brief How something looks before any theme says anything: a control's own
+/// look or one of its parts', written in code. Each look writes only what it
+/// sets, so a theme's style, and then the node's own look, go on over it.
+struct DefaultLook
+{
+    StylePatch resting;
+    /// At most one per state.
+    std::vector<StylePatch> states;
 };
 
 /// @brief @p resting with each of @p looks whose state @p holds put on over it,

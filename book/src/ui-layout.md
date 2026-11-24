@@ -96,6 +96,30 @@ which scale they're on: `1 1 1` is white on a 0–1 scale and nearly black on a
 0–255 scale. A channel outside its call's range also fails, with a message
 naming the call that takes that range.
 
+## Outlines
+
+An **outline** is a line drawn around an element, outside its edge. Unlike a
+border it takes no room, so adding one moves nothing. It is drawn over
+everything else on the screen, so a neighbour never covers it.
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `outline_width` | a length | How thick it is. `0`, the default, draws none. |
+| `outline_color` | colour | Its colour. |
+| `outline_gap` | a length | How far outside the element's edge it starts. |
+
+An outline follows the element's corners. Its main use is the **focus ring**,
+the line that shows which control the keys are on. Every built-in control has
+one in its `focused` state: 3 pixels wide, 3 pixels out, in white. Change it,
+or write `focused:outline_width="0"` to remove it:
+
+```xml
+<button focused:outline_color="#ffd23c" focused:outline_width="2">Resume</button>
+```
+
+To change the ring on every control at once, put it in the
+[theme's style for each kind of control](ui-themes.md#styles-for-each-kind-of-control).
+
 ## Images
 
 | Attribute | Values | Meaning |
@@ -214,8 +238,9 @@ and moves:
 ## States
 
 An element can look different while the player is pointing at it, holding it
-down or has moved to it with the keys, and while it is disabled. Write the
-attribute again with the state in front of it and a `:` between them:
+down or has moved to it with the keys, while it is disabled, and while a toggle
+is on. Write the attribute again with the state in front of it and a `:`
+between them:
 
 ```xml
 <button background="#222222" hover:background="#e63319"
@@ -224,6 +249,7 @@ attribute again with the state in front of it and a `:` between them:
 
 | State | Holds while |
 |---|---|
+| `on` | The element is a toggle that is switched on. |
 | `focused` | The keys act on the element: the player moved to it with the arrow keys or Tab. |
 | `hover` | The pointer is over the element, or over anything inside it. |
 | `pressed` | The player is holding the element down, or holding a control inside it. Only a control can be held: a press on a `<text>` presses nothing. |
@@ -244,15 +270,18 @@ light up while the pointer is anywhere over it:
 ```
 
 When more than one state holds and they change the same attribute, the one
-lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`, and
-`hover` over `focused`. A disabled button looks disabled even with the pointer
-on it, and a button being held shows its pressed look rather than its hover
-look.
+lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`,
+`hover` over `focused`, and `focused` over `on`. A disabled button looks
+disabled even with the pointer on it, and a button being held shows its
+pressed look rather than its hover look.
 
-`focused` shows only while the player is using the keys, as the focus ring
-does. Clicking a button gives it focus without showing it. A text field is the
-exception: it shows `focused` however it got focus, because the player is
-typing into it.
+`focused` shows only while the player is using the keys. Clicking a button
+gives it focus without showing it, so its focus ring stays hidden. A text field
+is the exception: it shows `focused`, ring included, however it got focus,
+because the player is typing into it.
+
+A control's [parts](ui-controls.md#parts) are in whatever states their control
+is in.
 
 A state that changes a size or spacing moves the elements around it, as the
 same attribute would without a state. A button that grows on hover pushes its

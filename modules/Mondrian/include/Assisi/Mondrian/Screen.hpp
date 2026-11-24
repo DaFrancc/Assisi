@@ -366,13 +366,9 @@ class Screen
     /// the @p axes asked for rather than shrinking its content.
     NodeId AddScroll(NodeId parent, const Style &style, std::array<bool, kAxisCount> axes);
 
-    /// @brief What a slider's ends mean, and how far a key or a button moves it.
+    /// @brief What a slider's ends mean, and how far a key moves it.
     void SetRange(ContinuousSliderId slider, SliderRange range);
     void SetRange(SteppedSliderId slider, SliderRange range);
-
-    /// @brief Whether a slider carries a button at each end to step it.
-    void SetButtons(ContinuousSliderId slider, SliderButtons buttons);
-    void SetButtons(SteppedSliderId slider, SliderButtons buttons);
 
     /// @brief What a slider's ends mean, for whatever draws them.
     [[nodiscard]] SliderRange GetRange(ContinuousSliderId slider) const;
@@ -605,6 +601,10 @@ class Screen
 
     /// Makes the control @p id show @p value, as code setting it would.
     void ShowValue(NodeId id, const WidgetValue &value);
+
+    /// Where the thumb part of the slider @p slider was placed, as of the last
+    /// Sync; empty when it was not.
+    [[nodiscard]] Rect ThumbRect(NodeId slider) const;
 
     /// Puts what @p bound last read on its node.
     void ShowAttribute(const BoundStyle &bound);
