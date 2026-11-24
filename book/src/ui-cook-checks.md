@@ -9,6 +9,8 @@ Every one of these fails the cook with the file, line and column:
 - Text or child elements inside an element that can't hold them.
 - A length with an unknown unit, a `px` suffix, or a space before its unit.
 - A colour written as bare numbers, or with a channel outside its call's range.
+- An `opacity` below 0 or above 1, a negative `shadow_blur`, or a
+  `shadow_offset` that isn't two lengths.
 - A `slider` without a `step`, or with `step="0"`.
 - A pattern name that doesn't exist, or an expression that isn't valid.
 - Two nodes with the same name, or a name containing `.`.

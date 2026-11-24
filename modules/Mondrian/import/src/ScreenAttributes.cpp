@@ -110,20 +110,54 @@ bool ReadLines(const AttributeTarget &target, std::string_view value)
     return true;
 }
 
-bool ReadFloatOffset(const AttributeTarget &target, std::string_view value)
+/// Two lengths, across then down, as an offset is written.
+std::optional<std::array<Length, kAxisCount>> ParseOffset(std::string_view value)
 {
     const std::vector<std::string_view> words = SplitWords(value);
     if (words.size() != kAxisCount)
     {
-        return false;
+        return std::nullopt;
     }
     const std::optional<Length> x = ParseLength(words[0]);
     const std::optional<Length> y = ParseLength(words[1]);
     if (!x || !y)
     {
+        return std::nullopt;
+    }
+    return std::array<Length, kAxisCount>{*x, *y};
+}
+
+bool ReadFloatOffset(const AttributeTarget &target, std::string_view value)
+{
+    return Read(target.style.floating.offset, value, ParseOffset);
+}
+
+bool ReadShadowOffset(const AttributeTarget &target, std::string_view value)
+{
+    return Read(target.style.shadowOffset, value, ParseOffset);
+}
+
+/// A blur, which softens over a distance and so is never less than none.
+bool ReadShadowBlur(const AttributeTarget &target, std::string_view value)
+{
+    const std::optional<Length> blur = ParseLength(value);
+    if (!blur || blur->value < 0.f)
+    {
         return false;
     }
-    target.style.floating.offset = {*x, *y};
+    target.style.shadowBlur = *blur;
+    return true;
+}
+
+/// A share of the node that shows, from none to all of it.
+bool ReadOpacity(const AttributeTarget &target, std::string_view value)
+{
+    const std::optional<float> opacity = ParseFloat(value);
+    if (!opacity || *opacity < 0.f || *opacity > 1.f)
+    {
+        return false;
+    }
+    target.style.opacity = *opacity;
     return true;
 }
 
@@ -256,6 +290,7 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForColor("border_color", HandledAttribute::BorderColor, StyleProperty::BorderColor),
     ForColor("text_color", HandledAttribute::TextColor, StyleProperty::TextColor),
     ForColor("tint", HandledAttribute::Tint, StyleProperty::Tint),
+    ForColor("shadow_color", HandledAttribute::ShadowColor, StyleProperty::ShadowColor),
 
     Handled("style", HandledAttribute::StyleName),
     Handled("sprite", HandledAttribute::Sprite),
@@ -328,6 +363,11 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForStyle("background_image", StyleProperty::BackgroundImage, ReadBackgroundImage),
     ForStyle("fit", StyleProperty::Fit,
              [](const AttributeTarget &t, std::string_view v) { return Read(t.style.fit, v, ParseImageFit); }),
+    ForStyle("opacity", StyleProperty::Opacity, ReadOpacity),
+    ForStyle("shadow_offset", StyleProperty::ShadowOffset, ReadShadowOffset),
+    ForStyle("shadow_blur", StyleProperty::ShadowBlur, ReadShadowBlur),
+    ForStyle("shadow_spread", StyleProperty::ShadowSpread,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.shadowSpread, v, ParseLength); }),
 });
 
 /// Each entry is read one way: through its own function, or by ApplyAttributes.
@@ -515,6 +555,9 @@ std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colou
         return {};
     case HandledAttribute::Tint:
         style.tint = *read;
+        return {};
+    case HandledAttribute::ShadowColor:
+        style.shadowColor = *read;
         return {};
     case HandledAttribute::None:
     case HandledAttribute::Action:

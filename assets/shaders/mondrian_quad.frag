@@ -56,6 +56,41 @@ float Coverage(float distance)
     return clamp(kCoverageMidpoint - distance / kAaWidth, 0.0, 1.0);
 }
 
+// A blur radius is two standard deviations of the Gaussian it softens with,
+// as in CSS.
+const float kBlurPerDeviation = 2.0;
+
+// sqrt(2): a Gaussian's cumulative share at x deviations is erf(x / sqrt(2)).
+const float kSqrt2 = 1.41421356;
+
+// The constant of Winitzki's approximation to erf, good to about 1e-4, far
+// below what 8 bits of colour can show: erf(x)^2 ~ 1 - exp(-x^2 (4/pi + a x^2)
+// / (1 + a x^2)). Winitzki, "A handy approximation for the error function and
+// its inverse", 2008.
+const float kErfShape = 0.147;
+const float kFourOverPi = 1.27323954;
+
+float Erf(float x)
+{
+    const float x2 = x * x;
+    const float ax2 = kErfShape * x2;
+    return sign(x) * sqrt(1.0 - exp(-x2 * (kFourOverPi + ax2) / (1.0 + ax2)));
+}
+
+// How much of a shadow covers a point @p distance outside its shape, softened
+// over @p blur pixels: the share of a Gaussian beyond the edge, which is a
+// box's own blur along a straight edge. With no blur, an edge as sharp as any
+// other.
+float ShadowCoverage(float distance, float blur)
+{
+    if (blur <= 0.0)
+    {
+        return Coverage(distance);
+    }
+    const float deviation = blur / kBlurPerDeviation;
+    return kCoverageMidpoint * (1.0 - Erf(distance / (deviation * kSqrt2)));
+}
+
 // Signed distance from a point @p local, relative to the box centre, to a box
 // of half size @p halfSize.
 float BoxDistance(vec2 local, vec2 halfSize)
@@ -162,11 +197,17 @@ void main()
     const uint cornerStyles = floatBitsToUint(scalars.y);
     const uint kind         = floatBitsToUint(scalars.z);
 
-    const vec2 halfSize = rect.zw * 0.5;
-    const vec2 local    = vPixel - (rect.xy + halfSize);
-    const uint corner   = QuadrantCorner(local);
-    const float radius  = min(radii[corner], min(halfSize.x, halfSize.y));
-    const uint style    = (cornerStyles >> (corner * kCornerStyleBits)) & kCornerStyleMask;
+    // A shadow's quad reaches past its shape to give the blur room; its shape
+    // is the quad with that reach taken back off, and its border slot holds
+    // the blur.
+    const bool shadow     = kind == kKindShadow;
+    const float blur      = shadow ? borderWidth : 0.0;
+    const vec2 quadHalf   = rect.zw * 0.5;
+    const vec2 halfSize   = max(quadHalf - vec2(kShadowReach * blur), vec2(0.0));
+    const vec2 local      = vPixel - (rect.xy + quadHalf);
+    const uint corner     = QuadrantCorner(local);
+    const float radius    = min(radii[corner], min(halfSize.x, halfSize.y));
+    const uint style      = (cornerStyles >> (corner * kCornerStyleBits)) & kCornerStyleMask;
 
     const float outer = ShapeDistance(local, halfSize, radius, style);
 
@@ -225,7 +266,7 @@ void main()
     // The border is the band between the shape and the same shape moved in by
     // its width; the fill shows through the inner edge.
     vec4 premultiplied = Premultiply(fill);
-    if (borderWidth > 0.0)
+    if (borderWidth > 0.0 && !shadow)
     {
         const float innerCoverage = Coverage(outer + borderWidth);
         premultiplied = mix(Premultiply(borderColor), premultiplied, innerCoverage);
@@ -233,7 +274,8 @@ void main()
 
     const vec2 clipHalf  = clip.zw * 0.5;
     const float clipped  = Coverage(BoxDistance(vPixel - (clip.xy + clipHalf), clipHalf));
-    vec4 result          = premultiplied * (Coverage(outer) * clipped);
+    const float shaped   = shadow ? ShadowCoverage(outer, blur) : Coverage(outer);
+    vec4 result          = premultiplied * (shaped * clipped);
 
     if (pass.encodeSrgb != 0u && result.a > 0.0)
     {

@@ -893,6 +893,7 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
     case HandledAttribute::Tint:
+    case HandledAttribute::ShadowColor:
         return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Change:
         return ApplyOnChange(walk, node, attribute);

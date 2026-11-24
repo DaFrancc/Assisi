@@ -141,6 +141,7 @@ class Layouter
             {
                 node.rect = SnapEdges(node.rect);
                 node.clip = SnapEdges(node.clip);
+                node.outerClip = SnapEdges(node.outerClip);
             }
         }
         ResolveDrawn();
@@ -257,6 +258,13 @@ class Layouter
             result.borderWidth = Resolve(style.borderWidth, side, result.textSize);
             result.cornerRadius = Resolve(style.cornerRadius, side, result.textSize);
             result.scrollBarMinLength = Resolve(style.scrollBarMinLength, side, result.textSize);
+            result.shadowOffset = {.x = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::X)], side,
+                                                result.textSize),
+                                   .y = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::Y)], side,
+                                                result.textSize)};
+            // A negative blur has no meaning; the cook refuses one written.
+            result.shadowBlur = std::max(0.f, Resolve(style.shadowBlur, side, result.textSize));
+            result.shadowSpread = Resolve(style.shadowSpread, side, result.textSize);
         }
     }
 
@@ -666,6 +674,7 @@ class Layouter
         LayoutNode &result = Result(index);
         const Rect rect = result.rect;
 
+        result.outerClip = result.clip;
         // A field keeps its text to itself: the line inside it runs on past
         // both ends, and what is off the end of the box must not be drawn over
         // whatever sits beside it.

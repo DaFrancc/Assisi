@@ -236,9 +236,19 @@ struct Style
     /// Multiplies every image the node draws, its background image and its
     /// picture alike. White draws them as they are.
     AFIELD() Math::Color4<Math::ColorSpace::Srgb> tint { 1.f, 1.f, 1.f, 1.f };
+    /// The shadow under the node, following its corners. Clear draws none.
+    AFIELD() Math::Color4<Math::ColorSpace::Srgb> shadowColor { 0.f, 0.f, 0.f, 0.f };
     AFIELD() std::array<Sizing, kAxisCount> sizing {};
     AFIELD() Padding padding;
     AFIELD() Floating floating;
+    /// How far the shadow is moved from the node, across then down.
+    AFIELD() std::array<Length, kAxisCount> shadowOffset {};
+    /// How far the shadow's edge softens, as CSS's blur radius: about this far
+    /// each side of where a hard edge would be.
+    AFIELD() Length shadowBlur;
+    /// How much larger than the node the shadow is on every side; negative is
+    /// smaller.
+    AFIELD() Length shadowSpread;
     AFIELD() Length gap; ///< between consecutive in-flow children
     /// Its parent's until set, as `1em` is.
     AFIELD() Length textSize = Em(1.f);
@@ -254,6 +264,10 @@ struct Style
     /// How long a scrolling node takes to reach where it was sent, in seconds.
     /// Zero arrives at once; a small fraction glides instead of jumping.
     AFIELD() float scrollSmoothing = 0.f;
+    /// How much of the node and everything inside it shows, from 0 to 1. It
+    /// multiplies down the tree, each part fading on its own: children that
+    /// overlap show through one another rather than fading as one picture.
+    AFIELD() float opacity = 1.f;
     /// The shortest its scroll bar's thumb draws, so a long list keeps
     /// something to see and to grab.
     AFIELD() Length scrollBarMinLength = Px(kDefaultScrollBarMinLength);
@@ -320,6 +334,11 @@ enum class StyleProperty : uint8_t
     BackgroundImage,
     Tint,
     Fit,
+    Opacity,
+    ShadowColor,
+    ShadowOffset,
+    ShadowBlur,
+    ShadowSpread,
     Count_
 };
 

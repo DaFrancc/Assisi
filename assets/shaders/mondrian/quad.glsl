@@ -29,6 +29,11 @@ const uint kKindSolid     = 0u;
 const uint kKindGlyph     = 1u;
 const uint kKindImage     = 2u;
 const uint kKindNineSlice = 3u;
+const uint kKindShadow    = 4u;
+
+// Mirrors Assisi::Mondrian::kShadowReach: how many blurs a shadow's quad
+// reaches past its shape on each side.
+const float kShadowReach = 1.5;
 
 // Mirrors Assisi::Mondrian::CornerStyle, packed per Assisi::Mondrian::Corner
 // (top-left, top-right, bottom-right, bottom-left) at kCornerStyleBits each.

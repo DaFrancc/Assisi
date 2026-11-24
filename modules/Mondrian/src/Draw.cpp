@@ -113,19 +113,27 @@ class Drawer
     /// Which node is pressed, hovered or focused, for the controls that show it.
     void SetInteraction(const Interaction &interaction) { _interaction = &interaction; }
 
-    /// @p index, then its in-flow children, then its floating ones.
-    void DrawNode(uint32_t index)
+    /// @p index, then its in-flow children, then its floating ones, all faded
+    /// by @p inherited, the opacity of everything holding it, times its own.
+    void DrawNode(uint32_t index, float inherited)
     {
         const LayoutNode &result = _layout.nodes[index];
-        if (!result.placed)
+        const Node &node = _slots[index];
+        const Style &style = node.style;
+        const float opacity = inherited * style.opacity;
+        // Nothing inside a node that shows none of itself shows either.
+        if (!result.placed || opacity <= 0.f)
         {
             return;
         }
-        const Node &node = _slots[index];
-        const Style &style = node.style;
         const float radius = result.cornerRadius;
         _list.SetDefaultClip(result.clip);
+        _list.SetOpacity(opacity);
 
+        if (style.shadowColor.a > 0.f)
+        {
+            DrawShadow(result, style);
+        }
         if (style.background.a > 0.f || result.borderWidth > 0.f)
         {
             // Whole device pixels, and never thinner than one, so a line stays
@@ -179,13 +187,36 @@ class Drawer
             {
                 if (_slots[child.index].style.floating.enabled == floating)
                 {
-                    DrawNode(child.index);
+                    DrawNode(child.index, opacity);
                 }
             }
         }
     }
 
   private:
+    /// The shadow under the node @p result places: its box moved by the
+    /// offset and grown by the spread, corners and all, as CSS draws one,
+    /// with room around it for the blur to fade into. It lies outside the box,
+    /// so a clip the node keeps for what is inside it, as a field does, does
+    /// not cut it off.
+    void DrawShadow(const LayoutNode &result, const Style &style)
+    {
+        const float grow = result.shadowSpread + (kShadowReach * result.shadowBlur);
+        const Rect &box = result.rect;
+        const Rect shadow{.x = box.x + result.shadowOffset.x - grow,
+                          .y = box.y + result.shadowOffset.y - grow,
+                          .width = std::max(0.f, box.width + (2.f * grow)),
+                          .height = std::max(0.f, box.height + (2.f * grow))};
+        // A square corner stays square however far the shadow spreads.
+        const float radius =
+            result.cornerRadius > 0.f ? std::max(0.f, result.cornerRadius + result.shadowSpread) : 0.f;
+        _list.Quad(shadow)
+            .Fill(style.shadowColor)
+            .Shadow(result.shadowBlur)
+            .Corners(radius, style.cornerStyle)
+            .Clip(result.outerClip);
+    }
+
     /// @p sprite where @p placed says, tinted and shaped as @p style says, with
     /// corners of @p radius. Its borders slice it only when @p stretched: a
     /// picture fitted to keep its shape has no stretching for its corners to
@@ -245,9 +276,10 @@ void DrawTree(const NodeTree &tree, const LayoutResult &layout, DrawList &list, 
     {
         Drawer drawer(tree, layout, list, fontAtlas);
         drawer.SetInteraction(interaction);
-        drawer.DrawNode(tree.Root().index);
+        drawer.DrawNode(tree.Root().index, 1.f);
     }
     list.SetDefaultClip(kNoClip);
+    list.SetOpacity(1.f);
 }
 
 } // namespace Assisi::Mondrian

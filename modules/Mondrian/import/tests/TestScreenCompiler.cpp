@@ -474,6 +474,44 @@ TEST_CASE("ScreenCompiler: every length unit reads")
     CHECK(floater.floating.offset[1] == Vh(2.f));
 }
 
+TEST_CASE("ScreenCompiler: opacity and a shadow read, at rest and in a state")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <button name="lifted" opacity="0.75" shadow_color="rgbf(0, 0, 0, 0.5)" shadow_offset="0 4" shadow_blur="12"
+          shadow_spread="-2" hover:shadow_blur="1em" hover:opacity="1">Go</button>
+</screen>)amdn");
+    const ScreenNode &lifted = NodeNamed(document, "lifted");
+    const Style &style = lifted.style;
+    CHECK(style.opacity == doctest::Approx(0.75f));
+    CHECK(style.shadowColor.a == doctest::Approx(0.5f));
+    CHECK(style.shadowOffset[0] == Px(0.f));
+    CHECK(style.shadowOffset[1] == Px(4.f));
+    CHECK(style.shadowBlur == Px(12.f));
+    CHECK(style.shadowSpread == Px(-2.f));
+    for (const StyleProperty property : {StyleProperty::Opacity, StyleProperty::ShadowColor,
+                                         StyleProperty::ShadowOffset, StyleProperty::ShadowBlur,
+                                         StyleProperty::ShadowSpread})
+    {
+        CHECK((lifted.written & PropertyBit(property)) != 0);
+    }
+
+    REQUIRE(lifted.states.size() == 1);
+    const StylePatch &hover = lifted.states[0].patch;
+    CHECK(hover.Writes(StyleProperty::ShadowBlur));
+    CHECK(hover.values.shadowBlur == Em(1.f));
+    CHECK(hover.values.opacity == doctest::Approx(1.f));
+}
+
+TEST_CASE("ScreenCompiler: an opacity outside 0 to 1, a negative blur or a lone offset is refused")
+{
+    CHECK(AttributeRefusedOnLine3(R"(opacity="1.5")").message.find("1.5") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(opacity="-0.1")").message.find("-0.1") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(opacity="half")").message.find("half") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_blur="-4")").message.find("-4") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_offset="4")").message.find("shadow_offset") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_color="1 1 1")").message.find("1 1 1") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: a length that is not one is refused where it is written")
 {
     SUBCASE("a px suffix, since a bare number already is one")

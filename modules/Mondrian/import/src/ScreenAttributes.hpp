@@ -72,6 +72,7 @@ enum class HandledAttribute : uint8_t
     BorderColor, ///< as Background
     TextColor,   ///< as Background
     Tint,        ///< as Background
+    ShadowColor, ///< as Background
     Count_
 };
 

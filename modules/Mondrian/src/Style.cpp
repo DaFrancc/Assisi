@@ -78,6 +78,16 @@ bool OnField(StyleProperty property, From &a, To &b, const Visit &visit)
         return visit(a.tint, b.tint);
     case StyleProperty::Fit:
         return visit(a.fit, b.fit);
+    case StyleProperty::Opacity:
+        return visit(a.opacity, b.opacity);
+    case StyleProperty::ShadowColor:
+        return visit(a.shadowColor, b.shadowColor);
+    case StyleProperty::ShadowOffset:
+        return visit(a.shadowOffset, b.shadowOffset);
+    case StyleProperty::ShadowBlur:
+        return visit(a.shadowBlur, b.shadowBlur);
+    case StyleProperty::ShadowSpread:
+        return visit(a.shadowSpread, b.shadowSpread);
     case StyleProperty::Count_:
         break;
     }

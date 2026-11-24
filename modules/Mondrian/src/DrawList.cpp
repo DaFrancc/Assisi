@@ -16,7 +16,9 @@ QuadInstance &QuadBuilder::Instance()
 
 QuadBuilder &QuadBuilder::Fill(const Math::Color4<Math::ColorSpace::Srgb> &color)
 {
-    Instance().color = color;
+    QuadInstance &instance = Instance();
+    instance.color = color;
+    instance.color.a *= _list->_opacity;
     return *this;
 }
 
@@ -25,6 +27,7 @@ QuadBuilder &QuadBuilder::Border(float width, const Math::Color4<Math::ColorSpac
     QuadInstance &instance = Instance();
     instance.borderWidth = width;
     instance.borderColor = color;
+    instance.borderColor.a *= _list->_opacity;
     return *this;
 }
 
@@ -70,6 +73,14 @@ QuadBuilder &QuadBuilder::NineSlice(const SliceInsets &destination, const SliceI
     return *this;
 }
 
+QuadBuilder &QuadBuilder::Shadow(float blur)
+{
+    QuadInstance &instance = Instance();
+    instance.borderWidth = blur;
+    instance.kind = static_cast<uint32_t>(QuadKind::Shadow);
+    return *this;
+}
+
 QuadBuilder &QuadBuilder::Kind(QuadKind kind)
 {
     Instance().kind = static_cast<uint32_t>(kind);
@@ -93,7 +104,8 @@ QuadBuilder &QuadBuilder::Mask(MaskId mask)
 QuadBuilder DrawList::Quad(const Rect &rect)
 {
     ASSISI_ASSERT(!_finalized, "a quad added to a finalized DrawList");
-    _instances.push_back(QuadInstance{.rect = rect, .clip = _defaultClip});
+    QuadInstance &added = _instances.emplace_back(QuadInstance{.rect = rect, .clip = _defaultClip});
+    added.color.a *= _opacity;
     _bindings.push_back(Binding{});
     return QuadBuilder(*this, _instances.size() - 1);
 }
@@ -165,6 +177,7 @@ void DrawList::Clear()
     _bindings.clear();
     _entries.clear();
     _defaultClip = kNoClip;
+    _opacity = 1.f;
     _finalized = false;
 }
 

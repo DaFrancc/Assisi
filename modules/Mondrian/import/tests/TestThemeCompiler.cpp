@@ -113,6 +113,7 @@ TEST_CASE("Themes: each palette gives every token a value in its mode, read into
     REQUIRE(accent->values.size() == 2);
     CHECK(accent->values[0].Writes(StyleProperty::Background));
     CHECK(accent->values[0].Writes(StyleProperty::TextColor));
+    CHECK(accent->values[0].Writes(StyleProperty::ShadowColor));
     CHECK_FALSE(accent->values[0].Writes(StyleProperty::Width));
     CHECK(accent->values[0].values.background.r == doctest::Approx(Hex(0xe6)));
     CHECK(accent->values[1].values.background.r == doctest::Approx(1.f));
@@ -122,6 +123,8 @@ TEST_CASE("Themes: each palette gives every token a value in its mode, read into
     CHECK(space->values[0].Writes(StyleProperty::Gap));
     CHECK(space->values[0].Writes(StyleProperty::Padding));
     CHECK(space->values[0].Writes(StyleProperty::Width));
+    CHECK(space->values[0].Writes(StyleProperty::ShadowBlur));
+    CHECK(space->values[0].Writes(StyleProperty::ShadowSpread));
     CHECK_FALSE(space->values[0].Writes(StyleProperty::Background));
     CHECK(space->values[0].values.gap == Px(8.f));
     CHECK(space->values[1].values.gap == Px(12.f));

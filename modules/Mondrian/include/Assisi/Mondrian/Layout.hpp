@@ -54,6 +54,9 @@ struct LayoutNode
 
     Rect rect;           ///< device pixels, edges whole
     Rect clip = kNoClip; ///< what the node's own quads are clipped to
+    /// What holds the node clips it to, before any clip of its own: what its
+    /// shadow and focus ring are clipped to, which lie outside its box.
+    Rect outerClip = kNoClip;
     Insets padding;
     Point contentSize; ///< the extent of its content, which exceeds rect where it scrolls
     Point minSize;     ///< the least it can shrink to without clipping its content
@@ -62,6 +65,8 @@ struct LayoutNode
     /// out again once a `%` padding or gap has a parent to be a share of.
     Point content;
     Point minContent;
+    /// How far the node's shadow is moved, across then down.
+    Point shadowOffset;
     /// The least and the most its sizing allows on each axis; kUnbounded where
     /// no maximum binds.
     std::array<float, kAxisCount> minLength{};
@@ -71,6 +76,8 @@ struct LayoutNode
     float borderWidth = 0.f;
     float cornerRadius = 0.f;
     float scrollBarMinLength = 0.f;
+    float shadowBlur = 0.f;
+    float shadowSpread = 0.f;
     /// How far a single line of text is shifted left to keep its caret in
     /// sight, in device pixels. Zero for everything that is not a field.
     float textScroll = 0.f;
