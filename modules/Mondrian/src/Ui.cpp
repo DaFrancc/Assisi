@@ -904,7 +904,9 @@ void Ui::DrawFocusRing(const Screen &screen)
                     .width = node->rect.width + (2.f * (gap + width)),
                     .height = node->rect.height + (2.f * (gap + width))};
     const float radius = node->cornerRadius > 0.f ? node->cornerRadius + gap + width : 0.f;
-    _drawList.SetDefaultClip(node->clip);
+    // The ring lies outside the node, so a clip the node keeps for what is
+    // inside it, as a field does, must not cut it off.
+    _drawList.SetDefaultClip(node->outerClip);
     _drawList.Quad(ring)
         .Fill({0.f, 0.f, 0.f, 0.f})
         .Border(width, kFocusRingColor)

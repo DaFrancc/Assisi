@@ -54,6 +54,9 @@ struct LayoutNode
 
     Rect rect;           ///< device pixels, edges whole
     Rect clip = kNoClip; ///< what the node's own quads are clipped to
+    /// What holds the node clips it to, before any clip of its own: what its
+    /// focus ring is clipped to, which lies outside its box.
+    Rect outerClip = kNoClip;
     Insets padding;
     Point contentSize; ///< the extent of its content, which exceeds rect where it scrolls
     Point minSize;     ///< the least it can shrink to without clipping its content

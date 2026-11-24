@@ -141,6 +141,7 @@ class Layouter
             {
                 node.rect = SnapEdges(node.rect);
                 node.clip = SnapEdges(node.clip);
+                node.outerClip = SnapEdges(node.outerClip);
             }
         }
         ResolveDrawn();
@@ -666,6 +667,7 @@ class Layouter
         LayoutNode &result = Result(index);
         const Rect rect = result.rect;
 
+        result.outerClip = result.clip;
         // A field keeps its text to itself: the line inside it runs on past
         // both ends, and what is off the end of the box must not be drawn over
         // whatever sits beside it.

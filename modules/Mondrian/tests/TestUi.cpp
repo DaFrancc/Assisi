@@ -504,6 +504,34 @@ TEST_CASE("Mondrian: the focus ring shows while keys were used last, and not whi
     CHECK(withRing == withoutRing + 1);
 }
 
+TEST_CASE("Mondrian: a field's focus ring is drawn around it, not clipped away by the field's own box")
+{
+    Assisi::Core::EventQueue events;
+    TestWorld world{events};
+    Assisi::Core::EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    Screen screen{ui, world, ScreenTraits{.input = ScreenInput::ConsumeInput}, kSortMenu, "fields"};
+    const TextFieldId field = screen.AddTextField(screen.Root(), TextLines::Single);
+    ui.Show(screen);
+    Frame(ui, kLandscape);
+    ui.SetFocus(screen, field.node);
+    // A key the field keeps for its caret: the keys were used last, so the
+    // ring shows.
+    (void)ui.ProcessInput(Action(UiAction::Left));
+    ui.Sync(kLandscape);
+    REQUIRE(ui.GetInteraction().focused == field.node);
+    REQUIRE(ui.GetInteraction().device == InputDevice::Keys);
+
+    // The ring is the last thing drawn, just outside the field's box.
+    const std::span<const QuadInstance> quads = ui.GetDrawList().Instances();
+    REQUIRE_FALSE(quads.empty());
+    const QuadInstance &ring = quads.back();
+    const Rect &box = screen.GetLayout().Get(field.node)->rect;
+    CHECK(ring.rect.x < box.x);
+    CHECK(ring.clip.x <= ring.rect.x);
+    CHECK(ring.clip.x + ring.clip.width >= ring.rect.x + ring.rect.width);
+}
+
 namespace
 {
 
