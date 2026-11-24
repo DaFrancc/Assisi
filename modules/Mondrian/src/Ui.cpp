@@ -27,12 +27,6 @@ namespace Assisi::Mondrian
 namespace
 {
 
-/// The ring around the focused node while keys were used last: its thickness,
-/// and the space between it and the node, in UI pixels.
-constexpr float kFocusRingWidth = 3.f;
-constexpr float kFocusRingGap = 3.f;
-constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
-
 /// The actions that move focus, which a focused control may take instead.
 constexpr std::array kMoveActions{UiAction::Up,    UiAction::Down, UiAction::Left,
                                   UiAction::Right, UiAction::Next, UiAction::Previous};
@@ -137,11 +131,37 @@ std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
     return chain;
 }
 
+/// The nodes hover and a press hold for this frame: each node and everything
+/// holding it, so a row is hovered while the pointer is over the label inside
+/// it.
+struct Held
+{
+    std::vector<NodeId> hovered;
+    std::vector<NodeId> pressed;
+};
+
+/// Which states hold for the node @p id under @p interaction.
+StateSet HoldsFor(const NodeTree &tree, NodeId id, const Interaction &interaction, const Held &held)
+{
+    const Node &node = *tree.Get(id);
+    StateSet holds{};
+    holds[static_cast<std::size_t>(StyleState::On)] = std::holds_alternative<bool>(node.value) &&
+                                                      std::get<bool>(node.value);
+    // While the keys were used last, or always on what is being typed into: a
+    // button clicked with the mouse does not go on looking focused.
+    holds[static_cast<std::size_t>(StyleState::Focused)] =
+        interaction.focused == id && (interaction.device == InputDevice::Keys || node.takesKeyboard);
+    holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(held.hovered, id) != held.hovered.end();
+    holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(held.pressed, id) != held.pressed.end();
+    holds[static_cast<std::size_t>(StyleState::Disabled)] = !node.enabled;
+    return holds;
+}
+
 /// Puts on every node of @p tree the look of each state that holds for it under
 /// @p interaction, over its resting look, and its parent's text colour where
 /// nothing it wears writes one, with the background image it names found among
 /// @p sprites. Parents first, so the colour a node passes on is the one it
-/// wears this frame.
+/// wears this frame. A part is in whichever states its control is.
 ///
 /// A background image no sheet has draws nothing: the cook refuses a screen or
 /// theme naming one, so this is a stale package, and saying so every frame
@@ -149,10 +169,8 @@ std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
 void Restyle(NodeTree &tree, const Interaction &interaction,
              const std::unordered_map<Core::InternedString, Sprite> &sprites)
 {
-    // Hover and a press hold for a node and for everything holding it, so a
-    // row is hovered while the pointer is over the label inside it.
-    const std::vector<NodeId> hovered = WithAncestors(tree, interaction.pointed);
-    const std::vector<NodeId> pressed = WithAncestors(tree, interaction.pressed);
+    const Held held{.hovered = WithAncestors(tree, interaction.pointed),
+                    .pressed = WithAncestors(tree, interaction.pressed)};
 
     // Depth-first with an explicit stack, so a deep tree cannot overflow the
     // call stack.
@@ -167,15 +185,7 @@ void Restyle(NodeTree &tree, const Interaction &interaction,
             pending.push_back(child);
         }
 
-        StateSet holds{};
-        // Shown as the focus ring is, while the keys were used last, or always
-        // on what is being typed into: a button clicked with the mouse does
-        // not go on looking focused.
-        holds[static_cast<std::size_t>(StyleState::Focused)] =
-            interaction.focused == id && (interaction.device == InputDevice::Keys || node->takesKeyboard);
-        holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(hovered, id) != hovered.end();
-        holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(pressed, id) != pressed.end();
-        holds[static_cast<std::size_t>(StyleState::Disabled)] = !node->enabled;
+        const StateSet holds = HoldsFor(tree, node->part != kNoPart ? node->parent : id, interaction, held);
         const StylePatch worn = Restyled(node->resting, node->states, holds);
         node->style = worn.values;
         if (const Node *parent = tree.Get(node->parent); parent != nullptr && !worn.Writes(StyleProperty::TextColor))
@@ -791,6 +801,7 @@ WidgetView Ui::ViewOf(const Screen &screen, NodeId id, const WidgetType &widget)
     view.focused = _session.interaction.focused == id;
     view.pressed = _session.interaction.pressed == id;
     view.hovered = _session.interaction.hovered == id;
+    view.parts = PartRects(screen.Tree(), screen._layout, id);
     return view;
 }
 
@@ -1110,32 +1121,6 @@ void Ui::Move(Screen &screen, UiAction action)
     ScrollIntoView(tree, layout, focused);
 }
 
-void Ui::DrawFocusRing(const Screen &screen, DrawList &list)
-{
-    const LayoutNode *node = screen._layout.Get(_session.interaction.focused);
-    const Node *focused = screen.Tree().Get(_session.interaction.focused);
-    if (_session.interaction.device != InputDevice::Keys || node == nullptr || focused == nullptr)
-    {
-        return;
-    }
-    const float scale = screen._layout.scale;
-    const float width = std::max(kMinBorderDevicePixels, std::round(kFocusRingWidth * scale));
-    const float gap = std::round(kFocusRingGap * scale);
-    const Rect ring{.x = node->rect.x - gap - width,
-                    .y = node->rect.y - gap - width,
-                    .width = node->rect.width + (2.f * (gap + width)),
-                    .height = node->rect.height + (2.f * (gap + width))};
-    const float radius = node->cornerRadius > 0.f ? node->cornerRadius + gap + width : 0.f;
-    // The ring lies outside the node, so a clip the node keeps for what is
-    // inside it, as a field does, must not cut it off.
-    list.SetDefaultClip(node->outerClip);
-    list.Quad(ring)
-        .Fill({0.f, 0.f, 0.f, 0.f})
-        .Border(width, kFocusRingColor)
-        .Corners(radius, focused->style.cornerStyle);
-    list.SetDefaultClip(kNoClip);
-}
-
 void Ui::Sync(Extent viewport)
 {
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingSync, "Ui::Sync called without a ProcessInput before it");
@@ -1245,7 +1230,6 @@ void Ui::DrawScreen(Screen &screen, Extent area, float scale, DrawList &list)
         return;
     }
     DrawTree(screen.Tree(), screen._layout, list, _fontAtlas, _session.interaction);
-    DrawFocusRing(screen, list);
 }
 
 void Ui::LayOut(Screen &screen, Extent viewport, float scale)

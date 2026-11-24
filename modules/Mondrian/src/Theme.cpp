@@ -8,7 +8,9 @@
 #include <Assisi/Core/Reflect/StructMeta.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <span>
 #include <unordered_set>
 
 ASSISI_REFLECTED_STRUCT(Assisi::Mondrian::ThemeDocument);
@@ -56,6 +58,11 @@ std::string_view NameOf(const ThemeStyle &style)
     return style.name.View();
 }
 
+std::string_view NameOf(const ThemePartStyle &part)
+{
+    return part.name.View();
+}
+
 /// Whether no two of @p items share a name, so a name finds one of them.
 template <typename T> bool NamesDistinct(const std::vector<T> &items)
 {
@@ -88,6 +95,20 @@ bool LooksConsistent(const std::vector<ThemedPatch> &looks)
     return true;
 }
 
+/// Whether @p part's looks are ones a cook writes.
+bool PartConsistent(const ThemePartStyle &part)
+{
+    return part.resting.patch.WritesOnlyKnown() && LooksConsistent(part.states);
+}
+
+/// Whether @p style's looks, its own and its parts', are ones a cook writes,
+/// with at most one look for each part.
+bool StyleConsistent(const ThemeStyle &style)
+{
+    return style.resting.patch.WritesOnlyKnown() && LooksConsistent(style.states) && NamesDistinct(style.parts) &&
+           std::ranges::all_of(style.parts, PartConsistent);
+}
+
 /// Whether @p document is one a cook writes, so every lookup into it finds one
 /// thing and every token has a value for whichever mode the theme is in.
 bool IsConsistent(const ThemeDocument &document)
@@ -108,8 +129,7 @@ bool IsConsistent(const ThemeDocument &document)
             return false;
         }
     }
-    return std::ranges::all_of(document.styles, [](const ThemeStyle &style)
-                               { return style.resting.patch.WritesOnlyKnown() && LooksConsistent(style.states); });
+    return std::ranges::all_of(document.styles, StyleConsistent);
 }
 
 /// @p look with each token's value in @p theme filled in. A token the theme
@@ -137,7 +157,73 @@ StylePatch Bound(const ThemedPatch &look, const ThemeView &theme)
     return bound;
 }
 
+/// What a style says about a node, or about one part of a control: its look at
+/// rest and its looks by state. Both null where it says nothing.
+struct StyleLooks
+{
+    const ThemedPatch *resting = nullptr;
+    const std::vector<ThemedPatch> *states = nullptr;
+};
+
+/// What @p style says about the node itself, or about its part called @p part.
+StyleLooks LooksIn(const ThemeStyle *style, std::string_view part)
+{
+    if (style == nullptr)
+    {
+        return {};
+    }
+    if (part.empty())
+    {
+        return {.resting = &style->resting, .states = &style->states};
+    }
+    const ThemePartStyle *dressed = style->FindPart(part);
+    return dressed != nullptr ? StyleLooks{.resting = &dressed->resting, .states = &dressed->states} : StyleLooks{};
+}
+
+/// The style @p name in @p theme, or null. One a node names that the theme does
+/// not have is logged when @p logMissing, so a control and its parts say so
+/// once rather than once each.
+const ThemeStyle *FindNamed(const ThemeView &theme, std::string_view name, bool logMissing)
+{
+    if (theme.theme == nullptr || name.empty())
+    {
+        return nullptr;
+    }
+    const ThemeStyle *named = theme.theme->document.FindStyle(name);
+    if (named == nullptr && logMissing)
+    {
+        Core::Log::Error("Mondrian: the theme '{}' has no style '{}', so a node naming it wears its own look alone.",
+                         theme.theme->vpath, name);
+    }
+    return named;
+}
+
+/// Every look of @p styles for @p state, bound against @p theme, put on
+/// @p merged in order.
+void AddStateLooks(StylePatch &merged, std::span<const StyleLooks> styles, StyleState state, const ThemeView &theme)
+{
+    for (const StyleLooks &style : styles)
+    {
+        if (style.states == nullptr)
+        {
+            continue;
+        }
+        for (const ThemedPatch &styled : *style.states)
+        {
+            if (styled.patch.state == state)
+            {
+                merged.Add(Bound(styled, theme));
+            }
+        }
+    }
+}
+
 } // namespace
+
+const ThemePartStyle *ThemeStyle::FindPart(std::string_view part) const
+{
+    return Named(parts, part);
+}
 
 void ThemedPatch::Take(StyleProperty property, const Style &from)
 {
@@ -187,55 +273,53 @@ const ListedTheme *Themes::Find(std::string_view vpath) const
     return found != listed.end() ? &*found : nullptr;
 }
 
-ResolvedLook ResolveLook(const NodeLook &look, const ThemeView &theme)
+ResolvedLook ResolveLook(const NodeLook &look, const ThemeView &theme, const LookBase &base)
 {
     ASSISI_ASSERT(theme.theme == nullptr || theme.mode < theme.theme->document.modes.size(),
                   "a theme is put on in a mode it has");
 
-    const ThemeStyle *named = nullptr;
-    if (theme.theme != nullptr && !look.styleName.View().empty())
-    {
-        named = theme.theme->document.FindStyle(look.styleName.View());
-        if (named == nullptr)
-        {
-            Core::Log::Error("Mondrian: the theme '{}' has no style '{}', so a node naming it wears its own look "
-                             "alone.",
-                             theme.theme->vpath, look.styleName.View());
-        }
-    }
+    // A part names no style: it wears its control's. Its control already said
+    // when the theme has none.
+    const bool isPart = !base.part.empty();
+    const std::string_view named = isPart ? base.style.View() : look.styleName.View();
+    const ThemedPatch own{.patch = StylePatch{.values = look.style, .written = look.written, .state = {}},
+                          .tokens = look.tokens};
+    // Weakest first. A kind of control the theme has no style for is not a
+    // mistake: it wears its defaults.
+    const std::array<StyleLooks, 3> styles{LooksIn(FindNamed(theme, base.kind, false), base.part),
+                                           LooksIn(FindNamed(theme, named, !isPart), base.part),
+                                           StyleLooks{.resting = &own, .states = &look.states}};
 
     ResolvedLook resolved;
     resolved.resting.values = look.style;
-    if (named != nullptr)
+    if (base.defaults != nullptr)
     {
-        resolved.resting.Add(Bound(named->resting, theme));
+        resolved.resting.Add(base.defaults->resting);
     }
-    const ThemedPatch own{.patch = StylePatch{.values = look.style, .written = look.written, .state = {}},
-                          .tokens = look.tokens};
-    resolved.resting.Add(Bound(own, theme));
+    for (const StyleLooks &style : styles)
+    {
+        if (style.resting != nullptr)
+        {
+            resolved.resting.Add(Bound(*style.resting, theme));
+        }
+    }
 
     for (std::size_t index = 0; index < static_cast<std::size_t>(StyleState::Count_); ++index)
     {
         const StyleState state = static_cast<StyleState>(index);
         StylePatch merged;
         merged.state = state;
-        if (named != nullptr)
+        if (base.defaults != nullptr)
         {
-            for (const ThemedPatch &styled : named->states)
+            for (const StylePatch &builtIn : base.defaults->states)
             {
-                if (styled.patch.state == state)
+                if (builtIn.state == state)
                 {
-                    merged.Add(Bound(styled, theme));
+                    merged.Add(builtIn);
                 }
             }
         }
-        for (const ThemedPatch &ownLook : look.states)
-        {
-            if (ownLook.patch.state == state)
-            {
-                merged.Add(Bound(ownLook, theme));
-            }
-        }
+        AddStateLooks(merged, styles, state, theme);
         if (merged.written != 0)
         {
             resolved.states.push_back(merged);

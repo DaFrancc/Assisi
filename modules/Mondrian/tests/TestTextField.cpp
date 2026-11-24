@@ -635,8 +635,7 @@ TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in 
 TEST_CASE("TextField: the caret blinks, and stays visible while the player types or moves it")
 {
     Field field;
-    // The caret's own colour.
-    constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> caret{0.95f, 0.96f, 0.98f, 1.f};
+    const Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> caret = Style{}.caretColor;
     const auto waitUntil = [&field](double time) { WaitUntil(field, time); };
     waitUntil(0.0);
     CHECK(QuadsIn(field, caret) == 1);
@@ -662,6 +661,35 @@ TEST_CASE("TextField: the caret blinks, and stays visible while the player types
     moving.time = kCaretBlinkSeconds * 4.8;
     field.Step(moving);
     CHECK(QuadsIn(field, caret) == 1);
+}
+
+TEST_CASE("TextField: the caret, the selection and the placeholder wear the colours the field's look gives them")
+{
+    using Color = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>;
+    constexpr Color kCaret{0.9f, 0.1f, 0.1f, 1.f};
+    constexpr Color kSelection{0.1f, 0.1f, 0.9f, 1.f};
+    constexpr Color kPlaceholder{0.1f, 0.9f, 0.1f, 1.f};
+
+    Field field;
+    Style colours;
+    colours.caretColor = kCaret;
+    colours.selectionColor = kSelection;
+    colours.placeholderColor = kPlaceholder;
+    NodeTree &tree = field.screen->Tree();
+    tree.SetOwnProperty(field.field.node, StyleProperty::CaretColor, colours);
+    tree.SetOwnProperty(field.field.node, StyleProperty::SelectionColor, colours);
+    tree.SetOwnProperty(field.field.node, StyleProperty::PlaceholderColor, colours);
+    field.screen->SetPlaceholder(field.field, "AAAA");
+    field.Step({});
+
+    CHECK(QuadsIn(field, kPlaceholder) == 4);
+
+    field.Type("AAAA");
+    CHECK(QuadsIn(field, kPlaceholder) == 0);
+    CHECK(QuadsIn(field, kCaret) == 1);
+
+    field.Step(Press(EditKey::SelectAll));
+    CHECK(QuadsIn(field, kSelection) == 1);
 }
 
 TEST_CASE("TextField: a click on a placeholder leaves the caret where it must be")

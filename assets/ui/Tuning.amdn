@@ -13,9 +13,15 @@
 
     <text name="title" width="grow" text_size="40">Tuning</text>
 
+    <!-- The slider's thumb is wide enough to carry the number it stands for,
+         which rides along with it. -->
     <row name="field_of_view" width="grow" gap="20" align="start center">
-      <text width="grow" text_size="24">Field of view {Camera.fovDegrees:.0f}</text>
-      <slider name="fov" value="{=Camera.fovDegrees}" min="40" max="120" step="5" />
+      <text width="grow" text_size="24">Field of view</text>
+      <slider name="fov" value="{=Camera.fovDegrees}" min="40" max="120" step="5" height="32">
+        <thumb width="48" corner_radius="8" align="center center">
+          <text text_size="18" text_color="#10161f">{Camera.fovDegrees:.0f}</text>
+        </thumb>
+      </slider>
     </row>
 
     <row name="hud" width="grow" gap="20" align="start center">

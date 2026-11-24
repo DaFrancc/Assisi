@@ -55,7 +55,8 @@ enum class ScreenLoadError : uint8_t
     UnsupportedWidget,
 
     /// A node carries something its place cannot hold — a control or an action
-    /// on the root, which is the screen itself.
+    /// on the root, which is the screen itself, or a part its parent does not
+    /// have, or a part that is more than a part.
     MisplacedNode,
 
     /// Two nodes carry one name. The cook refuses the same thing, so this is a

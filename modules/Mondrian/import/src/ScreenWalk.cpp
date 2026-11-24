@@ -894,6 +894,10 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::TextColor:
     case HandledAttribute::Tint:
     case HandledAttribute::ShadowColor:
+    case HandledAttribute::OutlineColor:
+    case HandledAttribute::CaretColor:
+    case HandledAttribute::SelectionColor:
+    case HandledAttribute::PlaceholderColor:
         return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Change:
         return ApplyOnChange(walk, node, attribute);
@@ -981,6 +985,108 @@ void WriteOwn(ScreenNode &node, StyleProperty property)
     std::erase_if(node.tokens, [property](const TokenUse &use) { return use.property == property; });
 }
 
+
+/// The node standing for the part called @p part of the control at @p control,
+/// made the first time anything dresses it: what a part's prefixed attributes
+/// and its tag both write to.
+uint32_t PartNodeOf(Walk &walk, uint32_t control, std::string_view part)
+{
+    for (uint32_t index = control + 1; index < walk.document.nodes.size(); ++index)
+    {
+        const ScreenNode &node = walk.document.nodes[index];
+        if (node.parent == control && node.part.View() == part)
+        {
+            return index;
+        }
+    }
+    ScreenNode node;
+    node.parent = control;
+    node.part = Core::InternedString{part};
+    walk.document.nodes.push_back(std::move(node));
+    return static_cast<uint32_t>(walk.document.nodes.size() - 1);
+}
+
+/// @p written, which @p prefix says is for one of the parts of the control at
+/// @p control, read onto that part as its tag would read it.
+std::expected<void, MarkupError> ApplyToPart(Walk &walk, uint32_t control, const AttributePrefix &prefix,
+                                             const MarkupAttribute &written)
+{
+    MarkupElement onPart;
+    onPart.name = std::string{prefix.part};
+    onPart.line = written.line;
+    onPart.column = written.column;
+    MarkupAttribute attribute = written;
+    attribute.name = written.name.substr(prefix.part.size() + 1);
+    onPart.attributes.push_back(std::move(attribute));
+    return ApplyAttributes(walk, onPart, PartNodeOf(walk, control, prefix.part));
+}
+
+/// Whether @p name is the tag of one of @p widget's parts.
+bool IsPartOf(BuiltinWidget widget, std::string_view name)
+{
+    const std::vector<std::string_view> parts = BuiltinPartNames(widget);
+    return std::ranges::find(parts, name) != parts.end();
+}
+
+/// Refuses what @p element holds when it is a @p kind, which holds no elements:
+/// nothing but its parts' tags, and nothing at all when it has no parts, which
+/// @p leaf says.
+std::expected<void, MarkupError> OnlyParts(const ElementKind &kind, const MarkupElement &element, std::string leaf)
+{
+    const std::vector<std::string_view> parts = BuiltinPartNames(kind.widget);
+    if (parts.empty())
+    {
+        return std::unexpected(At(element, std::move(leaf)));
+    }
+    for (const MarkupElement &child : element.children)
+    {
+        if (std::ranges::find(parts, child.name) == parts.end())
+        {
+            return std::unexpected(At(child, "'" + child.name + "' is not a part of " + std::string{kind.name} +
+                                                 ". Its parts are: " + Listed(parts) + "."));
+        }
+    }
+    return {};
+}
+
+/// The tag of one part of the control at @p control: its attributes are the
+/// part's own, written plainly, and what it holds goes inside the part. That
+/// passes the pointer to the control, so it holds no control of its own.
+std::expected<void, MarkupError> CompilePart(Walk &walk, const MarkupElement &element, uint32_t control)
+{
+    const BuiltinWidget widget = walk.document.nodes[control].widget;
+    if (widget == BuiltinWidget::Scroll)
+    {
+        return std::unexpected(At(element, "a scroll holds what it scrolls, so its parts take no tags. Write " +
+                                               element.name + ":background=\"...\" and the like on the scroll."));
+    }
+    if (!element.text.empty())
+    {
+        return std::unexpected(At(element, "a part holds no words of its own. Put them in a <text> inside it."));
+    }
+    const uint32_t part = PartNodeOf(walk, control, element.name);
+    if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, element, part); !attributes)
+    {
+        return attributes;
+    }
+    const std::size_t before = walk.document.nodes.size();
+    if (const std::expected<void, MarkupError> held = CompileChildren(walk, element, part); !held)
+    {
+        return held;
+    }
+    // Everything made since is inside the part.
+    for (std::size_t index = before; index < walk.document.nodes.size(); ++index)
+    {
+        const BuiltinWidget inside = walk.document.nodes[index].widget;
+        if (inside != BuiltinWidget::None)
+        {
+            return std::unexpected(At(element, "what a " + element.name + " holds passes the pointer to its " +
+                                                   std::string{BuiltinWidgetName(widget)} + ", so it holds no " +
+                                                   std::string{BuiltinWidgetName(inside)} + "."));
+        }
+    }
+    return {};
+}
 
 /// Whether the step @p element writes, if it writes one, has a value in the
 /// scope open now. In a template's own check, one naming a parameter with no
@@ -1086,27 +1192,43 @@ std::expected<Substituted, MarkupError> Substitute(const Walk &walk, std::string
 std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement &element, uint32_t index)
 {
     const bool isRoot = index == 0;
-    ScreenNode &node = walk.document.nodes[index];
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
-        if (!state)
+        // Taken afresh each time: dressing a part can add a node to the table.
+        ScreenNode &node = walk.document.nodes[index];
+        const std::expected<AttributePrefix, MarkupError> prefix = PrefixOf(written, PartsOf(node.widget));
+        if (!prefix)
         {
-            return std::unexpected(state.error());
+            return std::unexpected(prefix.error());
         }
-        const std::string_view name = *state ? AfterPrefix(written.name) : std::string_view{written.name};
+        if (!prefix->part.empty())
+        {
+            if (const std::expected<void, MarkupError> dressed = ApplyToPart(walk, index, *prefix, written); !dressed)
+            {
+                return dressed;
+            }
+            continue;
+        }
+        const std::optional<StyleState> state = prefix->state;
+        const std::string_view name = prefix->name;
         const AttributeSpec *const spec = FindAttribute(name, node.widget, isRoot);
         if (spec == nullptr)
         {
             return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
         }
-        if (*state && spec->handled == HandledAttribute::StyleName)
+        if (!node.part.Empty() && !spec->property && name != kVisibleAttribute)
+        {
+            return std::unexpected(At(written, "'" + std::string{name} +
+                                                   "' says what a node is or does, and a part takes only how it "
+                                                   "looks and whether it shows: its control does the rest."));
+        }
+        if (state && spec->handled == HandledAttribute::StyleName)
         {
             return std::unexpected(At(written, "a node names one style, which holds its own look for each state. "
                                                "Write the state on the style's attributes instead."));
         }
-        if (*state && !spec->property)
+        if (state && !spec->property)
         {
             return std::unexpected(At(written, "'" + std::string{name} +
                                                    "' says what the node is or does rather than how it looks, so it "
@@ -1146,7 +1268,7 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         const std::optional<BoundAttribute> bindable = BoundAttributeNamed(attribute.name);
         if (bindable && attribute.value.find(kBindingOpen) != std::string::npos)
         {
-            if (*state)
+            if (state)
             {
                 return std::unexpected(At(attribute, "'" + written.name +
                                           "' holds a binding, and a state's look is written out: "
@@ -1185,9 +1307,9 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                 return std::unexpected(At(attribute, "'" + attribute.name + "' " + checked.error()));
             }
         }
-        if (*state)
+        if (state)
         {
-            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, **state, *spec, attribute); !look)
+            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, *state, *spec, attribute); !look)
             {
                 return look;
             }
@@ -1254,8 +1376,13 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     }
     if (!kind.carriesChildren && !instance.children.empty())
     {
-        return std::unexpected(
-            At(instance, "'" + instance.name + "' is a " + std::string{kind.name} + ", which holds no elements."));
+        if (const std::expected<void, MarkupError> held =
+                OnlyParts(kind, instance,
+                          "'" + instance.name + "' is a " + std::string{kind.name} + ", which holds no elements.");
+            !held)
+        {
+            return held;
+        }
     }
 
     ScreenNode node;
@@ -1381,6 +1508,12 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
             At(element, "<" + std::string{kTemplatesElement} + "> is the root of a template library, a " +
                             std::string{kLibraryExtension} + " file of its own, which a screen imports."));
     }
+    // A part's tag, inside its control, before any element or template it might
+    // share a name with.
+    if (IsPartOf(walk.document.nodes[parent].widget, element.name))
+    {
+        return CompilePart(walk, element, parent);
+    }
     const ElementKind *const kind = FindElement(element.name);
     if (kind == nullptr)
     {
@@ -1402,7 +1535,12 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     }
     if (!kind->carriesChildren && !element.children.empty())
     {
-        return std::unexpected(At(element, "'" + element.name + "' holds elements, and holds none."));
+        if (const std::expected<void, MarkupError> held =
+                OnlyParts(*kind, element, "'" + element.name + "' holds elements, and holds none.");
+            !held)
+        {
+            return held;
+        }
     }
 
     const std::expected<Substituted, MarkupError> text = Substitute(walk, element.text, element.line, element.column);

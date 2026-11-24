@@ -667,6 +667,7 @@ std::optional<BindingUse> ControlUse(BuiltinWidget widget)
     case BuiltinWidget::Button:
     case BuiltinWidget::Scroll:
     case BuiltinWidget::TextField:
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::Count_:
         break;
     }

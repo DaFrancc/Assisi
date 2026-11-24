@@ -11,6 +11,8 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -146,6 +148,18 @@ bool ReadShadowBlur(const AttributeTarget &target, std::string_view value)
         return false;
     }
     target.style.shadowBlur = *blur;
+    return true;
+}
+
+/// An outline's thickness, which is never less than none.
+bool ReadOutlineWidth(const AttributeTarget &target, std::string_view value)
+{
+    const std::optional<Length> width = ParseLength(value);
+    if (!width || width->value < 0.f)
+    {
+        return false;
+    }
+    target.style.outlineWidth = *width;
     return true;
 }
 
@@ -293,6 +307,10 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForColor("text_color", HandledAttribute::TextColor, StyleProperty::TextColor),
     ForColor("tint", HandledAttribute::Tint, StyleProperty::Tint),
     ForColor("shadow_color", HandledAttribute::ShadowColor, StyleProperty::ShadowColor),
+    ForColor("outline_color", HandledAttribute::OutlineColor, StyleProperty::OutlineColor),
+    ForColor("caret_color", HandledAttribute::CaretColor, StyleProperty::CaretColor),
+    ForColor("selection_color", HandledAttribute::SelectionColor, StyleProperty::SelectionColor),
+    ForColor("placeholder_color", HandledAttribute::PlaceholderColor, StyleProperty::PlaceholderColor),
 
     Handled("style", HandledAttribute::StyleName),
     Handled("sprite", HandledAttribute::Sprite),
@@ -370,6 +388,9 @@ constexpr std::array kAttributes = std::to_array<AttributeSpec>({
     ForStyle("shadow_blur", StyleProperty::ShadowBlur, ReadShadowBlur),
     ForStyle("shadow_spread", StyleProperty::ShadowSpread,
              [](const AttributeTarget &t, std::string_view v) { return Read(t.style.shadowSpread, v, ParseLength); }),
+    ForStyle("outline_width", StyleProperty::OutlineWidth, ReadOutlineWidth),
+    ForStyle("outline_gap", StyleProperty::OutlineGap,
+             [](const AttributeTarget &t, std::string_view v) { return Read(t.style.outlineGap, v, ParseLength); }),
 });
 
 /// Each entry is read one way: through its own function, or by ApplyAttributes.
@@ -457,13 +478,49 @@ static_assert(EveryPropertyOnce(), "every style property is written by exactly o
 
 /// How a file spells each state, in the order they stack. One entry per
 /// StyleState, which the assert below holds the table to.
-constexpr std::array<NamedEnum<StyleState>, 4> kStates{{
+constexpr std::array<NamedEnum<StyleState>, 5> kStates{{
+    {"on", StyleState::On},
     {"focused", StyleState::Focused},
     {"hover", StyleState::Hover},
     {"pressed", StyleState::Pressed},
     {"disabled", StyleState::Disabled},
 }};
 static_assert(kStates.size() == static_cast<std::size_t>(StyleState::Count_), "every state needs a spelling");
+
+/// The most prefixes one attribute takes: a part, then a state.
+constexpr std::size_t kMostPrefixes = 2;
+
+/// @p name cut at each prefix separator: its prefixes, then the attribute.
+std::vector<std::string_view> SplitPrefixes(std::string_view name)
+{
+    std::vector<std::string_view> pieces;
+    std::size_t start = 0;
+    for (std::size_t separator = name.find(kPrefixSeparator); separator != std::string_view::npos;
+         separator = name.find(kPrefixSeparator, start))
+    {
+        pieces.push_back(name.substr(start, separator - start));
+        start = separator + 1;
+    }
+    pieces.push_back(name.substr(start));
+    return pieces;
+}
+
+/// What a prefix that is neither a state nor one of @p parts is told.
+std::string UnknownPrefix(std::string_view prefix, const PartNames &parts)
+{
+    const std::string states = "The states are: " + KnownStates();
+    if (parts.names.empty())
+    {
+        return "'" + std::string{prefix} + "' is not a state. " + states + ".";
+    }
+    if (parts.owner.empty())
+    {
+        return "'" + std::string{prefix} + "' is not a state or a part of any control. " + states +
+               "; the parts are: " + Listed(parts.names) + ".";
+    }
+    return "'" + std::string{prefix} + "' is not a state or a part of " + std::string{parts.owner} + ". " + states +
+           "; " + std::string{parts.owner} + "'s parts are: " + Listed(parts.names) + ".";
+}
 
 /// How a file spells @p verb.
 std::string_view VerbName(ScreenVerb verb)
@@ -561,6 +618,18 @@ std::expected<void, MarkupError> ApplyColor(Style &style, HandledAttribute colou
     case HandledAttribute::ShadowColor:
         style.shadowColor = *read;
         return {};
+    case HandledAttribute::OutlineColor:
+        style.outlineColor = *read;
+        return {};
+    case HandledAttribute::CaretColor:
+        style.caretColor = *read;
+        return {};
+    case HandledAttribute::SelectionColor:
+        style.selectionColor = *read;
+        return {};
+    case HandledAttribute::PlaceholderColor:
+        style.placeholderColor = *read;
+        return {};
     case HandledAttribute::None:
     case HandledAttribute::Action:
     case HandledAttribute::Change:
@@ -603,34 +672,75 @@ std::expected<void, MarkupError> ApplyStyleAttribute(const AttributeSpec &spec, 
     return {};
 }
 
-std::expected<std::optional<StyleState>, MarkupError> StateOf(const MarkupAttribute &attribute)
+std::string Listed(std::span<const std::string_view> words)
 {
-    const std::string_view name = attribute.name;
-    const std::size_t separator = name.find(kPrefixSeparator);
-    if (separator == std::string_view::npos)
+    std::string listed;
+    for (const std::string_view word : words)
     {
-        return std::optional<StyleState>{};
+        listed += listed.empty() ? "" : ", ";
+        listed += word;
     }
-    if (name.find(kPrefixSeparator, separator + 1) != std::string_view::npos)
-    {
-        return std::unexpected(At(attribute, "'" + attribute.name +
-                                                 "' gives one attribute two prefixes. An attribute takes one state, "
-                                                 "and states that hold at once stack on their own."));
-    }
-    const std::string_view prefix = name.substr(0, separator);
-    const std::optional<StyleState> state = LookUpState(prefix);
-    if (!state)
-    {
-        return std::unexpected(
-            At(attribute, "'" + std::string{prefix} + "' is not a state. The states are: " + KnownStates() + "."));
-    }
-    return state;
+    return listed;
 }
 
-std::string_view AfterPrefix(std::string_view name)
+PartNames PartsOf(BuiltinWidget widget)
 {
-    const std::size_t separator = name.find(kPrefixSeparator);
-    return separator == std::string_view::npos ? name : name.substr(separator + 1);
+    return PartNames{.names = BuiltinPartNames(widget), .owner = BuiltinWidgetName(widget)};
+}
+
+PartNames EveryControlsParts()
+{
+    PartNames every;
+    for (uint32_t widget = 0; widget < static_cast<uint32_t>(BuiltinWidget::Count_); ++widget)
+    {
+        for (const std::string_view part : BuiltinPartNames(static_cast<BuiltinWidget>(widget)))
+        {
+            if (std::ranges::find(every.names, part) == every.names.end())
+            {
+                every.names.push_back(part);
+            }
+        }
+    }
+    return every;
+}
+
+std::expected<AttributePrefix, MarkupError> PrefixOf(const MarkupAttribute &attribute, const PartNames &parts)
+{
+    std::vector<std::string_view> prefixes = SplitPrefixes(attribute.name);
+    AttributePrefix read{.part = {}, .state = std::nullopt, .name = prefixes.back()};
+    prefixes.pop_back();
+    const std::string misordered = "'" + attribute.name +
+                                   "' gives one attribute prefixes it cannot take. An attribute is written with at "
+                                   "most a part, then a state, as thumb:hover:background; states that hold at once "
+                                   "stack on their own.";
+    if (prefixes.size() > kMostPrefixes)
+    {
+        return std::unexpected(At(attribute, misordered));
+    }
+    for (std::size_t index = 0; index < prefixes.size(); ++index)
+    {
+        const std::string_view prefix = prefixes[index];
+        const bool isPart = std::ranges::find(parts.names, prefix) != parts.names.end();
+        const std::optional<StyleState> state = LookUpState(prefix);
+        // A part comes first, and a state after it.
+        if ((isPart && (index > 0 || read.state)) || (state && read.state))
+        {
+            return std::unexpected(At(attribute, misordered));
+        }
+        if (isPart)
+        {
+            read.part = prefix;
+        }
+        else if (state)
+        {
+            read.state = state;
+        }
+        else
+        {
+            return std::unexpected(At(attribute, UnknownPrefix(prefix, parts)));
+        }
+    }
+    return read;
 }
 
 std::optional<StyleState> LookUpState(std::string_view name)
@@ -706,6 +816,7 @@ void Seed(ScreenNode &node)
     case BuiltinWidget::Toggle:
     case BuiltinWidget::ContinuousSlider:
     case BuiltinWidget::SteppedSlider:
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::Count_:
         return;
     }

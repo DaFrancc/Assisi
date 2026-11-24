@@ -2,23 +2,30 @@
 #pragma once
 
 /// @file Widget.hpp
-/// @brief What a kind of control is: three plain functions, registered once and
-/// named by a node's behaviour.
+/// @brief What a kind of control is: a few plain functions and the parts it is
+/// made of, registered once and named by a node's behaviour.
 ///
 /// The UI does what every control shares — hit testing, keeping a press while
 /// the pointer wanders, focus, key repeat — and hands a control the gestures
 /// that came of it. A control therefore says only what it does with a press, a
 /// drag or a direction, which is what makes the built-ins short and a game's
 /// own control no harder to write than they are.
+///
+/// What a control shows is made of parts: a slider's track, fill and thumb are
+/// child nodes like any other, which a theme or a screen styles by name and
+/// can put content in. The control only says where each goes.
 
 #include <Assisi/Mondrian/DrawList.hpp>
 #include <Assisi/Mondrian/NodeId.hpp>
+#include <Assisi/Mondrian/Style.hpp>
 
 #include <Assisi/Core/CursorShape.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -127,9 +134,38 @@ enum class ScrollGrab : uint8_t
     Count_
 };
 
+/// The most parts one kind of control may have.
+inline constexpr std::size_t kMaxWidgetParts = 8;
+
+/// What a node that is no control's part carries as its part.
+inline constexpr uint8_t kNoPart = UINT8_MAX;
+
+/// @brief One part of a kind of control: a child node of each such control,
+/// which the control places and a file styles by its name.
+///
+/// Two parts may share a name, which a file then styles as one: a scroll's
+/// two bars each have a track and a thumb.
+struct WidgetPart
+{
+    std::string_view name;
+    /// How it looks before any theme says anything.
+    DefaultLook look;
+};
+
+/// @brief Where a control puts one of its parts, in device pixels.
+struct PartPlace
+{
+    Rect rect;
+    /// Whether it shows at all: a scroll bar with nothing to scroll does not.
+    bool shown = true;
+};
+
 /// @brief What a control sees of the node it is on.
 struct WidgetView
 {
+    /// Where each of its parts was placed this frame, by part; empty for one
+    /// that was not, being hidden or not shown.
+    std::array<Rect, kMaxWidgetParts> parts{};
     const Node *node = nullptr;
     const LayoutNode *layout = nullptr;
     /// The node's text as this frame laid it out, which is what a control
@@ -161,9 +197,22 @@ enum class WidgetResponse : uint8_t
 /// @brief One kind of control. Every callback may be null.
 struct WidgetType
 {
+    /// What a file calls it, and so the name of the theme style every such
+    /// control wears under whatever style it names itself. Empty for none.
+    std::string_view name{};
+    /// What it is made of. Each control of this kind gets one child node per
+    /// part, in this order, which draw in this order over its other children.
+    std::span<const WidgetPart> parts{};
+    /// How the control itself looks before any theme says anything, or null.
+    const DefaultLook *look = nullptr;
     /// The size the control wants, in UI pixels, before padding and sizing
     /// are applied. Null takes the size from the node's text and children.
     Point (*measure)(const Node &node, void *context) = nullptr;
+    /// Where each part goes, once the control's own box is final. @p parts
+    /// arrives with each part at the size its own style gives it, at the
+    /// corner inside the control's padding; the control moves each, and may
+    /// resize it, from what it holds. Null leaves them there.
+    void (*place)(const WidgetView &view, std::span<PartPlace> parts) = nullptr;
     /// Whether the control takes the pointer at this point even over whatever
     /// it contains — a scroll bar drawn across its own content. Null leaves the
     /// pointer to the children, which is what most controls want.
@@ -210,15 +259,23 @@ enum class BuiltinWidget : uint32_t
     SteppedSlider,
     Scroll,
     TextField,
+    /// Plain text a player may select and copy: a field's selecting without its
+    /// editing. No file names it, and it wears no theme style: a `text_field`
+    /// style's box is for fields.
+    SelectableText,
     Count_
 };
 
 /// @brief Registers the built-in controls into @p registry, which must be empty.
 void RegisterBuiltinWidgets(WidgetRegistry &registry);
 
-/// @brief Where a slider's handle sits, in device pixels, with its thumb
-/// @p fraction of the way along its track. Null layout gives an empty rect.
-[[nodiscard]] Rect SliderThumbRect(const Node &node, const LayoutNode *layout, float scale, float fraction);
+/// @brief What a file calls @p widget, which is also the theme style each one
+/// wears: "slider" for a ContinuousSlider. Empty for None.
+[[nodiscard]] std::string_view BuiltinWidgetName(BuiltinWidget widget);
+
+/// @brief The names of @p widget's parts, each once, in the order it has them:
+/// what a file may style on it, and what an error lists when it names another.
+[[nodiscard]] std::vector<std::string_view> BuiltinPartNames(BuiltinWidget widget);
 
 /// @brief A button, from Ui::AddButton. Naming the kind of control keeps a
 /// binding that expects another kind from compiling.
@@ -232,8 +289,8 @@ struct ToggleId
     NodeId node;
 };
 
-/// @brief What a slider's ends mean, and how far one press of a key or a button
-/// moves it. A stepped slider moves a step at a time and ignores @p step.
+/// @brief What a slider's ends mean, and how far one press of a key moves it. A
+/// stepped slider moves a step at a time and ignores @p step.
 ///
 /// @p step has no usable default: no one size suits every range, and one sized
 /// for 0 to 1 is a thousand presses end to end on 0 to 100. Left out it is zero,
@@ -247,14 +304,6 @@ struct SliderRange
     AFIELD() float step = 0.f;
 
     [[nodiscard]] friend constexpr bool operator==(const SliderRange &, const SliderRange &) = default;
-};
-
-/// @brief Whether a slider carries a button at each end to step it.
-enum class SliderButtons : uint8_t
-{
-    Hidden,
-    Shown,
-    Count_
 };
 
 /// @brief A slider that rests anywhere along its length, and so carries how far

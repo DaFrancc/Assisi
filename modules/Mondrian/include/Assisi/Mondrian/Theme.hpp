@@ -84,8 +84,26 @@ struct ThemeToken
     [[nodiscard]] friend bool operator==(const ThemeToken &, const ThemeToken &) = default;
 };
 
+/// @brief How a style dresses one part of a control: the part's look at rest
+/// and in each of its control's states.
+ASTRUCT()
+struct ThemePartStyle
+{
+    /// The part's name, as its control's type lists it.
+    AFIELD() Core::InternedString name;
+    AFIELD() ThemedPatch resting;
+    /// At most one per state.
+    AFIELD() std::vector<ThemedPatch> states;
+
+    [[nodiscard]] friend bool operator==(const ThemePartStyle &, const ThemePartStyle &) = default;
+};
+
 /// @brief A named style: how a node naming it looks at rest and in each state,
-/// with the style it extends already put under it.
+/// and how each part of a control naming it looks, with the style it extends
+/// already put under it.
+///
+/// A style named for a kind of control, such as "slider", is worn by every
+/// such control under whatever style it names itself.
 ASTRUCT()
 struct ThemeStyle
 {
@@ -93,6 +111,11 @@ struct ThemeStyle
     AFIELD() ThemedPatch resting;
     /// At most one per state.
     AFIELD() std::vector<ThemedPatch> states;
+    /// At most one per part name.
+    AFIELD() std::vector<ThemePartStyle> parts {};
+
+    /// @brief How it dresses the part called @p part, or null.
+    [[nodiscard]] const ThemePartStyle *FindPart(std::string_view part) const;
 
     [[nodiscard]] friend bool operator==(const ThemeStyle &, const ThemeStyle &) = default;
 };
@@ -169,11 +192,30 @@ struct ResolvedLook
     std::vector<StylePatch> states;
 };
 
-/// @brief @p look as it is worn under @p theme. Weakest first: the style's
-/// resting look, the node's own, then for each state the style's look and the
-/// node's own over it. A style or a token the theme does not have is logged and
-/// leaves what the node writes itself.
-[[nodiscard]] ResolvedLook ResolveLook(const NodeLook &look, const ThemeView &theme);
+/// @brief What a node's look starts from before its own: what its kind of
+/// control, or the part of one it is, looks like by default and under a theme.
+/// Empty for a node that is neither.
+struct LookBase
+{
+    /// How it looks before any theme says anything, or null.
+    const DefaultLook *defaults = nullptr;
+    /// Its control's kind, which names the theme style every such control
+    /// wears; for a part, its control's.
+    std::string_view kind;
+    /// Which part it is, for a part.
+    std::string_view part;
+    /// For a part, the style its control names, whose look for the part it
+    /// wears. A part names no style of its own.
+    Core::InternedString style;
+};
+
+/// @brief @p look as it is worn under @p theme, starting from @p base. Weakest
+/// first, at rest and then for each state: its default look, the style named
+/// for its kind of control, the style it names (its control's, for a part),
+/// and its own. Every state's look goes on over every resting one. A style or
+/// a token the theme does not have is logged and leaves what the node writes
+/// itself; a kind of control the theme has no style for wears its defaults.
+[[nodiscard]] ResolvedLook ResolveLook(const NodeLook &look, const ThemeView &theme, const LookBase &base = {});
 
 /// @brief Why the UI could not put on the theme or mode asked for.
 enum class ThemeError : uint8_t
@@ -214,7 +256,8 @@ void WriteCookedTheme(Core::BitWriter &writer, const ThemeDocument &document);
 /// @brief Read a blob written by WriteCookedTheme.
 ///
 /// A theme with no mode, a token without one value per mode, two modes, tokens
-/// or styles sharing a name, or a look for one state twice is Invalid.
+/// or styles sharing a name, two looks for one part of a style, or a look for
+/// one state twice is Invalid.
 [[nodiscard]] std::expected<ThemeDocument, CookedThemeError> ReadCookedTheme(std::span<const std::byte> bytes);
 
 } // namespace Assisi::Mondrian

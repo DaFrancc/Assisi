@@ -180,7 +180,7 @@ const StylePatch *LookFor(const ResolvedLook &resolved, StyleState state)
 /// Which states hold, in the order StyleState lists them.
 StateSet Holds(bool focused, bool hover, bool pressed, bool disabled)
 {
-    return StateSet{focused, hover, pressed, disabled};
+    return StateSet{false, focused, hover, pressed, disabled};
 }
 
 std::vector<std::byte> Cook(const ThemeDocument &theme)

@@ -513,7 +513,6 @@ class Ui
     /// Moves focus for the directions pressed this frame, and again for one
     /// still held once it has been held long enough.
     void Navigate(Screen &screen, const UiInput &input);
-    void DrawFocusRing(const Screen &screen, DrawList &list);
     /// Starts the caret's blink again when its field or where it stands
     /// changed since last frame, and says whether it shows at @p now.
     void Blink(const Screen *screen, double now);

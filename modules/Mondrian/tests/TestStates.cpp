@@ -31,6 +31,7 @@ constexpr Color kFocused{0.2f, 0.f, 0.f, 1.f};
 constexpr Color kHovered{0.f, 0.3f, 0.f, 1.f};
 constexpr Color kPressed{0.f, 0.f, 0.4f, 1.f};
 constexpr Color kDisabled{0.5f, 0.5f, 0.f, 1.f};
+constexpr Color kOn{0.f, 0.4f, 0.4f, 1.f};
 
 /// Sizes in UI pixels. These tests set no font, so every node is given a size
 /// of its own to have something to point at.
@@ -104,15 +105,22 @@ Style Distinct()
     style.shadowOffset = {Px(2.f), Px(3.f)};
     style.shadowBlur = Px(9.f);
     style.shadowSpread = Px(-1.f);
+    style.outlineColor = Color{0.3f, 0.4f, 0.5f, 0.6f};
+    style.outlineWidth = Px(4.f);
+    style.outlineGap = Px(5.f);
+    style.caretColor = Color{0.7f, 0.6f, 0.5f, 0.4f};
+    style.selectionColor = Color{0.6f, 0.5f, 0.4f, 0.3f};
+    style.placeholderColor = Color{0.5f, 0.4f, 0.3f, 0.2f};
     return style;
 }
 
 constexpr std::size_t kPropertyCount = static_cast<std::size_t>(StyleProperty::Count_);
 
-/// Which states hold, in the order StyleState lists them.
+/// Which states hold, in the order StyleState lists them after On, which none
+/// of these looks are for.
 StateSet Holds(bool focused, bool hover, bool pressed, bool disabled)
 {
-    return StateSet{focused, hover, pressed, disabled};
+    return StateSet{false, focused, hover, pressed, disabled};
 }
 
 UiInput PointerAt(Point pointer)
@@ -297,16 +305,22 @@ TEST_CASE("States: each property reaches its own field, and together they reach 
     }
 }
 
-TEST_CASE("States: looks stack focused, hover, pressed, disabled, whatever order they are kept in")
+TEST_CASE("States: looks stack on, focused, hover, pressed, disabled, whatever order they are kept in")
 {
     // Kept strongest first, so stacking in the order they are stored would give
     // the opposite of the answer.
     const std::vector<StylePatch> looks{Wearing(StyleState::Disabled, kDisabled), Wearing(StyleState::Pressed, kPressed),
-                                        Wearing(StyleState::Hover, kHovered), Wearing(StyleState::Focused, kFocused)};
+                                        Wearing(StyleState::Hover, kHovered), Wearing(StyleState::Focused, kFocused),
+                                        Wearing(StyleState::On, kOn)};
     StylePatch resting;
     resting.values.background = kResting;
 
     CHECK(Restyled(resting, looks, Holds(false, false, false, false)).values.background == kResting);
+    StateSet on{};
+    on[static_cast<std::size_t>(StyleState::On)] = true;
+    CHECK(Restyled(resting, looks, on).values.background == kOn);
+    on[static_cast<std::size_t>(StyleState::Focused)] = true;
+    CHECK(Restyled(resting, looks, on).values.background == kFocused);
     CHECK(Restyled(resting, looks, Holds(true, false, false, false)).values.background == kFocused);
     CHECK(Restyled(resting, looks, Holds(true, true, false, false)).values.background == kHovered);
     CHECK(Restyled(resting, looks, Holds(true, true, true, false)).values.background == kPressed);
@@ -461,13 +475,14 @@ TEST_CASE("States: a state's look set again replaces it, and a look writing noth
     stage.Tree().SetStateStyle(stage.equip, Wearing(StyleState::Hover, kHovered));
     stage.Tree().SetStateStyle(stage.equip, Wearing(StyleState::Hover, kPressed));
     const Node *equip = stage.Tree().Get(stage.equip);
-    REQUIRE(equip->states.size() == 1);
-    CHECK(equip->states[0].values.background == kPressed);
+    // Beside the focus ring every button has of itself.
+    REQUIRE(std::ranges::count(equip->states, StyleState::Hover, &StylePatch::state) == 1);
+    CHECK(std::ranges::find(equip->states, StyleState::Hover, &StylePatch::state)->values.background == kPressed);
 
     StylePatch nothing;
     nothing.state = StyleState::Hover;
     stage.Tree().SetStateStyle(stage.equip, nothing);
-    CHECK(equip->states.empty());
+    CHECK(std::ranges::count(equip->states, StyleState::Hover, &StylePatch::state) == 0);
 
     // And the node goes back to its resting look once it is restyled.
     stage.Step(PointerAt(stage.CentreOf(stage.equip)));

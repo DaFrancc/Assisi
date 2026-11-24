@@ -30,8 +30,9 @@ enum class InputGrant : uint8_t
     Count_
 };
 
-/// @brief Which device the player used last. The focus ring shows only for
-/// keys, since someone pointing can see where they are.
+/// @brief Which device the player used last. A node is in its focused state,
+/// which is what puts a ring around a control, only for keys, since someone
+/// pointing can see where they are; a field being typed into is the exception.
 enum class InputDevice : uint8_t
 {
     Pointer,
