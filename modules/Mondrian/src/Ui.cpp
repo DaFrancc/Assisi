@@ -606,6 +606,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     {
         Dispatch(*screen, _session.interaction.activated, PointerGesture(WidgetGesture::Activate, _lastPointer));
     }
+    Blink(screen, input.time);
     Announce(screen);
 
     // After the announcing: a screen says what its controls did before it goes,
@@ -616,6 +617,23 @@ InputResult Ui::ProcessInput(const UiInput &input)
         Back();
     }
     return result;
+}
+
+void Ui::Blink(const Screen *screen, double now)
+{
+    const NodeId focused = _session.interaction.focused;
+    const Node *field = screen != nullptr ? screen->Tree().Get(focused) : nullptr;
+    const CaretSeen seen{.length = field != nullptr ? field->text.size() : 0,
+                         .field = focused,
+                         .caret = field != nullptr ? field->edit.caret : 0,
+                         .anchor = field != nullptr ? field->edit.anchor : 0};
+    if (seen != _session.caretSeen)
+    {
+        _session.caretSeen = seen;
+        _session.caretSince = now;
+    }
+    _session.interaction.caretShown =
+        std::fmod(std::max(0.0, now - _session.caretSince), 2.0 * kCaretBlinkSeconds) < kCaretBlinkSeconds;
 }
 
 UiInput Ui::OnTarget(const Screen &screen, const UiInput &input) const

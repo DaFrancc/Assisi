@@ -427,7 +427,7 @@ Core::CursorShape FieldCursor(const WidgetView &view, Point /*point*/)
 void DrawCaret(const WidgetView &view, DrawList &list)
 {
     const Node &node = *view.node;
-    if (view.text == nullptr || !view.focused || node.edit.editing != TextEditing::Editable)
+    if (view.text == nullptr || !view.focused || !view.caretShown || node.edit.editing != TextEditing::Editable)
     {
         return;
     }

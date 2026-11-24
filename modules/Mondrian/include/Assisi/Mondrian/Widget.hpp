@@ -144,6 +144,8 @@ struct WidgetView
     bool focused = false;
     bool pressed = false;
     bool hovered = false;
+    /// Whether a blinking caret shows this frame.
+    bool caretShown = true;
 };
 
 /// @brief What a control did with a gesture.

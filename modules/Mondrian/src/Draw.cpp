@@ -256,6 +256,7 @@ class Drawer
         view.focused = _interaction != nullptr && _interaction->focused == id;
         view.pressed = _interaction != nullptr && _interaction->pressed == id;
         view.hovered = _interaction != nullptr && _interaction->hovered == id;
+        view.caretShown = _interaction == nullptr || _interaction->caretShown;
         return view;
     }
 

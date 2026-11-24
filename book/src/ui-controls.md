@@ -85,6 +85,9 @@ its box, as on any element. A field limited to a number of lines refuses input
 that would go past the limit rather than scrolling; put it inside a `<scroll>` to
 hold more than it shows.
 
+While a field has focus, its caret blinks. It stays visible while the player
+types or moves it, and starts blinking again once they stop.
+
 ## Patterns
 
 `pattern` takes either the name of a built-in pattern or a regular expression
