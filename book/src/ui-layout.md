@@ -20,7 +20,7 @@ A few attributes measure `%` and `em` against something else:
 | Attribute | `%` is of | `em` is of |
 |---|---|---|
 | `text_size` | The parent's text size | The parent's text size |
-| `border_width`, `corner_radius` | The element's own shorter side | The element's text size |
+| `border_width`, `corner_radius`, `shadow_offset`, `shadow_blur`, `shadow_spread` | The element's own shorter side | The element's text size |
 | `float_offset` | The element it floats against | The element's text size |
 
 There is no `px` suffix: a bare number already is one. `5px`, `5 %` (with a
@@ -105,6 +105,60 @@ naming the call that takes that range.
 | `fit` | `stretch`, `contain`, `cover` | How the element's picture fills the space inside its padding. |
 
 See [Images](ui-images.md) for sprites, pictures and frames.
+
+## Fading
+
+`opacity` fades an element and everything inside it. It is a number from 0,
+which shows nothing, to 1, the default, which shows everything:
+
+```xml
+<column opacity="0.5" padding="16" background="#1a1c24">
+  <text>Half faded, words and all</text>
+</column>
+```
+
+Opacity multiplies down the tree: a text at `opacity="0.5"` inside a panel at
+`0.5` shows at a quarter. Each part fades on its own, so where two children
+overlap, the one underneath shows through the one on top. To fade only an
+element's own background and keep what is inside it solid, give the
+background colour an alpha instead, such as `#1a1c2480`.
+
+An element at `opacity="0"` draws nothing, but it still takes its space and
+can still be clicked. To remove it, use `visible="false"`.
+
+## Shadows and glows
+
+An element can cast one shadow, drawn under it and following its corners,
+square, rounded or cut:
+
+```xml
+<button corner_radius="12" corner_style="rounded" background="#2a2e3a"
+        shadow_color="rgbf(0, 0, 0, 0.5)" shadow_offset="0 6" shadow_blur="16">Play</button>
+```
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `shadow_color` | colour | The shadow's colour. A fully clear colour (alpha 0), the default, draws no shadow. |
+| `shadow_offset` | two lengths, `x y` | How far the shadow is moved from the element: right, then down. |
+| `shadow_blur` | a length, not negative | How soft the shadow's edge is: it fades over about this far on each side of where a hard edge would be. `0` gives a hard edge. |
+| `shadow_spread` | a length | How much bigger than the element the shadow is on every side. Negative makes it smaller. |
+
+A **glow** is a shadow with no offset, in a bright colour:
+
+```xml
+<button shadow_color="#ffd84d" shadow_blur="12" hover:shadow_blur="20">Ready</button>
+```
+
+The whole shadow is drawn under the element, so it shows through a background
+or frame that is partly see-through. Give an element with a shadow a solid
+background.
+
+`%` in these lengths is of the element's own shorter side, as for
+`border_width`. Like every attribute on this page, they take states, so a
+button can lift further while hovered, and they can come from a theme's
+tokens.
+
+The F9 tuning panel in the sandbox, `assets/ui/Tuning.amdn`, casts a shadow.
 
 ## Text
 

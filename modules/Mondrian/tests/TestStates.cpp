@@ -99,6 +99,11 @@ Style Distinct()
     style.backgroundImage = Assisi::Core::InternedString{"frames:panel"};
     style.tint = Color{0.25f, 0.5f, 0.75f, 1.f};
     style.fit = ImageFit::Cover;
+    style.opacity = 0.6f;
+    style.shadowColor = Color{0.2f, 0.1f, 0.05f, 0.5f};
+    style.shadowOffset = {Px(2.f), Px(3.f)};
+    style.shadowBlur = Px(9.f);
+    style.shadowSpread = Px(-1.f);
     return style;
 }
 

@@ -77,6 +77,11 @@ ScreenDocument Everything()
     panel.style.scrollBarDrag = ScrollBarDrag::Smoothed;
     panel.style.textAlign = TextAlign::Right;
     panel.style.textColor = Color{0.9f, 0.8f, 0.7f, 0.6f};
+    panel.style.opacity = 0.65f;
+    panel.style.shadowColor = Color{0.05f, 0.1f, 0.15f, 0.45f};
+    panel.style.shadowOffset = {Px(3.f), Em(0.5f)};
+    panel.style.shadowBlur = Vh(1.f);
+    panel.style.shadowSpread = Percent(-4.f);
     panel.boundAttributes = {
         AttributeBinding{.size = Sizing{.value = Em(0.f), .min = Px(4.f), .max = Vw(30.f), .kind = SizingKind::Fixed},
                          .binding = document.AddText("{Gauge.fill}"),

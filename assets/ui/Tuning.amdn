@@ -6,7 +6,10 @@
      this screen. -->
 <screen input="consume" sort="popup" align="center center">
 
-  <column name="panel" style="panel" width="480" padding="32" gap="20" align="center start">
+  <!-- The shadow lifts the panel off the game behind it: moved down, softened,
+       and following the frame's square corners. -->
+  <column name="panel" style="panel" width="480" padding="32" gap="20" align="center start"
+          shadow_color="rgbf(0, 0, 0, 0.6)" shadow_offset="0 8" shadow_blur="24">
 
     <text name="title" width="grow" text_size="40">Tuning</text>
 

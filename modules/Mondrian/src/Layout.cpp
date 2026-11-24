@@ -258,6 +258,13 @@ class Layouter
             result.borderWidth = Resolve(style.borderWidth, side, result.textSize);
             result.cornerRadius = Resolve(style.cornerRadius, side, result.textSize);
             result.scrollBarMinLength = Resolve(style.scrollBarMinLength, side, result.textSize);
+            result.shadowOffset = {.x = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::X)], side,
+                                                result.textSize),
+                                   .y = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::Y)], side,
+                                                result.textSize)};
+            // A negative blur has no meaning; the cook refuses one written.
+            result.shadowBlur = std::max(0.f, Resolve(style.shadowBlur, side, result.textSize));
+            result.shadowSpread = Resolve(style.shadowSpread, side, result.textSize);
         }
     }
 
