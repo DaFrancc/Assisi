@@ -1,0 +1,12 @@
+<!-- A waypoint marker. The beacon behind the player's start in levels/Test.alvl
+     wears it, with offScreen="StaysOnEdge": while the beacon is out of view the
+     marker waits on the edge of the screen nearest it, behind the player too,
+     so turning towards the marker turns towards the beacon. -->
+<screen sort="hud">
+
+  <column style="panel" padding="12 8 12 8" gap="2" align="center center">
+    <text text_size="20" text_color="#ffd84d">Waypoint</text>
+    <text text_size="14">{Transform.position:.0f}</text>
+  </column>
+
+</screen>

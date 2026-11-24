@@ -28,7 +28,13 @@ const Node *NodeTree::Get(NodeId id) const
 
 Node *NodeTree::GetMutable(NodeId id)
 {
-    return const_cast<Node *>(std::as_const(*this).Get(id));
+    // Every change to a node comes through here, so counting here misses none.
+    Node *const node = const_cast<Node *>(std::as_const(*this).Get(id));
+    if (node != nullptr)
+    {
+        ++_revision;
+    }
+    return node;
 }
 
 std::expected<NodeId, NameError> NodeTree::Create(NodeId parent, std::string_view name)
@@ -118,6 +124,7 @@ void NodeTree::Destroy(NodeId id)
         return;
     }
     ASSISI_ASSERT(id != _root, "the UI root cannot be destroyed");
+    ++_revision;
     Unlink(id);
 
     // Depth-first over the subtree with an explicit stack, so a deep tree
@@ -179,6 +186,11 @@ std::expected<void, NameError> NodeTree::SetName(NodeId id, std::string_view nam
 
 void NodeTree::SetVisible(NodeId id, bool visible)
 {
+    // As SetValue: a binding writes this every frame.
+    if (const Node *const held = Get(id); held == nullptr || held->visible == visible)
+    {
+        return;
+    }
     if (Node *node = GetMutable(id))
     {
         node->visible = visible;
@@ -246,6 +258,7 @@ void NodeTree::SetLook(NodeId id, NodeLook look)
 void NodeTree::SetTheme(const ThemeView &theme)
 {
     _theme = theme;
+    ++_revision;
     for (Node &node : _slots)
     {
         if (node.alive)
@@ -362,6 +375,12 @@ void NodeTree::SetTextEdit(NodeId id, const TextEdit &edit)
 
 void NodeTree::SetValue(NodeId id, WidgetValue value)
 {
+    // A binding writes its value every frame; one that has not moved changes
+    // nothing, and must not make the screen look changed.
+    if (const Node *const held = Get(id); held == nullptr || held->value == value)
+    {
+        return;
+    }
     if (Node *node = GetMutable(id))
     {
         node->value = std::move(value);

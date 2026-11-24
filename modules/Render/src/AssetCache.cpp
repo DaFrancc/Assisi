@@ -203,6 +203,25 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Image
     BuildFallbackMaterial();
 }
 
+std::optional<Geometry::MeshData> AssetCache::PrimitiveMeshData(const Core::AssetId &id)
+{
+    if (id == kCubePrimitive)
+    {
+        return Geometry::CreateUnitCubeMesh();
+    }
+    if (id == Core::BuiltinAssetId::Quad)
+    {
+        return Geometry::CreateUnitQuadMesh();
+    }
+    if (id == kMissingMeshPrimitive)
+    {
+        return Geometry::CreateErrorSignMesh();
+    }
+    const std::array<PrimitiveDesc, 8>::const_iterator shape =
+        std::ranges::find(kShapePrimitives, id, &PrimitiveDesc::id);
+    return shape != kShapePrimitives.end() ? std::optional<Geometry::MeshData>{shape->factory()} : std::nullopt;
+}
+
 const MeshBuffer *AssetCache::ResolvePrimitive(const Core::AssetId &id)
 {
     if (std::unordered_map<Core::AssetId, MeshBuffer>::iterator it = _meshes.find(id); it != _meshes.end())
@@ -396,15 +415,15 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
 
     // The table's real capacity is fixed at creation to the layout's maxCapacity;
     // nvrhi's Vulkan resizeDescriptorTable is an assert-only no-op, so there is no
-    // growing to do — the ceiling below IS the table.
-    if (_nextBindlessSlot >= kBindlessCapacity)
+    // growing to do — the ceiling below IS the table, less the lent slots above it.
+    if (_nextBindlessSlot >= kBindlessCapacity - kLentTextureSlots)
     {
         if (!_bindlessTableFull)
         {
             _bindlessTableFull = true;
             Core::Log::Warn("AssetCache: bindless texture table full ({} slots); further textures fall back to "
                             "slot 0 and will render with the wrong texture.",
-                            kBindlessCapacity);
+                            kBindlessCapacity - kLentTextureSlots);
         }
         // Slot 0 is always written (the first texture resolved is a default), so
         // this is wrong-looking but defined — unlike recording a slot that was
@@ -427,6 +446,60 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
     ++_nextBindlessSlot;
     texture.SetBindlessIndex(slot);
     return slot;
+}
+
+std::optional<uint32_t> AssetCache::LendTextureSlot(nvrhi::ITexture *texture, nvrhi::Format viewFormat)
+{
+    const std::array<bool, kLentTextureSlots>::iterator free = std::ranges::find(_lentSlots, false);
+    if (free == _lentSlots.end())
+    {
+        Core::Log::Error("AssetCache: all {} lent texture slots are taken; a surface texture is left unshown.",
+                         kLentTextureSlots);
+        return std::nullopt;
+    }
+    const uint32_t slot =
+        kBindlessCapacity - kLentTextureSlots + static_cast<uint32_t>(std::distance(_lentSlots.begin(), free));
+    if (!_device->writeDescriptorTable(_bindlessTable, nvrhi::BindingSetItem::Texture_SRV(slot, texture, viewFormat)))
+    {
+        Core::Log::Error("AssetCache: writeDescriptorTable rejected lent slot {}; a surface texture is left unshown.",
+                         slot);
+        return std::nullopt;
+    }
+    *free = true;
+    return slot;
+}
+
+void AssetCache::ReturnTextureSlot(uint32_t slot)
+{
+    if (slot < kBindlessCapacity - kLentTextureSlots || slot >= kBindlessCapacity)
+    {
+        return;
+    }
+    _lentSlots[slot - (kBindlessCapacity - kLentTextureSlots)] = false;
+    // Pointed at white rather than left naming a texture its owner is about to
+    // free: a frame recorded before the return may still sample it.
+    if (const Texture *white = ResolveTexture(kWhiteTexture, Image::ColorSpace::Srgb, Image::PixelFormat::Rgba8, 0.f))
+    {
+        (void)_device->writeDescriptorTable(_bindlessTable,
+                                            nvrhi::BindingSetItem::Texture_SRV(slot, white->NativeTexture()));
+    }
+}
+
+const Material *AssetCache::ResolveShownMaterial(const Material &base, uint32_t textureSlot)
+{
+    const ShownKey key{.base = base.Id(), .slot = textureSlot};
+    if (const std::unordered_map<ShownKey, Material, ShownKeyHash>::const_iterator found = _shownMaterials.find(key);
+        found != _shownMaterials.end())
+    {
+        return &found->second;
+    }
+    MaterialTextures textures = base.Textures();
+    textures.baseColor = textureSlot;
+    textures.emissive = textureSlot;
+    Material &shown = _shownMaterials[key];
+    shown.Create(_device, MintMaterialId(), base.Source(), textures);
+    WriteMaterialToTable(shown);
+    return &shown;
 }
 
 uint32_t AssetCache::ResolveChannel(const Geometry::MaterialData &data, Geometry::MaterialChannel channel,
@@ -552,6 +625,16 @@ bool AssetCache::UpdateMaterialFactors(const Core::AssetId &id, const Geometry::
     const MaterialTextures textures = material.Textures();
     material.Create(_device, material.Id(), data, textures);
     WriteMaterialToTable(material);
+    // What shows a surface texture over this material follows the edit too.
+    for (auto &[key, shown] : _shownMaterials)
+    {
+        if (key.base == material.Id())
+        {
+            const MaterialTextures shownTextures = shown.Textures();
+            shown.Create(_device, shown.Id(), data, shownTextures);
+            WriteMaterialToTable(shown);
+        }
+    }
     return true;
 }
 
@@ -1335,6 +1418,9 @@ void AssetCache::Clear()
 
     _textures.clear();
     _materials.clear();
+    // Their rows are the ids restarting below; the lent slots they read stay
+    // lent, and whoever shows a surface resolves them again.
+    _shownMaterials.clear();
     _slotMaterials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();

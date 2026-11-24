@@ -37,6 +37,28 @@ void ClearPass::Record(Recorder &rec, const AppFrame &frame, Writes<SceneTarget>
     }
 }
 
+// --- ui-surfaces ------------------------------------------------------------
+
+void UiSurfacesPass::Record(Recorder &rec, const AppFrame &frame, Writes<QuadPass> out)
+{
+    nvrhi::ICommandList *commandList = rec.CommandList();
+    QuadPass &pass = out.Get<QuadPass>();
+    for (const UiSurfaceDraw &surface : frame.uiSurfaces)
+    {
+        // Clear, not kept: the screen redraws all of itself, and what it does
+        // not cover is no picture rather than the last one's.
+        commandList->clearTextureFloat(surface.texture, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 0.f));
+        if (surface.drawList != nullptr)
+        {
+            pass.Draw(commandList, surface.framebuffer, *surface.drawList);
+        }
+        // The scene reads it through the bindless table, which tracks no
+        // states, so it is made readable here.
+        commandList->setTextureState(surface.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    }
+    commandList->commitBarriers();
+}
+
 // --- scene ------------------------------------------------------------------
 
 void ScenePass::Record(Recorder &rec, const AppFrame & /*frame*/, Writes<SceneTarget, SceneLook, FrameHooks> out)

@@ -135,6 +135,45 @@ public:
     ///        is not resident, which picks the new binding up when it loads.
     void SetSlotMaterials(const Core::AssetId &meshId, std::vector<Core::AssetId> slotMaterials);
 
+    /// @brief The vertices and indices of the built-in mesh @p id, such as
+    ///        `prim://quad`, built anew; nullopt for an id naming none. For
+    ///        what needs a primitive's shape on the CPU, such as a ray cast
+    ///        onto a screen shown on one.
+    [[nodiscard]] static std::optional<Geometry::MeshData> PrimitiveMeshData(const Core::AssetId &id);
+
+    // --- Textures the cache does not own ----------------------------------
+    //
+    // A UI screen shown on a surface in the world draws into a texture its
+    // owner makes and keeps. A material reads a texture by its bindless slot,
+    // so such a texture needs one, but not one Clear() wipes on a level load:
+    // its owner decides how long it lasts.
+
+    /// @brief Slots at the top of the bindless table kept for textures the
+    ///        cache does not own. Clear() leaves them alone.
+    static constexpr uint32_t kLentTextureSlots = 64u;
+
+    /// @brief Puts @p texture, read as @p viewFormat, in a slot of its own;
+    ///        nullopt, logged, when every lent slot is taken or the slot cannot
+    ///        be written.
+    ///
+    /// @p viewFormat may differ from the texture's own when it was made
+    /// typeless: a UI target holds display values written as plain RGBA8 and
+    /// is read through an sRGB view, so the scene decodes them to light.
+    /// The texture must outlive every frame that reads the slot.
+    [[nodiscard]] std::optional<uint32_t> LendTextureSlot(nvrhi::ITexture *texture, nvrhi::Format viewFormat);
+
+    /// @brief Gives a lent slot back. It reads a plain default texture until
+    ///        lent again, so a frame still drawing with it reads nothing freed.
+    void ReturnTextureSlot(uint32_t slot);
+
+    /// @brief @p base as it looks with its base colour and emissive channels
+    ///        showing the texture in lent slot @p textureSlot: everything else,
+    ///        how strongly it glows included, is @p base's. Made once per base
+    ///        and slot, and kept until Clear(). Never null.
+    ///
+    /// A factor edit to @p base (UpdateMaterialFactors) reaches it too.
+    const Material *ResolveShownMaterial(const Material &base, uint32_t textureSlot);
+
     /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
     /// roughness 0.6 — the engine's pre-material look, also shown while a real
     /// material is still loading. Never null.
@@ -408,6 +447,25 @@ private:
     // offset (see WriteMaterialToTable) — never a whole-prefix re-upload, which
     // would race in-flight frames reading other rows and flicker the scene.
     Buffer _materialTable;
+
+    // Which lent slots are taken, by their place above the cache's own.
+    std::array<bool, kLentTextureSlots> _lentSlots{};
+
+    // A material shown with a lent texture: by the base's row and the slot.
+    struct ShownKey
+    {
+        uint32_t base = 0;
+        uint32_t slot = 0;
+        bool operator==(const ShownKey &) const = default;
+    };
+    struct ShownKeyHash
+    {
+        std::size_t operator()(const ShownKey &key) const
+        {
+            return (static_cast<std::size_t>(key.base) << 32u) ^ static_cast<std::size_t>(key.slot);
+        }
+    };
+    std::unordered_map<ShownKey, Material, ShownKeyHash> _shownMaterials;
 
     std::unordered_map<Core::AssetId, MeshBuffer>           _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;

@@ -41,6 +41,11 @@
 #include <string>
 #include <vector>
 
+namespace Assisi::Render
+{
+class AssetCache;
+}
+
 namespace Assisi::App
 {
 
@@ -499,6 +504,13 @@ protected:
     }
     static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
+    /// @brief Shows the UI's targets, the pictures screens on surfaces in the
+    /// world draw into, through @p cache: each is made a texture with a slot
+    /// of the cache's own, which a material reads, and drawn before the scene
+    /// whenever its screens changed. Called once the cache is initialized;
+    /// null, from the derived app's destructor, before the cache goes.
+    void ShowUiSurfacesThrough(Render::AssetCache *cache);
+
 private:
     /// Everything a dedicated server needs: assets, config, options, jobs.
     [[nodiscard]] bool InitializeCore();
@@ -545,6 +557,23 @@ private:
     /// failed and there is no size.
     [[nodiscard]] std::optional<Mondrian::Sprite> KeepUiTexture(Render::Texture texture,
                                                                 std::optional<Mondrian::Extent> size);
+    /// Makes the texture a UI target of @p size draws into, and lends it a slot
+    /// a material reads; nullopt, logged, when it cannot.
+    [[nodiscard]] std::optional<Mondrian::TargetTexture> MakeUiSurface(Mondrian::TargetId target,
+                                                                       Mondrian::Extent size);
+    /// Gives @p target's slot back, and keeps its texture until no frame still
+    /// on the GPU can read it.
+    void ReleaseUiSurface(Mondrian::TargetId target);
+    /// Marks every picture whose screens the sync just drew again as waiting to
+    /// be drawn. Straight after each sync, so a frame that renders nothing, as
+    /// while minimised, does not lose the mark when the next sync draws nothing.
+    void NoteRedrawnUiSurfaces();
+    /// The pictures to draw this frame, those waiting to be drawn, and the
+    /// retired textures no frame can read any more let go.
+    void GatherUiSurfaces();
+    /// Whether a picture released at frame @p releasedAt can be let go, giving
+    /// its @p slot back when it can: no frame still on the GPU reads it.
+    [[nodiscard]] bool FreeRetiredUiSurface(uint64_t releasedAt, uint32_t slot);
     /// Builds the mixer from the game's bus declarations and starts a device on
     /// it. A game that cannot open a sound device still runs, silently, with
     /// sounds starting and finishing as they would.
@@ -599,6 +628,37 @@ private:
     /// Every image the UI has asked for, sheets' and screens', each kept until
     /// the app goes: the pass draws from them by the ids it gave them.
     std::vector<Render::Texture> _uiTextures;
+
+    /// A UI target's picture: what it draws into and the slot it is read from.
+    struct UiSurface
+    {
+        nvrhi::TextureHandle texture;
+        nvrhi::FramebufferHandle framebuffer;
+        Mondrian::TargetId target;
+        uint32_t slot = 0;
+        /// Whether it waits to be drawn: from when it is made, holding nothing
+        /// yet, and from each sync that drew its screens again, until a frame
+        /// records it. A frame that is skipped, as while minimised, keeps it.
+        bool needsDraw = true;
+    };
+    /// A released picture, kept with its slot until the frame it was released
+    /// in has left the GPU, so nothing still drawing reads a slot rewritten.
+    struct RetiredUiSurface
+    {
+        nvrhi::TextureHandle texture;
+        nvrhi::FramebufferHandle framebuffer;
+        uint64_t releasedAt = 0;
+        uint32_t slot = 0;
+    };
+    /// The cache the pictures borrow slots from; null until the derived app
+    /// has one, and again once it is going.
+    Render::AssetCache *_surfaceCache = nullptr;
+    std::vector<UiSurface> _uiSurfaces;
+    std::vector<RetiredUiSurface> _retiredUiSurfaces;
+    /// What the surfaces pass draws this frame.
+    std::vector<Passes::UiSurfaceDraw> _uiSurfaceDraws;
+    /// Frames rendered, which says when a retired picture is safe to free.
+    uint64_t _renderedFrames = 0;
 
     /// Audio, created with the window, so a headless process has none. The
     /// device is declared after the mixer it plays, so it is destroyed first and

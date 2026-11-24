@@ -41,6 +41,8 @@ struct Point
 {
     float x = 0.f;
     float y = 0.f;
+
+    bool operator==(const Point &) const = default;
 };
 
 /// @brief The size of the surface the UI lays out against, in pixels.
@@ -48,6 +50,8 @@ struct Extent
 {
     uint32_t width = 0;
     uint32_t height = 0;
+
+    bool operator==(const Extent &) const = default;
 };
 
 /// @brief A texture the engine layer registered for the UI. The UI owns its

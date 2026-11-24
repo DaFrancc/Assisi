@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.25,
+  "NormalScale": 1.0,
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [
+    3.0,
+    3.0,
+    3.0
+  ]
+}

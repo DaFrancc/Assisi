@@ -100,6 +100,25 @@ struct MeshRenderer
     std::vector<const Assisi::Render::Material *> materials;
 };
 
+/// @brief A texture an engine system draws, shown by one material slot of this
+///        entity's MeshRenderer as its base colour and its glow, such as the
+///        screen a monitor shows.
+///
+/// Put on and taken off by that system, which resolves the entity's assets
+/// again when it does; never saved or sent. The slot keeps the rest of its
+/// material, how strongly it glows included, so the author of the mesh's
+/// material decides how bright the picture is. A primitive mesh has one slot,
+/// slot 0.
+ACOMP(transient)
+struct SurfaceTexture
+{
+    /// Which slot of the mesh shows it.
+    AFIELD() uint32_t materialSlot = 0;
+    /// The texture's slot in the asset cache's bindless table, one it lent
+    /// (Render::AssetCache::LendTextureSlot).
+    AFIELD() uint32_t textureSlot = 0;
+};
+
 /// @brief The SkinnedMesh::boundMeshId of a component no skeleton is bound to.
 ///        The asset cache never gives a mesh this id.
 inline constexpr uint32_t kUnboundMesh = 0;
