@@ -9,7 +9,9 @@ braces in an element's text:
 ```
 
 This is a **binding**. Which entity it reads is the screen's context, which code
-sets (see [Contexts](ui-run-time.md#contexts)).
+sets (see [Contexts](ui-run-time.md#contexts)). A binding can also decide an
+element's colour, size or picture (see
+[Colours, sizes and pictures](#colours-sizes-and-pictures)).
 
 ## A HUD
 
@@ -135,11 +137,75 @@ same field in a text beside it, with a key.
 
 `visible` takes one binding and nothing else, with no format.
 
+## Colours, sizes and pictures
+
+A binding can also set how an element looks. Write it as the attribute's whole
+value:
+
+```xml
+<column background="{Team.colour}" padding="8">
+  <image sprite="{Item.icon}" />
+  <row width="{Stamina.percent}% max 400" height="12" background="#e6c419" />
+</column>
+```
+
+| Attribute | Field types it takes |
+|---|---|
+| `background`, `border_color`, `text_color`, `tint` | A colour: `Color3` or `Color4`, sRGB or linear. A linear colour is converted to sRGB, and a `Color3` is fully opaque. |
+| `width`, `height` | A number. |
+| `sprite`, `background_image` | A `ShortString` or `InternedString` holding a sprite's name, such as `icons:sword`. |
+| `texture` | An `AssetId`, the image file it names. |
+
+A field of any other type fails the cook, and so does a format: these
+bindings show no text.
+
+### Sizes
+
+A bound `width` or `height` is fixed at the field's value. A unit can follow
+the binding, and then `min` and `max`, as they follow a length:
+
+```xml
+<row width="{Stamina.percent}%" />            <!-- 0 to 100, of the parent -->
+<row width="{Stamina.percent}% max 400" />    <!-- never wider than 400 -->
+<column height="{Panel.lines}em" />           <!-- that many text sizes tall -->
+```
+
+With no unit the value is in UI pixels. The field holds the number only, so a
+stamina bar wants a field from 0 to 100. A field from 0 to 1 would make a bar
+at most 1% wide.
+
+### Pictures
+
+- A bound `sprite` or `background_image` shows the sprite the field names. An
+  empty name shows no picture. A name no sheet has shows no picture either, and
+  an error is logged.
+- A bound `texture` shows the whole image the field's `AssetId` names. A nil id
+  shows no picture, and an image that can't be loaded shows the placeholder.
+  Each image is loaded the first time it is shown, and stays loaded.
+
+An element shows one picture, so a bound `sprite` and a `texture`, bound or
+not, on one element fail the cook.
+
+### States and styles
+
+A bound attribute counts as one the element writes itself, so it wins over the
+element's [style](ui-themes.md). A state's look still goes on top: with
+`disabled:background="#555555"`, a disabled element shows grey whatever its
+bound colour is. A binding can't be given a state itself, so
+`hover:background="{Team.colour}"` fails the cook.
+
+Until a binding has read once, the attribute is as if it weren't written: the
+element shows its style's value, or the default. A bound `background`, for
+example, is the style's background until the field is first read, and a bound
+`width` fits the element's content unless its style gives it a width.
+
 ## Where bindings go
 
 - Inside a `<text>`, and in a `<button>`'s label.
 - In `visible`.
 - In a toggle's `on`, and in the `value` of a slider or a stepped slider.
+- In `background`, `border_color`, `text_color`, `tint`, `width`, `height`,
+  `sprite`, `background_image` and `texture`.
 
 A text field's text is the player's, so it can't hold a binding, and neither can
 a placeholder. `{=...}` goes only on a control.

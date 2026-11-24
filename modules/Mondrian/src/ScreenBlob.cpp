@@ -64,6 +64,29 @@ bool LooksConsistent(const ScreenNode &node)
     return true;
 }
 
+/// Whether @p node's bound attributes are ones a cook writes: each an attribute
+/// this build has, bound at most once, its binding inside @p pool, and at most
+/// one picture among them and what the node names itself.
+bool BoundAttributesConsistent(const Core::StringPool &pool, const ScreenNode &node)
+{
+    std::array<bool, static_cast<std::size_t>(BoundAttribute::Count_)> seen{};
+    uint32_t pictures = node.sprite.Empty() && node.texture.Empty() ? 0 : 1;
+    for (const AttributeBinding &bound : node.boundAttributes)
+    {
+        const std::size_t attribute = static_cast<std::size_t>(bound.attribute);
+        if (attribute >= seen.size() || seen[attribute] || !InPool(pool, bound.binding))
+        {
+            return false;
+        }
+        seen[attribute] = true;
+        if (bound.attribute == BoundAttribute::Sprite || bound.attribute == BoundAttribute::Texture)
+        {
+            ++pictures;
+        }
+    }
+    return pictures <= 1;
+}
+
 /// Whether the table describes a tree this build can walk in one pass.
 bool IsConsistent(const ScreenDocument &document)
 {
@@ -114,7 +137,7 @@ bool IsConsistent(const ScreenDocument &document)
             }
         }
 
-        if (!LooksConsistent(node))
+        if (!LooksConsistent(node) || !BoundAttributesConsistent(document.pool, node))
         {
             return false;
         }

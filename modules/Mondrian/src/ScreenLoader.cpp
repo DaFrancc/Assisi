@@ -149,6 +149,13 @@ bool BindingsResolve(const ScreenDocument &document, const ScreenNode &node, con
     {
         return false;
     }
+    for (const AttributeBinding &bound : node.boundAttributes)
+    {
+        if (!SoleBindingResolves(document.Text(bound.binding), AttributeUse(bound.attribute), world))
+        {
+            return false;
+        }
+    }
     const std::string_view value = document.Text(node.valueBinding);
     if (value.empty())
     {
@@ -381,6 +388,12 @@ void ApplyBindings(Screen &screen, NodeId id, const ScreenDocument &document, co
     if (const std::string_view value = document.Text(node.valueBinding); !value.empty())
     {
         const std::expected<void, BindingError> bound = screen.BindControl(id, value);
+        ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
+    }
+    for (const AttributeBinding &attribute : node.boundAttributes)
+    {
+        const std::expected<void, BindingError> bound =
+            screen.BindAttribute(id, attribute.attribute, document.Text(attribute.binding), attribute.size);
         ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
     }
 }

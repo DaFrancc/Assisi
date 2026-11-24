@@ -1077,4 +1077,23 @@ Sprite Ui::TextureSprite(std::string_view vpath)
     return sprite;
 }
 
+Sprite Ui::TextureSprite(Core::AssetId id)
+{
+    if (const std::unordered_map<Core::AssetId, Sprite>::const_iterator found = _assetTextures.find(id);
+        found != _assetTextures.end())
+    {
+        return found->second;
+    }
+    std::optional<Sprite> loaded = _assetTextureLoader ? _assetTextureLoader(id) : std::nullopt;
+    if (!_assetTextureLoader)
+    {
+        Core::Log::Error("Mondrian: no texture loader is installed to load the image {}; it shows the placeholder.",
+                         id.ToString());
+    }
+    // Kept even when it failed, as a path is.
+    const Sprite sprite = loaded.value_or(WholeTexture(_placeholderTexture, 0, 0));
+    _assetTextures.emplace(id, sprite);
+    return sprite;
+}
+
 } // namespace Assisi::Mondrian

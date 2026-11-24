@@ -220,6 +220,20 @@ class Screen
     /// stepped slider bound to an enum takes one step per enumerator.
     std::expected<void, BindingError> BindControl(NodeId node, std::string_view binding);
 
+    /// @brief Makes @p attribute of @p node follow the field @p binding names,
+    /// such as `{Team.colour}` for its background, at every sync.
+    ///
+    /// A bound style property is the node's own, so its named style gives way
+    /// and its states' looks go on over it. A bound width or height becomes
+    /// @p size with the field's value in place of its own, so @p size gives the
+    /// unit and the limits; other attributes ignore it. A bound sprite or
+    /// background image is found by name among the UI's sheets, and a bound
+    /// texture is loaded by its asset id; an empty name or a nil id shows no
+    /// picture. Until it has read once, and while there is nothing to read,
+    /// the attribute stays as it was.
+    std::expected<void, BindingError> BindAttribute(NodeId node, BoundAttribute attribute, std::string_view binding,
+                                                    Sizing size = Sizing::Fixed(Px(0.f)));
+
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
     [[nodiscard]] NodeId Root() const { return _tree.Root(); }
@@ -516,6 +530,18 @@ class Screen
         NodeId node;
     };
 
+    /// An attribute and what it last read, which a read is compared with so the
+    /// node is restyled only when the field changes.
+    struct BoundStyle
+    {
+        BoundField field;
+        AttributeValue shown;
+        /// For a width or height, what it becomes with the field's value in it.
+        Sizing size;
+        NodeId node;
+        BoundAttribute attribute = BoundAttribute::Background;
+    };
+
     /// The context called @p name, made empty the first time it is asked for.
     Context &ContextNamed(std::string_view name);
 
@@ -525,6 +551,13 @@ class Screen
 
     /// Makes the control @p id show @p value, as code setting it would.
     void ShowValue(NodeId id, const WidgetValue &value);
+
+    /// Puts what @p bound last read on its node.
+    void ShowAttribute(const BoundStyle &bound);
+
+    /// Makes @p id show the sprite called @p name, or no picture for an empty
+    /// name or one no sheet the UI has holds, which is said.
+    void ShowSprite(NodeId id, std::string_view name);
 
     /// Fills every binding on this screen from what its contexts hold now.
     /// Called by the UI before it lays the screen out.
@@ -589,6 +622,7 @@ class Screen
     std::vector<BoundText> _boundTexts;
     std::vector<BoundVisible> _boundVisibles;
     std::vector<BoundControl> _boundControls;
+    std::vector<BoundStyle> _boundStyles;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;

@@ -204,6 +204,21 @@ void NodeTree::SetStyle(NodeId id, const Style &style)
     }
 }
 
+void NodeTree::SetOwnProperty(NodeId id, StyleProperty property, const Style &from)
+{
+    Node *node = GetMutable(id);
+    if (node == nullptr)
+    {
+        return;
+    }
+    StylePatch own{.values = node->look.style, .written = node->look.written, .state = StyleState::Focused};
+    own.Take(property, from);
+    node->look.style = own.values;
+    node->look.written = own.written;
+    std::erase_if(node->look.tokens, [property](const TokenUse &use) { return use.property == property; });
+    Relook(*node);
+}
+
 void NodeTree::SetStateStyle(NodeId id, const StylePatch &look)
 {
     Node *node = GetMutable(id);

@@ -297,6 +297,38 @@ void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device)
     texture.UploadDecoded(device, image, "Mondrian::Placeholder");
 }
 
+namespace
+{
+
+/// The image @p id names, uploaded through @p source, with @p name standing for
+/// it in what is logged and in the texture's debug name.
+std::optional<Extent> UploadImage(Render::Texture &texture, nvrhi::IDevice *device, const Render::AssetSource &source,
+                                  Core::AssetId id, std::string_view name)
+{
+    // Asked for as colour, which is how the cook encodes an image no material
+    // binds, and how a source image is encoded to match.
+    std::expected<Image::DecodedImage, Render::AssetLoadError> image =
+        source.LoadTexture(id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
+    if (!image)
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", name, Render::ToString(image.error()));
+        return std::nullopt;
+    }
+    // The texels are the display values the file holds. Sampled through an
+    // sRGB format they would be decoded to linear and draw too dark.
+    image->colorSpace = Image::ColorSpace::Linear;
+    const std::string debugName = "Mondrian::" + std::string{name};
+    texture.UploadDecoded(device, *image, debugName.c_str());
+    if (!texture.IsValid())
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be uploaded.", name);
+        return std::nullopt;
+    }
+    return Extent{.width = image->width, .height = image->height};
+}
+
+} // namespace
+
 std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device, std::string_view vpath)
 {
     const Render::AssetSource *source = Render::GetAssetSource();
@@ -311,26 +343,19 @@ std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *
         Core::Log::Error("Mondrian: the image '{}' could not be found ({}).", vpath, Render::ToString(id.error()));
         return std::nullopt;
     }
-    // Asked for as colour, which is how the cook encodes an image no material
-    // binds, and how a source image is encoded to match.
-    std::expected<Image::DecodedImage, Render::AssetLoadError> image =
-        source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
-    if (!image)
+    return UploadImage(texture, device, *source, *id, vpath);
+}
+
+std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device, Core::AssetId id)
+{
+    const std::string name = id.ToString();
+    const Render::AssetSource *source = Render::GetAssetSource();
+    if (source == nullptr)
     {
-        Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", vpath, Render::ToString(image.error()));
+        Core::Log::Error("Mondrian: no asset source is installed to load the image '{}'.", name);
         return std::nullopt;
     }
-    // The texels are the display values the file holds. Sampled through an
-    // sRGB format they would be decoded to linear and draw too dark.
-    image->colorSpace = Image::ColorSpace::Linear;
-    const std::string debugName = "Mondrian::" + std::string{vpath};
-    texture.UploadDecoded(device, *image, debugName.c_str());
-    if (!texture.IsValid())
-    {
-        Core::Log::Error("Mondrian: the image '{}' could not be uploaded.", vpath);
-        return std::nullopt;
-    }
-    return Extent{.width = image->width, .height = image->height};
+    return UploadImage(texture, device, *source, id, name);
 }
 
 } // namespace Assisi::Mondrian::Engine

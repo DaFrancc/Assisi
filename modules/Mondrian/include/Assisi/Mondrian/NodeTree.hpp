@@ -162,6 +162,10 @@ class NodeTree
     /// token. It wears it at once, until the UI next puts on the looks of the
     /// states that hold.
     void SetStyle(NodeId id, const Style &style);
+    /// @brief @p property as @p from has it, made the node's own at rest: its
+    /// named style and any token for it give way, and the looks of its states
+    /// still go on over it. The rest of how it asks to look stays as it is.
+    void SetOwnProperty(NodeId id, StyleProperty property, const Style &from);
     /// @brief How @p id looks in @p look's state, replacing the look it had for
     /// it. A look that writes nothing takes the state's look off.
     void SetStateStyle(NodeId id, const StylePatch &look);

@@ -27,6 +27,53 @@ constexpr Padding kFieldPadding{.left = Px(10.f), .top = Px(6.f), .right = Px(10
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldColor{0.04f, 0.05f, 0.07f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFieldBorder{0.34f, 0.38f, 0.48f, 1.f};
 
+using SrgbColor = Math::Color4<Math::ColorSpace::Srgb>;
+
+/// The colour of @p style that @p attribute names, or null for one that is no
+/// colour.
+SrgbColor *ColourOf(Style &style, BoundAttribute attribute)
+{
+    switch (attribute)
+    {
+    case BoundAttribute::Background:
+        return &style.background;
+    case BoundAttribute::BorderColor:
+        return &style.borderColor;
+    case BoundAttribute::TextColor:
+        return &style.textColor;
+    case BoundAttribute::Tint:
+        return &style.tint;
+    default:
+        return nullptr;
+    }
+}
+
+/// Puts @p value into the part of @p style @p attribute names: a colour, a
+/// size that is @p size with the number in place of its value, or a
+/// background image.
+void PutAttribute(Style &style, BoundAttribute attribute, const AttributeValue &value, const Sizing &size)
+{
+    if (const SrgbColor *const colour = std::get_if<SrgbColor>(&value))
+    {
+        if (SrgbColor *const into = ColourOf(style, attribute))
+        {
+            *into = *colour;
+        }
+    }
+    else if (const float *const number = std::get_if<float>(&value))
+    {
+        const Axis axis = attribute == BoundAttribute::Width ? Axis::X : Axis::Y;
+        Sizing &sizing = style.sizing[static_cast<std::size_t>(axis)];
+        sizing = size;
+        sizing.value.value = *number;
+        sizing.kind = SizingKind::Fixed;
+    }
+    else if (const std::string *const name = std::get_if<std::string>(&value))
+    {
+        style.backgroundImage = Core::InternedString{*name};
+    }
+}
+
 } // namespace
 
 Style TextFieldStyle()
@@ -234,6 +281,86 @@ std::expected<void, BindingError> Screen::BindControl(NodeId id, std::string_vie
     return {};
 }
 
+std::expected<void, BindingError> Screen::BindAttribute(NodeId node, BoundAttribute attribute,
+                                                        std::string_view binding, Sizing size)
+{
+    const std::expected<BindingSource, BindingError> source = ReadSoleBinding(binding);
+    if (!source)
+    {
+        return std::unexpected(source.error());
+    }
+    std::expected<FieldBinding, BindingError> resolved =
+        ResolveBinding(*source, _world.FindOwner(source->component), AttributeUse(attribute));
+    if (!resolved)
+    {
+        return std::unexpected(resolved.error());
+    }
+    std::erase_if(_boundStyles, [node, attribute](const BoundStyle &held)
+                  { return held.node == node && held.attribute == attribute; });
+    _boundStyles.push_back(BoundStyle{.field = {.binding = *std::move(resolved), .warned = {}, .looked = false},
+                                      .shown = {},
+                                      .size = size,
+                                      .node = node,
+                                      .attribute = attribute});
+    return {};
+}
+
+void Screen::ShowSprite(NodeId id, std::string_view name)
+{
+    if (name.empty())
+    {
+        _tree.ClearImage(id);
+        return;
+    }
+    const Sprite *const sprite = _ui.FindSprite(name);
+    if (sprite == nullptr)
+    {
+        Core::Log::Error("Mondrian: the screen '{}' shows the sprite '{}', and no sheet the UI has holds it.", _name,
+                         name);
+        _tree.ClearImage(id);
+        return;
+    }
+    _tree.SetImage(id, *sprite);
+}
+
+void Screen::ShowAttribute(const BoundStyle &bound)
+{
+    const Node *const node = _tree.Get(bound.node);
+    if (node == nullptr)
+    {
+        return;
+    }
+    if (const Core::AssetId *const image = std::get_if<Core::AssetId>(&bound.shown))
+    {
+        if (image->IsNil())
+        {
+            _tree.ClearImage(bound.node);
+            return;
+        }
+        _tree.SetImage(bound.node, _ui.TextureSprite(*image));
+        return;
+    }
+    const std::string *const name = std::get_if<std::string>(&bound.shown);
+    if (bound.attribute == BoundAttribute::Sprite && name != nullptr)
+    {
+        ShowSprite(bound.node, *name);
+        return;
+    }
+    if (name != nullptr && !name->empty() && _ui.FindSprite(*name) == nullptr)
+    {
+        Core::Log::Error("Mondrian: the screen '{}' draws the background image '{}', and no sheet the UI has holds it.",
+                         _name, *name);
+    }
+    const std::optional<StyleProperty> property = PropertyOf(bound.attribute);
+    if (!property)
+    {
+        return;
+    }
+    Style from = node->look.style;
+    PutAttribute(from, bound.attribute, bound.shown, bound.size);
+    _tree.SetOwnProperty(bound.node, *property, from);
+}
+
 const void *Screen::ReadBound(BoundField &field)
 {
     const FieldBinding &binding = field.binding;
@@ -321,6 +448,22 @@ void Screen::RefreshBindings()
         if (value)
         {
             ShowValue(bound.node, *value);
+        }
+    }
+    for (BoundStyle &bound : _boundStyles)
+    {
+        const void *const owner = ReadBound(bound.field);
+        if (owner == nullptr)
+        {
+            continue;
+        }
+        AttributeValue value = ReadAttributeField(bound.field.binding, owner);
+        // Restyling resolves the node's whole look again, so it waits for a
+        // change rather than running every frame.
+        if (value != bound.shown)
+        {
+            bound.shown = std::move(value);
+            ShowAttribute(bound);
         }
     }
 }

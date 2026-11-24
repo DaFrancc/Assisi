@@ -3,8 +3,8 @@
 
 /// @file Binding.hpp
 /// @brief A field shown in a node: `{Component.field}` in its text, a bool
-/// deciding whether it is visible, or what a control shows, and with
-/// `{=Component.field}` writes.
+/// deciding whether it is visible, what a control shows, and with
+/// `{=Component.field}` writes, or a colour, size or picture.
 ///
 /// Reflection says what `CharacterState.groundSpeed` is; the screen's context
 /// says whose. A field can also sit in a registered source, a struct on no
@@ -12,11 +12,16 @@
 /// and the loader read a binding with what is here, so the two cannot disagree
 /// about what one says.
 
+#include <Assisi/Mondrian/Style.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/InternedString.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
+#include <Assisi/Math/Color.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -24,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace Assisi::Mondrian
@@ -95,6 +101,7 @@ enum class BindingError : uint8_t
     NotAControl,      ///< a control's binding on a node that holds no value
     WrongControl,     ///< a control bound to a field of a type it cannot hold
     SourceContext,    ///< a registered source read through a context
+    WrongAttribute,   ///< an attribute bound to a field of a type it cannot take
     Count_
 };
 
@@ -107,7 +114,8 @@ enum class BindingError : uint8_t
 /// and a control take.
 [[nodiscard]] std::expected<BindingSource, BindingError> ReadSoleBinding(std::string_view text);
 
-/// @brief What a binding feeds: the words of a text, a yes or no, or a control.
+/// @brief What a binding feeds: the words of a text, a yes or no, a control, or
+/// an attribute.
 enum class BindingUse : uint8_t
 {
     Text,
@@ -115,12 +123,53 @@ enum class BindingUse : uint8_t
     Toggle,
     Slider,
     Stepped,
+    Colour,     ///< a colour attribute, from a colour field
+    Length,     ///< a width or height, from a number
+    SpriteName, ///< a sprite, from a string naming it `sheet:name`
+    Texture,    ///< a whole image, from the asset id of its file
     Count_
 };
 
 /// @brief What a binding on a @p widget feeds, or nothing for a node that holds
 /// no value for one to feed.
 [[nodiscard]] std::optional<BindingUse> ControlUse(BuiltinWidget widget);
+
+/// @brief An attribute other than text, `visible` and a control's value that
+/// a binding can drive: `background="{Team.colour}"`.
+AENUM()
+enum class BoundAttribute : uint8_t
+{
+    Background,
+    BorderColor,
+    TextColor,
+    Tint,
+    Width,
+    Height,
+    BackgroundImage,
+    Sprite,
+    Texture,
+    Count_
+};
+
+/// @brief The attribute a file writes @p attribute as, such as `border_color`.
+[[nodiscard]] std::string_view AttributeName(BoundAttribute attribute);
+
+/// @brief The attribute a file writes as @p name, or nothing for one no binding
+/// can drive.
+[[nodiscard]] std::optional<BoundAttribute> BoundAttributeNamed(std::string_view name);
+
+/// @brief What a binding on @p attribute feeds.
+[[nodiscard]] BindingUse AttributeUse(BoundAttribute attribute);
+
+/// @brief The part of a style @p attribute writes, or nothing for the picture a
+/// node shows, which is no part of its style.
+[[nodiscard]] std::optional<StyleProperty> PropertyOf(BoundAttribute attribute);
+
+/// @brief What a bound attribute last read: nothing before its first read, then
+/// a colour, a number, a sprite's name or an image's asset id. A name is plain
+/// text, compared every frame and interned only when it changes.
+using AttributeValue =
+    std::variant<std::monostate, Math::Color4<Math::ColorSpace::Srgb>, float, std::string, Core::AssetId>;
 
 /// @brief What a binding's name found.
 struct BindingOwner
@@ -190,5 +239,10 @@ using StructLookup = std::function<const Core::Reflect::StructSpec *(std::string
 /// @brief Puts @p value, what a control carries, into the field @p binding
 /// names, in @p owner: rounded for a whole number, and held to what it can store.
 void WriteControlField(const FieldBinding &binding, void *owner, const WidgetValue &value);
+
+/// @brief The field @p binding names, in @p owner, as the attribute it drives
+/// takes it: a colour in sRGB, opaque when the field has no alpha, a number, a
+/// sprite's name, or an asset id.
+[[nodiscard]] AttributeValue ReadAttributeField(const FieldBinding &binding, const void *owner);
 
 } // namespace Assisi::Mondrian

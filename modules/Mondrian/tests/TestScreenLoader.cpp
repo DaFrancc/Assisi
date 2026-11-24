@@ -1154,6 +1154,56 @@ TEST_CASE("ScreenLoader: a document's bindings read the screen's context")
     CHECK(quit.visible);
 }
 
+TEST_CASE("ScreenLoader: a document's attribute binding follows its field, and one that cannot is refused")
+{
+    // The most the bound height may reach, in UI pixels: under what Lives holds.
+    constexpr float kTallest = 20.f;
+    ScreenDocument document = PauseMenu();
+    document.nodes[kTitle].boundAttributes.push_back(
+        AttributeBinding{.size = Sizing{.value = Px(0.f), .min = {}, .max = Px(kTallest), .kind = SizingKind::Fixed},
+                         .binding = document.AddText("{Lives.left}"),
+                         .attribute = BoundAttribute::Height});
+    const Sizing unbound = document.nodes[kTitle].style.sizing[static_cast<std::size_t>(Axis::Y)];
+
+    SUBCASE("followed")
+    {
+        EventQueue events;
+        TestWorld world{events};
+        constexpr EntityId kPlayer{.index = 0, .generation = 1};
+        Lives lives{.left = 30, .shown = true};
+        world.components = {LivesMeta()};
+        world.alive = {kPlayer};
+        world.held = {{.component = "Lives", .data = &lives, .entity = kPlayer}};
+        EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
+        const std::expected<LoadedScreen, ScreenLoadError> loaded =
+            InstantiateScreen(ui, world, kScreenPath, document, TwoEvents());
+        REQUIRE(loaded.has_value());
+        Screen &screen = *loaded->screen;
+        screen.Show();
+        const Node &title = *screen.Tree().Get(screen.Find("title"));
+        // Nothing to read yet: the height the file gives the node unbound.
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+        CHECK(title.style.sizing[static_cast<std::size_t>(Axis::Y)] == unbound);
+
+        screen.SetContext(kPlayer);
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+        const Sizing &height = title.style.sizing[static_cast<std::size_t>(Axis::Y)];
+        CHECK(height.kind == SizingKind::Fixed);
+        CHECK(height.value == Px(30.f));
+        CHECK(height.max == Px(kTallest));
+    }
+
+    SUBCASE("a field of a type the attribute cannot take")
+    {
+        document.nodes[kTitle].boundAttributes.push_back(
+            AttributeBinding{.binding = document.AddText("{Lives.shown}"), .attribute = BoundAttribute::Background});
+        CHECK(BoundRefusal(document) == ScreenLoadError::BadBinding);
+    }
+}
+
 namespace
 {
 
