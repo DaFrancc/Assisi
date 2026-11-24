@@ -576,6 +576,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
 
     LoadedScreen loaded;
     loaded.screen = std::make_unique<Screen>(ui, world, document.traits, document.sortKey, std::string{name});
+    loaded.screen->SetAttach(document.attach);
     for (const Core::InternedString &system : document.systems)
     {
         loaded.systems.emplace_back(system.View());

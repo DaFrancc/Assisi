@@ -536,6 +536,23 @@ TEST_CASE("ScreenCompiler: a length that is not one is refused where it is writt
     }
 }
 
+TEST_CASE("ScreenCompiler: a screen says which of its points goes on the place it is shown at")
+{
+    const ScreenDocument placed = Compiled(R"amdn(<screen attach="center end"><text>Name</text></screen>)amdn");
+    CHECK(placed.attach[0] == Alignment::Center);
+    CHECK(placed.attach[1] == Alignment::End);
+
+    // Its middle, unless it says otherwise.
+    const ScreenDocument plain = Compiled(R"amdn(<screen><text>Name</text></screen>)amdn");
+    CHECK(plain.attach[0] == Alignment::Center);
+    CHECK(plain.attach[1] == Alignment::Center);
+
+    CHECK(Refused(R"amdn(<screen attach="middle"><text>Name</text></screen>)amdn").message.find("middle") !=
+          std::string::npos);
+    CHECK(Refused(R"amdn(<screen><column attach="center end" /></screen>)amdn").message.find("attach") !=
+          std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: a sort key is a named layer or a number between them")
 {
     CHECK(Compiled(R"(<screen sort="hud" />)").sortKey == kSortHud);

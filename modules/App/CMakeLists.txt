@@ -35,6 +35,7 @@ target_sources(Assisi-App
     "include/Assisi/App/UiInputBridge.hpp"
     "include/Assisi/App/World.hpp"
     "include/Assisi/App/WorldFrame.hpp"
+    "include/Assisi/App/WorldWidgets.hpp"
   PRIVATE
     "src/AppConfig.cpp"
     "src/AppPasses.cpp"
@@ -72,6 +73,7 @@ target_sources(Assisi-App
     "src/UiInputBridge.cpp"
     "src/World.cpp"
     "src/WorldFrame.cpp"
+    "src/WorldWidgets.cpp"
 )
 
 target_include_directories(Assisi-App
@@ -133,6 +135,7 @@ assisi_reflect(
     include/Assisi/App/MotionSystems.hpp
     include/Assisi/App/SessionTypes.hpp
     include/Assisi/App/SystemRegistry.hpp
+    include/Assisi/App/WorldWidgets.hpp
 )
 
 # The frame's passes around the scene: ordered from their declarations and

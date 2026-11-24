@@ -102,9 +102,23 @@ struct LayoutResult
     [[nodiscard]] const LayoutNode *Get(NodeId id) const;
 };
 
-/// @brief Lays @p tree out in @p viewport at @p scale into @p out. Text is set in
+/// @brief How large a tree's root is.
+enum class RootSize : uint8_t
+{
+    Viewport, ///< the whole viewport, whatever its style says: a screen across the window
+    Own,      ///< as its style sizes it, a share being of the viewport: a screen placed at a point
+    Count_
+};
+
+/// @brief Lays @p tree out in @p viewport at @p scale into @p out, its root at
+/// the viewport's top-left corner and sized as @p root says. Text is set in
 /// @p font; with no font, text takes no space and draws nothing.
-void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out);
+void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out,
+                   RootSize root = RootSize::Viewport);
+
+/// @brief Moves everything @p layout placed by @p by, in whole device pixels,
+/// clips included: what puts a tree laid out at the corner where it belongs.
+void MoveLayout(LayoutResult &layout, Point by);
 
 /// @brief The width @p placed's text wraps to, in device pixels: what is left
 /// inside its padding, and never less than a pixel so that a node squeezed to

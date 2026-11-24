@@ -191,6 +191,38 @@ void Restyle(NodeTree &tree, const Interaction &interaction,
     }
 }
 
+/// How far along a span @p alignment is: none of it at Start, all of it at End.
+float ShareAlong(Alignment alignment)
+{
+    switch (alignment)
+    {
+    case Alignment::Center:
+        return 0.5f;
+    case Alignment::End:
+        return 1.f;
+    case Alignment::Start:
+    case Alignment::Count_:
+        break;
+    }
+    return 0.f;
+}
+
+/// Where the top-left corner of a screen whose root is @p root goes so the
+/// point of it @p anchor attaches lands on the anchor, slid back inside
+/// @p viewport when the anchor asks. A screen larger than the viewport keeps its
+/// top-left corner on screen.
+Point AnchoredCorner(const Rect &root, const ScreenAnchor &anchor, Extent viewport)
+{
+    Point corner{.x = anchor.at.x - (ShareAlong(anchor.attach[0]) * root.width),
+                 .y = anchor.at.y - (ShareAlong(anchor.attach[1]) * root.height)};
+    if (anchor.keepOnScreen)
+    {
+        corner.x = std::clamp(corner.x, 0.f, std::max(0.f, static_cast<float>(viewport.width) - root.width));
+        corner.y = std::clamp(corner.y, 0.f, std::max(0.f, static_cast<float>(viewport.height) - root.height));
+    }
+    return corner;
+}
+
 } // namespace
 
 Ui::Ui(Core::EventQueue &universal) : _universal(universal)
@@ -920,11 +952,18 @@ void Ui::Sync(Extent viewport)
     _nextStep = FrameStep::AwaitingInput;
 
     _drawList.Clear();
+    _viewport = viewport;
     const float scale = UiScale(viewport, _userScale, _scaleMatch);
     if (scale > 0.f)
     {
         for (Screen *screen : DrawOrder())
         {
+            // A screen shrunk to nothing has nothing to lay out or draw, and
+            // a scale that is no number at all is drawn nowhere either.
+            if (!(screen->Scale() > 0.f))
+            {
+                continue;
+            }
             // First, so what the world holds now is what is laid out, and a
             // node a binding hides takes no room.
             screen->RefreshBindings();
@@ -932,7 +971,8 @@ void Ui::Sync(Extent viewport)
             // frame it takes hold. Hover, presses and focus are only the input
             // screen's, for the reason drawing gives below.
             Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{}, _sprites);
-            ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
+            LayOut(*screen, viewport, scale * screen->Scale());
+            _drawList.SetOpacity(screen->Opacity());
             // Only the screen with the keys draws anything as hovered, pressed
             // or focused. A node id means nothing on another screen, so handing
             // this one's ids to a second tree would mark whatever shares a slot.
@@ -946,6 +986,22 @@ void Ui::Sync(Extent viewport)
         }
     }
     _drawList.Finalize();
+}
+
+void Ui::LayOut(Screen &screen, Extent viewport, float scale)
+{
+    const std::optional<ScreenAnchor> anchor = screen.Anchor();
+    if (!anchor)
+    {
+        ComputeLayout(screen.Tree(), viewport, scale, _font, screen._layout);
+        return;
+    }
+    // At its own size, at the corner, then moved to where its anchor puts it.
+    ComputeLayout(screen.Tree(), viewport, scale, _font, screen._layout, RootSize::Own);
+    if (const LayoutNode *const root = screen._layout.Get(screen.Root()))
+    {
+        MoveLayout(screen._layout, AnchoredCorner(root->rect, *anchor, viewport));
+    }
 }
 
 void Ui::SetStringTables(const StringTables *tables)

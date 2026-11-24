@@ -15,6 +15,7 @@
 #include <Assisi/App/Network.hpp>
 #include <Assisi/App/ResourceStore.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Core/Reflect/StructRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -255,6 +256,10 @@ struct World
         std::vector<std::string> systems;
         std::unique_ptr<Mondrian::Screen> screen;
         ScreenId id;
+        /// The entity the screen belongs to, such as the character a nameplate
+        /// hangs over, which takes it away when it goes; NullEntity for a
+        /// screen that lasts as long as its world.
+        ECS::Entity owner = ECS::NullEntity;
     };
 
     /// The screens this world owns, destroyed with it.
@@ -378,6 +383,19 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
 ///         is logged. A world without it keeps running: a screen that failed to
 ///         load is not what should take a game down.
 Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath);
+
+/// @brief The same for the screen @p id names, as a component naming one holds
+/// it, so a renamed file still loads. The screen is called by the id's text.
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, Core::AssetId id);
+
+/// @brief Makes @p owner the entity the screen @p id belongs to, so it is taken
+/// away by RemoveOrphanedScreens once @p owner has gone: a nameplate with its
+/// character, however the character goes. No screen of that id changes nothing.
+void SetScreenOwner(World &world, ScreenId id, ECS::Entity owner);
+
+/// @brief Takes away every screen whose owner is no longer alive. Run each
+/// frame before the Ui systems, and by WorldWidgets.
+void RemoveOrphanedScreens(World &world);
 
 /// @brief Destroys @p screen and takes its claim on the systems it asked for.
 /// Nothing is uninstalled: a system already running costs almost nothing idle,

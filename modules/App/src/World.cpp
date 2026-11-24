@@ -109,13 +109,16 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
     return *world.screenStack.back().screen;
 }
 
-Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath)
+namespace
 {
-    const std::expected<Mondrian::ScreenDocument, Mondrian::ScreenReadError> document =
-        Mondrian::LoadScreenDocument(vpath);
+
+/// @p document, read for the screen called @p name, built into @p world.
+Mondrian::Screen *BuildScreen(World &world, Mondrian::Ui &ui, std::string_view name,
+                              const std::expected<Mondrian::ScreenDocument, Mondrian::ScreenReadError> &document)
+{
     if (!document)
     {
-        Core::Log::Error("World: the screen '{}' did not load ({}).", vpath, Mondrian::ToString(document.error()));
+        Core::Log::Error("World: the screen '{}' did not load ({}).", name, Mondrian::ToString(document.error()));
         return nullptr;
     }
 
@@ -123,10 +126,10 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, world.screenWorld, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.screenWorld, name, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
-        Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
+        Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", name,
                          Mondrian::ToString(loaded.error()));
         return nullptr;
     }
@@ -134,9 +137,36 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     return &AddScreen(world, std::move(loaded->screen), loaded->systems);
 }
 
+} // namespace
+
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath)
+{
+    return BuildScreen(world, ui, vpath, Mondrian::LoadScreenDocument(vpath));
+}
+
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, Core::AssetId id)
+{
+    return BuildScreen(world, ui, id.ToString(), Mondrian::LoadScreenDocument(id));
+}
+
 void RemoveScreen(World &world, Mondrian::Screen &screen)
 {
     std::erase_if(world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+}
+
+void SetScreenOwner(World &world, ScreenId id, ECS::Entity owner)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    if (at != world.screenStack.end())
+    {
+        at->owner = owner;
+    }
+}
+
+void RemoveOrphanedScreens(World &world)
+{
+    std::erase_if(world.screenStack, [&world](const World::Screen &held)
+                  { return held.owner != ECS::NullEntity && !world.scene.IsAlive(held.owner); });
 }
 
 Mondrian::Screen *FindScreen(World &world, std::string_view name)

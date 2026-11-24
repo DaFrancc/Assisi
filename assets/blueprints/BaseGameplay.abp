@@ -8,7 +8,8 @@
     "ControlsScreen",
     "ControlsScreenToggle",
     "TuningScreen",
-    "TuningScreenToggle"
+    "TuningScreenToggle",
+    "WorldWidgets"
   ],
   "entities": [
     {

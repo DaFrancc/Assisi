@@ -276,7 +276,8 @@ void DrawTree(const NodeTree &tree, const LayoutResult &layout, DrawList &list, 
     {
         Drawer drawer(tree, layout, list, fontAtlas);
         drawer.SetInteraction(interaction);
-        drawer.DrawNode(tree.Root().index, 1.f);
+        // Under whatever opacity the list was handed at: a screen faded as a whole.
+        drawer.DrawNode(tree.Root().index, list.Opacity());
     }
     list.SetDefaultClip(kNoClip);
     list.SetOpacity(1.f);
