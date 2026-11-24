@@ -1,0 +1,10 @@
+{
+  "guid": "7d2ec045-cacb-4151-af04-ef9a1fa6f47e",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "animator"
+    }
+  ],
+  "version": 1
+}

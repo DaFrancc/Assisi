@@ -37,6 +37,12 @@
           "sprintSpeedScale": 1.6,
           "walkSpeed": 5.0
         },
+        "Look": {
+          "maxPitchDegrees": 89.0
+        },
+        "Movement": {
+          "walkMoveScale": 0.4
+        },
         "Player": {},
         "Replicated": {},
         "Transform": {
@@ -56,6 +62,9 @@
             1.0,
             1.0
           ]
+        },
+        "ViewRig": {
+          "camera": "Camera"
         }
       },
       "name": "Player"
@@ -139,11 +148,13 @@
   ],
   "systems": [
     "LocalPlayer",
-    "PlayerCamera",
     "PlayerGather",
-    "CharacterCommand",
-    "CharacterEye",
-    "PlayerAnimation",
+    "Look",
+    "LookAhead",
+    "Movement",
+    "EyeHeight",
+    "PlayerView",
+    "BodyAnimation",
     "Animators",
     "AnimationPlayers"
   ],

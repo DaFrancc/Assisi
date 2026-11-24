@@ -1,0 +1,164 @@
+{
+  "entities": [
+    {
+      "components": {
+        "ArcadeMovement": {
+          "airAcceleration": 10.0,
+          "airBrakingDeceleration": 10.0,
+          "brakingDeceleration": 60.0,
+          "groundAcceleration": 60.0,
+          "turnFriction": 0.0
+        },
+        "Character": {
+          "collidesWith": "All",
+          "crouchEyeHeight": 0.9,
+          "crouchHalfHeight": 0.3,
+          "eyeHeight": 1.5,
+          "eyeSpeed": 3.0,
+          "halfHeight": 0.6,
+          "mass": 70.0,
+          "maxSlopeDegrees": 50.0,
+          "maxStepHeight": 0.4,
+          "options": "All",
+          "pushStrength": 100.0,
+          "radius": 0.3
+        },
+        "CharacterLocomotion": {
+          "canSprint": true,
+          "coyoteTime": 0.1,
+          "crouchSpeedScale": 0.4,
+          "gravityScale": 1.0,
+          "jumpBufferTime": 0.15,
+          "jumpSpeed": 4.5,
+          "maxFallSpeed": 0.0,
+          "preset": 1,
+          "sprintInAir": false,
+          "sprintMaxAngle": 50.0,
+          "sprintSpeedScale": 1.6,
+          "walkSpeed": 5.0
+        },
+        "Look": {
+          "maxPitchDegrees": 89.0
+        },
+        "Movement": {
+          "walkMoveScale": 0.4
+        },
+        "Player": {},
+        "Replicated": {},
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "ViewRig": {
+          "camera": "Camera"
+        }
+      },
+      "name": "Player"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Parent": {
+          "parent": "Player"
+        },
+        "Replicated": {},
+        "Transform": {
+          "position": [
+            0.0,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Camera"
+    },
+    {
+      "components": {
+        "AnimationPlayer": {},
+        "Animator": {
+          "machine": {
+            "guid": "7d2ec045-cacb-4151-af04-ef9a1fa6f47e",
+            "path": "animation/Player.sgl"
+          }
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "hiddenFromOwnCamera": true,
+          "mesh": {
+            "guid": "ce6a243c-9c5e-40bd-860f-09c8305349a9",
+            "path": "quaternius/UAL1/UAL1.glb"
+          }
+        },
+        "Parent": {
+          "parent": "Player"
+        },
+        "Replicated": {},
+        "SkinnedMesh": {},
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Body"
+    }
+  ],
+  "systems": [
+    "LocalPlayer",
+    "PlayerGather",
+    "Look",
+    "LookAhead",
+    "Movement",
+    "EyeHeight",
+    "PlayerView",
+    "BodyAnimation",
+    "Animators",
+    "AnimationPlayers",
+    "CaptureCursor",
+    "CursorToggle"
+  ],
+  "version": 2
+}

@@ -208,7 +208,10 @@ struct LocalPlayerLost
 ACOMP()
 struct PlayerStart
 {
-    AFIELD() Assisi::Core::AssetPath blueprint{std::string_view{"blueprints/Player.abp"}};
+    /// The game's player blueprint, such as the first-person template's
+    /// `blueprints/Player.abp`. Empty makes no character: the engine has no
+    /// player of its own to fall back on.
+    AFIELD() Assisi::Core::AssetPath blueprint;
 };
 
 /// @brief Which network client this machine is, for the world it plays. A

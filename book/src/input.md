@@ -77,9 +77,10 @@ You rarely need to write that yourself. The engine has two systems for it:
   doesn't take the cursor back.
 
 Escape isn't one of them: it opens the pause menu, which frees the cursor, and
-**Resume** captures it again. `blueprints/Player.abp` lists both systems, so a
-level with the player captures the mouse with nothing more to do. A level
-without that player can name both in its own systems list.
+**Resume** captures it again. The first-person template's
+`blueprints/Player.abp` (see [Players](players.md)) lists both systems, so a
+level with that player captures the mouse with nothing more to do. A level
+without it can name both in its own systems list.
 
 ## Named actions
 

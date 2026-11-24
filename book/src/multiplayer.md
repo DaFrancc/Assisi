@@ -293,10 +293,12 @@ else's. The host hands out the characters:
 - **The host keeps the level's own player.** The first character in the level
   marked `Player` (see [Players](players.md)) becomes the host's.
 - **Everyone who joins gets a new one**, made at a **`PlayerStart`**. Give an
-  entity a `PlayerStart` and a `Transform`, and set its `blueprint` to the
-  player blueprint to make, `blueprints/Player.abp` by default. With several
-  starts, players are spread over them in the order they joined. A level with
-  no start gives late joiners nothing, and the log says so.
+  entity a `PlayerStart` and a `Transform`, and set its `blueprint` to your
+  game's player blueprint, such as the first-person template's
+  `blueprints/Player.abp`. There is no default: a start with no blueprint makes
+  no character. With several starts, players are spread over them in the order
+  they joined. A level with no start gives late joiners nothing, and the log
+  says so.
 - **A player who leaves takes their character with them**, camera and all.
 
 `levels/NetPile.alvl` has three starts. To try it, open it, pick **Host + 2
@@ -376,8 +378,9 @@ aren't the host's numbers, only their changes are the same.
 The sample game's player has an animated body: a child entity, `Body`, in
 `blueprints/Player.abp`, with a skinned model and an `Animator` running
 `animation/Player.sgl`. It walks, runs, sprints, crouches, jumps, falls and
-lands. The game's `PlayerAnimation` system, in `apps/game/src/PlayerAnimation.cpp`,
-sets the file's params from each player's `CharacterState`:
+lands. The first-person template's `BodyAnimation` system (see
+[Players](players.md)) sets the file's params from each player's
+`CharacterState`:
 - `speed`, its speed across the ground, eased so a correction doesn't jolt it;
 - `airborne`, whether it has been off the ground for longer than a step down a
   stair;
@@ -391,7 +394,7 @@ player. Landing comes from `landings`, not from the character touching the
 ground, which also happens for a moment as it takes off.
 
 Nothing about animation goes over the network. Each machine runs
-`PlayerAnimation` for every player, its own and the others, from the character
+`BodyAnimation` for every player, its own and the others, from the character
 state the host sends. To try it, open `levels/NetPile.alvl`, pick **Host + 2
 clients** and press **Run**: walk, sprint (Shift), crouch (Ctrl) and jump
 (Space) in one window, and watch that player in the other two. Your own body is
@@ -532,10 +535,7 @@ everything else stays once per step.
 
 After every system of a step has run, the engine clears the turning and the
 presses in each player's `PlayerInput`, so every system of the step reads the
-same ones in any order and none of yours has to clear them. The engine's
-`CharacterCommand` system, which the sample player's blueprint names, also
-clears them as it uses them, so a system that runs after it in the same step
-sees none.
+same ones in any order and none of yours has to clear them.
 
 A predicted component works best when your machine can work it out from your
 own player alone. Ammo that goes down when your own player fires is fine. A

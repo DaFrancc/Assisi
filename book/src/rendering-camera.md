@@ -72,9 +72,10 @@ The editor's own camera draws as far as the level's active camera, its
 with no active camera is drawn to 200 m. The field of view changes with the
 scroll wheel; the near plane can't be changed.
 
-**Players.** In a game with [players](players.md), the `PlayerCamera` system
-sets `isActive` on the camera of the player who is playing on this machine, and
-clears it on everyone else's. You don't set `isActive` yourself for those.
+**Players.** In a game with [players](players.md), every player's blueprint
+carries a camera, and each machine looks through its own player's. The
+first-person template's `PlayerView` system sets `isActive` on that camera and
+clears it on everyone else's, so you don't set `isActive` yourself for those.
 
 **Multiplayer.** `Camera` is never sent over the network. Each machine chooses
 its own camera, so the host can't take over a client's view.
@@ -96,9 +97,10 @@ void CutTo(Assisi::ECS::Scene &scene, Assisi::ECS::Entity next)
 }
 ```
 
-The `PlayerCamera` system sets the local player's camera active again every
-frame, so in a level that runs it, the player's camera stays active alongside
-the one you chose.
+The first-person template's `PlayerView` system sets the local player's camera
+active again every frame, so in a level that runs it, the player's camera stays
+active alongside the one you chose. Stop it from doing so for the length of
+the cut-scene, or change it in your copy of the template.
 
 A camera can be the child of another entity through a `Parent`, such as a
 camera on a car's bonnet. It follows the car and is drawn from where the car is
@@ -135,10 +137,10 @@ Only the drawing changes. The `Transform`, what the game simulates and what is
 sent over the network stay as they are. Remove the component to draw the camera
 as its `Transform` has it again. It is never saved with a level.
 
-On the camera of the player playing on this machine, the engine draws the
-player turning as far as the mouse has moved before the next step uses it. A
-`CameraDrawPose` there takes the place of that turning, so a game that draws its
-own look isn't turned twice.
+The first-person template uses it for its look: its `LookAhead` system draws
+your player's camera turned as far as the mouse has moved, every frame, before
+the next fixed step uses the turning (see
+[Looking ahead of the step](players.md#looking-ahead-of-the-step)).
 
 ## Camera paths for benchmarks
 

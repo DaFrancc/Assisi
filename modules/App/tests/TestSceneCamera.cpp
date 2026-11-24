@@ -129,10 +129,10 @@ TEST_CASE("A camera with a draw pose is drawn turned and moved by it, and its Tr
     CHECK(transform->rotation == glm::quat(1.f, 0.f, 0.f, 0.f));
 }
 
-TEST_CASE("A draw pose on the player's camera takes the place of the turning drawn ahead of the step")
+TEST_CASE("The player's camera is drawn where the blend puts it unless the game gives it a draw pose")
 {
-    // A game that draws its own look ahead must not be turned a second time by
-    // the engine's.
+    // The engine draws no turning of its own for a player: what a game wants
+    // drawn ahead of the step, it sets as a draw pose.
     Assisi::ECS::Scene scene;
     const Assisi::ECS::Entity player = scene.Create();
     (void)scene.Add<Assisi::ECS::Transform>(player);
@@ -144,10 +144,10 @@ TEST_CASE("A draw pose on the player's camera takes the place of the turning dra
     (void)scene.Add<Assisi::ECS::Parent>(camera, Assisi::ECS::Parent{player});
     (void)Assisi::ECS::PropagateTransforms(scene, 0);
 
-    // Without one, the turning not yet stepped shows: the case below means something.
-    const std::optional<SceneView> turned = ActiveSceneCamera(scene);
-    REQUIRE(turned.has_value());
-    CHECK_FALSE(Near(turned->world.inCell, glm::mat4(1.f)));
+    // The turning not yet stepped is the game's to draw, not the engine's.
+    const std::optional<SceneView> blended = ActiveSceneCamera(scene);
+    REQUIRE(blended.has_value());
+    CHECK(Near(blended->world.inCell, glm::mat4(1.f)));
 
     (void)scene.Add<Assisi::Runtime::CameraDrawPose>(
         camera, Assisi::Runtime::CameraDrawPose{.rotation = kDrawnRotation, .offset = glm::vec3{0.f}});

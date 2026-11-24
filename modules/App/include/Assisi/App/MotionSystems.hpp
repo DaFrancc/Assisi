@@ -5,9 +5,9 @@
 /// @brief Ready-made systems that turn the motion components in
 ///        Assisi::Runtime into behaviour.
 ///
-/// Same arrangement as PhysicsSystems.hpp and for the same reason: a system
-/// needs a SystemContext, and App is the layer that owns one. Plain functions,
-/// never installed automatically — a level names the ones it wants.
+/// They live in App rather than Runtime because a system needs a
+/// SystemContext, and App is the layer that owns one. Plain functions, never
+/// installed automatically — a level names the ones it wants.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>
 

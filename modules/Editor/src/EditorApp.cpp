@@ -7,7 +7,6 @@
 
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
-#include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/StepWorld.hpp>
 #include <Assisi/App/SystemCatalog.hpp>

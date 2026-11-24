@@ -5,7 +5,6 @@
 #include <Assisi/App/InputSetup.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/BlueprintReplication.hpp>
-#include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/App/SceneCamera.hpp>
 #include <Assisi/App/SessionDriver.hpp>
 #include <Assisi/App/StartupScene.hpp>

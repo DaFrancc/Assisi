@@ -49,14 +49,9 @@ struct SceneView
 ///
 /// A camera with a Runtime::CameraDrawPose is drawn with its rotation, and
 /// standing its offset from where the blend between steps puts it: what a game
-/// moves the view with every frame, and nothing simulated or sent changes.
-///
-/// Otherwise, a camera on this machine's player looks where the player has
-/// turned so far, every frame, including turning no fixed step has used yet,
-/// and is not blended between steps; it still stands where the blend puts it.
-/// Aim then follows the mouse at the frame rate rather than at the step's,
-/// while the step keeps the real aim. A draw pose on that camera takes the
-/// place of this turning. Every other camera is drawn as propagated.
+/// moves the view with every frame, such as a look that follows the mouse
+/// between fixed steps, and nothing simulated or sent changes. Every other
+/// camera is drawn as propagated. Nothing here knows about players.
 ///
 /// Two active cameras warn and the first found wins. Which one that is depends
 /// on entity order, so it is arbitrary — said out loud rather than picked in

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "type": "BlendSpace",
+  "Points": [
+    { "Clip": { "guid": "a54dabc7-2e37-4141-90d5-2dcbaa0aef2e", "path": "quaternius/UAL1/UAL1_animations/Idle_Loop.glb" }, "Position": [0, 0] },
+    { "Clip": { "guid": "986916bf-2ff1-48d3-ae49-2ee4b2b14a81", "path": "quaternius/UAL1/UAL1_animations/Walk_Loop.glb" }, "Position": [1.5, 0] },
+    { "Clip": { "guid": "87acac77-3531-4c14-9382-95a484fe4f12", "path": "quaternius/UAL1/UAL1_animations/Jog_Fwd_Loop.glb" }, "Position": [3.5, 0] },
+    { "Clip": { "guid": "0dc08eae-e066-419e-b035-fe63a7ce5689", "path": "quaternius/UAL1/UAL1_animations/Sprint_Loop.glb" }, "Position": [6, 0] }
+  ]
+}

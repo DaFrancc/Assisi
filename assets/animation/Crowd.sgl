@@ -4,7 +4,7 @@
 use animation;
 skeleton "quaternius/UAL1/UAL1.glb";
 
-const walk_space = "quaternius/UAL1/Locomotion.ablnd";
+const walk_space = "animation/Locomotion.ablnd";
 const aim_clip = "quaternius/UAL1/UAL1_animations/Pistol_Aim_Neutral.glb";
 const idle_clip = "quaternius/UAL1/UAL1_animations/Idle_Loop.glb";
 

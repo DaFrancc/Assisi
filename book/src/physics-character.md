@@ -381,11 +381,13 @@ In the air it is the other way round: crouching keeps the head in place and
 a jump therefore clears a ledge that the jump alone does not. Standing up in the
 air lowers the feet again, and is refused while the ground is too close below.
 
-The `CharacterEye` system keeps a camera parented to the character at the
-character's eye height, after every step, and the camera is smoothed between
-steps like everything else. The eye eases between `eyeHeight` and
+After every step the character's `CharacterState` says where its eye is,
+`eyeHeight` above its feet. The eye eases between `eyeHeight` and
 `crouchEyeHeight` at `eyeSpeed`. When the feet move in the air the eye height
-changes by the same amount at once, so the view stays where it was.
+changes by the same amount at once, so the view stays where it was. Where a
+camera goes is your game's: the first-person template's `EyeHeight` system
+keeps its camera there, and the camera is smoothed between steps like
+everything else (see [Players](players.md)).
 
 ## When two characters meet
 

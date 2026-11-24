@@ -21,10 +21,21 @@ file(GLOB_RECURSE _game_headers CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
 
+# The sample game's player is the first-person template, built from where it
+# lives so every engine build keeps the template compiling. A project made from
+# the template copies templates/first-person/src/ into its own src/ instead,
+# where the globs above pick it up, and drops everything below that names the
+# template. Its includes are relative to its own src/, as a game's are.
+set(_template_src "${CMAKE_SOURCE_DIR}/templates/first-person/src")
+file(GLOB_RECURSE _template_sources CONFIGURE_DEPENDS "${_template_src}/*.cpp")
+file(GLOB_RECURSE _template_headers CONFIGURE_DEPENDS "${_template_src}/*.hpp")
+
 target_sources(Assisi-GameLib
   PRIVATE
     ${_game_sources}
     ${_game_headers}
+    ${_template_sources}
+    ${_template_headers}
     "launch/LaunchArgs.cpp"
     "launch/LaunchArgs.hpp"
     "launch/ServerApp.cpp"
@@ -35,6 +46,7 @@ target_include_directories(Assisi-GameLib
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/launch"
+    "${_template_src}"
 )
 
 target_link_libraries(Assisi-GameLib
@@ -72,6 +84,17 @@ if (_game_headers)
   )
 endif()
 
+# The template's declarations, the same way. A target of their own because a
+# reflected target has one include root, and the template's is its own src/.
+add_library(Assisi-FirstPerson-Systems INTERFACE)
+target_include_directories(Assisi-FirstPerson-Systems INTERFACE "${_template_src}")
+target_link_libraries(Assisi-FirstPerson-Systems INTERFACE Assisi::App)
+assisi_reflect(
+  TARGET       Assisi-FirstPerson-Systems
+  INCLUDE_ROOT "${_template_src}"
+  HEADERS      ${_template_headers}
+)
+
 # --- The two executables.
 #
 # Game links no editor and has no way to reach one; GameEditor is the same game
@@ -85,7 +108,7 @@ endif()
 add_executable(Assisi-Game EXCLUDE_FROM_ALL)
 Assisi_apply_defaults(Assisi-Game)
 target_sources(Assisi-Game PRIVATE "launch/GameMain.cpp")
-target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems)
+target_link_libraries(Assisi-Game PRIVATE Assisi-GameLib Assisi-Game-Systems Assisi-FirstPerson-Systems)
 if (ASSISI_PAK_OVERRIDES)
   target_compile_definitions(Assisi-Game PRIVATE ASSISI_PAK_OVERRIDES)
 endif()
@@ -137,14 +160,17 @@ endif()
 add_executable(Assisi-GameEditor)
 Assisi_apply_defaults(Assisi-GameEditor)
 target_sources(Assisi-GameEditor PRIVATE "launch/EditorMain.cpp")
-target_link_libraries(Assisi-GameEditor PRIVATE Assisi-GameLib Assisi-Game-Systems Assisi::Editor)
+target_link_libraries(Assisi-GameEditor PRIVATE Assisi-GameLib Assisi-Game-Systems Assisi-FirstPerson-Systems
+                                                Assisi::Editor)
 
 # Per-binary, for the reason stated above the INTERFACE library: an executable
 # cannot be linked into, so its registrations arrive as objects.
 foreach(_exe Assisi-Game Assisi-GameEditor)
-  if (TARGET Assisi-Game-Systems-Generated)
-    target_sources("${_exe}" PRIVATE $<TARGET_OBJECTS:Assisi-Game-Systems-Generated>)
-  endif()
+  foreach(_systems Assisi-Game-Systems-Generated Assisi-FirstPerson-Systems-Generated)
+    if (TARGET ${_systems})
+      target_sources("${_exe}" PRIVATE $<TARGET_OBJECTS:${_systems}>)
+    endif()
+  endforeach()
   assisi_link_reflections("${_exe}")
 endforeach()
 # The editor cooks source files as it loads them; the game reads cooked ones.
@@ -209,6 +235,10 @@ if (TARGET crashpad_handler)
   foreach(_exe Assisi-Game Assisi-GameEditor)
     add_dependencies("${_exe}" crashpad_handler)
   endforeach()
+endif()
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
 endif()
 
 # A refused start has to reach the exit code. Driven as a real process because

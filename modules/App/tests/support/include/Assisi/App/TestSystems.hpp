@@ -15,10 +15,17 @@
 /// for test code it has no reason to contain. Header-only keeps the registration
 /// self-contained, which is the same reason the NetSync test components are.
 
+#include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
+#include <Assisi/ECS/Hierarchy.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Math/GLM.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Components.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -143,6 +150,15 @@ ASYSTEM(Begin, name = "SeesAssets") inline void SeesAssetsSystem(SystemContext &
 ASYSTEM(Render, name = "DrawEarly") inline void DrawEarlySystem(RenderContext &ctx);
 ASYSTEM(Render, name = "DrawLate", after = "DrawEarly") inline void DrawLateSystem(RenderContext &ctx);
 
+/// Drives every character with controls the way a game's player code does, so
+/// the session tests can play characters without depending on any game's or
+/// template's: turning turns the character about world up, looking up tilts
+/// every camera parented to it, and the move, crouch, sprint and jump fill in
+/// its CharacterIntent. `predicted`, so a client's replay steps it again from
+/// the controls it recorded, as a game's own movement is.
+ASYSTEM(FixedUpdate, name = "TestDrive", predicted, after = "LocalPlayer")
+inline void TestDriveSystem(SystemContext &ctx);
+
 inline void CounterSystem(SystemContext &ctx)
 {
     RunCounts::Instance().Record(ctx.world, "Counter");
@@ -193,6 +209,62 @@ inline void DrawEarlySystem(RenderContext &)
 inline void DrawLateSystem(RenderContext &)
 {
     RunOrder::Instance().Record("DrawLate");
+}
+
+inline void TestDriveSystem(SystemContext &ctx)
+{
+    constexpr float kMaxPitch = glm::radians(89.f);
+    ECS::Scene &scene = ctx.world.scene;
+
+    // Collected first: turning writes Transforms while a query over the
+    // controls walks, and tilting walks another query inside.
+    std::vector<ECS::Entity> driven;
+    for (auto [entity, controls, intent] : scene.Query<PlayerInput, Physics::CharacterIntent>())
+    {
+        (void)controls;
+        (void)intent;
+        driven.push_back(entity);
+    }
+
+    for (const ECS::Entity entity : driven)
+    {
+        const PlayerInput controls = *scene.Get<PlayerInput>(entity);
+        ECS::Transform *body = scene.GetMut<ECS::Transform>(entity);
+        if (body != nullptr && controls.lookYaw != 0.f)
+        {
+            body->rotation =
+                glm::normalize(glm::angleAxis(controls.lookYaw, glm::vec3(0.f, 1.f, 0.f)) * body->rotation);
+        }
+        if (controls.lookPitch != 0.f)
+        {
+            for (auto [child, camera, parent] : scene.Query<Runtime::Camera, ECS::Parent>())
+            {
+                (void)camera;
+                ECS::Transform *eye = parent.parent == entity ? scene.GetMut<ECS::Transform>(child) : nullptr;
+                if (eye == nullptr)
+                {
+                    continue;
+                }
+                const float current = std::asin(glm::clamp((eye->rotation * glm::vec3(0.f, 0.f, -1.f)).y, -1.f, 1.f));
+                const float pitch = glm::clamp(current + controls.lookPitch, -kMaxPitch, kMaxPitch);
+                eye->rotation = glm::normalize(glm::angleAxis(pitch, glm::vec3(1.f, 0.f, 0.f)));
+            }
+        }
+
+        glm::vec3 move{controls.move.x, 0.f, -controls.move.y};
+        if (body != nullptr)
+        {
+            move = body->rotation * move;
+        }
+        move.y = 0.f;
+        const float length = glm::min(glm::length(controls.move), 1.f);
+        Physics::CharacterIntent &intent = *scene.GetMut<Physics::CharacterIntent>(entity);
+        intent.move = length > 0.f && glm::dot(move, move) > 0.f ? glm::normalize(move) * length : glm::vec3{0.f};
+        intent.stance =
+            controls.held.Has(PlayerAction::Crouch) ? Physics::Stance::Crouching : Physics::Stance::Standing;
+        intent.sprint = controls.held.Has(PlayerAction::Sprint);
+        intent.jump = intent.jump || controls.pressed.Has(PlayerAction::Jump);
+    }
 }
 
 } // namespace Assisi::App::Test

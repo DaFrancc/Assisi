@@ -2,14 +2,15 @@
 #pragma once
 
 /// @file PlayerSystems.hpp
-/// @brief The systems that drive a player's character from the player's
-///        controls, the same on every machine.
+/// @brief What the engine gives every game about its players: whose character
+///        is this machine's, its controls from the devices, and the cursor.
 ///
-/// PlayerGather fills in this machine's player's controls from the keyboard and
-/// mouse. CharacterCommand turns any player's controls into where its character
-/// faces and what it is asked to do, whoever filled them in: this machine, or a
-/// host for a remote player. LocalPlayer says which character is this machine's
-/// player, and PlayerCamera looks through its camera.
+/// LocalPlayer says which character is this machine's player. PlayerGather
+/// fills in its controls from the keyboard and mouse, and StepWorld clears
+/// what each step used of them (ClearUsedControls). What a game does with the
+/// controls, turning, moving and which camera to look through, is the game's
+/// own: the first-person template in templates/first-person is one way to do
+/// it.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
@@ -29,33 +30,16 @@ struct SystemContext;
 /// better to put it.
 inline constexpr float kLookDegreesPerPixel = 0.1f;
 
-/// @brief How far up or down a character may look.
-///
-/// Short of straight up, because at exactly 90 the forward direction becomes
-/// parallel to the up axis and the view matrix's basis collapses — the image
-/// rolls or vanishes at the moment the player is least able to explain why.
-inline constexpr float kMaxPitchDegrees = 89.f;
-
-/// @brief @p facing, a character's rotation, turned left by @p radians about
-/// world up.
-///
-/// About world up rather than the character's own axis: composing onto its own
-/// would let pitch and roll leak in, and it would end up tipped over after
-/// enough looking around.
-[[nodiscard]] glm::quat Turned(const glm::quat &facing, float radians);
-
-/// @brief @p eye, a camera's rotation on its character, tilted up by
-/// @p radians and kept within kMaxPitchDegrees of level.
-[[nodiscard]] glm::quat Tilted(const glm::quat &eye, float radians);
-
 /// @brief Marks this machine's player: with no network session every Player,
 /// and in one the Player this machine controls. Gives each a PlayerInput, and
 /// takes both away from a character that stops being this machine's, so its
 /// last controls do not walk it on by themselves.
 ///
 /// Reads the world's LocalClient. Until a session has said who this machine is,
-/// nothing is its player.
-ASYSTEM(FixedUpdate, name = "LocalPlayer", before = "CharacterCommand")
+/// nothing is its player. A system that reads the controls runs
+/// `after = "LocalPlayer"`, so a character gains its controls before the step
+/// that first reads them.
+ASYSTEM(FixedUpdate, name = "LocalPlayer")
 void LocalPlayerSystem(SystemContext &ctx);
 
 /// @brief Fills in the controls of this machine's player from the keyboard and
@@ -72,31 +56,14 @@ void LocalPlayerSystem(SystemContext &ctx);
 /// runs three counts them three times. PreUpdate runs once a frame, before the
 /// frame's steps, so those steps act on what this frame gathered.
 ///
-/// The camera of this machine's player is drawn turned as far as what is
-/// gathered here, every frame, before any step has used it (ActiveSceneCamera).
+/// What is gathered here and no step has used yet is still in the controls
+/// when a frame draws, so a game can draw its view turned on by it every frame
+/// (Runtime::CameraDrawPose), as the first-person template does.
 ///
 /// `activeWorldOnly`, and it does nothing without devices: a headless host has
 /// none.
 ASYSTEM(PreUpdate, name = "PlayerGather", activeWorldOnly)
 void PlayerGatherSystem(SystemContext &ctx);
-
-/// @brief Turns each player's controls into its character's facing and
-/// CharacterIntent, then clears what the step used.
-///
-/// Turning goes on the character, about world up; looking up and down goes on
-/// the camera parented to it, so the body turns and the head tilts. Movement is
-/// taken in the character's frame after it turns. A press asks for one jump
-/// however long it is held; Crouch and Sprint are asked for while they are
-/// held. A character without PlayerInput is left alone, so
-/// an AI keeps writing its own intent.
-///
-/// Every machine runs it on every character with controls, which is what makes
-/// a host move a remote player exactly as that player's own machine does.
-///
-/// `predicted`: a client stepping its character again turns and moves it from
-/// the controls it recorded for each tick.
-ASYSTEM(FixedUpdate, name = "CharacterCommand", predicted)
-void CharacterCommandSystem(SystemContext &ctx);
 
 /// @brief Clears what a step used of every player's controls in @p scene: the
 /// turning and the presses, which add up until a step uses them. What is held
@@ -105,18 +72,8 @@ void CharacterCommandSystem(SystemContext &ctx);
 /// Not a system: StepWorld calls it once every system of the step has run,
 /// live or replayed, so every system reads the same turning and presses in any
 /// order, none of them has to be the one that clears them, and no level or
-/// blueprint has to name it. CharacterCommand also clears what it uses, as it
-/// uses it, so where it runs, a system after it in the step sees no turning or
-/// presses.
+/// blueprint has to name it.
 void ClearUsedControls(ECS::Scene &scene);
-
-/// @brief Makes the camera of this machine's player the active one, and every
-/// other player's camera inactive.
-///
-/// Every player's blueprint carries a camera, and a networked game holds every
-/// player's; each machine looks through its own.
-ASYSTEM(Update, name = "PlayerCamera", activeWorldOnly)
-void PlayerCameraSystem(SystemContext &ctx);
 
 /// @brief Takes the cursor when the level is up, so a first-person level is
 /// playable the moment it finishes loading.
