@@ -1,0 +1,15 @@
+<!-- A nameplate over an entity in the world. A WorldWidget names this file, and
+     the WorldWidgets system shows it over that entity, with the entity as its
+     context. The falling cube in levels/Test.alvl wears one.
+
+     attach="center end" puts the plate's bottom middle on the point the
+     widget's offset names, so it sits above the cube rather than over it. -->
+<screen sort="hud" attach="center end">
+
+  <column name="plate" style="panel" padding="10 6 10 6" gap="2" align="center center"
+          shadow_color="rgbf(0, 0, 0, 0.5)" shadow_offset="0 4" shadow_blur="10">
+    <text text_size="18">Crate</text>
+    <text text_size="14">{Transform.position:.1f}</text>
+  </column>
+
+</screen>

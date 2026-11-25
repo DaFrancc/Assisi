@@ -168,6 +168,17 @@ tone mapping.
 > carefully, so the game shows them as drawn. When an image looks wrong in the
 > editor, check it in the game before changing the art.
 
+## Pictures from the world
+
+`sprite`, `background_image` and `texture` can each follow a field, so an
+inventory slot shows whatever its item's icon is:
+
+```xml
+<image sprite="{Item.icon}" />
+```
+
+See [Colours, sizes, pictures and positions](ui-bindings.md#colours-sizes-pictures-and-positions).
+
 ## Images in C++
 
 A screen built in C++ shows a picture with `NodeTree::SetImage`, which takes a

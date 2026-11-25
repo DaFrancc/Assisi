@@ -41,6 +41,8 @@ struct Point
 {
     float x = 0.f;
     float y = 0.f;
+
+    bool operator==(const Point &) const = default;
 };
 
 /// @brief The size of the surface the UI lays out against, in pixels.
@@ -48,6 +50,8 @@ struct Extent
 {
     uint32_t width = 0;
     uint32_t height = 0;
+
+    bool operator==(const Extent &) const = default;
 };
 
 /// @brief A texture the engine layer registered for the UI. The UI owns its
@@ -88,8 +92,17 @@ enum class QuadKind : uint32_t
     Glyph,     ///< colour times the coverage in the texture's red channel
     Image,     ///< colour times the texture
     NineSlice, ///< an image whose borders keep their size while its edges and middle stretch
+    /// colour only, its shape softened by the blur its borderWidth holds; the
+    /// quad reaches kShadowReach blurs past the shape on every side
+    Shadow,
     Count_
 };
+
+/// How many blurs a shadow quad reaches past its shape on each side, so its
+/// soft edge has room to fade: the blur is two standard deviations, so this
+/// is three, where less than a 1/700 of the shadow is left to cut off. The
+/// shader takes the same reach back off to find the shape.
+inline constexpr float kShadowReach = 1.5f;
 
 /// @brief How far in from each edge, in whole pixels, a nine-slice's corners
 /// reach: on the quad, or in the texture it samples.
@@ -174,6 +187,7 @@ struct QuadInstance
     Math::Color4<Math::ColorSpace::Srgb> color{1.f, 1.f, 1.f, 1.f};
     Math::Color4<Math::ColorSpace::Srgb> borderColor{0.f, 0.f, 0.f, 0.f};
     std::array<float, static_cast<std::size_t>(Corner::Count_)> cornerRadius{};
+    /// The border's width; on a Shadow, which has no border, its blur.
     float borderWidth = 0.f;
     uint32_t cornerStyles = 0; ///< one CornerStyle per corner, packed by PackCornerStyle
     uint32_t kind = static_cast<uint32_t>(QuadKind::Solid);
@@ -249,6 +263,9 @@ class QuadBuilder
     /// device pixels in from its edges show the texels @p source in from the
     /// edges of its uv, and the edges and middle between them stretch.
     QuadBuilder &NineSlice(const SliceInsets &destination, const SliceInsets &source);
+    /// @brief Makes the quad a Shadow whose edge softens over @p blur pixels.
+    /// The quad is the shape grown by kShadowReach times @p blur on every side.
+    QuadBuilder &Shadow(float blur);
     QuadBuilder &Kind(QuadKind kind);
     QuadBuilder &Material(MaterialId material);
     QuadBuilder &Mask(MaskId mask);
@@ -285,6 +302,13 @@ class DrawList
     /// or cleared. Clip() on a quad still replaces it.
     void SetDefaultClip(const Rect &clip) { _defaultClip = clip; }
 
+    /// @brief How much shows of every quad added from now on, from 0 to 1,
+    /// until changed or cleared: what it multiplies the alpha of each fill and
+    /// border by. What fades a node with everything drawn inside it, the
+    /// parts a control paints included.
+    void SetOpacity(float opacity) { _opacity = opacity; }
+    [[nodiscard]] float Opacity() const { return _opacity; }
+
     [[nodiscard]] bool IsFinalized() const { return _finalized; }
     [[nodiscard]] std::span<const QuadInstance> Instances() const { return _instances; }
     [[nodiscard]] std::span<const DrawEntry> Entries() const { return _entries; }
@@ -305,6 +329,7 @@ class DrawList
     std::vector<Binding> _bindings;
     std::vector<DrawEntry> _entries;
     Rect _defaultClip = kNoClip;
+    float _opacity = 1.f;
     bool _finalized = false;
 };
 

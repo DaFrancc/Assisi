@@ -51,6 +51,19 @@ bool IsWalkable(const ScreenDocument &document)
     return true;
 }
 
+/// Whether @p node, a part, names one its parent has, and is nothing but that
+/// part: no control, and nothing it does.
+bool PartFits(const ScreenDocument &document, const ScreenNode &node)
+{
+    if (node.parent >= document.nodes.size() || node.widget != BuiltinWidget::None ||
+        node.action != ActionKind::None)
+    {
+        return false;
+    }
+    const std::vector<std::string_view> parts = BuiltinPartNames(document.nodes[node.parent].widget);
+    return std::ranges::find(parts, node.part.View()) != parts.end();
+}
+
 /// Whether @p node's verb has what it takes: a target it can act on when it
 /// takes one and none when it does not, and a count of moves that moves.
 bool VerbFits(const ScreenDocument &document, const ScreenNode &node)
@@ -149,6 +162,13 @@ bool BindingsResolve(const ScreenDocument &document, const ScreenNode &node, con
     {
         return false;
     }
+    for (const AttributeBinding &bound : node.boundAttributes)
+    {
+        if (!SoleBindingResolves(document.Text(bound.binding), AttributeUse(bound.attribute), world))
+        {
+            return false;
+        }
+    }
     const std::string_view value = document.Text(node.valueBinding);
     if (value.empty())
     {
@@ -212,8 +232,15 @@ std::expected<std::vector<std::shared_ptr<const Pattern>>, ScreenLoadError> Reso
         {
             return std::unexpected(ScreenLoadError::MisplacedNode);
         }
+        if (!node.part.Empty() && !PartFits(document, node))
+        {
+            return std::unexpected(ScreenLoadError::MisplacedNode);
+        }
 
-        if (static_cast<uint32_t>(node.widget) >= static_cast<uint32_t>(BuiltinWidget::Count_))
+        // Selectable text is a flag on a node, which the cook never writes as a
+        // control of its own.
+        if (static_cast<uint32_t>(node.widget) >= static_cast<uint32_t>(BuiltinWidget::Count_) ||
+            node.widget == BuiltinWidget::SelectableText)
         {
             return std::unexpected(ScreenLoadError::UnsupportedWidget);
         }
@@ -282,6 +309,8 @@ NodeId Create(Screen &screen, NodeId parent, const ScreenDocument &document, con
         return screen.AddScroll(parent, node.style, node.style.enabledScrollBars);
     case BuiltinWidget::TextField:
         return screen.AddTextField(parent, node.lines).node;
+    // Refused by Resolve: selectable text is a flag, set below.
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::None:
     case BuiltinWidget::Count_:
         break;
@@ -383,6 +412,37 @@ void ApplyBindings(Screen &screen, NodeId id, const ScreenDocument &document, co
         const std::expected<void, BindingError> bound = screen.BindControl(id, value);
         ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
     }
+    for (const AttributeBinding &attribute : node.boundAttributes)
+    {
+        const std::expected<void, BindingError> bound =
+            screen.BindAttribute(id, attribute.attribute, document.Text(attribute.binding), attribute.length);
+        ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
+    }
+}
+
+/// Dresses each part of @p control that @p node names in what @p node says of
+/// it: how it looks, whether it shows, and what it binds. Two parts may share a
+/// name, as a scroll's two bars do, and each is dressed alike. Returns the
+/// first, which is where what @p node holds goes.
+NodeId DressParts(Screen &screen, NodeId control, const ScreenDocument &document, const ScreenNode &node)
+{
+    NodeTree &tree = screen.Tree();
+    const WidgetType *type = tree.WidgetOf(control);
+    NodeId first;
+    // Resolve checked the control has a part by this name.
+    for (std::size_t index = 0; index < type->parts.size(); ++index)
+    {
+        if (type->parts[index].name != node.part.View())
+        {
+            continue;
+        }
+        const NodeId part = tree.Part(control, static_cast<uint8_t>(index));
+        tree.SetLook(part, LookOf(node));
+        tree.SetVisible(part, node.visible);
+        ApplyBindings(screen, part, document, node);
+        first = first ? first : part;
+    }
+    return first;
 }
 
 /// Pushes @p value, what a control holds, through @p push.
@@ -563,6 +623,7 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
 
     LoadedScreen loaded;
     loaded.screen = std::make_unique<Screen>(ui, world, document.traits, document.sortKey, std::string{name});
+    loaded.screen->SetAttach(document.attach);
     for (const Core::InternedString &system : document.systems)
     {
         loaded.systems.emplace_back(system.View());
@@ -587,6 +648,11 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
             // destroyed. The document's first node describes that one.
             id = screen.Root();
             tree.SetLook(id, LookOf(node));
+        }
+        else if (!node.part.Empty())
+        {
+            // Made with its control, which is already here.
+            id = DressParts(screen, ids[node.parent], document, node);
         }
         else
         {
@@ -613,6 +679,12 @@ std::expected<LoadedScreen, ScreenLoadError> InstantiateScreen(Ui &ui, ScreenWor
                 screen.SetPattern(field, std::move((*patterns)[index]), node.check);
                 ApplyTextFieldText(screen, field, document, node, ui);
             }
+        }
+
+        if (!node.part.Empty())
+        {
+            ids.push_back(id);
+            continue;
         }
 
         // Resolve refused any name two nodes carry, and every node on this

@@ -15,6 +15,7 @@
 #include <Assisi/Mondrian/NodeTree.hpp>
 #include <Assisi/Mondrian/Pattern.hpp>
 #include <Assisi/Mondrian/ScreenWorld.hpp>
+#include <Assisi/Mondrian/Target.hpp>
 #include <Assisi/Mondrian/TextEdit.hpp>
 #include <Assisi/Mondrian/Widget.hpp>
 
@@ -27,6 +28,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -120,6 +122,24 @@ enum class ContextMoment : uint8_t
 
 inline constexpr std::size_t kContextMomentCount = static_cast<std::size_t>(ContextMoment::Count_);
 
+/// @brief Where a screen placed at a point sits this frame, as against one laid
+/// across the whole window: the point, in device pixels from the window's
+/// top-left corner, and which point of the screen lands on it.
+///
+/// What the engine moves a screen that follows something in the world with,
+/// every frame, having worked the point out from a camera Mondrian never sees.
+struct ScreenAnchor
+{
+    Point at;
+    /// Across, then down: Start, Center, End of the screen's own box.
+    std::array<Alignment, kAxisCount> attach{Alignment::Center, Alignment::Center};
+    /// Whether the screen is slid back inside the window where the point
+    /// would put any of it outside.
+    bool keepOnScreen = false;
+
+    bool operator==(const ScreenAnchor &) const = default;
+};
+
 class Screen
 {
   public:
@@ -158,6 +178,40 @@ class Screen
     [[nodiscard]] int32_t SortKey() const { return _sortKey; }
     [[nodiscard]] std::string_view Name() const { return _name; }
     [[nodiscard]] bool IsShown() const { return _shown; }
+
+    /// @brief Places this screen at @p at, in device pixels, from the next sync
+    /// on: its root is sized by its own width and height rather than the
+    /// window's, and the point of it its attach names lands on @p at. With
+    /// @p keepOnScreen it is slid back inside the window wherever it would
+    /// leave it. What a screen following something in the world is moved by.
+    void SetAnchor(Point at, bool keepOnScreen);
+    /// @brief Lays the screen across the whole window again.
+    void ClearAnchor() { _anchored = false; }
+    /// @brief Which point of the screen lands on its anchor, across then down.
+    void SetAttach(const std::array<Alignment, kAxisCount> &attach) { _anchor.attach = attach; }
+    /// @brief Where the screen sits this frame, or nothing for one laid across
+    /// the window.
+    [[nodiscard]] std::optional<ScreenAnchor> Anchor() const
+    {
+        return _anchored ? std::optional<ScreenAnchor>{_anchor} : std::nullopt;
+    }
+
+    /// @brief How large this screen is drawn, times the UI's own scale: what
+    /// shrinks a nameplate with its distance. One is as laid out.
+    void SetScale(float scale) { _scale = scale; }
+    [[nodiscard]] float Scale() const { return _scale; }
+
+    /// @brief How much of this screen shows, from 0 to 1, over what each of
+    /// its nodes says: what fades a nameplate with its distance.
+    void SetOpacity(float opacity) { _opacity = opacity; }
+    [[nodiscard]] float Opacity() const { return _opacity; }
+
+    /// @brief Draws this screen into @p target from the next sync on: laid out
+    /// against that target's size, ordered and hidden among the screens on it,
+    /// and never given the keys or the pointer unless the UI is told to use it.
+    /// kWindowTarget puts it back on the window.
+    void SetTarget(TargetId target);
+    [[nodiscard]] TargetId Target() const { return _target; }
 
     /// @brief The queue this screen's controls push every world event into.
     [[nodiscard]] Core::EventQueue &Events() const { return _world.Events(); }
@@ -219,6 +273,21 @@ class Screen
     /// stays as it is, and with nothing to write to the move is dropped. A
     /// stepped slider bound to an enum takes one step per enumerator.
     std::expected<void, BindingError> BindControl(NodeId node, std::string_view binding);
+
+    /// @brief Makes @p attribute of @p node follow the field @p binding names,
+    /// such as `{Team.colour}` for its background, at every sync.
+    ///
+    /// A bound style property is the node's own, so its named style gives way
+    /// and its states' looks go on over it. A bound width or height becomes
+    /// @p length with the field's value in place of its own, so @p length gives
+    /// the unit and the limits. A bound float offset puts each axis of its vec2
+    /// in @p length's unit and ignores its limits. Other attributes ignore
+    /// @p length. A bound sprite or background image is found by name among
+    /// the UI's sheets, and a bound texture is loaded by its asset id; an empty
+    /// name or a nil id shows no picture. Until it has read once, and while
+    /// there is nothing to read, the attribute stays as it was.
+    std::expected<void, BindingError> BindAttribute(NodeId node, BoundAttribute attribute, std::string_view binding,
+                                                    Sizing length = Sizing::Fixed(Px(0.f)));
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -298,13 +367,9 @@ class Screen
     /// the @p axes asked for rather than shrinking its content.
     NodeId AddScroll(NodeId parent, const Style &style, std::array<bool, kAxisCount> axes);
 
-    /// @brief What a slider's ends mean, and how far a key or a button moves it.
+    /// @brief What a slider's ends mean, and how far a key moves it.
     void SetRange(ContinuousSliderId slider, SliderRange range);
     void SetRange(SteppedSliderId slider, SliderRange range);
-
-    /// @brief Whether a slider carries a button at each end to step it.
-    void SetButtons(ContinuousSliderId slider, SliderButtons buttons);
-    void SetButtons(SteppedSliderId slider, SliderButtons buttons);
 
     /// @brief What a slider's ends mean, for whatever draws them.
     [[nodiscard]] SliderRange GetRange(ContinuousSliderId slider) const;
@@ -516,6 +581,19 @@ class Screen
         NodeId node;
     };
 
+    /// An attribute and what it last read, which a read is compared with so the
+    /// node is restyled only when the field changes.
+    struct BoundStyle
+    {
+        BoundField field;
+        AttributeValue shown;
+        /// For a width or height, what it becomes with the field's value in it;
+        /// for a float offset, the unit of each axis.
+        Sizing length;
+        NodeId node;
+        BoundAttribute attribute = BoundAttribute::Background;
+    };
+
     /// The context called @p name, made empty the first time it is asked for.
     Context &ContextNamed(std::string_view name);
 
@@ -525,6 +603,17 @@ class Screen
 
     /// Makes the control @p id show @p value, as code setting it would.
     void ShowValue(NodeId id, const WidgetValue &value);
+
+    /// Where the thumb part of the slider @p slider was placed, as of the last
+    /// Sync; empty when it was not.
+    [[nodiscard]] Rect ThumbRect(NodeId slider) const;
+
+    /// Puts what @p bound last read on its node.
+    void ShowAttribute(const BoundStyle &bound);
+
+    /// Makes @p id show the sprite called @p name, or no picture for an empty
+    /// name or one no sheet the UI has holds, which is said.
+    void ShowSprite(NodeId id, std::string_view name);
 
     /// Fills every binding on this screen from what its contexts hold now.
     /// Called by the UI before it lays the screen out.
@@ -589,15 +678,22 @@ class Screen
     std::vector<BoundText> _boundTexts;
     std::vector<BoundVisible> _boundVisibles;
     std::vector<BoundControl> _boundControls;
+    std::vector<BoundStyle> _boundStyles;
     /// Which show this was, so screens sharing a sort key draw in the order
     /// they were shown. Zero until first shown.
     uint64_t _shownAt = 0;
     /// What had focus when this screen last gave the keys up, restored when it
     /// takes them back.
     NodeId _focused;
+    /// Where it sits when anchored; its attach is kept while it is not.
+    ScreenAnchor _anchor;
     int32_t _sortKey = kSortMenu;
+    float _scale = 1.f;
+    float _opacity = 1.f;
+    TargetId _target = kWindowTarget;
     ScreenTraits _traits;
     bool _shown = false;
+    bool _anchored = false;
 };
 
 } // namespace Assisi::Mondrian

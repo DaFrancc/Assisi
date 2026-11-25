@@ -15,6 +15,8 @@
 
 #include <Assisi/Mondrian/ScreenDocument.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
+
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -50,8 +52,23 @@ ScreenReader SetScreenReader(ScreenReader reader);
 /// @brief The screen at @p vpath, through the installed reader.
 [[nodiscard]] std::expected<ScreenDocument, ScreenReadError> LoadScreenDocument(std::string_view vpath);
 
+/// @brief The same for a screen named by its asset id, as a component naming
+/// one holds it, so a renamed file still loads.
+using ScreenIdReader = std::function<std::expected<ScreenDocument, ScreenReadError>(Core::AssetId id)>;
+
+/// @brief Install the reader every screen load by asset id goes through,
+/// returning the one it replaces, as SetScreenReader does for paths.
+ScreenIdReader SetScreenIdReader(ScreenIdReader reader);
+
+/// @brief The screen @p id names, through the installed id reader.
+[[nodiscard]] std::expected<ScreenDocument, ScreenReadError> LoadScreenDocument(Core::AssetId id);
+
 /// @brief The reader for screens cooked into @p provider.
 [[nodiscard]] std::expected<ScreenDocument, ScreenReadError> ReadCookedScreen(const Core::AssetProvider &provider,
                                                                               std::string_view vpath);
+
+/// @brief The same for the screen @p id names.
+[[nodiscard]] std::expected<ScreenDocument, ScreenReadError> ReadCookedScreen(const Core::AssetProvider &provider,
+                                                                              Core::AssetId id);
 
 } // namespace Assisi::Mondrian

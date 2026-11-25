@@ -70,6 +70,10 @@ struct PlacedGlyph
 struct TextLine
 {
     float width = 0.f;    ///< pen extent, not counting whitespace at its end
+    /// Where the pen ends, from the left edge, counting whitespace at its end:
+    /// where a caret after the line's last character stands. The width again
+    /// for a line wrapping broke, whose closing whitespace a caret skips.
+    float end = 0.f;
     float x = 0.f;        ///< left edge, in whole pixels
     float baseline = 0.f; ///< in whole pixels
     uint32_t first = 0;

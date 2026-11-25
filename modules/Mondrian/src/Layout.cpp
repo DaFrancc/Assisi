@@ -19,6 +19,9 @@ namespace
 /// otherwise chase float dust.
 constexpr float kSizeEpsilon = 1.0e-3f;
 
+/// A part slot no child fills.
+constexpr uint32_t kNoSlot = UINT32_MAX;
+
 /// Where Start, Center and End put something, as a fraction of the free space.
 constexpr std::array<float, static_cast<std::size_t>(Alignment::Count_)> kAlignFactor{0.f, 0.5f, 1.f};
 
@@ -96,6 +99,13 @@ Rect Intersect(const Rect &a, const Rect &b)
     return Rect{.x = left, .y = top, .width = std::max(0.f, right - left), .height = std::max(0.f, bottom - top)};
 }
 
+/// Moves @p rect by @p by.
+void MoveRect(Rect &rect, Point by)
+{
+    rect.x += by.x;
+    rect.y += by.y;
+}
+
 /// @p rect with each edge rounded on its own, so neighbours that share an edge
 /// keep sharing it.
 Rect SnapEdges(const Rect &rect)
@@ -113,9 +123,9 @@ Rect SnapEdges(const Rect &rect)
 class Layouter
 {
   public:
-    Layouter(const NodeTree &tree, LayoutResult &out, const Font *font, Extent viewport)
+    Layouter(const NodeTree &tree, LayoutResult &out, const Font *font, Extent viewport, RootSize rootSize)
         : _slots(tree.Slots()), _widgets(&tree.Widgets()), _out(out), _font(font), _root(tree.Root()),
-          _viewport(viewport), _scale(out.scale)
+          _viewport(viewport), _scale(out.scale), _rootSize(rootSize)
     {
     }
 
@@ -141,6 +151,7 @@ class Layouter
             {
                 node.rect = SnapEdges(node.rect);
                 node.clip = SnapEdges(node.clip);
+                node.outerClip = SnapEdges(node.outerClip);
             }
         }
         ResolveDrawn();
@@ -216,7 +227,7 @@ class Layouter
 
         float &length = Span(result.rect, axis);
         float &least = Component(result.minSize, axis);
-        if (index == _root.index)
+        if (index == _root.index && _rootSize == RootSize::Viewport)
         {
             length = ViewportSide(_viewport, axis);
             least = length;
@@ -247,20 +258,41 @@ class Layouter
     {
         for (uint32_t index = 0; index < _out.nodes.size(); ++index)
         {
-            LayoutNode &result = Result(index);
-            if (!result.placed)
+            if (Result(index).placed)
             {
-                continue;
+                ResolveDrawnOf(index);
             }
-            const Style &style = Slot(index).style;
-            const float side = std::min(result.rect.width, result.rect.height);
-            result.borderWidth = Resolve(style.borderWidth, side, result.textSize);
-            result.cornerRadius = Resolve(style.cornerRadius, side, result.textSize);
-            result.scrollBarMinLength = Resolve(style.scrollBarMinLength, side, result.textSize);
         }
     }
 
-    [[nodiscard]] bool IsInFlow(uint32_t index) const { return !Slot(index).style.floating.enabled; }
+    /// ResolveDrawn for the one node @p index.
+    void ResolveDrawnOf(uint32_t index)
+    {
+        LayoutNode &result = Result(index);
+        const Style &style = Slot(index).style;
+        const float side = std::min(result.rect.width, result.rect.height);
+        result.borderWidth = Resolve(style.borderWidth, side, result.textSize);
+        result.cornerRadius = Resolve(style.cornerRadius, side, result.textSize);
+        result.scrollBarMinLength = Resolve(style.scrollBarMinLength, side, result.textSize);
+        result.shadowOffset = {
+            .x = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::X)], side, result.textSize),
+            .y = Resolve(style.shadowOffset[static_cast<std::size_t>(Axis::Y)], side, result.textSize)};
+        // A negative blur has no meaning; the cook refuses one written.
+        result.shadowBlur = std::max(0.f, Resolve(style.shadowBlur, side, result.textSize));
+        result.shadowSpread = Resolve(style.shadowSpread, side, result.textSize);
+        // Nor a negative outline.
+        result.outlineWidth = std::max(0.f, Resolve(style.outlineWidth, side, result.textSize));
+        result.outlineGap = Resolve(style.outlineGap, side, result.textSize);
+    }
+
+    /// Whether @p index takes space among its siblings: neither floating nor a
+    /// part of its parent, which its parent places.
+    [[nodiscard]] bool IsInFlow(uint32_t index) const
+    {
+        return !Slot(index).style.floating.enabled && Slot(index).part == kNoPart;
+    }
+
+    [[nodiscard]] bool IsPart(uint32_t index) const { return Slot(index).part != kNoPart; }
 
     /// Calls @p visit with the slot of every visible child of @p index, in order.
     template <typename Visit> void ForEachChild(uint32_t index, Visit &&visit) const
@@ -413,6 +445,11 @@ class Layouter
                      {
                          const Sizing &sizing = Slot(child).style.sizing[At(axis)];
                          float &childLength = Span(Result(child).rect, axis);
+                         if (IsPart(child))
+                         {
+                             PartLength(child, axis, space);
+                             return;
+                         }
                          if (!IsInFlow(child))
                          {
                              FloatLength(child, axis, index);
@@ -461,6 +498,18 @@ class Layouter
         if (style.sizing[At(axis)].kind == SizingKind::Grow)
         {
             Span(Result(index).rect, axis) = Clamp(index, axis, anchor);
+        }
+    }
+
+    /// A part's length, against @p space, what its control's padding leaves:
+    /// its `%` are a share of that, and Grow fills it. Its control may change it
+    /// once it places the part.
+    void PartLength(uint32_t index, Axis axis, float space)
+    {
+        SizeFromContent(index, axis, space);
+        if (Slot(index).style.sizing[At(axis)].kind == SizingKind::Grow)
+        {
+            Span(Result(index).rect, axis) = Clamp(index, axis, space);
         }
     }
 
@@ -666,6 +715,7 @@ class Layouter
         LayoutNode &result = Result(index);
         const Rect rect = result.rect;
 
+        result.outerClip = result.clip;
         // A field keeps its text to itself: the line inside it runs on past
         // both ends, and what is off the end of the box must not be drawn over
         // whatever sits beside it.
@@ -722,6 +772,10 @@ class Layouter
                      [&](uint32_t child)
                      {
                          LayoutNode &childResult = Result(child);
+                         if (IsPart(child))
+                         {
+                             return;
+                         }
                          if (!IsInFlow(child))
                          {
                              PlaceFloating(child, index);
@@ -737,8 +791,99 @@ class Layouter
                              (free > 0.f ? free * AlignFactor(style.childAlign[At(cross)]) : 0.f);
                          childResult.clip = childClip;
                      });
+        PlaceParts(index);
 
-        ForEachChild(index, [this](uint32_t child) { Place(child); });
+        // A part its control does not show is placed nowhere, and nor is
+        // anything in it.
+        ForEachChild(index, [this](uint32_t child) { PlaceIfShown(child); });
+    }
+
+    /// Places @p index's children, unless its control placed it nowhere.
+    void PlaceIfShown(uint32_t index)
+    {
+        if (Result(index).placed)
+        {
+            Place(index);
+        }
+    }
+
+    /// Has @p index's control put each of its parts where it goes, from the
+    /// size each part's own style gave it. A part whose size the control
+    /// changed lays what it holds out again against its new size; one the
+    /// control does not show is placed nowhere, with everything in it.
+    void PlaceParts(uint32_t index)
+    {
+        const Node &node = Slot(index);
+        const WidgetType *widget = _widgets->Get(node.behaviour);
+        if (widget == nullptr || widget->parts.empty())
+        {
+            return;
+        }
+        // What the control reads of its own box, a scroll bar's least length,
+        // ahead of the rest of the tree's.
+        ResolveDrawnOf(index);
+        const LayoutNode &result = Result(index);
+        std::array<PartPlace, kMaxWidgetParts> places{};
+        std::array<uint32_t, kMaxWidgetParts> slots{};
+        slots.fill(kNoSlot);
+        for (NodeId child = node.firstChild; child; child = Slot(child.index).nextSibling)
+        {
+            const uint8_t part = Slot(child.index).part;
+            if (Slot(child.index).visible && part < widget->parts.size())
+            {
+                slots[part] = child.index;
+                places[part].rect = Rect{.x = result.rect.x + result.padding.left,
+                                         .y = result.rect.y + result.padding.top,
+                                         .width = Result(child.index).rect.width,
+                                         .height = Result(child.index).rect.height};
+            }
+        }
+        if (widget->place != nullptr)
+        {
+            WidgetView view;
+            view.node = &node;
+            view.layout = &result;
+            view.context = widget->context;
+            view.scale = _scale;
+            view.id = NodeId{.index = index, .generation = node.generation};
+            widget->place(view, std::span<PartPlace>{places.data(), widget->parts.size()});
+        }
+        for (std::size_t part = 0; part < widget->parts.size(); ++part)
+        {
+            if (slots[part] != kNoSlot)
+            {
+                PutPart(slots[part], places[part], result.clip);
+            }
+        }
+    }
+
+    /// Puts the part in slot @p index where @p place says, clipped to @p clip,
+    /// what its control is clipped to.
+    void PutPart(uint32_t index, const PartPlace &place, const Rect &clip)
+    {
+        LayoutNode &result = Result(index);
+        if (!place.shown)
+        {
+            Unplace(index);
+            return;
+        }
+        const bool resized = place.rect.width != result.rect.width || place.rect.height != result.rect.height;
+        result.rect = place.rect;
+        result.clip = clip;
+        if (resized)
+        {
+            for (const Axis axis : kAxes)
+            {
+                DistributeAxis(index, axis);
+            }
+        }
+    }
+
+    /// Marks @p index and everything under it as placed nowhere.
+    void Unplace(uint32_t index)
+    {
+        Result(index).placed = false;
+        ForEachChild(index, [this](uint32_t child) { Unplace(child); });
     }
 
     /// Lands a floating node's attach point on its anchor point, then offsets it.
@@ -766,6 +911,7 @@ class Layouter
     NodeId _root;
     Extent _viewport;
     float _scale;
+    RootSize _rootSize;
 };
 
 } // namespace
@@ -805,6 +951,26 @@ float TextWrapWidth(const LayoutNode &placed)
     return std::max(1.f, std::ceil(space));
 }
 
+std::array<Rect, kMaxWidgetParts> PartRects(const NodeTree &tree, const LayoutResult &layout, NodeId control)
+{
+    std::array<Rect, kMaxWidgetParts> rects{};
+    const Node *node = tree.Get(control);
+    if (node == nullptr)
+    {
+        return rects;
+    }
+    for (NodeId child = node->firstChild; child; child = tree.Get(child)->nextSibling)
+    {
+        const uint8_t part = tree.Get(child)->part;
+        const LayoutNode *placed = layout.Get(child);
+        if (part < kMaxWidgetParts && placed != nullptr)
+        {
+            rects[part] = placed->rect;
+        }
+    }
+    return rects;
+}
+
 Point TextOrigin(const LayoutNode &placed)
 {
     return {.x = std::round(placed.rect.x + placed.padding.left) - placed.textScroll,
@@ -821,7 +987,8 @@ const LayoutNode *LayoutResult::Get(NodeId id) const
     return node.placed && node.generation == id.generation ? &node : nullptr;
 }
 
-void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out)
+void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Font *font, LayoutResult &out,
+                   RootSize root)
 {
     ASSISI_ASSERT(scale > 0.f && Math::IsFinite(scale), "ComputeLayout needs a positive, finite scale");
 
@@ -829,7 +996,22 @@ void ComputeLayout(const NodeTree &tree, Extent viewport, float scale, const Fon
     out.texts.clear();
     out.scale = scale;
 
-    Layouter(tree, out, font, viewport).Run();
+    Layouter(tree, out, font, viewport, root).Run();
+}
+
+void MoveLayout(LayoutResult &layout, Point by)
+{
+    // Whole pixels, so the edges layout snapped stay snapped.
+    const Point whole{.x = std::round(by.x), .y = std::round(by.y)};
+    for (LayoutNode &node : layout.nodes)
+    {
+        if (node.placed)
+        {
+            MoveRect(node.rect, whole);
+            MoveRect(node.clip, whole);
+            MoveRect(node.outerClip, whole);
+        }
+    }
 }
 
 } // namespace Assisi::Mondrian

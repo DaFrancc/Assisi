@@ -13,6 +13,8 @@
 #include <Assisi/Mondrian/Font.hpp>
 #include <Assisi/Render/Texture.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
+
 #include <nvrhi/nvrhi.h>
 
 #include <cstdint>
@@ -26,10 +28,16 @@ namespace Assisi::Mondrian::Engine
 class QuadPass
 {
 public:
-    /// @brief Builds the pipeline against @p framebufferInfo, which every
-    /// framebuffer later handed to Draw must match, and the white texture every
-    /// untextured draw samples. False, logged, when any of it cannot be built.
+    /// @brief Builds the pipeline against @p framebufferInfo, the window's, and
+    /// the white texture every untextured draw samples. False, logged, when any
+    /// of it cannot be built. A framebuffer of another format, such as a
+    /// picture shown on a surface in the world, gets a pipeline of its own the
+    /// first time it is drawn into.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo);
+
+    /// @brief Starts a frame's draws over: each Draw after it writes its quads
+    /// after the last one's, so several may share a command list.
+    void BeginFrame() { _instanceCursor = 0; }
 
     /// @brief Makes @p texture drawable by the UI and returns its id. The pass
     /// holds a reference until Shutdown.
@@ -42,9 +50,8 @@ public:
     /// @brief Records @p drawList into @p framebuffer. A no-op before a
     /// successful Initialize and for an empty list.
     ///
-    /// Rewrites one instance buffer, so it may run once per command list: a
-    /// second Draw on the same list would overwrite instances the first has not
-    /// drawn yet.
+    /// Its quads go after those of every Draw since BeginFrame, in one instance
+    /// buffer, so no Draw overwrites quads an earlier one has not drawn yet.
     void Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, const DrawList &drawList);
 
     /// @brief Releases every GPU handle. Must run before the device is destroyed.
@@ -59,8 +66,17 @@ private:
         Count_
     };
 
+    /// One pipeline, and the format of the target it draws into.
+    struct Pipeline
+    {
+        nvrhi::GraphicsPipelineHandle pipeline;
+        nvrhi::Format format = nvrhi::Format::UNKNOWN;
+    };
+
     [[nodiscard]] bool BuildLayouts();
-    [[nodiscard]] bool BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
+    /// The pipeline for @p framebufferInfo's format, built the first time it is
+    /// asked for; null, logged, when it cannot be built.
+    [[nodiscard]] nvrhi::IGraphicsPipeline *PipelineFor(const nvrhi::FramebufferInfo &framebufferInfo);
 
     /// Grows the instance buffer to hold at least @p instanceCount, rebuilding
     /// the one binding set that names it. False on a failed allocation.
@@ -71,7 +87,8 @@ private:
     nvrhi::ShaderHandle _pixelShader;
     nvrhi::BindingLayoutHandle _instanceLayout;
     nvrhi::BindingLayoutHandle _textureLayout;
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    /// One per target format drawn into: the window's, and a picture's.
+    std::vector<Pipeline> _pipelines;
     nvrhi::SamplerHandle _sampler;
 
     nvrhi::BufferHandle _instanceBuffer;
@@ -84,10 +101,8 @@ private:
     Render::Texture _white;
 
     uint32_t _instanceCapacity = 0;
-
-    /// Whether the target encodes sRGB on write, so the shader decodes display
-    /// colours first and the encode restores them.
-    bool _encodeSrgb = false;
+    /// Where the next Draw writes its quads, counted in quads.
+    uint32_t _instanceCursor = 0;
 };
 
 /// @brief Uploads @p font's atlas as a single-channel texture for Glyph quads to
@@ -104,5 +119,10 @@ void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device);
 /// cannot be loaded.
 [[nodiscard]] std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device,
                                                     std::string_view vpath);
+
+/// @brief The same for the image @p id names, such as a field a texture is
+/// bound to holds.
+[[nodiscard]] std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device,
+                                                    Core::AssetId id);
 
 } // namespace Assisi::Mondrian::Engine

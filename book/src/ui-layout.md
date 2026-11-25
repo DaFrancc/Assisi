@@ -20,7 +20,7 @@ A few attributes measure `%` and `em` against something else:
 | Attribute | `%` is of | `em` is of |
 |---|---|---|
 | `text_size` | The parent's text size | The parent's text size |
-| `border_width`, `corner_radius` | The element's own shorter side | The element's text size |
+| `border_width`, `corner_radius`, `shadow_offset`, `shadow_blur`, `shadow_spread` | The element's own shorter side | The element's text size |
 | `float_offset` | The element it floats against | The element's text size |
 
 There is no `px` suffix: a bare number already is one. `5px`, `5 %` (with a
@@ -96,6 +96,30 @@ which scale they're on: `1 1 1` is white on a 0–1 scale and nearly black on a
 0–255 scale. A channel outside its call's range also fails, with a message
 naming the call that takes that range.
 
+## Outlines
+
+An **outline** is a line drawn around an element, outside its edge. Unlike a
+border it takes no room, so adding one moves nothing. It is drawn over
+everything else on the screen, so a neighbour never covers it.
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `outline_width` | a length | How thick it is. `0`, the default, draws none. |
+| `outline_color` | colour | Its colour. |
+| `outline_gap` | a length | How far outside the element's edge it starts. |
+
+An outline follows the element's corners. Its main use is the **focus ring**,
+the line that shows which control the keys are on. Every built-in control has
+one in its `focused` state: 3 pixels wide, 3 pixels out, in white. Change it,
+or write `focused:outline_width="0"` to remove it:
+
+```xml
+<button focused:outline_color="#ffd23c" focused:outline_width="2">Resume</button>
+```
+
+To change the ring on every control at once, put it in the
+[theme's style for each kind of control](ui-themes.md#styles-for-each-kind-of-control).
+
 ## Images
 
 | Attribute | Values | Meaning |
@@ -105,6 +129,60 @@ naming the call that takes that range.
 | `fit` | `stretch`, `contain`, `cover` | How the element's picture fills the space inside its padding. |
 
 See [Images](ui-images.md) for sprites, pictures and frames.
+
+## Fading
+
+`opacity` fades an element and everything inside it. It is a number from 0,
+which shows nothing, to 1, the default, which shows everything:
+
+```xml
+<column opacity="0.5" padding="16" background="#1a1c24">
+  <text>Half faded, words and all</text>
+</column>
+```
+
+Opacity multiplies down the tree: a text at `opacity="0.5"` inside a panel at
+`0.5` shows at a quarter. Each part fades on its own, so where two children
+overlap, the one underneath shows through the one on top. To fade only an
+element's own background and keep what is inside it solid, give the
+background colour an alpha instead, such as `#1a1c2480`.
+
+An element at `opacity="0"` draws nothing, but it still takes its space and
+can still be clicked. To remove it, use `visible="false"`.
+
+## Shadows and glows
+
+An element can cast one shadow, drawn under it and following its corners,
+square, rounded or cut:
+
+```xml
+<button corner_radius="12" corner_style="rounded" background="#2a2e3a"
+        shadow_color="rgbf(0, 0, 0, 0.5)" shadow_offset="0 6" shadow_blur="16">Play</button>
+```
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `shadow_color` | colour | The shadow's colour. A fully clear colour (alpha 0), the default, draws no shadow. |
+| `shadow_offset` | two lengths, `x y` | How far the shadow is moved from the element: right, then down. |
+| `shadow_blur` | a length, not negative | How soft the shadow's edge is: it fades over about this far on each side of where a hard edge would be. `0` gives a hard edge. |
+| `shadow_spread` | a length | How much bigger than the element the shadow is on every side. Negative makes it smaller. |
+
+A **glow** is a shadow with no offset, in a bright colour:
+
+```xml
+<button shadow_color="#ffd84d" shadow_blur="12" hover:shadow_blur="20">Ready</button>
+```
+
+The whole shadow is drawn under the element, so it shows through a background
+or frame that is partly see-through. Give an element with a shadow a solid
+background.
+
+`%` in these lengths is of the element's own shorter side, as for
+`border_width`. Like every attribute on this page, they take states, so a
+button can lift further while hovered, and they can come from a theme's
+tokens.
+
+The F9 tuning panel in the sandbox, `assets/ui/Tuning.amdn`, casts a shadow.
 
 ## Text
 
@@ -131,7 +209,7 @@ parent — a badge on a corner, for example.
 | `float_target` | `parent`, `root` | What it is placed against: its parent, or the whole screen. |
 | `float_anchor` | two alignment words | The point on the target to attach to. |
 | `float_attach` | two alignment words | The point on the element that goes on the anchor. |
-| `float_offset` | two lengths, `x y` | A further shift after attaching. |
+| `float_offset` | two lengths, `x y`, or a binding | A further shift after attaching. A binding lets game code move the element every frame: see [Positions](ui-bindings.md#positions). |
 | `float_clip` | `true`, `false` | Whether the parent's edges clip it. |
 
 ## Scrolling
@@ -160,8 +238,9 @@ and moves:
 ## States
 
 An element can look different while the player is pointing at it, holding it
-down or has moved to it with the keys, and while it is disabled. Write the
-attribute again with the state in front of it and a `:` between them:
+down or has moved to it with the keys, while it is disabled, and while a toggle
+is on. Write the attribute again with the state in front of it and a `:`
+between them:
 
 ```xml
 <button background="#222222" hover:background="#e63319"
@@ -170,6 +249,7 @@ attribute again with the state in front of it and a `:` between them:
 
 | State | Holds while |
 |---|---|
+| `on` | The element is a toggle that is switched on. |
 | `focused` | The keys act on the element: the player moved to it with the arrow keys or Tab. |
 | `hover` | The pointer is over the element, or over anything inside it. |
 | `pressed` | The player is holding the element down, or holding a control inside it. Only a control can be held: a press on a `<text>` presses nothing. |
@@ -190,15 +270,18 @@ light up while the pointer is anywhere over it:
 ```
 
 When more than one state holds and they change the same attribute, the one
-lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`, and
-`hover` over `focused`. A disabled button looks disabled even with the pointer
-on it, and a button being held shows its pressed look rather than its hover
-look.
+lower in the table wins: `disabled` over `pressed`, `pressed` over `hover`,
+`hover` over `focused`, and `focused` over `on`. A disabled button looks
+disabled even with the pointer on it, and a button being held shows its
+pressed look rather than its hover look.
 
-`focused` shows only while the player is using the keys, as the focus ring
-does. Clicking a button gives it focus without showing it. A text field is the
-exception: it shows `focused` however it got focus, because the player is
-typing into it.
+`focused` shows only while the player is using the keys. Clicking a button
+gives it focus without showing it, so its focus ring stays hidden. A text field
+is the exception: it shows `focused`, ring included, however it got focus,
+because the player is typing into it.
+
+A control's [parts](ui-controls.md#parts) are in whatever states their control
+is in.
 
 A state that changes a size or spacing moves the elements around it, as the
 same attribute would without a state. A button that grows on hover pushes its

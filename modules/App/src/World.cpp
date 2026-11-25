@@ -8,6 +8,7 @@
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Mondrian/ScreenLoader.hpp>
 #include <Assisi/Mondrian/ScreenReader.hpp>
+#include <Assisi/Mondrian/Ui.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
@@ -100,6 +101,7 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
     // asked is what a programmer has to go and fix.
     const std::string context(screen->Name());
     world.screenStack.push_back(World::Screen{.systems = std::vector<std::string>(systems.begin(), systems.end()),
+                                              .target = {},
                                               .screen = std::move(screen),
                                               .id = ScreenId{++world.lastScreenId}});
     if (!world.screenStack.back().systems.empty())
@@ -109,13 +111,16 @@ Mondrian::Screen &AddScreen(World &world, std::unique_ptr<Mondrian::Screen> scre
     return *world.screenStack.back().screen;
 }
 
-Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath)
+namespace
 {
-    const std::expected<Mondrian::ScreenDocument, Mondrian::ScreenReadError> document =
-        Mondrian::LoadScreenDocument(vpath);
+
+/// @p document, read for the screen called @p name, built into @p world.
+Mondrian::Screen *BuildScreen(World &world, Mondrian::Ui &ui, std::string_view name,
+                              const std::expected<Mondrian::ScreenDocument, Mondrian::ScreenReadError> &document)
+{
     if (!document)
     {
-        Core::Log::Error("World: the screen '{}' did not load ({}).", vpath, Mondrian::ToString(document.error()));
+        Core::Log::Error("World: the screen '{}' did not load ({}).", name, Mondrian::ToString(document.error()));
         return nullptr;
     }
 
@@ -123,10 +128,10 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     // checked this file against. Reached for here rather than inside Mondrian,
     // which knows nothing of game types and should not start.
     std::expected<Mondrian::LoadedScreen, Mondrian::ScreenLoadError> loaded =
-        Mondrian::InstantiateScreen(ui, world.screenWorld, vpath, *document, Core::EventCatalog::Instance());
+        Mondrian::InstantiateScreen(ui, world.screenWorld, name, *document, Core::EventCatalog::Instance());
     if (!loaded)
     {
-        Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", vpath,
+        Core::Log::Error("World: the screen '{}' {}. The package is older than this build.", name,
                          Mondrian::ToString(loaded.error()));
         return nullptr;
     }
@@ -134,9 +139,71 @@ Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vp
     return &AddScreen(world, std::move(loaded->screen), loaded->systems);
 }
 
+} // namespace
+
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, std::string_view vpath)
+{
+    return BuildScreen(world, ui, vpath, Mondrian::LoadScreenDocument(vpath));
+}
+
+Mondrian::Screen *LoadScreen(World &world, Mondrian::Ui &ui, Core::AssetId id)
+{
+    return BuildScreen(world, ui, id.ToString(), Mondrian::LoadScreenDocument(id));
+}
+
 void RemoveScreen(World &world, Mondrian::Screen &screen)
 {
     std::erase_if(world.screenStack, [&screen](const World::Screen &held) { return held.screen.get() == &screen; });
+}
+
+void SetScreenOwner(World &world, ScreenId id, ECS::Entity owner)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    if (at != world.screenStack.end())
+    {
+        at->owner = owner;
+    }
+}
+
+void RemoveOrphanedScreens(World &world)
+{
+    std::erase_if(world.screenStack, [&world](const World::Screen &held)
+                  { return held.owner != ECS::NullEntity && !world.scene.IsAlive(held.owner); });
+}
+
+Mondrian::TargetId DrawScreenInto(World &world, Mondrian::Ui &ui, ScreenId id, Mondrian::Extent size)
+{
+    const std::vector<World::Screen>::iterator at = std::ranges::find(world.screenStack, id, &World::Screen::id);
+    if (at == world.screenStack.end() || at->screen == nullptr)
+    {
+        return Mondrian::kWindowTarget;
+    }
+    const Mondrian::TargetId target = ui.AddTarget(size);
+    at->screen->SetTarget(target);
+    at->target = OwnedTarget{ui, target};
+    return target;
+}
+
+OwnedTarget &OwnedTarget::operator=(OwnedTarget &&other) noexcept
+{
+    if (this != &other)
+    {
+        if (_ui != nullptr)
+        {
+            _ui->RemoveTarget(_target);
+        }
+        _ui = std::exchange(other._ui, nullptr);
+        _target = std::exchange(other._target, Mondrian::kWindowTarget);
+    }
+    return *this;
+}
+
+OwnedTarget::~OwnedTarget()
+{
+    if (_ui != nullptr)
+    {
+        _ui->RemoveTarget(_target);
+    }
 }
 
 Mondrian::Screen *FindScreen(World &world, std::string_view name)
@@ -841,7 +908,8 @@ void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
     for (const ECS::Entity entity : entities)
     {
         if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
-            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache);
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache,
+                                               world.scene.Get<Runtime::SurfaceTexture>(entity));
     }
 }
 

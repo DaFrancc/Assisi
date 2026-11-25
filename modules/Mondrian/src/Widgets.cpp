@@ -4,6 +4,7 @@
 #include <Assisi/Mondrian/Widget.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <variant>
 
@@ -12,10 +13,17 @@ namespace Assisi::Mondrian
 namespace
 {
 
-/// The built-ins' own look, until themes decide it.
+/// The built-ins' own look, which their parts wear until a theme or a screen
+/// says otherwise.
 constexpr Math::Color4<Math::ColorSpace::Srgb> kTrackColor{0.24f, 0.26f, 0.32f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kFillColor{0.90f, 0.20f, 0.10f, 1.f};
 constexpr Math::Color4<Math::ColorSpace::Srgb> kKnobColor{0.92f, 0.93f, 0.96f, 1.f};
+
+/// The ring every built-in control wears while it has the keys: how thick, how
+/// far out from its edge, in UI pixels, and its colour.
+constexpr float kFocusRingWidth = 3.f;
+constexpr float kFocusRingGap = 3.f;
+constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
 
 /// Sizes in UI pixels.
 constexpr float kToggleWidth = 56.f;
@@ -25,12 +33,9 @@ constexpr float kSliderHeight = 28.f;
 constexpr float kSliderTrackHeight = 6.f;
 constexpr float kSliderThumbWidth = 16.f;
 
-/// A slider's end buttons: how far they sit from its track, how round they are,
-/// and the marks across them, all in UI pixels.
-constexpr float kSliderButtonGap = 6.f;
-constexpr float kSliderButtonRadius = 6.f;
-constexpr float kSliderMarkLength = 12.f;
-constexpr float kSliderMarkThickness = 2.f;
+/// How round a part's corners are: half its shorter side, which makes a pill
+/// of a long part and a circle of a square one.
+constexpr Length kPillCorners = Percent(50.f);
 
 /// How far one notch of the wheel scrolls, in UI pixels, and how far one
 /// press of a key does.
@@ -39,6 +44,37 @@ constexpr float kScrollKeyStep = 40.f;
 
 /// How wide the bar showing where a scrolling node is sits, in UI pixels.
 constexpr float kScrollBarThickness = 6.f;
+
+/// Each built-in's parts, by where they sit in its list.
+enum class TogglePart : uint8_t
+{
+    Track,
+    Knob,
+    Count_
+};
+
+enum class SliderPart : uint8_t
+{
+    Track,
+    Fill,
+    Thumb,
+    Count_
+};
+
+/// A scroll's two bars, across first, each a track and a thumb.
+enum class ScrollPart : uint8_t
+{
+    AcrossTrack,
+    AcrossThumb,
+    DownTrack,
+    DownThumb,
+    Count_
+};
+
+template <typename Part> constexpr std::size_t At(Part part)
+{
+    return static_cast<std::size_t>(part);
+}
 
 /// @p value as a fraction, or zero when the node holds something else.
 float Fraction(const WidgetValue &value)
@@ -53,32 +89,148 @@ bool Switched(const WidgetValue &value)
     return held != nullptr && *held;
 }
 
-/// Whether @p point is on @p rect, which a bar or a button is pressed by.
+/// Whether @p point is on @p rect, which a bar is pressed by.
 bool Covers(const Rect &rect, Point point)
 {
     return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
 }
 
-/// The part of @p rect a slider's thumb slides along, in device pixels.
-float ThumbTravel(const Rect &rect, float scale)
+/// What @p view's padding leaves of its control's box: where its parts go.
+Rect ContentBox(const WidgetView &view)
 {
-    return std::max(0.f, rect.width - (kSliderThumbWidth * scale));
+    const Rect &rect = view.layout->rect;
+    const Insets &padding = view.layout->padding;
+    return {.x = rect.x + padding.left,
+            .y = rect.y + padding.top,
+            .width = std::max(0.f, rect.width - padding.left - padding.right),
+            .height = std::max(0.f, rect.height - padding.top - padding.bottom)};
 }
+
+/// Where a part @p height tall sits to be centred down @p box.
+float CentredDown(const Rect &box, float height)
+{
+    return box.y + ((box.height - height) / 2.f);
+}
+
+// -----------------------------------------------------------------------------
+// Default looks
+// -----------------------------------------------------------------------------
+
+/// A part's resting look: @p width by @p height, filled with @p fill, its
+/// corners rounded to a pill.
+StylePatch PillLook(Sizing width, Sizing height, const Math::Color4<Math::ColorSpace::Srgb> &fill)
+{
+    Style style;
+    style.sizing = {width, height};
+    style.background = fill;
+    style.cornerRadius = kPillCorners;
+    style.cornerStyle = CornerStyle::Rounded;
+    StylePatch look;
+    for (const StyleProperty property : {StyleProperty::Width, StyleProperty::Height, StyleProperty::Background,
+                                         StyleProperty::CornerRadius, StyleProperty::CornerStyle})
+    {
+        look.Take(property, style);
+    }
+    return look;
+}
+
+/// A look for @p state that changes only the background, to @p fill.
+StylePatch FilledWhen(StyleState state, const Math::Color4<Math::ColorSpace::Srgb> &fill)
+{
+    Style style;
+    style.background = fill;
+    StylePatch look;
+    look.state = state;
+    look.Take(StyleProperty::Background, style);
+    return look;
+}
+
+/// A ring around a control while it has the keys.
+DefaultLook FocusRinged()
+{
+    Style ring;
+    ring.outlineWidth = Px(kFocusRingWidth);
+    ring.outlineGap = Px(kFocusRingGap);
+    ring.outlineColor = kFocusRingColor;
+    StylePatch focused;
+    focused.state = StyleState::Focused;
+    focused.Take(StyleProperty::OutlineWidth, ring);
+    focused.Take(StyleProperty::OutlineGap, ring);
+    focused.Take(StyleProperty::OutlineColor, ring);
+    return DefaultLook{.resting = {}, .states = {focused}};
+}
+
+/// How every built-in control looks of itself.
+const DefaultLook &ControlLook()
+{
+    static const DefaultLook look = FocusRinged();
+    return look;
+}
+
+/// A toggle's parts: a track that fills while it is on, and the knob that
+/// slides along it.
+std::span<const WidgetPart> ToggleParts()
+{
+    static const std::array<WidgetPart, At(TogglePart::Count_)> parts{{
+        {.name = "track",
+         .look = {.resting = PillLook(Sizing::Grow(), Sizing::Grow(), kTrackColor),
+                  .states = {FilledWhen(StyleState::On, kFillColor)}}},
+        {.name = "knob",
+         .look = {.resting = PillLook(Sizing::Fixed(Px(kToggleHeight)), Sizing::Fixed(Px(kToggleHeight)), kKnobColor),
+                  .states = {}}},
+    }};
+    return parts;
+}
+
+/// A slider's parts: its track, the share of it behind the thumb, and the thumb.
+std::span<const WidgetPart> SliderParts()
+{
+    static const std::array<WidgetPart, At(SliderPart::Count_)> parts{{
+        {.name = "track",
+         .look = {.resting = PillLook(Sizing::Grow(), Sizing::Fixed(Px(kSliderTrackHeight)), kTrackColor),
+                  .states = {}}},
+        // As wide as the slider makes it.
+        {.name = "fill",
+         .look = {.resting = PillLook(Sizing::Fixed(Px(0.f)), Sizing::Fixed(Px(kSliderTrackHeight)), kFillColor),
+                  .states = {}}},
+        {.name = "thumb",
+         .look = {.resting = PillLook(Sizing::Fixed(Px(kSliderThumbWidth)), Sizing::Grow(), kKnobColor),
+                  .states = {}}},
+    }};
+    return parts;
+}
+
+/// A scroll's parts: a track and a thumb for each bar, sized by the scroll.
+std::span<const WidgetPart> ScrollParts()
+{
+    static const std::array<WidgetPart, At(ScrollPart::Count_)> parts{{
+        {.name = "track", .look = {.resting = PillLook(Sizing::Fit(), Sizing::Fit(), kTrackColor), .states = {}}},
+        {.name = "thumb", .look = {.resting = PillLook(Sizing::Fit(), Sizing::Fit(), kKnobColor), .states = {}}},
+        {.name = "track", .look = {.resting = PillLook(Sizing::Fit(), Sizing::Fit(), kTrackColor), .states = {}}},
+        {.name = "thumb", .look = {.resting = PillLook(Sizing::Fit(), Sizing::Fit(), kKnobColor), .states = {}}},
+    }};
+    return parts;
+}
+
+// -----------------------------------------------------------------------------
+// Toggle
+// -----------------------------------------------------------------------------
 
 Point MeasureToggle(const Node & /*node*/, void * /*context*/)
 {
     return {.x = kToggleWidth, .y = kToggleHeight};
 }
 
-void DrawToggle(const WidgetView &view, DrawList &list)
+/// The track down the middle, and the knob at the end the toggle is switched to.
+void PlaceToggle(const WidgetView &view, std::span<PartPlace> parts)
 {
-    const Rect &rect = view.layout->rect;
-    const bool on = Switched(view.node->value);
-    const float knob = rect.height;
-    list.Quad(rect).Fill(on ? kFillColor : kTrackColor).Corners(rect.height / 2.f, CornerStyle::Rounded);
-    list.Quad(Rect{.x = on ? rect.x + rect.width - knob : rect.x, .y = rect.y, .width = knob, .height = knob})
-        .Fill(kKnobColor)
-        .Corners(knob / 2.f, CornerStyle::Rounded);
+    const Rect box = ContentBox(view);
+    Rect &track = parts[At(TogglePart::Track)].rect;
+    track.x = box.x;
+    track.y = CentredDown(box, track.height);
+    Rect &knob = parts[At(TogglePart::Knob)].rect;
+    knob.x = Switched(view.node->value) ? box.x + box.width - knob.width : box.x;
+    knob.y = CentredDown(box, knob.height);
 }
 
 WidgetResponse ToggleInput(const WidgetView & /*view*/, Node &node, const WidgetEvent &event)
@@ -91,6 +243,10 @@ WidgetResponse ToggleInput(const WidgetView & /*view*/, Node &node, const Widget
     node.value = !Switched(node.value);
     return WidgetResponse::Changed;
 }
+
+// -----------------------------------------------------------------------------
+// Sliders
+// -----------------------------------------------------------------------------
 
 Point MeasureSlider(const Node & /*node*/, void * /*context*/)
 {
@@ -118,125 +274,49 @@ float StepFraction(const Node &node)
     return node.steps > 1 ? static_cast<float>(Step(node.value)) / static_cast<float>(node.steps - 1) : 0.f;
 }
 
-/// Where a slider's parts sit: its track, and the buttons at either end when it
-/// carries them.
-struct SliderParts
+/// How far along its box a slider's thumb, @p thumb device pixels wide, may move.
+float ThumbTravel(const Rect &box, float thumb)
 {
-    Rect decrement;
-    Rect increment;
-    Rect track;
-    bool buttoned = false;
-};
-
-SliderParts PlaceSlider(const WidgetView &view)
-{
-    const Rect &rect = view.layout->rect;
-    SliderParts parts;
-    parts.buttoned = view.node->sliderButtons == SliderButtons::Shown;
-    if (!parts.buttoned)
-    {
-        parts.track = rect;
-        return parts;
-    }
-    // Square ends, so a button is as tall as the slider and no wider.
-    const float side = std::min(rect.height, rect.width / 2.f);
-    parts.decrement = Rect{.x = rect.x, .y = rect.y, .width = side, .height = rect.height};
-    parts.increment = Rect{.x = rect.x + rect.width - side, .y = rect.y, .width = side, .height = rect.height};
-    parts.track = Rect{.x = rect.x + side + (kSliderButtonGap * view.scale),
-                       .y = rect.y,
-                       .width = std::max(0.f, rect.width - (2.f * (side + (kSliderButtonGap * view.scale)))),
-                       .height = rect.height};
-    return parts;
+    return std::max(0.f, box.width - thumb);
 }
 
-/// Draws one end button, with a bar across it and, when it adds, one down it.
-void DrawSliderButton(DrawList &list, const Rect &rect, float scale, bool adds)
+/// The track down the middle of the box, the thumb @p fraction of the way along
+/// it, and the fill from the start up to the thumb's middle.
+void PlaceSliderAt(const WidgetView &view, std::span<PartPlace> parts, float fraction)
 {
-    const float mark = kSliderMarkLength * scale;
-    const float thickness = kSliderMarkThickness * scale;
-    const Point centre{.x = rect.x + (rect.width / 2.f), .y = rect.y + (rect.height / 2.f)};
+    const Rect box = ContentBox(view);
+    Rect &track = parts[At(SliderPart::Track)].rect;
+    Rect &fill = parts[At(SliderPart::Fill)].rect;
+    Rect &thumb = parts[At(SliderPart::Thumb)].rect;
+    const float travel = ThumbTravel(box, thumb.width);
 
-    list.Quad(rect).Fill(kTrackColor).Corners(kSliderButtonRadius * scale, CornerStyle::Rounded);
-    list.Quad(Rect{.x = std::round(centre.x - (mark / 2.f)),
-                   .y = std::round(centre.y - (thickness / 2.f)),
-                   .width = mark,
-                   .height = thickness})
-        .Fill(kKnobColor);
-    if (adds)
-    {
-        list.Quad(Rect{.x = std::round(centre.x - (thickness / 2.f)),
-                       .y = std::round(centre.y - (mark / 2.f)),
-                       .width = thickness,
-                       .height = mark})
-            .Fill(kKnobColor);
-    }
+    track.x = box.x;
+    track.y = CentredDown(box, track.height);
+    fill.x = box.x;
+    fill.y = CentredDown(box, fill.height);
+    fill.width = std::round((travel * fraction) + (thumb.width / 2.f));
+    thumb.x = std::round(box.x + (travel * fraction));
+    thumb.y = CentredDown(box, thumb.height);
 }
 
-/// Draws a slider's track, the part of it behind the thumb, the thumb @p
-/// fraction of the way along, and its buttons when it has them.
-void DrawSliderAt(const WidgetView &view, DrawList &list, float fraction)
+void PlaceContinuousSlider(const WidgetView &view, std::span<PartPlace> parts)
 {
-    const SliderParts parts = PlaceSlider(view);
-    const Rect &track = parts.track;
-    const float thumb = kSliderThumbWidth * view.scale;
-    const float trackHeight = kSliderTrackHeight * view.scale;
-    const float trackY = std::round(track.y + ((track.height - trackHeight) / 2.f));
-    const float travel = ThumbTravel(track, view.scale);
-
-    list.Quad(Rect{.x = track.x, .y = trackY, .width = track.width, .height = trackHeight})
-        .Fill(kTrackColor)
-        .Corners(trackHeight / 2.f, CornerStyle::Rounded);
-    list
-        .Quad(Rect{
-            .x = track.x, .y = trackY, .width = std::round((travel * fraction) + (thumb / 2.f)), .height = trackHeight})
-        .Fill(kFillColor)
-        .Corners(trackHeight / 2.f, CornerStyle::Rounded);
-    list.Quad(
-            Rect{.x = std::round(track.x + (travel * fraction)), .y = track.y, .width = thumb, .height = track.height})
-        .Fill(kKnobColor)
-        .Corners(thumb / 2.f, CornerStyle::Rounded);
-
-    if (parts.buttoned)
-    {
-        DrawSliderButton(list, parts.decrement, view.scale, false);
-        DrawSliderButton(list, parts.increment, view.scale, true);
-    }
+    PlaceSliderAt(view, parts, ContinuousFraction(*view.node));
 }
 
-/// How far along its track the pointer is, from 0 to 1, with the thumb's centre
+void PlaceSteppedSlider(const WidgetView &view, std::span<PartPlace> parts)
+{
+    PlaceSliderAt(view, parts, StepFraction(*view.node));
+}
+
+/// How far along its box the pointer is, from 0 to 1, with the thumb's middle
 /// under it so that where it was grabbed is where it stays.
 float PointerFraction(const WidgetView &view, Point pointer)
 {
-    const Rect track = PlaceSlider(view).track;
-    const float travel = ThumbTravel(track, view.scale);
-    const float thumb = kSliderThumbWidth * view.scale;
-    return travel > 0.f ? std::clamp((pointer.x - track.x - (thumb / 2.f)) / travel, 0.f, 1.f) : 0.f;
-}
-
-/// Which end button @p pointer is on: -1 for the one that takes away, 1 for the
-/// one that adds, and 0 for neither.
-int32_t ButtonUnder(const WidgetView &view, Point pointer)
-{
-    const SliderParts parts = PlaceSlider(view);
-    if (!parts.buttoned)
-    {
-        return 0;
-    }
-    if (Covers(parts.decrement, pointer))
-    {
-        return -1;
-    }
-    return Covers(parts.increment, pointer) ? 1 : 0;
-}
-
-void DrawContinuousSlider(const WidgetView &view, DrawList &list)
-{
-    DrawSliderAt(view, list, ContinuousFraction(*view.node));
-}
-
-void DrawSteppedSlider(const WidgetView &view, DrawList &list)
-{
-    DrawSliderAt(view, list, StepFraction(*view.node));
+    const Rect box = ContentBox(view);
+    const float thumb = view.parts[At(SliderPart::Thumb)].width;
+    const float travel = ThumbTravel(box, thumb);
+    return travel > 0.f ? std::clamp((pointer.x - box.x - (thumb / 2.f)) / travel, 0.f, 1.f) : 0.f;
 }
 
 /// Moves @p node to step @p step, saying whether it moved at all.
@@ -264,15 +344,8 @@ WidgetResponse SteppedSliderInput(const WidgetView &view, Node &node, const Widg
     switch (event.gesture)
     {
     case WidgetGesture::Press:
-        if (const int32_t button = ButtonUnder(view, event.pointer); button != 0)
-        {
-            node.slidingTrack = false;
-            return MoveStep(node, Step(node.value) + button);
-        }
-        node.slidingTrack = true;
-        return MoveStep(node, StepUnder(view, node, event.pointer));
     case WidgetGesture::Drag:
-        return node.slidingTrack ? MoveStep(node, StepUnder(view, node, event.pointer)) : WidgetResponse::Handled;
+        return MoveStep(node, StepUnder(view, node, event.pointer));
     case WidgetGesture::Action:
         if (event.action == UiAction::Left || event.action == UiAction::Right)
         {
@@ -282,8 +355,6 @@ WidgetResponse SteppedSliderInput(const WidgetView &view, Node &node, const Widg
         }
         return WidgetResponse::Ignored;
     case WidgetGesture::Release:
-        node.slidingTrack = false;
-        return WidgetResponse::Handled;
     case WidgetGesture::Activate:
         return WidgetResponse::Handled;
     case WidgetGesture::Wheel:
@@ -313,18 +384,8 @@ WidgetResponse ContinuousSliderInput(const WidgetView &view, Node &node, const W
     switch (event.gesture)
     {
     case WidgetGesture::Press:
-        if (const int32_t button = ButtonUnder(view, event.pointer); button != 0)
-        {
-            node.slidingTrack = false;
-            return MoveContinuous(node, Fraction(node.value) + (static_cast<float>(button) * node.range.step));
-        }
-        node.slidingTrack = true;
-        return MoveContinuous(node, node.range.min + (PointerFraction(view, event.pointer) * span));
     case WidgetGesture::Drag:
-        // A press that began on a button stays that button's, so the thumb does
-        // not jump to a pointer sliding off it.
-        return node.slidingTrack ? MoveContinuous(node, node.range.min + (PointerFraction(view, event.pointer) * span))
-                                 : WidgetResponse::Handled;
+        return MoveContinuous(node, node.range.min + (PointerFraction(view, event.pointer) * span));
     case WidgetGesture::Action:
         if (event.action == UiAction::Left || event.action == UiAction::Right)
         {
@@ -335,8 +396,6 @@ WidgetResponse ContinuousSliderInput(const WidgetView &view, Node &node, const W
         }
         return WidgetResponse::Ignored;
     case WidgetGesture::Release:
-        node.slidingTrack = false;
-        return WidgetResponse::Handled;
     case WidgetGesture::Activate:
         return WidgetResponse::Handled;
     case WidgetGesture::Wheel:
@@ -347,6 +406,10 @@ WidgetResponse ContinuousSliderInput(const WidgetView &view, Node &node, const W
     }
     return WidgetResponse::Ignored;
 }
+
+// -----------------------------------------------------------------------------
+// Scroll
+// -----------------------------------------------------------------------------
 
 bool Scrolls(const Node &node, Axis axis)
 {
@@ -424,6 +487,21 @@ ScrollBarPlace PlaceScrollBar(const WidgetView &view, Axis axis)
     return place;
 }
 
+/// Each bar's track and thumb where the scroll offset puts them, and neither
+/// for a bar that does not show.
+void PlaceScroll(const WidgetView &view, std::span<PartPlace> parts)
+{
+    for (const Axis axis : {Axis::X, Axis::Y})
+    {
+        const ScrollBarPlace place = PlaceScrollBar(view, axis);
+        const bool across = axis == Axis::X;
+        PartPlace &track = parts[At(across ? ScrollPart::AcrossTrack : ScrollPart::DownTrack)];
+        PartPlace &thumb = parts[At(across ? ScrollPart::AcrossThumb : ScrollPart::DownThumb)];
+        track = PartPlace{.rect = place.track, .shown = place.shown};
+        thumb = PartPlace{.rect = place.thumb, .shown = place.shown};
+    }
+}
+
 /// Moves @p node's content along @p axis by @p logical UI pixels, stopping where
 /// its content does. @p glides says whether the style's smoothing applies, or
 /// the content arrives at once.
@@ -459,34 +537,6 @@ WidgetResponse DragBar(const WidgetView &view, Node &node, Axis axis, float move
     // a thumb that lags behind the hand moving it feels broken rather than soft.
     return Scroll(view, node, axis, moved * (place.hidden / place.travel) / view.scale,
                   node.style.scrollBarDrag == ScrollBarDrag::Smoothed);
-}
-
-void DrawScroll(const WidgetView &view, DrawList &list)
-{
-    const float radius = kScrollBarThickness * view.scale / 2.f;
-    for (const Axis axis : {Axis::X, Axis::Y})
-    {
-        const ScrollBarPlace place = PlaceScrollBar(view, axis);
-        if (!place.shown)
-        {
-            continue;
-        }
-        list.Quad(place.track).Fill(kTrackColor).Corners(radius, CornerStyle::Rounded);
-        list.Quad(place.thumb).Fill(kKnobColor).Corners(radius, CornerStyle::Rounded);
-    }
-}
-
-bool ScrollClaims(const WidgetView &view, Point point)
-{
-    for (const Axis axis : {Axis::X, Axis::Y})
-    {
-        const ScrollBarPlace place = PlaceScrollBar(view, axis);
-        if (place.shown && Covers(place.track, point))
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 /// How far the wheel turned along @p axis. A node that scrolls only sideways
@@ -583,6 +633,10 @@ WidgetResponse ScrollInput(const WidgetView &view, Node &node, const WidgetEvent
     return WidgetResponse::Ignored;
 }
 
+// -----------------------------------------------------------------------------
+// Button
+// -----------------------------------------------------------------------------
+
 WidgetResponse ButtonInput(const WidgetView & /*view*/, Node & /*node*/, const WidgetEvent &event)
 {
     // A button's activation is announced by the Ui itself; what it says here is
@@ -604,48 +658,91 @@ WidgetResponse ButtonInput(const WidgetView & /*view*/, Node & /*node*/, const W
     return WidgetResponse::Ignored;
 }
 
-} // namespace
+/// Every built-in control's type, by BuiltinWidget.
+using BuiltinTypeTable = std::array<WidgetType, static_cast<std::size_t>(BuiltinWidget::Count_)>;
 
-Rect SliderThumbRect(const Node &node, const LayoutNode *layout, float scale, float fraction)
+BuiltinTypeTable MakeBuiltinTypes()
 {
-    if (layout == nullptr)
-    {
-        return {};
-    }
-    WidgetView view;
-    view.node = &node;
-    view.layout = layout;
-    view.scale = scale;
-    const Rect track = PlaceSlider(view).track;
-    const float thumb = kSliderThumbWidth * scale;
-    return Rect{.x = std::round(track.x + (ThumbTravel(track, scale) * std::clamp(fraction, 0.f, 1.f))),
-                .y = track.y,
-                .width = thumb,
-                .height = track.height};
+    WidgetType field = TextFieldWidget();
+    field.look = &ControlLook();
+    const WidgetType selectable = field;
+    field.name = "text_field";
+    return {{
+        WidgetType{},
+        WidgetType{.name = "button", .look = &ControlLook(), .input = &ButtonInput},
+        WidgetType{.name = "toggle",
+                   .parts = ToggleParts(),
+                   .look = &ControlLook(),
+                   .measure = &MeasureToggle,
+                   .place = &PlaceToggle,
+                   .input = &ToggleInput},
+        WidgetType{.name = "slider",
+                   .parts = SliderParts(),
+                   .look = &ControlLook(),
+                   .measure = &MeasureSlider,
+                   .place = &PlaceContinuousSlider,
+                   .input = &ContinuousSliderInput},
+        WidgetType{.name = "stepped_slider",
+                   .parts = SliderParts(),
+                   .look = &ControlLook(),
+                   .measure = &MeasureSlider,
+                   .place = &PlaceSteppedSlider,
+                   .input = &SteppedSliderInput},
+        WidgetType{.name = "scroll",
+                   .parts = ScrollParts(),
+                   .look = &ControlLook(),
+                   .place = &PlaceScroll,
+                   .input = &ScrollInput},
+        field,
+        selectable,
+    }};
 }
+
+/// The one list of the built-in controls: what is registered, what a file
+/// calls each, and which parts each has. Made once and kept, so a span or a
+/// name taken from it never outlives it.
+const BuiltinTypeTable &BuiltinTypes()
+{
+    static const BuiltinTypeTable types = MakeBuiltinTypes();
+    return types;
+}
+
+} // namespace
 
 void RegisterBuiltinWidgets(WidgetRegistry &registry)
 {
     // In the order BuiltinWidget names them, so a node can name one by its
     // enumerator rather than by remembering what came back.
-    const uint32_t button = registry.Register(WidgetType{.input = &ButtonInput});
-    const uint32_t toggle =
-        registry.Register(WidgetType{.measure = &MeasureToggle, .draw = &DrawToggle, .input = &ToggleInput});
-    const uint32_t slider = registry.Register(
-        WidgetType{.measure = &MeasureSlider, .draw = &DrawContinuousSlider, .input = &ContinuousSliderInput});
-    const uint32_t stepped = registry.Register(
-        WidgetType{.measure = &MeasureSlider, .draw = &DrawSteppedSlider, .input = &SteppedSliderInput});
-    const uint32_t scroll =
-        registry.Register(WidgetType{.claims = &ScrollClaims, .draw = &DrawScroll, .input = &ScrollInput});
-    const uint32_t field = registry.Register(TextFieldWidget());
+    const BuiltinTypeTable &types = BuiltinTypes();
+    for (std::size_t index = 1; index < types.size(); ++index)
+    {
+        const uint32_t id = registry.Register(types[index]);
+        ASSISI_ASSERT(id == index, "the built-in controls must be registered into an empty registry, in order");
+    }
+}
 
-    ASSISI_ASSERT(field == static_cast<uint32_t>(BuiltinWidget::TextField) &&
-                      button == static_cast<uint32_t>(BuiltinWidget::Button) &&
-                      toggle == static_cast<uint32_t>(BuiltinWidget::Toggle) &&
-                      slider == static_cast<uint32_t>(BuiltinWidget::ContinuousSlider) &&
-                      stepped == static_cast<uint32_t>(BuiltinWidget::SteppedSlider) &&
-                      scroll == static_cast<uint32_t>(BuiltinWidget::Scroll),
-                  "the built-in controls must be registered into an empty registry, in order");
+std::string_view BuiltinWidgetName(BuiltinWidget widget)
+{
+    const std::size_t index = static_cast<std::size_t>(widget);
+    return index < static_cast<std::size_t>(BuiltinWidget::Count_) ? BuiltinTypes()[index].name : std::string_view{};
+}
+
+std::vector<std::string_view> BuiltinPartNames(BuiltinWidget widget)
+{
+    std::vector<std::string_view> names;
+    const std::size_t index = static_cast<std::size_t>(widget);
+    if (index >= static_cast<std::size_t>(BuiltinWidget::Count_))
+    {
+        return names;
+    }
+    for (const WidgetPart &part : BuiltinTypes()[index].parts)
+    {
+        if (std::ranges::find(names, part.name) == names.end())
+        {
+            names.push_back(part.name);
+        }
+    }
+    return names;
 }
 
 } // namespace Assisi::Mondrian

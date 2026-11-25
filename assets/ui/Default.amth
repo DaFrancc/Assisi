@@ -32,4 +32,32 @@
   <style name="secondary_button" extends="menu_button"
          border_width="$edge_width" border_color="$ink"
          hover:background="$ghost_hover" pressed:background="$ghost_pressed" />
+
+  <!-- Every built-in control wears the style named after it, under any style
+       it names itself. These hold the look each has when nothing else says,
+       part by part: change one here to change every control of its kind.
+       What a control decides itself, such as how wide a slider's fill is and
+       how big a scroll bar is, is not written here. -->
+  <style name="control" focused:outline_width="3" focused:outline_gap="3"
+         focused:outline_color="#ffffff" />
+  <style name="button" extends="control" />
+  <style name="toggle" extends="control"
+         track:width="grow" track:height="grow" track:background="rgbf(0.24, 0.26, 0.32)"
+         track:on:background="rgbf(0.9, 0.2, 0.1)"
+         track:corner_radius="50%" track:corner_style="rounded"
+         knob:width="28" knob:height="28" knob:background="rgbf(0.92, 0.93, 0.96)"
+         knob:corner_radius="50%" knob:corner_style="rounded" />
+  <style name="slider" extends="control"
+         track:width="grow" track:height="6" track:background="rgbf(0.24, 0.26, 0.32)"
+         track:corner_radius="50%" track:corner_style="rounded"
+         fill:height="6" fill:background="rgbf(0.9, 0.2, 0.1)"
+         fill:corner_radius="50%" fill:corner_style="rounded"
+         thumb:width="16" thumb:height="grow" thumb:background="rgbf(0.92, 0.93, 0.96)"
+         thumb:corner_radius="50%" thumb:corner_style="rounded" />
+  <style name="stepped_slider" extends="slider" />
+  <style name="scroll" extends="control"
+         track:background="rgbf(0.24, 0.26, 0.32)" track:corner_radius="50%" track:corner_style="rounded"
+         thumb:background="rgbf(0.92, 0.93, 0.96)" thumb:corner_radius="50%" thumb:corner_style="rounded" />
+  <style name="text_field" extends="control" caret_color="rgbf(0.95, 0.96, 0.98)"
+         selection_color="rgbf(0.22, 0.38, 0.72)" />
 </theme>

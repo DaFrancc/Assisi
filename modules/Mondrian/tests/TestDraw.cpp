@@ -349,6 +349,194 @@ TEST_CASE("Draw: what a control paints behind the text comes before the glyphs i
     CHECK(highlight.rect.width < kFieldWidth);
 }
 
+namespace
+{
+
+using Srgb4 = Assisi::Math::Color4<ColorSpace::Srgb>;
+
+/// A panel holding a box, words, a picture and a toggle, faded to
+/// @p panelOpacity, inside a root faded to @p rootOpacity, drawn.
+DrawList FadedPanel(float panelOpacity, float rootOpacity = 1.f)
+{
+    NodeTree tree;
+    RegisterBuiltinWidgets(tree.Widgets());
+    Style root = tree.Get(tree.Root())->style;
+    root.opacity = rootOpacity;
+    tree.SetStyle(tree.Root(), root);
+
+    const NodeId panel = tree.Create(tree.Root());
+    Style panelStyle = Filled(400.f, 300.f, 0.1f);
+    panelStyle.borderWidth = Px(2.f);
+    panelStyle.borderColor = Srgb4{1.f, 1.f, 1.f, 0.8f};
+    panelStyle.direction = Direction::Column;
+    panelStyle.opacity = panelOpacity;
+    tree.SetStyle(panel, panelStyle);
+
+    tree.SetStyle(tree.Create(panel), Filled(20.f, 20.f, 0.2f));
+    const NodeId words = tree.Create(panel);
+    tree.SetText(words, "AB");
+    const NodeId picture = tree.Create(panel);
+    tree.SetStyle(picture, Filled(16.f, 16.f, 0.f));
+    tree.SetImage(picture, WholeTexture(kPicture, 16, 16));
+    const NodeId toggle = tree.Create(panel);
+    Style toggleStyle;
+    toggleStyle.sizing = {Sizing::Fixed(Px(40.f)), Sizing::Fixed(Px(20.f))};
+    tree.SetStyle(toggle, toggleStyle);
+    tree.SetBehaviour(toggle, static_cast<uint32_t>(BuiltinWidget::Toggle));
+    tree.SetValue(toggle, WidgetValue{true});
+    return Draw(tree, FixtureFont());
+}
+
+} // namespace
+
+TEST_CASE("Draw: opacity fades a node and everything inside it, each quad by the same share")
+{
+    constexpr float kHalf = 0.5f;
+    const DrawList whole = FadedPanel(1.f);
+    const DrawList faded = FadedPanel(kHalf);
+    REQUIRE(whole.Instances().size() == faded.Instances().size());
+    // A box, a border, words, a picture and the toggle's own parts, at least.
+    REQUIRE(whole.Instances().size() >= 5);
+    REQUIRE(FirstOfKind(faded, QuadKind::Glyph) != nullptr);
+    REQUIRE(FirstOfKind(faded, QuadKind::Image) != nullptr);
+    for (std::size_t index = 0; index < whole.Instances().size(); ++index)
+    {
+        const QuadInstance &before = whole.Instances()[index];
+        const QuadInstance &after = faded.Instances()[index];
+        CHECK(after.color.a == doctest::Approx(before.color.a * kHalf));
+        CHECK(after.borderColor.a == doctest::Approx(before.borderColor.a * kHalf));
+        CHECK(after.color.r == before.color.r);
+    }
+}
+
+TEST_CASE("Draw: opacity multiplies down the tree, and a node at none draws nothing")
+{
+    constexpr float kHalf = 0.5f;
+    const DrawList whole = FadedPanel(1.f);
+    const DrawList nested = FadedPanel(kHalf, kHalf);
+    REQUIRE(whole.Instances().size() == nested.Instances().size());
+    for (std::size_t index = 0; index < whole.Instances().size(); ++index)
+    {
+        CHECK(nested.Instances()[index].color.a == doctest::Approx(whole.Instances()[index].color.a * kHalf * kHalf));
+    }
+
+    const DrawList gone = FadedPanel(0.f);
+    CHECK_FALSE(QuadWithRed(gone, 0.1f).has_value());
+    CHECK_FALSE(QuadWithRed(gone, 0.2f).has_value());
+    CHECK(FirstOfKind(gone, QuadKind::Glyph) == nullptr);
+}
+
+TEST_CASE("Draw: a shadow is drawn under its node, moved, spread and made room for its blur")
+{
+    constexpr float kBlur = 10.f;
+    constexpr float kSpread = 2.f;
+    constexpr float kRadius = 8.f;
+    constexpr Srgb4 kShade{0.f, 0.f, 0.f, 0.5f};
+
+    NodeTree tree;
+    Style style = Filled(100.f, 50.f, 0.5f);
+    style.cornerRadius = Px(kRadius);
+    style.cornerStyle = CornerStyle::Cut;
+    style.shadowColor = kShade;
+    style.shadowOffset = {Px(4.f), Px(6.f)};
+    style.shadowBlur = Px(kBlur);
+    style.shadowSpread = Px(kSpread);
+    tree.SetStyle(tree.Create(tree.Root()), style);
+
+    const DrawList list = Draw(tree, FixtureFont());
+    const std::optional<std::size_t> box = QuadWithRed(list, 0.5f);
+    const QuadInstance *const shadow = FirstOfKind(list, QuadKind::Shadow);
+    REQUIRE(box.has_value());
+    REQUIRE(shadow != nullptr);
+    CHECK(shadow < &list.Instances()[*box]);
+
+    const Rect &node = list.Instances()[*box].rect;
+    const float room = kShadowReach * kBlur;
+    CHECK(shadow->rect.x == doctest::Approx(node.x + 4.f - kSpread - room));
+    CHECK(shadow->rect.y == doctest::Approx(node.y + 6.f - kSpread - room));
+    CHECK(shadow->rect.width == doctest::Approx(node.width + (2.f * (kSpread + room))));
+    CHECK(shadow->rect.height == doctest::Approx(node.height + (2.f * (kSpread + room))));
+    CHECK(shadow->borderWidth == kBlur);
+    CHECK(shadow->cornerRadius[0] == doctest::Approx(kRadius + kSpread));
+    CHECK(UnpackCornerStyle(shadow->cornerStyles, Corner::BottomRight) == CornerStyle::Cut);
+    CHECK(shadow->color == kShade);
+}
+
+TEST_CASE("Draw: a shadow with no offset is a glow around its node, and a clear one draws nothing")
+{
+    NodeTree tree;
+    Style glowing = Filled(60.f, 60.f, 0.25f);
+    glowing.shadowColor = Srgb4{1.f, 0.8f, 0.2f, 1.f};
+    glowing.shadowBlur = Px(8.f);
+    tree.SetStyle(tree.Create(tree.Root()), glowing);
+    tree.SetStyle(tree.Create(tree.Root()), Filled(60.f, 60.f, 0.75f));
+
+    const DrawList list = Draw(tree, FixtureFont());
+    const std::optional<std::size_t> box = QuadWithRed(list, 0.25f);
+    REQUIRE(box.has_value());
+    const std::span<const QuadInstance> quads = list.Instances();
+    CHECK(std::ranges::count(quads, static_cast<uint32_t>(QuadKind::Shadow), &QuadInstance::kind) == 1);
+    const QuadInstance &glow = *FirstOfKind(list, QuadKind::Shadow);
+    const Rect &node = quads[*box].rect;
+    CHECK(glow.rect.x + (glow.rect.width * 0.5f) == doctest::Approx(node.x + (node.width * 0.5f)));
+    CHECK(glow.rect.y + (glow.rect.height * 0.5f) == doctest::Approx(node.y + (node.height * 0.5f)));
+}
+
+TEST_CASE("Draw: a field's shadow reaches past the field, which clips only what is inside it")
+{
+    NodeTree tree;
+    RegisterBuiltinWidgets(tree.Widgets());
+    const NodeId field = tree.Create(tree.Root());
+    Style style = Filled(200.f, 40.f, 0.5f);
+    style.shadowColor = Srgb4{0.3f, 0.6f, 1.f, 1.f};
+    style.shadowBlur = Px(8.f);
+    tree.SetStyle(field, style);
+    tree.SetBehaviour(field, static_cast<uint32_t>(BuiltinWidget::TextField));
+    TextEdit edit;
+    edit.editing = TextEditing::Editable;
+    tree.SetTextEdit(field, edit);
+    tree.SetText(field, "glow");
+
+    const DrawList list = Draw(tree, FixtureFont());
+    const QuadInstance *const glow = FirstOfKind(list, QuadKind::Shadow);
+    const QuadInstance *const glyph = FirstOfKind(list, QuadKind::Glyph);
+    const std::optional<std::size_t> box = QuadWithRed(list, 0.5f);
+    REQUIRE(glow != nullptr);
+    REQUIRE(glyph != nullptr);
+    REQUIRE(box.has_value());
+    const Rect &rect = list.Instances()[*box].rect;
+    // The words stay inside the box; the glow is clipped only by what holds
+    // the field, so it shows all round it.
+    CHECK(glyph->clip == rect);
+    CHECK(glow->clip.x < glow->rect.x);
+    CHECK(glow->clip.x + glow->clip.width > glow->rect.x + glow->rect.width);
+}
+
+TEST_CASE("Draw: a shadow's lengths are resolved with the UI's scale and the node's size")
+{
+    NodeTree tree;
+    Style style = Filled(100.f, 40.f, 0.5f);
+    style.shadowColor = Srgb4{0.f, 0.f, 0.f, 1.f};
+    style.shadowOffset = {Percent(50.f), Em(1.f)};
+    style.shadowBlur = Px(8.f);
+    style.shadowSpread = Percent(10.f);
+    style.textSize = Px(10.f);
+    tree.SetStyle(tree.Create(tree.Root()), style);
+
+    // At half scale the box is 50 by 20 device pixels: half its shorter side
+    // is 10, a tenth is 2, and its text size is 5.
+    const DrawList list = Draw(tree, FixtureFont(), {960, 540}, 0.5f);
+    const QuadInstance *const shadow = FirstOfKind(list, QuadKind::Shadow);
+    const std::optional<std::size_t> box = QuadWithRed(list, 0.5f);
+    REQUIRE(shadow != nullptr);
+    REQUIRE(box.has_value());
+    const Rect &node = list.Instances()[*box].rect;
+    CHECK(shadow->borderWidth == doctest::Approx(4.f));
+    const float room = (kShadowReach * 4.f) + 2.f;
+    CHECK(shadow->rect.x == doctest::Approx(node.x + 10.f - room));
+    CHECK(shadow->rect.y == doctest::Approx(node.y + 5.f - room));
+}
+
 TEST_CASE("Draw: a hidden node and everything under it draws nothing")
 {
     NodeTree tree;

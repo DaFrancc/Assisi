@@ -662,7 +662,8 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World &world, std::span<c
         if (member == Assisi::ECS::NullEntity)
             continue;
         if (auto *mesh = world.scene.Get<Assisi::Runtime::MeshRenderer>(member))
-            Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache);
+            Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache,
+                                                       world.scene.Get<Assisi::Runtime::SurfaceTexture>(member));
     }
 
     // The members' bodies are built by the world's next reconcile. Propagated now,

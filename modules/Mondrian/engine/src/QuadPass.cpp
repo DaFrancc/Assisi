@@ -7,6 +7,7 @@
 #include <Assisi/Render/AssetSource.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -62,11 +63,7 @@ bool QuadPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
         return false;
     }
 
-    // The target's own format decides, not an assumption about the swapchain:
-    // an sRGB target would otherwise lighten every display colour the UI writes.
-    _encodeSrgb = !framebufferInfo.colorFormats.empty() && nvrhi::getFormatInfo(framebufferInfo.colorFormats[0]).isSRGB;
-
-    if (!BuildLayouts() || !BuildPipeline(framebufferInfo) || !EnsureInstanceCapacity(kInitialInstanceCapacity))
+    if (!BuildLayouts() || PipelineFor(framebufferInfo) == nullptr || !EnsureInstanceCapacity(kInitialInstanceCapacity))
     {
         return false;
     }
@@ -108,8 +105,16 @@ bool QuadPass::BuildLayouts()
     return true;
 }
 
-bool QuadPass::BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
+nvrhi::IGraphicsPipeline *QuadPass::PipelineFor(const nvrhi::FramebufferInfo &framebufferInfo)
 {
+    const nvrhi::Format format =
+        framebufferInfo.colorFormats.empty() ? nvrhi::Format::UNKNOWN : framebufferInfo.colorFormats[0];
+    const std::vector<Pipeline>::const_iterator built = std::ranges::find(_pipelines, format, &Pipeline::format);
+    if (built != _pipelines.end())
+    {
+        return built->pipeline;
+    }
+
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.VS       = _vertexShader;
@@ -129,13 +134,14 @@ bool QuadPass::BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
         .setSrcBlendAlpha(nvrhi::BlendFactor::One)
         .setDestBlendAlpha(nvrhi::BlendFactor::InvSrcAlpha);
 
-    _pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-    if (!_pipeline)
+    nvrhi::GraphicsPipelineHandle pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+    if (!pipeline)
     {
         Core::Log::Error("Mondrian: the quad pipeline could not be created.");
-        return false;
+        return nullptr;
     }
-    return true;
+    _pipelines.push_back(Pipeline{.pipeline = pipeline, .format = format});
+    return pipeline;
 }
 
 bool QuadPass::EnsureInstanceCapacity(uint32_t instanceCount)
@@ -202,20 +208,31 @@ void QuadPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *frame
 {
     ASSISI_ASSERT(drawList.IsFinalized(), "QuadPass::Draw given a DrawList that was never finalized");
     const std::span<const QuadInstance> instances = drawList.Instances();
-    if (!_pipeline || instances.empty() || !EnsureInstanceCapacity(static_cast<uint32_t>(instances.size())))
+    if (_device == nullptr || instances.empty())
     {
         return;
     }
-
-    commandList->writeBuffer(_instanceBuffer, instances.data(), instances.size_bytes());
-
     const nvrhi::FramebufferInfoEx &target = framebuffer->getFramebufferInfo();
+    nvrhi::IGraphicsPipeline *const pipeline = PipelineFor(target);
+    const uint32_t first = _instanceCursor;
+    if (pipeline == nullptr || !EnsureInstanceCapacity(first + static_cast<uint32_t>(instances.size())))
+    {
+        return;
+    }
+    _instanceCursor += static_cast<uint32_t>(instances.size());
+
+    commandList->writeBuffer(_instanceBuffer, instances.data(), instances.size_bytes(),
+                             static_cast<uint64_t>(first) * sizeof(QuadInstance));
+
+    // The target's own format decides, not an assumption about the swapchain:
+    // an sRGB target would otherwise lighten every display colour the UI writes.
+    const bool encodeSrgb = !target.colorFormats.empty() && nvrhi::getFormatInfo(target.colorFormats[0]).isSRGB;
     const PassConstants constants{
         .viewport   = {static_cast<float>(target.width), static_cast<float>(target.height)},
-        .encodeSrgb = _encodeSrgb ? 1u : 0u};
+        .encodeSrgb = encodeSrgb ? 1u : 0u};
 
     nvrhi::GraphicsState state;
-    state.pipeline    = _pipeline;
+    state.pipeline    = pipeline;
     state.framebuffer = framebuffer;
     state.viewport.addViewportAndScissorRect(
         nvrhi::Viewport(static_cast<float>(target.width), static_cast<float>(target.height)));
@@ -235,7 +252,7 @@ void QuadPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *frame
         nvrhi::DrawArguments drawArgs;
         drawArgs.vertexCount           = kVerticesPerQuad;
         drawArgs.instanceCount         = entry.instanceCount;
-        drawArgs.startInstanceLocation = entry.firstInstance;
+        drawArgs.startInstanceLocation = first + entry.firstInstance;
         commandList->draw(drawArgs);
     }
 }
@@ -247,13 +264,14 @@ void QuadPass::Shutdown()
     _instanceSet    = nullptr;
     _instanceBuffer = nullptr;
     _white          = Render::Texture{};
-    _pipeline       = nullptr;
+    _pipelines.clear();
     _sampler        = nullptr;
     _textureLayout  = nullptr;
     _instanceLayout = nullptr;
     _pixelShader    = nullptr;
     _vertexShader   = nullptr;
     _instanceCapacity = 0;
+    _instanceCursor = 0;
 }
 
 bool UploadFontAtlas(Render::Texture &texture, nvrhi::IDevice *device, const Font &font)
@@ -297,6 +315,38 @@ void UploadPlaceholderTexture(Render::Texture &texture, nvrhi::IDevice *device)
     texture.UploadDecoded(device, image, "Mondrian::Placeholder");
 }
 
+namespace
+{
+
+/// The image @p id names, uploaded through @p source, with @p name standing for
+/// it in what is logged and in the texture's debug name.
+std::optional<Extent> UploadImage(Render::Texture &texture, nvrhi::IDevice *device, const Render::AssetSource &source,
+                                  Core::AssetId id, std::string_view name)
+{
+    // Asked for as colour, which is how the cook encodes an image no material
+    // binds, and how a source image is encoded to match.
+    std::expected<Image::DecodedImage, Render::AssetLoadError> image =
+        source.LoadTexture(id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
+    if (!image)
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", name, Render::ToString(image.error()));
+        return std::nullopt;
+    }
+    // The texels are the display values the file holds. Sampled through an
+    // sRGB format they would be decoded to linear and draw too dark.
+    image->colorSpace = Image::ColorSpace::Linear;
+    const std::string debugName = "Mondrian::" + std::string{name};
+    texture.UploadDecoded(device, *image, debugName.c_str());
+    if (!texture.IsValid())
+    {
+        Core::Log::Error("Mondrian: the image '{}' could not be uploaded.", name);
+        return std::nullopt;
+    }
+    return Extent{.width = image->width, .height = image->height};
+}
+
+} // namespace
+
 std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device, std::string_view vpath)
 {
     const Render::AssetSource *source = Render::GetAssetSource();
@@ -311,26 +361,19 @@ std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *
         Core::Log::Error("Mondrian: the image '{}' could not be found ({}).", vpath, Render::ToString(id.error()));
         return std::nullopt;
     }
-    // Asked for as colour, which is how the cook encodes an image no material
-    // binds, and how a source image is encoded to match.
-    std::expected<Image::DecodedImage, Render::AssetLoadError> image =
-        source->LoadTexture(*id, Image::ColorSpace::Srgb, Image::PixelFormat::Bc7, /*alphaCutoff=*/ 0.f);
-    if (!image)
+    return UploadImage(texture, device, *source, *id, vpath);
+}
+
+std::optional<Extent> UploadUiTexture(Render::Texture &texture, nvrhi::IDevice *device, Core::AssetId id)
+{
+    const std::string name = id.ToString();
+    const Render::AssetSource *source = Render::GetAssetSource();
+    if (source == nullptr)
     {
-        Core::Log::Error("Mondrian: the image '{}' could not be loaded ({}).", vpath, Render::ToString(image.error()));
+        Core::Log::Error("Mondrian: no asset source is installed to load the image '{}'.", name);
         return std::nullopt;
     }
-    // The texels are the display values the file holds. Sampled through an
-    // sRGB format they would be decoded to linear and draw too dark.
-    image->colorSpace = Image::ColorSpace::Linear;
-    const std::string debugName = "Mondrian::" + std::string{vpath};
-    texture.UploadDecoded(device, *image, debugName.c_str());
-    if (!texture.IsValid())
-    {
-        Core::Log::Error("Mondrian: the image '{}' could not be uploaded.", vpath);
-        return std::nullopt;
-    }
-    return Extent{.width = image->width, .height = image->height};
+    return UploadImage(texture, device, *source, id, name);
 }
 
 } // namespace Assisi::Mondrian::Engine

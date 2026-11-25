@@ -76,6 +76,38 @@ TEST_CASE("DrawList: quads start with the default clip until it changes, and cle
     CHECK(list.Instances()[0].clip.x == kNoClip.x);
 }
 
+TEST_CASE("DrawList: quads take the current opacity on their fill and border, until clearing forgets it")
+{
+    constexpr float kHalf = 0.5f;
+    constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> kFill{0.1f, 0.2f, 0.3f, 0.8f};
+    constexpr Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> kEdge{0.5f, 0.6f, 0.7f, 0.4f};
+
+    DrawList list;
+    list.SetOpacity(kHalf);
+    list.Quad(kVisible);
+    list.Quad(kVisible).Fill(kFill).Border(1.f, kEdge);
+    REQUIRE(list.Instances().size() == 2);
+    CHECK(list.Instances()[0].color.a == doctest::Approx(kHalf));
+    const QuadInstance &built = list.Instances()[1];
+    CHECK(built.color.a == doctest::Approx(kFill.a * kHalf));
+    CHECK(built.color.r == kFill.r); // the colour itself is left alone
+    CHECK(built.borderColor.a == doctest::Approx(kEdge.a * kHalf));
+
+    list.Clear();
+    list.Quad(kVisible).Fill(kFill);
+    CHECK(list.Instances()[0].color.a == kFill.a);
+}
+
+TEST_CASE("DrawList: a shadow quad carries its blur and draws as a shadow")
+{
+    constexpr float kBlur = 12.f;
+    DrawList list;
+    list.Quad(kVisible).Shadow(kBlur);
+    REQUIRE(list.Instances().size() == 1);
+    CHECK(list.Instances()[0].kind == static_cast<uint32_t>(QuadKind::Shadow));
+    CHECK(list.Instances()[0].borderWidth == kBlur);
+}
+
 TEST_CASE("DrawList: every corner keeps its own style when packed")
 {
     uint32_t packed = 0;

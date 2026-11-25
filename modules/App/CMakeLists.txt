@@ -26,6 +26,7 @@ target_sources(Assisi-App
     "include/Assisi/App/PlayerSystems.hpp"
     "include/Assisi/App/ResourceStore.hpp"
     "include/Assisi/App/SceneCamera.hpp"
+    "include/Assisi/App/ScreenSurfaces.hpp"
     "include/Assisi/App/SessionDriver.hpp"
     "include/Assisi/App/SessionTypes.hpp"
     "include/Assisi/App/StepWorld.hpp"
@@ -35,6 +36,7 @@ target_sources(Assisi-App
     "include/Assisi/App/UiInputBridge.hpp"
     "include/Assisi/App/World.hpp"
     "include/Assisi/App/WorldFrame.hpp"
+    "include/Assisi/App/WorldWidgets.hpp"
   PRIVATE
     "src/AppConfig.cpp"
     "src/AppPasses.cpp"
@@ -61,6 +63,7 @@ target_sources(Assisi-App
     "src/PlayerSettings.cpp"
     "src/PlayerSystems.cpp"
     "src/SceneCamera.cpp"
+    "src/ScreenSurfaces.cpp"
     "src/SessionDriver.cpp"
     "src/SessionTypes.cpp"
     "src/StartupScene.cpp"
@@ -72,6 +75,7 @@ target_sources(Assisi-App
     "src/UiInputBridge.cpp"
     "src/World.cpp"
     "src/WorldFrame.cpp"
+    "src/WorldWidgets.cpp"
 )
 
 target_include_directories(Assisi-App
@@ -131,8 +135,10 @@ assisi_reflect(
     include/Assisi/App/PlayerComponents.hpp
     include/Assisi/App/PlayerSystems.hpp
     include/Assisi/App/MotionSystems.hpp
+    include/Assisi/App/ScreenSurfaces.hpp
     include/Assisi/App/SessionTypes.hpp
     include/Assisi/App/SystemRegistry.hpp
+    include/Assisi/App/WorldWidgets.hpp
 )
 
 # The frame's passes around the scene: ordered from their declarations and

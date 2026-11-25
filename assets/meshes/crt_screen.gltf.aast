@@ -1,0 +1,17 @@
+{
+  "guid": "afcea398-9b58-55eb-bd16-107e8069eb72",
+  "sourceHash": "99f907b251e1255a",
+  "subAssets": [
+    {
+      "material": "a534d415-f08f-4ff2-b11a-a6a74827add5",
+      "slot": 0
+    }
+  ],
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "mesh"
+    }
+  ],
+  "version": 1
+}

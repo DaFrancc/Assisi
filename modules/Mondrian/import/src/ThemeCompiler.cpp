@@ -162,31 +162,72 @@ std::expected<void, MarkupError> ReadPalettes(const MarkupElement &root,
     return {};
 }
 
-/// The look @p style has in @p state, made empty if it has none yet.
-ThemedPatch &LookIn(ThemeStyle &style, StyleState state)
+/// The look among @p states for @p state, made empty if there is none yet.
+ThemedPatch &LookIn(std::vector<ThemedPatch> &states, StyleState state)
 {
     std::vector<ThemedPatch>::iterator look =
-        std::ranges::find_if(style.states, [state](const ThemedPatch &held) { return held.patch.state == state; });
-    if (look == style.states.end())
+        std::ranges::find_if(states, [state](const ThemedPatch &held) { return held.patch.state == state; });
+    if (look == states.end())
     {
         ThemedPatch empty;
         empty.patch.state = state;
-        style.states.push_back(std::move(empty));
-        look = std::prev(style.states.end());
+        states.push_back(std::move(empty));
+        look = std::prev(states.end());
     }
     return *look;
 }
 
-/// One attribute of a style, about how a node looks, read into @p style.
+/// How @p style dresses its part called @p name, made empty if it says nothing
+/// of it yet.
+ThemePartStyle &PartIn(ThemeStyle &style, std::string_view name)
+{
+    std::vector<ThemePartStyle>::iterator part =
+        std::ranges::find_if(style.parts, [name](const ThemePartStyle &held) { return held.name.View() == name; });
+    if (part == style.parts.end())
+    {
+        style.parts.push_back(ThemePartStyle{.name = Core::InternedString{name}, .resting = {}, .states = {}});
+        part = std::prev(style.parts.end());
+    }
+    return *part;
+}
+
+/// The parts a style called @p name may dress: those of the control it is named
+/// for, or those of any control.
+PartNames PartsFor(std::string_view name)
+{
+    for (uint32_t widget = 1; widget < static_cast<uint32_t>(BuiltinWidget::Count_); ++widget)
+    {
+        if (BuiltinWidgetName(static_cast<BuiltinWidget>(widget)) == name)
+        {
+            return PartsOf(static_cast<BuiltinWidget>(widget));
+        }
+    }
+    return EveryControlsParts();
+}
+
+/// The look an attribute @p prefix says it is for: @p style's own or one of its
+/// parts', at rest or in a state.
+ThemedPatch &LookFor(ThemeStyle &style, const AttributePrefix &prefix)
+{
+    if (prefix.part.empty())
+    {
+        return prefix.state ? LookIn(style.states, *prefix.state) : style.resting;
+    }
+    ThemePartStyle &part = PartIn(style, prefix.part);
+    return prefix.state ? LookIn(part.states, *prefix.state) : part.resting;
+}
+
+/// One attribute of a style, about how a node or one of its parts looks, read
+/// into @p style.
 std::expected<void, MarkupError> ReadStyleAttribute(const MarkupAttribute &written, const CompiledTheme &theme,
                                                     ThemeStyle &style)
 {
-    const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
-    if (!state)
+    const std::expected<AttributePrefix, MarkupError> prefix = PrefixOf(written, PartsFor(style.name.View()));
+    if (!prefix)
     {
-        return std::unexpected(state.error());
+        return std::unexpected(prefix.error());
     }
-    const std::string_view name = AfterPrefix(written.name);
+    const std::string_view name = prefix->name;
     const AttributeSpec *const spec = FindAttribute(name, BuiltinWidget::None, false);
     if (spec == nullptr)
     {
@@ -205,7 +246,7 @@ std::expected<void, MarkupError> ReadStyleAttribute(const MarkupAttribute &writt
 
     MarkupAttribute attribute = written;
     attribute.name = name;
-    ThemedPatch &look = *state ? LookIn(style, **state) : style.resting;
+    ThemedPatch &look = LookFor(style, *prefix);
     if (NamesToken(attribute.value))
     {
         const std::expected<std::string_view, MarkupError> token = TokenNamed(attribute);
@@ -272,15 +313,24 @@ std::expected<WrittenStyle, MarkupError> ReadStyle(const MarkupElement &element,
     return style;
 }
 
-/// @p own with @p base put under it: its looks, at rest and in each state,
-/// with the base's where it writes nothing of its own.
+/// @p own with @p base put under it: its looks and each of its parts', at rest
+/// and in each state, with the base's where it writes nothing of its own.
 ThemeStyle Extended(const ThemeStyle &base, const ThemeStyle &own)
 {
-    ThemeStyle style{.name = own.name, .resting = base.resting, .states = base.states};
+    ThemeStyle style{.name = own.name, .resting = base.resting, .states = base.states, .parts = base.parts};
     style.resting.Add(own.resting);
     for (const ThemedPatch &look : own.states)
     {
-        LookIn(style, look.patch.state).Add(look);
+        LookIn(style.states, look.patch.state).Add(look);
+    }
+    for (const ThemePartStyle &part : own.parts)
+    {
+        ThemePartStyle &dressed = PartIn(style, part.name.View());
+        dressed.resting.Add(part.resting);
+        for (const ThemedPatch &look : part.states)
+        {
+            LookIn(dressed.states, look.patch.state).Add(look);
+        }
     }
     return style;
 }

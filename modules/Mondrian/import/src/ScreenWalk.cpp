@@ -715,16 +715,37 @@ std::expected<void, MarkupError> ApplyStyleName(const Walk &walk, ScreenNode &no
     return {};
 }
 
+/// The binding @p node holds for @p attribute, or null.
+const AttributeBinding *BindingFor(const ScreenNode &node, BoundAttribute attribute)
+{
+    const std::vector<AttributeBinding>::const_iterator found =
+        std::ranges::find(node.boundAttributes, attribute, &AttributeBinding::attribute);
+    return found != node.boundAttributes.end() ? &*found : nullptr;
+}
+
+/// What names @p node's picture other than @p picture, which is Sprite or
+/// Texture: the other's value or binding as written, or empty for nothing.
+std::string OtherPicture(const Walk &walk, const ScreenNode &node, BoundAttribute picture)
+{
+    const bool sprite = picture == BoundAttribute::Sprite;
+    const Core::InternedString &written = sprite ? node.texture : node.sprite;
+    if (!written.Empty())
+    {
+        return std::string{written.View()};
+    }
+    const AttributeBinding *const bound = BindingFor(node, sprite ? BoundAttribute::Texture : BoundAttribute::Sprite);
+    return bound != nullptr ? std::string{walk.document.Text(bound->binding)} : std::string{};
+}
+
 /// Refuses @p attribute giving a node a picture when it already names @p other
 /// the other way: a node shows one.
-std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute,
-                                                     const Core::InternedString &other)
+std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attribute, const std::string &other)
 {
-    if (!attribute.value.empty() && !other.Empty())
+    if (!attribute.value.empty() && !other.empty())
     {
         return std::unexpected(At(attribute, "a node shows one picture, named by a sprite or by a texture; this one "
                                              "already names '" +
-                                                 std::string{other.View()} + "'."));
+                                                 other + "'."));
     }
     return {};
 }
@@ -732,7 +753,9 @@ std::expected<void, MarkupError> RefuseSecondPicture(const MarkupAttribute &attr
 /// `sprite`, which a sheet the project lists must have.
 std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
 {
-    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.texture); !refused)
+    if (const std::expected<void, MarkupError> refused =
+            RefuseSecondPicture(attribute, OtherPicture(walk, node, BoundAttribute::Sprite));
+        !refused)
     {
         return refused;
     }
@@ -750,7 +773,9 @@ std::expected<void, MarkupError> ApplySprite(const Walk &walk, ScreenNode &node,
 /// `texture`, which must be an image the project has.
 std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node, const MarkupAttribute &attribute)
 {
-    if (const std::expected<void, MarkupError> refused = RefuseSecondPicture(attribute, node.sprite); !refused)
+    if (const std::expected<void, MarkupError> refused =
+            RefuseSecondPicture(attribute, OtherPicture(walk, node, BoundAttribute::Texture));
+        !refused)
     {
         return refused;
     }
@@ -773,6 +798,101 @@ std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node
         }
     }
     node.texture = Core::InternedString{attribute.value};
+    return {};
+}
+
+/// What stands for a bound length's value while what follows its binding is
+/// read as a length is: a number, so the unit after it and a size's limits read
+/// as they do in `width="50% max 400"`.
+constexpr std::string_view kBoundLengthStandIn = "0";
+
+/// Whether a binding on @p bound can be followed by a unit: a size's, then its
+/// limits, or a float offset's.
+bool TakesUnit(BoundAttribute bound)
+{
+    return bound == BoundAttribute::Width || bound == BoundAttribute::Height || bound == BoundAttribute::FloatOffset;
+}
+
+/// The length the field's value goes into, from @p after, which @p attribute
+/// writes after its binding on @p bound: a unit then min and max for a size,
+/// and a unit alone for a float offset, whose axes share it.
+std::expected<Sizing, MarkupError> ReadAfterBinding(BoundAttribute bound, const MarkupAttribute &attribute,
+                                                    const std::string &after)
+{
+    const std::string written = std::string{kBoundLengthStandIn} + after;
+    if (bound == BoundAttribute::FloatOffset)
+    {
+        if (const std::optional<Length> unit = ParseLength(written))
+        {
+            return Sizing::Fixed(*unit);
+        }
+        return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
+                                  "' after its binding, and only a unit, such as %, can follow one, which both "
+                                  "axes take."));
+    }
+    if (const std::optional<Sizing> sizing = ParseSizing(written))
+    {
+        return *sizing;
+    }
+    return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
+                              "' after its binding, and only a unit, such as %, then min and "
+                              "max can follow one, as they follow a length."));
+}
+
+/// `background="{Team.colour}"`, `width="{Bar.fill}% max 400"` and the other
+/// attributes a binding can drive: the binding kept beside the node, with the
+/// unit and limits of a bound size or the unit of a bound float offset.
+std::expected<void, MarkupError> ApplyAttributeBinding(Walk &walk, ScreenNode &node, BoundAttribute bound,
+                                                       const MarkupAttribute &attribute)
+{
+    const bool unit = TakesUnit(bound);
+    MarkupAttribute binding = attribute;
+    std::string after;
+    if (unit)
+    {
+        const std::size_t close = attribute.value.find(kBindingClose);
+        if (!attribute.value.starts_with(kBindingOpen) || close == std::string::npos)
+        {
+            const std::string_view example =
+                bound == BoundAttribute::FloatOffset ? "{Marker.screen}%" : "{Bar.fill}% max 400";
+            return std::unexpected(At(attribute, "'" + attribute.name +
+                                      "' holds a binding, which comes first, such as " + attribute.name + "=\"" +
+                                      std::string{example} + "\"."));
+        }
+        binding.value = attribute.value.substr(0, close + 1);
+        after = attribute.value.substr(close + 1);
+    }
+    if (bound == BoundAttribute::Sprite || bound == BoundAttribute::Texture)
+    {
+        if (const std::expected<void, MarkupError> refused =
+                RefuseSecondPicture(attribute, OtherPicture(walk, node, bound));
+            !refused)
+        {
+            return refused;
+        }
+    }
+    const std::expected<Core::PooledString, MarkupError> handle = KeepBinding(walk, binding, AttributeUse(bound));
+    if (!handle)
+    {
+        return std::unexpected(handle.error());
+    }
+    AttributeBinding kept{.length = Sizing::Fixed(Px(0.f)), .binding = *handle, .attribute = bound};
+    if (unit)
+    {
+        const std::expected<Sizing, MarkupError> length = ReadAfterBinding(bound, attribute, after);
+        if (!length)
+        {
+            return std::unexpected(length.error());
+        }
+        kept.length = *length;
+    }
+    // Not written until the binding reads, so a named style shows until then,
+    // even over what a control's own call writes.
+    if (const std::optional<StyleProperty> property = PropertyOf(bound))
+    {
+        node.written &= ~PropertyBit(*property);
+    }
+    node.boundAttributes.push_back(kept);
     return {};
 }
 
@@ -806,6 +926,11 @@ std::expected<void, MarkupError> ApplyHandled(Walk &walk, uint32_t index, Handle
     case HandledAttribute::BorderColor:
     case HandledAttribute::TextColor:
     case HandledAttribute::Tint:
+    case HandledAttribute::ShadowColor:
+    case HandledAttribute::OutlineColor:
+    case HandledAttribute::CaretColor:
+    case HandledAttribute::SelectionColor:
+    case HandledAttribute::PlaceholderColor:
         return ApplyColor(node.style, handled, attribute);
     case HandledAttribute::Change:
         return ApplyOnChange(walk, node, attribute);
@@ -893,6 +1018,108 @@ void WriteOwn(ScreenNode &node, StyleProperty property)
     std::erase_if(node.tokens, [property](const TokenUse &use) { return use.property == property; });
 }
 
+
+/// The node standing for the part called @p part of the control at @p control,
+/// made the first time anything dresses it: what a part's prefixed attributes
+/// and its tag both write to.
+uint32_t PartNodeOf(Walk &walk, uint32_t control, std::string_view part)
+{
+    for (uint32_t index = control + 1; index < walk.document.nodes.size(); ++index)
+    {
+        const ScreenNode &node = walk.document.nodes[index];
+        if (node.parent == control && node.part.View() == part)
+        {
+            return index;
+        }
+    }
+    ScreenNode node;
+    node.parent = control;
+    node.part = Core::InternedString{part};
+    walk.document.nodes.push_back(std::move(node));
+    return static_cast<uint32_t>(walk.document.nodes.size() - 1);
+}
+
+/// @p written, which @p prefix says is for one of the parts of the control at
+/// @p control, read onto that part as its tag would read it.
+std::expected<void, MarkupError> ApplyToPart(Walk &walk, uint32_t control, const AttributePrefix &prefix,
+                                             const MarkupAttribute &written)
+{
+    MarkupElement onPart;
+    onPart.name = std::string{prefix.part};
+    onPart.line = written.line;
+    onPart.column = written.column;
+    MarkupAttribute attribute = written;
+    attribute.name = written.name.substr(prefix.part.size() + 1);
+    onPart.attributes.push_back(std::move(attribute));
+    return ApplyAttributes(walk, onPart, PartNodeOf(walk, control, prefix.part));
+}
+
+/// Whether @p name is the tag of one of @p widget's parts.
+bool IsPartOf(BuiltinWidget widget, std::string_view name)
+{
+    const std::vector<std::string_view> parts = BuiltinPartNames(widget);
+    return std::ranges::find(parts, name) != parts.end();
+}
+
+/// Refuses what @p element holds when it is a @p kind, which holds no elements:
+/// nothing but its parts' tags, and nothing at all when it has no parts, which
+/// @p leaf says.
+std::expected<void, MarkupError> OnlyParts(const ElementKind &kind, const MarkupElement &element, std::string leaf)
+{
+    const std::vector<std::string_view> parts = BuiltinPartNames(kind.widget);
+    if (parts.empty())
+    {
+        return std::unexpected(At(element, std::move(leaf)));
+    }
+    for (const MarkupElement &child : element.children)
+    {
+        if (std::ranges::find(parts, child.name) == parts.end())
+        {
+            return std::unexpected(At(child, "'" + child.name + "' is not a part of " + std::string{kind.name} +
+                                                 ". Its parts are: " + Listed(parts) + "."));
+        }
+    }
+    return {};
+}
+
+/// The tag of one part of the control at @p control: its attributes are the
+/// part's own, written plainly, and what it holds goes inside the part. That
+/// passes the pointer to the control, so it holds no control of its own.
+std::expected<void, MarkupError> CompilePart(Walk &walk, const MarkupElement &element, uint32_t control)
+{
+    const BuiltinWidget widget = walk.document.nodes[control].widget;
+    if (widget == BuiltinWidget::Scroll)
+    {
+        return std::unexpected(At(element, "a scroll holds what it scrolls, so its parts take no tags. Write " +
+                                               element.name + ":background=\"...\" and the like on the scroll."));
+    }
+    if (!element.text.empty())
+    {
+        return std::unexpected(At(element, "a part holds no words of its own. Put them in a <text> inside it."));
+    }
+    const uint32_t part = PartNodeOf(walk, control, element.name);
+    if (const std::expected<void, MarkupError> attributes = ApplyAttributes(walk, element, part); !attributes)
+    {
+        return attributes;
+    }
+    const std::size_t before = walk.document.nodes.size();
+    if (const std::expected<void, MarkupError> held = CompileChildren(walk, element, part); !held)
+    {
+        return held;
+    }
+    // Everything made since is inside the part.
+    for (std::size_t index = before; index < walk.document.nodes.size(); ++index)
+    {
+        const BuiltinWidget inside = walk.document.nodes[index].widget;
+        if (inside != BuiltinWidget::None)
+        {
+            return std::unexpected(At(element, "what a " + element.name + " holds passes the pointer to its " +
+                                                   std::string{BuiltinWidgetName(widget)} + ", so it holds no " +
+                                                   std::string{BuiltinWidgetName(inside)} + "."));
+        }
+    }
+    return {};
+}
 
 /// Whether the step @p element writes, if it writes one, has a value in the
 /// scope open now. In a template's own check, one naming a parameter with no
@@ -998,27 +1225,43 @@ std::expected<Substituted, MarkupError> Substitute(const Walk &walk, std::string
 std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement &element, uint32_t index)
 {
     const bool isRoot = index == 0;
-    ScreenNode &node = walk.document.nodes[index];
 
     for (const MarkupAttribute &written : element.attributes)
     {
-        const std::expected<std::optional<StyleState>, MarkupError> state = StateOf(written);
-        if (!state)
+        // Taken afresh each time: dressing a part can add a node to the table.
+        ScreenNode &node = walk.document.nodes[index];
+        const std::expected<AttributePrefix, MarkupError> prefix = PrefixOf(written, PartsOf(node.widget));
+        if (!prefix)
         {
-            return std::unexpected(state.error());
+            return std::unexpected(prefix.error());
         }
-        const std::string_view name = *state ? AfterPrefix(written.name) : std::string_view{written.name};
+        if (!prefix->part.empty())
+        {
+            if (const std::expected<void, MarkupError> dressed = ApplyToPart(walk, index, *prefix, written); !dressed)
+            {
+                return dressed;
+            }
+            continue;
+        }
+        const std::optional<StyleState> state = prefix->state;
+        const std::string_view name = prefix->name;
         const AttributeSpec *const spec = FindAttribute(name, node.widget, isRoot);
         if (spec == nullptr)
         {
             return std::unexpected(At(written, "'" + written.name + "' is not an attribute this markup has."));
         }
-        if (*state && spec->handled == HandledAttribute::StyleName)
+        if (!node.part.Empty() && !spec->property && name != kVisibleAttribute)
+        {
+            return std::unexpected(At(written, "'" + std::string{name} +
+                                                   "' says what a node is or does, and a part takes only how it "
+                                                   "looks and whether it shows: its control does the rest."));
+        }
+        if (state && spec->handled == HandledAttribute::StyleName)
         {
             return std::unexpected(At(written, "a node names one style, which holds its own look for each state. "
                                                "Write the state on the style's attributes instead."));
         }
-        if (*state && !spec->property)
+        if (state && !spec->property)
         {
             return std::unexpected(At(written, "'" + std::string{name} +
                                                    "' says what the node is or does rather than how it looks, so it "
@@ -1055,6 +1298,22 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
         {
             return refused;
         }
+        const std::optional<BoundAttribute> bindable = BoundAttributeNamed(attribute.name);
+        if (bindable && attribute.value.find(kBindingOpen) != std::string::npos)
+        {
+            if (state)
+            {
+                return std::unexpected(At(attribute, "'" + written.name +
+                                          "' holds a binding, and a state's look is written out: "
+                                          "bind the attribute with no state."));
+            }
+            if (const std::expected<void, MarkupError> bound = ApplyAttributeBinding(walk, node, *bindable, attribute);
+                !bound)
+            {
+                return bound;
+            }
+            continue;
+        }
         if (attribute.name == kVisibleAttribute && attribute.value.find(kBindingOpen) != std::string::npos)
         {
             if (const std::expected<void, MarkupError> bound = ApplyVisibleBinding(walk, node, attribute); !bound)
@@ -1081,9 +1340,9 @@ std::expected<void, MarkupError> ApplyAttributes(Walk &walk, const MarkupElement
                 return std::unexpected(At(attribute, "'" + attribute.name + "' " + checked.error()));
             }
         }
-        if (*state)
+        if (state)
         {
-            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, **state, *spec, attribute); !look)
+            if (const std::expected<void, MarkupError> look = ApplyLook(walk, index, *state, *spec, attribute); !look)
             {
                 return look;
             }
@@ -1150,8 +1409,13 @@ std::expected<void, MarkupError> CompileInstance(Walk &walk, const MarkupElement
     }
     if (!kind.carriesChildren && !instance.children.empty())
     {
-        return std::unexpected(
-            At(instance, "'" + instance.name + "' is a " + std::string{kind.name} + ", which holds no elements."));
+        if (const std::expected<void, MarkupError> held =
+                OnlyParts(kind, instance,
+                          "'" + instance.name + "' is a " + std::string{kind.name} + ", which holds no elements.");
+            !held)
+        {
+            return held;
+        }
     }
 
     ScreenNode node;
@@ -1277,6 +1541,12 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
             At(element, "<" + std::string{kTemplatesElement} + "> is the root of a template library, a " +
                             std::string{kLibraryExtension} + " file of its own, which a screen imports."));
     }
+    // A part's tag, inside its control, before any element or template it might
+    // share a name with.
+    if (IsPartOf(walk.document.nodes[parent].widget, element.name))
+    {
+        return CompilePart(walk, element, parent);
+    }
     const ElementKind *const kind = FindElement(element.name);
     if (kind == nullptr)
     {
@@ -1298,7 +1568,12 @@ std::expected<void, MarkupError> CompileElement(Walk &walk, const MarkupElement 
     }
     if (!kind->carriesChildren && !element.children.empty())
     {
-        return std::unexpected(At(element, "'" + element.name + "' holds elements, and holds none."));
+        if (const std::expected<void, MarkupError> held =
+                OnlyParts(*kind, element, "'" + element.name + "' holds elements, and holds none.");
+            !held)
+        {
+            return held;
+        }
     }
 
     const std::expected<Substituted, MarkupError> text = Substitute(walk, element.text, element.line, element.column);

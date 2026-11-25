@@ -50,8 +50,19 @@ finds nothing rather than another screen. [Showing values from the
 world](ui-bindings.md#a-hud) has the sandbox's HUD as an example.
 
 Destroying the entity destroys the component too, so nothing can read the id
-from it afterwards. Have the screen send the id itself, in an event pushed when
-its context is [lost](#contexts):
+from it afterwards. The simplest way to have the screen go with the entity is
+to make the entity its owner:
+
+```cpp
+Assisi::App::SetScreenOwner(ctx.world, id, entity);
+```
+
+Every frame, before the `Ui` systems run, the world removes each screen whose
+owner no longer exists, however the owner went. [UI in the
+world](ui-world.md) does this for every widget it shows.
+
+A screen can also send its id itself, in an event pushed when its context is
+[lost](#contexts):
 
 ```cpp
 hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, Game::HudOrphaned{.screen = id});
@@ -59,7 +70,9 @@ hud->OnContext({}, Assisi::Mondrian::ContextMoment::Lost, Game::HudOrphaned{.scr
 
 Remove the screen in a `PreUpdate` system that reads the event. A paused world
 runs `PreUpdate` but not `Update`, and its events end with the frame, so an
-`Update` system would miss one pushed during a pause.
+`Update` system would miss one pushed during a pause. An entity destroyed
+before the UI has looked at its screen once sends no event, because the
+screen never saw it; an owner covers that case too.
 
 `Screen::Find` returns a node by its name. It searches every node on the
 screen, so call it once while setting up and keep the result rather than

@@ -8,10 +8,12 @@
 #include <Assisi/Core/ShortString.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <type_traits>
 #include <variant>
@@ -504,6 +506,11 @@ bool ControlHolds(BindingUse use, const FieldMeta &field)
         return IsNumber(field) || (field.type == FieldType::Enum && !field.enumConstants.empty());
     case BindingUse::Text:
     case BindingUse::Bool:
+    case BindingUse::Colour:
+    case BindingUse::Length:
+    case BindingUse::SpriteName:
+    case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
@@ -516,7 +523,143 @@ bool IsControl(BindingUse use)
     return use == BindingUse::Toggle || use == BindingUse::Slider || use == BindingUse::Stepped;
 }
 
+bool IsColour(const FieldMeta &field)
+{
+    return field.type == FieldType::SrgbColor3 || field.type == FieldType::SrgbColor4 ||
+           field.type == FieldType::LinearColor3 || field.type == FieldType::LinearColor4;
+}
+
+/// Whether an attribute fed by @p use can take @p field, or nothing when @p use
+/// feeds no attribute.
+std::optional<bool> AttributeTakes(BindingUse use, const FieldMeta &field)
+{
+    switch (use)
+    {
+    case BindingUse::Colour:
+        return IsColour(field);
+    case BindingUse::Length:
+        return IsNumber(field);
+    case BindingUse::SpriteName:
+        return field.type == FieldType::String || field.type == FieldType::InternedString;
+    case BindingUse::Texture:
+        return field.type == FieldType::AssetId;
+    case BindingUse::Offset:
+        return field.type == FieldType::Vec2;
+    case BindingUse::Text:
+    case BindingUse::Bool:
+    case BindingUse::Toggle:
+    case BindingUse::Slider:
+    case BindingUse::Stepped:
+    case BindingUse::Count_:
+        break;
+    }
+    return std::nullopt;
+}
+
+/// The colour field @p field holds at @p at, in sRGB.
+Math::Color4<Math::ColorSpace::Srgb> ColourAt(const FieldMeta &field, const std::byte *at)
+{
+    // A colour with no alpha of its own covers what is under it.
+    constexpr float kOpaque = 1.f;
+    switch (field.type)
+    {
+    case FieldType::SrgbColor3:
+        return glm::vec4{ReadAt<glm::vec3>(at), kOpaque};
+    case FieldType::LinearColor3:
+        return Math::ToSrgb(Math::Color4<Math::ColorSpace::Linear>{glm::vec4{ReadAt<glm::vec3>(at), kOpaque}});
+    case FieldType::LinearColor4:
+        return Math::ToSrgb(Math::Color4<Math::ColorSpace::Linear>{ReadAt<glm::vec4>(at)});
+    default:
+        return ReadAt<glm::vec4>(at);
+    }
+}
+
+/// The text of a sprite's name, held at @p at in the String or InternedString
+/// @p field.
+std::string NameAt(const FieldMeta &field, const std::byte *at)
+{
+    if (field.type == FieldType::String)
+    {
+        return std::string{static_cast<const Core::ShortString *>(static_cast<const void *>(at))->View()};
+    }
+    return std::string{static_cast<const Core::InternedString *>(static_cast<const void *>(at))->View()};
+}
+
+/// How a file writes each BoundAttribute, in its order.
+constexpr std::array<std::string_view, static_cast<std::size_t>(BoundAttribute::Count_)> kAttributeNames{
+    "background", "border_color", "text_color", "tint", "width", "height", "background_image", "sprite", "texture",
+    "float_offset"};
+
 } // namespace
+
+std::string_view AttributeName(BoundAttribute attribute)
+{
+    const std::size_t index = static_cast<std::size_t>(attribute);
+    return index < kAttributeNames.size() ? kAttributeNames[index] : std::string_view{};
+}
+
+std::optional<BoundAttribute> BoundAttributeNamed(std::string_view name)
+{
+    const std::array<std::string_view, kAttributeNames.size()>::const_iterator found =
+        std::ranges::find(kAttributeNames, name);
+    if (found == kAttributeNames.end())
+    {
+        return std::nullopt;
+    }
+    return static_cast<BoundAttribute>(std::distance(kAttributeNames.begin(), found));
+}
+
+BindingUse AttributeUse(BoundAttribute attribute)
+{
+    switch (attribute)
+    {
+    case BoundAttribute::Background:
+    case BoundAttribute::BorderColor:
+    case BoundAttribute::TextColor:
+    case BoundAttribute::Tint:
+        return BindingUse::Colour;
+    case BoundAttribute::Width:
+    case BoundAttribute::Height:
+        return BindingUse::Length;
+    case BoundAttribute::BackgroundImage:
+    case BoundAttribute::Sprite:
+        return BindingUse::SpriteName;
+    case BoundAttribute::FloatOffset:
+        return BindingUse::Offset;
+    case BoundAttribute::Texture:
+    case BoundAttribute::Count_:
+        break;
+    }
+    return BindingUse::Texture;
+}
+
+std::optional<StyleProperty> PropertyOf(BoundAttribute attribute)
+{
+    switch (attribute)
+    {
+    case BoundAttribute::Background:
+        return StyleProperty::Background;
+    case BoundAttribute::BorderColor:
+        return StyleProperty::BorderColor;
+    case BoundAttribute::TextColor:
+        return StyleProperty::TextColor;
+    case BoundAttribute::Tint:
+        return StyleProperty::Tint;
+    case BoundAttribute::Width:
+        return StyleProperty::Width;
+    case BoundAttribute::Height:
+        return StyleProperty::Height;
+    case BoundAttribute::BackgroundImage:
+        return StyleProperty::BackgroundImage;
+    case BoundAttribute::FloatOffset:
+        return StyleProperty::FloatOffset;
+    case BoundAttribute::Sprite:
+    case BoundAttribute::Texture:
+    case BoundAttribute::Count_:
+        break;
+    }
+    return std::nullopt;
+}
 
 std::optional<BindingUse> ControlUse(BuiltinWidget widget)
 {
@@ -532,6 +675,7 @@ std::optional<BindingUse> ControlUse(BuiltinWidget widget)
     case BuiltinWidget::Button:
     case BuiltinWidget::Scroll:
     case BuiltinWidget::TextField:
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::Count_:
         break;
     }
@@ -574,6 +718,10 @@ std::string_view ToString(BindingError error) noexcept
                "stepped slider a whole number or an enum";
     case BindingError::SourceContext:
         return "reads a registered source through a context, and a source is on no entity";
+    case BindingError::WrongAttribute:
+        return "binds a field its attribute cannot take: a colour takes a colour, a width or a height a number, a "
+               "sprite or a background_image a string naming sheet:name, a texture an AssetId, and a float_offset "
+               "a vec2";
     case BindingError::Count_:
         break;
     }
@@ -674,6 +822,18 @@ std::expected<FieldBinding, BindingError> ResolveBinding(const BindingSource &so
                          .field = &*field,
                          .use = use,
                          .twoWay = source.twoWay};
+    if (const std::optional<bool> takes = AttributeTakes(use, *field))
+    {
+        if (!*takes)
+        {
+            return std::unexpected(BindingError::WrongAttribute);
+        }
+        if (!source.format.empty())
+        {
+            return std::unexpected(BindingError::BadFormat);
+        }
+        return binding;
+    }
     switch (use)
     {
     case BindingUse::Bool:
@@ -699,6 +859,11 @@ std::expected<FieldBinding, BindingError> ResolveBinding(const BindingSource &so
         }
         return binding;
     case BindingUse::Text:
+    case BindingUse::Colour:
+    case BindingUse::Length:
+    case BindingUse::SpriteName:
+    case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
@@ -815,10 +980,42 @@ std::optional<WidgetValue> ReadControlField(const FieldBinding &binding, const v
         return PositionAt(field, at);
     case BindingUse::Text:
     case BindingUse::Bool:
+    case BindingUse::Colour:
+    case BindingUse::Length:
+    case BindingUse::SpriteName:
+    case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
     return std::nullopt;
+}
+
+AttributeValue ReadAttributeField(const FieldBinding &binding, const void *owner)
+{
+    const FieldMeta &field = *binding.field;
+    const std::byte *const at = static_cast<const std::byte *>(owner) + field.offset;
+    switch (binding.use)
+    {
+    case BindingUse::Colour:
+        return ColourAt(field, at);
+    case BindingUse::Length:
+        return static_cast<float>(NumberAt(field.type, at));
+    case BindingUse::SpriteName:
+        return NameAt(field, at);
+    case BindingUse::Texture:
+        return ReadAt<Core::AssetId>(at);
+    case BindingUse::Offset:
+        return ReadAt<glm::vec2>(at);
+    case BindingUse::Text:
+    case BindingUse::Bool:
+    case BindingUse::Toggle:
+    case BindingUse::Slider:
+    case BindingUse::Stepped:
+    case BindingUse::Count_:
+        break;
+    }
+    return std::monostate{};
 }
 
 void WriteControlField(const FieldBinding &binding, void *owner, const WidgetValue &value)

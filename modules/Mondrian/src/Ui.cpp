@@ -20,17 +20,12 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace Assisi::Mondrian
 {
 namespace
 {
-
-/// The ring around the focused node while keys were used last: its thickness,
-/// and the space between it and the node, in UI pixels.
-constexpr float kFocusRingWidth = 3.f;
-constexpr float kFocusRingGap = 3.f;
-constexpr Math::Color4<Math::ColorSpace::Srgb> kFocusRingColor{1.f, 1.f, 1.f, 1.f};
 
 /// The actions that move focus, which a focused control may take instead.
 constexpr std::array kMoveActions{UiAction::Up,    UiAction::Down, UiAction::Left,
@@ -136,11 +131,37 @@ std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
     return chain;
 }
 
+/// The nodes hover and a press hold for this frame: each node and everything
+/// holding it, so a row is hovered while the pointer is over the label inside
+/// it.
+struct Held
+{
+    std::vector<NodeId> hovered;
+    std::vector<NodeId> pressed;
+};
+
+/// Which states hold for the node @p id under @p interaction.
+StateSet HoldsFor(const NodeTree &tree, NodeId id, const Interaction &interaction, const Held &held)
+{
+    const Node &node = *tree.Get(id);
+    StateSet holds{};
+    holds[static_cast<std::size_t>(StyleState::On)] = std::holds_alternative<bool>(node.value) &&
+                                                      std::get<bool>(node.value);
+    // While the keys were used last, or always on what is being typed into: a
+    // button clicked with the mouse does not go on looking focused.
+    holds[static_cast<std::size_t>(StyleState::Focused)] =
+        interaction.focused == id && (interaction.device == InputDevice::Keys || node.takesKeyboard);
+    holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(held.hovered, id) != held.hovered.end();
+    holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(held.pressed, id) != held.pressed.end();
+    holds[static_cast<std::size_t>(StyleState::Disabled)] = !node.enabled;
+    return holds;
+}
+
 /// Puts on every node of @p tree the look of each state that holds for it under
 /// @p interaction, over its resting look, and its parent's text colour where
 /// nothing it wears writes one, with the background image it names found among
 /// @p sprites. Parents first, so the colour a node passes on is the one it
-/// wears this frame.
+/// wears this frame. A part is in whichever states its control is.
 ///
 /// A background image no sheet has draws nothing: the cook refuses a screen or
 /// theme naming one, so this is a stale package, and saying so every frame
@@ -148,10 +169,8 @@ std::vector<NodeId> WithAncestors(const NodeTree &tree, NodeId id)
 void Restyle(NodeTree &tree, const Interaction &interaction,
              const std::unordered_map<Core::InternedString, Sprite> &sprites)
 {
-    // Hover and a press hold for a node and for everything holding it, so a
-    // row is hovered while the pointer is over the label inside it.
-    const std::vector<NodeId> hovered = WithAncestors(tree, interaction.pointed);
-    const std::vector<NodeId> pressed = WithAncestors(tree, interaction.pressed);
+    const Held held{.hovered = WithAncestors(tree, interaction.pointed),
+                    .pressed = WithAncestors(tree, interaction.pressed)};
 
     // Depth-first with an explicit stack, so a deep tree cannot overflow the
     // call stack.
@@ -166,15 +185,7 @@ void Restyle(NodeTree &tree, const Interaction &interaction,
             pending.push_back(child);
         }
 
-        StateSet holds{};
-        // Shown as the focus ring is, while the keys were used last, or always
-        // on what is being typed into: a button clicked with the mouse does
-        // not go on looking focused.
-        holds[static_cast<std::size_t>(StyleState::Focused)] =
-            interaction.focused == id && (interaction.device == InputDevice::Keys || node->takesKeyboard);
-        holds[static_cast<std::size_t>(StyleState::Hover)] = std::ranges::find(hovered, id) != hovered.end();
-        holds[static_cast<std::size_t>(StyleState::Pressed)] = std::ranges::find(pressed, id) != pressed.end();
-        holds[static_cast<std::size_t>(StyleState::Disabled)] = !node->enabled;
+        const StateSet holds = HoldsFor(tree, node->part != kNoPart ? node->parent : id, interaction, held);
         const StylePatch worn = Restyled(node->resting, node->states, holds);
         node->style = worn.values;
         if (const Node *parent = tree.Get(node->parent); parent != nullptr && !worn.Writes(StyleProperty::TextColor))
@@ -191,12 +202,54 @@ void Restyle(NodeTree &tree, const Interaction &interaction,
     }
 }
 
+/// How far along a span @p alignment is: none of it at Start, all of it at End.
+float ShareAlong(Alignment alignment)
+{
+    switch (alignment)
+    {
+    case Alignment::Center:
+        return 0.5f;
+    case Alignment::End:
+        return 1.f;
+    case Alignment::Start:
+    case Alignment::Count_:
+        break;
+    }
+    return 0.f;
+}
+
+/// Where the top-left corner of a screen whose root is @p root goes so the
+/// point of it @p anchor attaches lands on the anchor, slid back inside
+/// @p viewport when the anchor asks. A screen larger than the viewport keeps its
+/// top-left corner on screen.
+Point AnchoredCorner(const Rect &root, const ScreenAnchor &anchor, Extent viewport)
+{
+    Point corner{.x = anchor.at.x - (ShareAlong(anchor.attach[0]) * root.width),
+                 .y = anchor.at.y - (ShareAlong(anchor.attach[1]) * root.height)};
+    if (anchor.keepOnScreen)
+    {
+        corner.x = std::clamp(corner.x, 0.f, std::max(0.f, static_cast<float>(viewport.width) - root.width));
+        corner.y = std::clamp(corner.y, 0.f, std::max(0.f, static_cast<float>(viewport.height) - root.height));
+    }
+    return corner;
+}
+
 } // namespace
 
 Ui::Ui(Core::EventQueue &universal) : _universal(universal)
 {
 }
-Ui::~Ui() = default;
+
+Ui::~Ui()
+{
+    if (_releaseTarget)
+    {
+        for (const Target &target : _targets)
+        {
+            _releaseTarget(target.id);
+        }
+    }
+}
 
 // -----------------------------------------------------------------------------
 // Screens
@@ -220,6 +273,10 @@ void Ui::Forget(Screen &screen)
     // Hidden before it goes, so the session naming its nodes is handed on while
     // the tree those ids name is still there.
     screen._shown = false;
+    if (_inUse == &screen)
+    {
+        _inUse = nullptr;
+    }
     if (_inputScreen == &screen)
     {
         _inputScreen = nullptr;
@@ -253,12 +310,22 @@ void Ui::Hide(Screen &screen)
         return;
     }
     screen._shown = false;
+    if (_inUse == &screen)
+    {
+        _inUse = nullptr;
+    }
     RefreshInputScreen();
 }
 
 bool Ui::Back()
 {
     Screen *top = _inputScreen;
+    // A screen in use is put down, not hidden: the monitor stays on.
+    if (top != nullptr && top == _inUse)
+    {
+        StopUsing();
+        return true;
+    }
     // A screen that locks the keys keeps them: only code hides it, so Back is
     // not a way out of one.
     if (top == nullptr || top->Traits().input != ScreenInput::ConsumeInput)
@@ -274,7 +341,9 @@ Screen *Ui::TopInputScreen()
     Screen *top = nullptr;
     for (Screen *const screen : _screens)
     {
-        if (!screen->_shown || screen->Traits().input == ScreenInput::NoConsume)
+        // A screen on another target takes nothing by its kind: it is worked
+        // only while it is used.
+        if (!screen->_shown || screen->_target != kWindowTarget || screen->Traits().input == ScreenInput::NoConsume)
         {
             continue;
         }
@@ -282,6 +351,12 @@ Screen *Ui::TopInputScreen()
         {
             top = screen;
         }
+    }
+    // Below every window screen that takes input: a menu opened while a
+    // monitor is used has the keys until it closes.
+    if (top == nullptr && _inUse != nullptr && _inUse->_shown && FindTarget(_inUse->_target) != nullptr)
+    {
+        top = _inUse;
     }
     return top;
 }
@@ -317,12 +392,12 @@ void Ui::RefreshInputScreen()
     }
 }
 
-std::vector<Screen *> Ui::DrawOrder()
+std::vector<Screen *> Ui::DrawOrder(TargetId target)
 {
     std::vector<Screen *> order;
     for (Screen *const screen : _screens)
     {
-        if (screen->_shown)
+        if (screen->_shown && screen->_target == target)
         {
             order.push_back(screen);
         }
@@ -346,8 +421,119 @@ bool Ui::TakesInput() const
 
 bool Ui::PausesWorld() const
 {
-    return std::ranges::any_of(_screens, [](const Screen *screen)
-                               { return screen->_shown && screen->Traits().pause == ScreenPause::Pause; });
+    // A monitor in the world stops nothing, whatever its file says.
+    return std::ranges::any_of(_screens,
+                               [](const Screen *screen)
+        {
+            return screen->_shown && screen->_target == kWindowTarget &&
+                   screen->Traits().pause == ScreenPause::Pause;
+        });
+}
+
+// -----------------------------------------------------------------------------
+// Targets
+// -----------------------------------------------------------------------------
+
+TargetId Ui::AddTarget(Extent size)
+{
+    Target &target = _targets.emplace_back();
+    target.id = TargetId{_nextTarget++};
+    target.size = size;
+    if (_makeTarget)
+    {
+        target.texture = _makeTarget(target.id, size);
+    }
+    return target.id;
+}
+
+void Ui::RemoveTarget(TargetId target)
+{
+    const std::vector<Target>::iterator found = std::ranges::find(_targets, target, &Target::id);
+    if (found == _targets.end())
+    {
+        return;
+    }
+    _targets.erase(found);
+    if (_releaseTarget)
+    {
+        _releaseTarget(target);
+    }
+    if (_inUse != nullptr && _inUse->_target == target)
+    {
+        StopUsing();
+    }
+}
+
+void Ui::SetTargetHost(TargetMaker make, TargetReleaser release)
+{
+    _makeTarget = std::move(make);
+    _releaseTarget = std::move(release);
+}
+
+Ui::Target *Ui::FindTarget(TargetId target)
+{
+    const std::vector<Target>::iterator found = std::ranges::find(_targets, target, &Target::id);
+    return found != _targets.end() ? &*found : nullptr;
+}
+
+const Ui::Target *Ui::FindTarget(TargetId target) const
+{
+    const std::vector<Target>::const_iterator found = std::ranges::find(_targets, target, &Target::id);
+    return found != _targets.end() ? &*found : nullptr;
+}
+
+std::optional<TargetTexture> Ui::GetTargetTexture(TargetId target) const
+{
+    const Target *const found = FindTarget(target);
+    return found != nullptr ? found->texture : std::nullopt;
+}
+
+std::optional<Extent> Ui::TargetSize(TargetId target) const
+{
+    const Target *const found = FindTarget(target);
+    return found != nullptr ? std::optional<Extent>{found->size} : std::nullopt;
+}
+
+const DrawList *Ui::TargetDrawList(TargetId target) const
+{
+    const Target *const found = FindTarget(target);
+    return found != nullptr ? &found->drawList : nullptr;
+}
+
+bool Ui::TargetRedrawn(TargetId target) const
+{
+    const Target *const found = FindTarget(target);
+    return found != nullptr && found->redrawn;
+}
+
+void Ui::SetTargetPointer(TargetId target, PointerMap map)
+{
+    if (Target *const found = FindTarget(target))
+    {
+        found->pointerMap = std::move(map);
+    }
+}
+
+void Ui::Retarget(Screen &screen, TargetId target)
+{
+    screen._target = target;
+    if (_inUse == &screen && target == kWindowTarget)
+    {
+        _inUse = nullptr;
+    }
+    RefreshInputScreen();
+}
+
+void Ui::Use(Screen &screen)
+{
+    _inUse = screen._target != kWindowTarget ? &screen : nullptr;
+    RefreshInputScreen();
+}
+
+void Ui::StopUsing()
+{
+    _inUse = nullptr;
+    RefreshInputScreen();
 }
 
 void Ui::SetFocus(Screen &screen, NodeId id)
@@ -401,7 +587,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     InputResult result;
     if (screen != nullptr)
     {
-        result = Interact(*screen, input);
+        result = Interact(*screen, OnTarget(*screen, input));
 
         // Leaving a field is as much a way of finishing with it as pressing
         // Enter, so a field judged on commit is judged when focus goes
@@ -430,6 +616,7 @@ InputResult Ui::ProcessInput(const UiInput &input)
     {
         Dispatch(*screen, _session.interaction.activated, PointerGesture(WidgetGesture::Activate, _lastPointer));
     }
+    Blink(screen, input.time);
     Announce(screen);
 
     // After the announcing: a screen says what its controls did before it goes,
@@ -440,6 +627,46 @@ InputResult Ui::ProcessInput(const UiInput &input)
         Back();
     }
     return result;
+}
+
+void Ui::Blink(const Screen *screen, double now)
+{
+    const NodeId focused = _session.interaction.focused;
+    const Node *field = screen != nullptr ? screen->Tree().Get(focused) : nullptr;
+    const CaretSeen seen{.length = field != nullptr ? field->text.size() : 0,
+                         .field = focused,
+                         .caret = field != nullptr ? field->edit.caret : 0,
+                         .anchor = field != nullptr ? field->edit.anchor : 0};
+    if (seen != _session.caretSeen)
+    {
+        _session.caretSeen = seen;
+        _session.caretSince = now;
+    }
+    _session.interaction.caretShown =
+        std::fmod(std::max(0.0, now - _session.caretSince), 2.0 * kCaretBlinkSeconds) < kCaretBlinkSeconds;
+}
+
+UiInput Ui::OnTarget(const Screen &screen, const UiInput &input) const
+{
+    if (screen._target == kWindowTarget)
+    {
+        return input;
+    }
+    // The window pointer means nothing on a monitor in the world until the
+    // engine has cast it there. Where it misses, it is over nothing on it.
+    UiInput mapped = input;
+    const Target *const target = FindTarget(screen._target);
+    const std::optional<Point> at =
+        target != nullptr && target->pointerMap ? target->pointerMap(input.pointer) : std::nullopt;
+    if (at)
+    {
+        mapped.pointer = *at;
+    }
+    else
+    {
+        mapped.pointerClaimed = true;
+    }
+    return mapped;
 }
 
 void Ui::AnnounceContexts()
@@ -534,11 +761,16 @@ void Ui::AdvanceScrolling(double seconds)
         NodeTree &tree = screen->Tree();
         for (uint32_t index = 0; index < tree.Slots().size(); ++index)
         {
-            Node *node = tree.Editable(tree.IdOf(index));
-            if (node == nullptr || node->style.scrollSmoothing <= 0.f)
+            // Read first and taken to change only while moving: taking a node
+            // counts as changing it, and a settled list must not make its
+            // screen look changed every frame.
+            const Node *settled = tree.Get(tree.IdOf(index));
+            if (settled == nullptr || settled->style.scrollSmoothing <= 0.f ||
+                settled->scrollOffset == settled->scrollTarget)
             {
                 continue;
             }
+            Node *node = tree.Editable(tree.IdOf(index));
             const float part = std::min(1.f, static_cast<float>(seconds) / node->style.scrollSmoothing);
             const auto approach = [part](float offset, float target)
             { return std::abs(target - offset) <= kSettled ? target : offset + ((target - offset) * part); };
@@ -569,6 +801,7 @@ WidgetView Ui::ViewOf(const Screen &screen, NodeId id, const WidgetType &widget)
     view.focused = _session.interaction.focused == id;
     view.pressed = _session.interaction.pressed == id;
     view.hovered = _session.interaction.hovered == id;
+    view.parts = PartRects(screen.Tree(), screen._layout, id);
     return view;
 }
 
@@ -888,62 +1121,131 @@ void Ui::Move(Screen &screen, UiAction action)
     ScrollIntoView(tree, layout, focused);
 }
 
-void Ui::DrawFocusRing(const Screen &screen)
-{
-    const LayoutNode *node = screen._layout.Get(_session.interaction.focused);
-    const Node *focused = screen.Tree().Get(_session.interaction.focused);
-    if (_session.interaction.device != InputDevice::Keys || node == nullptr || focused == nullptr)
-    {
-        return;
-    }
-    const float scale = screen._layout.scale;
-    const float width = std::max(kMinBorderDevicePixels, std::round(kFocusRingWidth * scale));
-    const float gap = std::round(kFocusRingGap * scale);
-    const Rect ring{.x = node->rect.x - gap - width,
-                    .y = node->rect.y - gap - width,
-                    .width = node->rect.width + (2.f * (gap + width)),
-                    .height = node->rect.height + (2.f * (gap + width))};
-    const float radius = node->cornerRadius > 0.f ? node->cornerRadius + gap + width : 0.f;
-    _drawList.SetDefaultClip(node->clip);
-    _drawList.Quad(ring)
-        .Fill({0.f, 0.f, 0.f, 0.f})
-        .Border(width, kFocusRingColor)
-        .Corners(radius, focused->style.cornerStyle);
-    _drawList.SetDefaultClip(kNoClip);
-}
-
 void Ui::Sync(Extent viewport)
 {
     ASSISI_ASSERT(_nextStep == FrameStep::AwaitingSync, "Ui::Sync called without a ProcessInput before it");
     _nextStep = FrameStep::AwaitingInput;
 
     _drawList.Clear();
+    _viewport = viewport;
     const float scale = UiScale(viewport, _userScale, _scaleMatch);
     if (scale > 0.f)
     {
-        for (Screen *screen : DrawOrder())
+        for (Screen *screen : DrawOrder(kWindowTarget))
         {
+            // A screen shrunk to nothing has nothing to lay out or draw, and
+            // a scale that is no number at all is drawn nowhere either.
+            if (!(screen->Scale() > 0.f))
+            {
+                continue;
+            }
             // First, so what the world holds now is what is laid out, and a
             // node a binding hides takes no room.
             screen->RefreshBindings();
-            // Before layout, so a look that changes a size is placed in the
-            // frame it takes hold. Hover, presses and focus are only the input
-            // screen's, for the reason drawing gives below.
-            Restyle(screen->Tree(), screen == _inputScreen ? _session.interaction : Interaction{}, _sprites);
-            ComputeLayout(screen->Tree(), viewport, scale, _font, screen->_layout);
-            // Only the screen with the keys draws anything as hovered, pressed
-            // or focused. A node id means nothing on another screen, so handing
-            // this one's ids to a second tree would mark whatever shares a slot.
-            if (screen != _inputScreen)
-            {
-                DrawTree(screen->Tree(), screen->_layout, _drawList, _fontAtlas, Interaction{});
-                continue;
-            }
-            DrawTree(screen->Tree(), screen->_layout, _drawList, _fontAtlas, _session.interaction);
-            DrawFocusRing(*screen);
+            DrawScreen(*screen, viewport, scale, _drawList);
         }
     }
     _drawList.Finalize();
+
+    for (Target &target : _targets)
+    {
+        SyncTarget(target);
+    }
+}
+
+std::vector<Ui::DrawnScreen> Ui::Snapshot(const std::vector<Screen *> &screens)
+{
+    std::vector<DrawnScreen> drawn;
+    drawn.reserve(screens.size());
+    for (const Screen *const screen : screens)
+    {
+        drawn.push_back(DrawnScreen{.anchor = screen->Anchor(),
+                                    .screen = screen,
+                                    .revision = screen->Tree().Revision(),
+                                    .shownAt = screen->_shownAt,
+                                    .scale = screen->Scale(),
+                                    .opacity = screen->Opacity()});
+    }
+    return drawn;
+}
+
+void Ui::SyncTarget(Target &target)
+{
+    target.redrawn = false;
+    const std::vector<Screen *> order = DrawOrder(target.id);
+    for (Screen *const screen : order)
+    {
+        if (screen->Scale() > 0.f)
+        {
+            screen->RefreshBindings();
+        }
+    }
+    // The screen being worked is drawn every frame, hover and presses moving
+    // without its tree changing, and once more when it is put down, so it is
+    // not left looking hovered.
+    const bool worked = std::ranges::find(order, _inputScreen) != order.end();
+    const bool wasWorked = std::exchange(target.drawnWorked, worked);
+    if (target.everDrawn && !worked && !wasWorked && target.drawnLook == _lookRevision &&
+        Snapshot(order) == target.drawn)
+    {
+        return;
+    }
+
+    target.drawList.Clear();
+    // Neither the player's UI size nor their choice of side: both are about
+    // their display, and a monitor in the world is laid out the same for all.
+    const float scale = UiScale(target.size, 1.f, ScaleMatch::ShorterSide);
+    if (scale > 0.f)
+    {
+        for (Screen *const screen : order)
+        {
+            if (screen->Scale() > 0.f)
+            {
+                DrawScreen(*screen, target.size, scale, target.drawList);
+            }
+        }
+    }
+    target.drawList.Finalize();
+    // Taken after drawing, which restyles and so moves each tree's revision.
+    target.drawn = Snapshot(order);
+    target.drawnLook = _lookRevision;
+    target.everDrawn = true;
+    target.redrawn = true;
+}
+
+void Ui::DrawScreen(Screen &screen, Extent area, float scale, DrawList &list)
+{
+    // Before layout, so a look that changes a size is placed in the frame it
+    // takes hold. Hover, presses and focus are only the input screen's, for
+    // the reason drawing gives below.
+    Restyle(screen.Tree(), &screen == _inputScreen ? _session.interaction : Interaction{}, _sprites);
+    LayOut(screen, area, scale * screen.Scale());
+    list.SetOpacity(screen.Opacity());
+    // Only the screen with the keys draws anything as hovered, pressed or
+    // focused. A node id means nothing on another screen, so handing this
+    // one's ids to a second tree would mark whatever shares a slot.
+    if (&screen != _inputScreen)
+    {
+        DrawTree(screen.Tree(), screen._layout, list, _fontAtlas, Interaction{});
+        return;
+    }
+    DrawTree(screen.Tree(), screen._layout, list, _fontAtlas, _session.interaction);
+}
+
+void Ui::LayOut(Screen &screen, Extent viewport, float scale)
+{
+    const std::optional<ScreenAnchor> anchor = screen.Anchor();
+    if (!anchor)
+    {
+        ComputeLayout(screen.Tree(), viewport, scale, _font, screen._layout);
+        return;
+    }
+    // At its own size, at the corner, then moved to where its anchor puts it.
+    ComputeLayout(screen.Tree(), viewport, scale, _font, screen._layout, RootSize::Own);
+    if (const LayoutNode *const root = screen._layout.Get(screen.Root()))
+    {
+        MoveLayout(screen._layout, AnchoredCorner(root->rect, *anchor, viewport));
+    }
 }
 
 void Ui::SetStringTables(const StringTables *tables)
@@ -1048,6 +1350,8 @@ void Ui::AddSpriteSheet(std::string_view vpath, const SpriteSheetDocument &sheet
         _sprites.insert_or_assign(Core::InternedString{QualifiedSprite(name, sprite.name.View())},
                                   SpriteOf(sheet, sprite, texture));
     }
+    // A background image names its sprite and is found again at each restyle.
+    ++_lookRevision;
 }
 
 const Sprite *Ui::FindSprite(std::string_view qualified) const
@@ -1074,6 +1378,25 @@ Sprite Ui::TextureSprite(std::string_view vpath)
     // reported, once rather than by every screen naming it.
     const Sprite sprite = loaded.value_or(WholeTexture(_placeholderTexture, 0, 0));
     _textures.emplace(key, sprite);
+    return sprite;
+}
+
+Sprite Ui::TextureSprite(Core::AssetId id)
+{
+    if (const std::unordered_map<Core::AssetId, Sprite>::const_iterator found = _assetTextures.find(id);
+        found != _assetTextures.end())
+    {
+        return found->second;
+    }
+    std::optional<Sprite> loaded = _assetTextureLoader ? _assetTextureLoader(id) : std::nullopt;
+    if (!_assetTextureLoader)
+    {
+        Core::Log::Error("Mondrian: no texture loader is installed to load the image {}; it shows the placeholder.",
+                         id.ToString());
+    }
+    // Kept even when it failed, as a path is.
+    const Sprite sprite = loaded.value_or(WholeTexture(_placeholderTexture, 0, 0));
+    _assetTextures.emplace(id, sprite);
     return sprite;
 }
 

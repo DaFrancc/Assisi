@@ -464,3 +464,26 @@ TEST_CASE("Text: the width a word is measured at is a width that word fits in")
         CHECK(laid.lines[0].width <= measured);
     }
 }
+
+TEST_CASE("Text: a caret after spaces at the end of the text stands after them, where the next character goes")
+{
+    const Font font = PlainFont();
+    const std::string text = "A  ";
+    const TextLayout laid = Lay(font, text, kCookedSize);
+    // The spaces still add nothing to the line's measured width...
+    CHECK(laid.lines[0].width == doctest::Approx(kAAdvance));
+    // ...but the caret after each moves on by its advance, as it will once a
+    // character follows them.
+    CHECK(PlaceCaret(laid, text, 1).x == doctest::Approx(kAAdvance));
+    CHECK(PlaceCaret(laid, text, 2).x == doctest::Approx(kAAdvance + kSpaceAdvance));
+    CHECK(PlaceCaret(laid, text, 3).x == doctest::Approx(kAAdvance + (2.f * kSpaceAdvance)));
+}
+
+TEST_CASE("Text: a caret after spaces ending a centred line still stands after them")
+{
+    const Font font = PlainFont();
+    const std::string text = "A ";
+    const float box = 100.f;
+    const TextLayout laid = Lay(font, text, kCookedSize, box, TextAlign::Center);
+    CHECK(PlaceCaret(laid, text, 2).x == doctest::Approx(laid.lines[0].x + kAAdvance + kSpaceAdvance));
+}

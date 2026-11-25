@@ -474,6 +474,44 @@ TEST_CASE("ScreenCompiler: every length unit reads")
     CHECK(floater.floating.offset[1] == Vh(2.f));
 }
 
+TEST_CASE("ScreenCompiler: opacity and a shadow read, at rest and in a state")
+{
+    const ScreenDocument document = Compiled(R"amdn(<screen>
+  <button name="lifted" opacity="0.75" shadow_color="rgbf(0, 0, 0, 0.5)" shadow_offset="0 4" shadow_blur="12"
+          shadow_spread="-2" hover:shadow_blur="1em" hover:opacity="1">Go</button>
+</screen>)amdn");
+    const ScreenNode &lifted = NodeNamed(document, "lifted");
+    const Style &style = lifted.style;
+    CHECK(style.opacity == doctest::Approx(0.75f));
+    CHECK(style.shadowColor.a == doctest::Approx(0.5f));
+    CHECK(style.shadowOffset[0] == Px(0.f));
+    CHECK(style.shadowOffset[1] == Px(4.f));
+    CHECK(style.shadowBlur == Px(12.f));
+    CHECK(style.shadowSpread == Px(-2.f));
+    for (const StyleProperty property : {StyleProperty::Opacity, StyleProperty::ShadowColor,
+                                         StyleProperty::ShadowOffset, StyleProperty::ShadowBlur,
+                                         StyleProperty::ShadowSpread})
+    {
+        CHECK((lifted.written & PropertyBit(property)) != 0);
+    }
+
+    REQUIRE(lifted.states.size() == 1);
+    const StylePatch &hover = lifted.states[0].patch;
+    CHECK(hover.Writes(StyleProperty::ShadowBlur));
+    CHECK(hover.values.shadowBlur == Em(1.f));
+    CHECK(hover.values.opacity == doctest::Approx(1.f));
+}
+
+TEST_CASE("ScreenCompiler: an opacity outside 0 to 1, a negative blur or a lone offset is refused")
+{
+    CHECK(AttributeRefusedOnLine3(R"(opacity="1.5")").message.find("1.5") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(opacity="-0.1")").message.find("-0.1") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(opacity="half")").message.find("half") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_blur="-4")").message.find("-4") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_offset="4")").message.find("shadow_offset") != std::string::npos);
+    CHECK(AttributeRefusedOnLine3(R"(shadow_color="1 1 1")").message.find("1 1 1") != std::string::npos);
+}
+
 TEST_CASE("ScreenCompiler: a length that is not one is refused where it is written")
 {
     SUBCASE("a px suffix, since a bare number already is one")
@@ -496,6 +534,23 @@ TEST_CASE("ScreenCompiler: a length that is not one is refused where it is writt
         CHECK(AttributeRefusedOnLine3(R"(width="fixed 200")").message.find("not a size") != std::string::npos);
         CHECK(AttributeRefusedOnLine3(R"(height="percent 0.5")").message.find('%') != std::string::npos);
     }
+}
+
+TEST_CASE("ScreenCompiler: a screen says which of its points goes on the place it is shown at")
+{
+    const ScreenDocument placed = Compiled(R"amdn(<screen attach="center end"><text>Name</text></screen>)amdn");
+    CHECK(placed.attach[0] == Alignment::Center);
+    CHECK(placed.attach[1] == Alignment::End);
+
+    // Its middle, unless it says otherwise.
+    const ScreenDocument plain = Compiled(R"amdn(<screen><text>Name</text></screen>)amdn");
+    CHECK(plain.attach[0] == Alignment::Center);
+    CHECK(plain.attach[1] == Alignment::Center);
+
+    CHECK(Refused(R"amdn(<screen attach="middle"><text>Name</text></screen>)amdn").message.find("middle") !=
+          std::string::npos);
+    CHECK(Refused(R"amdn(<screen><column attach="center end" /></screen>)amdn").message.find("attach") !=
+          std::string::npos);
 }
 
 TEST_CASE("ScreenCompiler: a sort key is a named layer or a number between them")
@@ -585,7 +640,7 @@ TEST_CASE("ScreenCompiler: a state's prefix the markup does not have, or cannot 
                                           "      hover:pressed:background=\"#ffffff\">Quit</button>\n"
                                           "</screen>\n");
         CHECK(error.line == 3);
-        CHECK(error.message.find("one state") != std::string::npos);
+        CHECK(error.message.find("at most a part, then a state") != std::string::npos);
     }
 
     SUBCASE("a state on what the node does rather than how it looks")
@@ -1349,9 +1404,15 @@ TEST_CASE("ScreenCompiler: a control holds what it can hold")
         CHECK(Refused(R"(<screen><toggle>on</toggle></screen>)").message.find("text") != std::string::npos);
     }
 
-    SUBCASE("a slider holding elements")
+    SUBCASE("a slider holding elements other than its parts")
     {
-        CHECK(Refused(R"(<screen><slider step="1"><text /></slider></screen>)").message.find("elements") !=
+        CHECK(Refused(R"(<screen><slider step="1"><text /></slider></screen>)").message.find("not a part of slider") !=
+              std::string::npos);
+    }
+
+    SUBCASE("an image holding elements")
+    {
+        CHECK(Refused(R"(<screen><image sprite="a:b"><text /></image></screen>)").message.find("elements") !=
               std::string::npos);
     }
 

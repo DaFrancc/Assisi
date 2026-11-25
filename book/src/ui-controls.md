@@ -7,6 +7,86 @@ A toggle's `on` and a slider's `value` can hold a binding instead of a starting
 value, and those three controls can push an event when the player moves them
 with `on_change`. See [Controls](ui-bindings.md#controls) on the bindings page.
 
+## Parts
+
+A toggle, a slider and a scroll are drawn as **parts**. A part is an element
+inside the control, such as a slider's thumb. You can style it like any other
+element, and even put things in it. The control only decides where each part
+goes and, for some parts, how big it is.
+
+| Control | Parts |
+|---|---|
+| `toggle` | `track`, `knob` |
+| `slider` | `track`, `fill`, `thumb` |
+| `stepped_slider` | `track`, `fill`, `thumb` |
+| `scroll` | `track`, `thumb` |
+
+- **Toggle.** The `track` fills the toggle. The `knob` sits at the left end
+  while the toggle is off and at the right end while it is on.
+- **Slider.** The `track` runs down the middle. The `thumb` sits where the value
+  is, and the `fill` covers the track from its start to the thumb's middle. The
+  slider sets the fill's width.
+- **Scroll.** Each scroll bar is a `track` with a `thumb` on it. The scroll sets
+  both of their sizes. Both bars share one look: whatever you write for `thumb`
+  styles the thumb of each.
+
+### Styling a part
+
+Write the part's name, then a `:`, in front of any attribute about how it looks:
+
+```xml
+<slider name="volume" step="5" thumb:background="#ffd23c" thumb:width="24"
+        track:height="4" fill:background="#e63319" />
+```
+
+A part is in whatever [state](ui-layout.md#states) its control is in. While the
+pointer is anywhere over the slider, its thumb is hovered too:
+
+```xml
+<slider step="5" thumb:background="#cccccc" thumb:hover:background="#ffffff" />
+```
+
+The part's name comes first, then the state. A toggle that is switched on is in
+the `on` state, which is how you colour a toggle that's on:
+
+```xml
+<toggle name="vsync" track:background="#3a3f4b" track:on:background="#2fbf71" />
+```
+
+A part's own size comes from its `width` and `height`, like any element. The
+control then moves it into place. So a wider thumb still stops at the end of
+the slider, and a taller knob stays centred on the toggle.
+
+To hide a part, write `visible="false"` on it. The control still works: a
+slider with no track can still be dragged.
+
+### Putting something in a part
+
+Write a part's name as an element inside its control, and put elements in it.
+Its attributes are the part's own, written without the prefix:
+
+```xml
+<slider name="volume" min="0" max="100" step="5" value="{=OptionsView.volume}">
+  <thumb width="44" corner_radius="8">
+    <text text_size="16">{OptionsView.volume:.0f}</text>
+  </thumb>
+</slider>
+```
+
+What is in a part moves with it, so the number above rides on the thumb.
+Pressing it presses the slider, so a part can't hold a control such as a
+button.
+
+A scroll's elements are what it scrolls, so a scroll's parts can only be styled
+with the prefix, as in `thumb:background`.
+
+### Every slider at once
+
+A theme can hold a style named after a kind of control, such as `slider`.
+Every slider then wears it, with no `style` attribute needed. Your own `style`
+and the element's own attributes go on top. See
+[Styles for each kind of control](ui-themes.md#styles-for-each-kind-of-control).
+
 ## Toggle
 
 ```xml
@@ -37,6 +117,18 @@ with `on_change`. See [Controls](ui-bindings.md#controls) on the bindings page.
 reasonable on a 0–1 slider but would take a thousand presses on a 0–100 one.
 
 A `stepped_slider` always moves one position per press, so it has no `step`.
+
+To give a slider buttons that step it, put buttons beside it with the
+[`step` action](ui-actions.md). Each press moves the slider as one arrow-key
+press would:
+
+```xml
+<row gap="6">
+  <button on_click="step(volume, -1)">-</button>
+  <slider name="volume" min="0" max="100" step="5" />
+  <button on_click="step(volume, 1)">+</button>
+</row>
+```
 
 ## Scroll
 
@@ -84,6 +176,20 @@ The text between the tags is what the field starts with:
 its box, as on any element. A field limited to a number of lines refuses input
 that would go past the limit rather than scrolling; put it inside a `<scroll>` to
 hold more than it shows.
+
+While a field has focus, its caret blinks. It stays visible while the player
+types or moves it, and starts blinking again once they stop.
+
+These colour the parts of a field that aren't text:
+
+| Attribute | Values | Meaning |
+|---|---|---|
+| `caret_color` | colour | The caret. |
+| `selection_color` | colour | The box behind selected text. Also used by `selectable` text, written on the text itself: a theme's `text_field` style dresses fields only. |
+| `placeholder_color` | colour | The placeholder. Left out, it is the text colour, faded. |
+
+Like any attribute about how something looks, they can go in a
+[theme style](ui-themes.md) and take a state.
 
 ## Patterns
 

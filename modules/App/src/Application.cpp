@@ -35,6 +35,7 @@
 
 #include <Assisi/Core/ConfigReader.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/FrameCapture.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -411,6 +412,7 @@ bool Application::InitializePresentation()
         // The UI and the pass are both this Application's, and the UI goes
         // first.
         _ui->SetTextureLoader([this](std::string_view vpath) { return LoadUiTexture(vpath); });
+        _ui->SetAssetTextureLoader([this](Core::AssetId id) { return LoadUiTexture(id); });
 
         // A game with no font still runs, with no text: the UI is not what a
         // missing font should take down.
@@ -490,6 +492,15 @@ Application::~Application()
     // this only orders the releases: our own resources first, then the device last.
     if (_presentationInitialized)
     {
+        // The pictures before the device; the UI, which outlives this, is
+        // told there is nothing left to release them to.
+        if (_ui != nullptr)
+        {
+            _ui->SetTargetHost({}, {});
+        }
+        _uiSurfaceDraws.clear();
+        _uiSurfaces.clear();
+        _retiredUiSurfaces.clear();
         _uiPass.Shutdown();
         _uiPlaceholderTexture = Render::Texture{};
         _uiFontAtlas = Render::Texture{};
@@ -954,6 +965,7 @@ void Application::Run()
             const Window::WindowSize size = _window->GetFramebufferSize();
             _ui->Sync({.width = static_cast<uint32_t>(std::max(size.Width, 0)),
                        .height = static_cast<uint32_t>(std::max(size.Height, 0))});
+            NoteRedrawnUiSurfaces();
         }
         if (!_headless)
         {
@@ -1274,8 +1286,11 @@ void Application::RenderFrame()
     // A redraw from the window-refresh callback shows the last frame's list,
     // which is still current. Null only if that callback fires during bring-up,
     // before the UI exists.
+    GatherUiSurfaces();
+    _uiPass.BeginFrame();
     const Passes::AppFrame appFrame{.tonemap = _options.tonemap,
                                     .gameUi = _ui && _uiShown ? &_ui->GetDrawList() : nullptr,
+                                    .uiSurfaces = _uiSurfaceDraws,
                                     .clearColor = Math::ToLinear(_config.clearColor),
                                     .frameSeconds = frameSeconds,
                                     .route = route,
@@ -1518,6 +1533,25 @@ std::optional<Mondrian::Sprite> Application::LoadUiTexture(std::string_view vpat
     Render::Texture texture;
     const std::optional<Mondrian::Extent> size =
         Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), vpath);
+    return KeepUiTexture(std::move(texture), size);
+}
+
+std::optional<Mondrian::Sprite> Application::LoadUiTexture(Core::AssetId id)
+{
+    Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (vulkanContext == nullptr)
+    {
+        return std::nullopt;
+    }
+    Render::Texture texture;
+    const std::optional<Mondrian::Extent> size =
+        Mondrian::Engine::UploadUiTexture(texture, vulkanContext->GetDevice(), id);
+    return KeepUiTexture(std::move(texture), size);
+}
+
+std::optional<Mondrian::Sprite> Application::KeepUiTexture(Render::Texture texture,
+                                                           std::optional<Mondrian::Extent> size)
+{
     if (!size)
     {
         return std::nullopt;
@@ -1525,6 +1559,132 @@ std::optional<Mondrian::Sprite> Application::LoadUiTexture(std::string_view vpat
     const Mondrian::TextureId id = _uiPass.RegisterTexture(texture.NativeTexture());
     _uiTextures.push_back(std::move(texture));
     return Mondrian::WholeTexture(id, size->width, size->height);
+}
+
+void Application::ShowUiSurfacesThrough(Render::AssetCache *cache)
+{
+    _surfaceCache = cache;
+    if (_ui == nullptr)
+    {
+        return;
+    }
+    if (cache == nullptr)
+    {
+        // What is left is let go of when the device is, and released without
+        // a cache to give a slot back to.
+        return;
+    }
+    // The UI and these pictures are both this Application's, and the UI is
+    // told to stop calling before either goes.
+    _ui->SetTargetHost([this](Mondrian::TargetId target, Mondrian::Extent size)
+                       { return MakeUiSurface(target, size); },
+                       [this](Mondrian::TargetId target) { ReleaseUiSurface(target); });
+}
+
+std::optional<Mondrian::TargetTexture> Application::MakeUiSurface(Mondrian::TargetId target, Mondrian::Extent size)
+{
+    Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (_surfaceCache == nullptr || vulkanContext == nullptr)
+    {
+        return std::nullopt;
+    }
+    nvrhi::IDevice *device = vulkanContext->GetDevice();
+    // Written as the display values the UI blends in, exactly as it blends
+    // them on the window, and read by the scene through an sRGB view, which
+    // turns them into light. Typeless is what lets one texture be both.
+    nvrhi::TextureDesc desc;
+    desc.width = size.width;
+    desc.height = size.height;
+    desc.format = nvrhi::Format::RGBA8_UNORM;
+    desc.isRenderTarget = true;
+    desc.isTypeless = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    desc.debugName = "Mondrian::Surface";
+    nvrhi::TextureHandle texture = device->createTexture(desc);
+    nvrhi::FramebufferHandle framebuffer =
+        texture ? device->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(texture)) : nullptr;
+    if (!framebuffer)
+    {
+        Core::Log::Error("UI: a {}x{} picture for a screen on a surface could not be made; it shows nothing.",
+                         size.width, size.height);
+        return std::nullopt;
+    }
+    const std::optional<uint32_t> slot = _surfaceCache->LendTextureSlot(texture, nvrhi::Format::SRGBA8_UNORM);
+    if (!slot)
+    {
+        return std::nullopt;
+    }
+    _uiSurfaces.push_back(UiSurface{.texture = texture, .framebuffer = framebuffer, .target = target, .slot = *slot});
+    return Mondrian::TargetTexture{*slot};
+}
+
+void Application::ReleaseUiSurface(Mondrian::TargetId target)
+{
+    const std::vector<UiSurface>::iterator found = std::ranges::find(_uiSurfaces, target, &UiSurface::target);
+    if (found == _uiSurfaces.end())
+    {
+        return;
+    }
+    _retiredUiSurfaces.push_back(RetiredUiSurface{.texture = std::move(found->texture),
+                                                  .framebuffer = std::move(found->framebuffer),
+                                                  .releasedAt = _renderedFrames,
+                                                  .slot = found->slot});
+    _uiSurfaces.erase(found);
+}
+
+void Application::GatherUiSurfaces()
+{
+    ++_renderedFrames;
+    std::erase_if(_retiredUiSurfaces, [this](const RetiredUiSurface &retired)
+                  { return FreeRetiredUiSurface(retired.releasedAt, retired.slot); });
+
+    _uiSurfaceDraws.clear();
+    if (_ui == nullptr)
+    {
+        return;
+    }
+    for (UiSurface &surface : _uiSurfaces)
+    {
+        const Mondrian::DrawList *drawList = _ui->TargetDrawList(surface.target);
+        if (!surface.needsDraw)
+        {
+            continue;
+        }
+        // Until its screens have been drawn once, as while the game UI is
+        // hidden, it is only cleared, so the scene never reads what a new
+        // texture held; and it still waits for them.
+        const bool drawn = drawList != nullptr && drawList->IsFinalized();
+        _uiSurfaceDraws.push_back(Passes::UiSurfaceDraw{.texture = surface.texture,
+                                                        .framebuffer = surface.framebuffer,
+                                                        .drawList = drawn ? drawList : nullptr});
+        surface.needsDraw = !drawn;
+    }
+}
+
+void Application::NoteRedrawnUiSurfaces()
+{
+    for (UiSurface &surface : _uiSurfaces)
+    {
+        surface.needsDraw = surface.needsDraw || _ui->TargetRedrawn(surface.target);
+    }
+}
+
+bool Application::FreeRetiredUiSurface(uint64_t releasedAt, uint32_t slot)
+{
+    // A frame recorded this many frames ago has left the GPU: the context keeps
+    // two in flight, and one more covers a redraw between frames.
+    constexpr uint64_t kFramesInFlight = 3;
+
+    if (_renderedFrames - releasedAt <= kFramesInFlight)
+    {
+        return false;
+    }
+    if (_surfaceCache != nullptr)
+    {
+        _surfaceCache->ReturnTextureSlot(slot);
+    }
+    return true;
 }
 
 void Application::LoadUiThemes(const Mondrian::UiConfig &settings)

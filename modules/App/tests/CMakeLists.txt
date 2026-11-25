@@ -28,6 +28,8 @@ add_executable(Assisi-App-Tests
   TestConfigReader.cpp
   TestCookedAssets.cpp
   TestCursorSystems.cpp
+  TestWorldWidgets.cpp
+  TestScreenSurfaces.cpp
   TestCrashReport.cpp
   TestFixedStepClock.cpp
   TestFrameEvents.cpp

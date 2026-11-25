@@ -1,0 +1,11 @@
+<!-- A label seen only through the wall in levels/Test.alvl. Its WorldWidget has
+     blocked="Shows": it shows only while something stands between the camera
+     and it, as a marker seen through walls does. Walk round the wall and it
+     goes. -->
+<screen sort="hud" attach="center end">
+
+  <column style="panel" padding="10 6 10 6" align="center center">
+    <text text_size="16" text_color="#7fd1ff">Seen through walls</text>
+  </column>
+
+</screen>

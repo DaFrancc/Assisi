@@ -38,6 +38,7 @@ set_target_properties(Assisi-FontImport-Tests PROPERTIES FOLDER "tests")
 add_executable(Assisi-MondrianImport-Tests
   main.cpp
   ScreenTesting.hpp
+  TestControlParts.cpp
   TestCsv.cpp
   TestMarkup.cpp
   TestScreenBindings.cpp
@@ -79,6 +80,9 @@ target_compile_definitions(Assisi-MondrianImport-Tests PRIVATE
   # Any image will do for a sheet's texture; this one has been 256 pixels
   # square since it was added.
   ASSISI_TEST_IMAGE_PATH="${CMAKE_SOURCE_DIR}/assets/textures/checker.png"
+  # The book's table of each control's parts, which the controls' own list of
+  # them is checked against.
+  ASSISI_BOOK_CONTROLS_PATH="${CMAKE_SOURCE_DIR}/book/src/ui-controls.md"
 )
 
 Assisi_add_doctest_tests(Assisi-MondrianImport-Tests NAME MondrianImport)

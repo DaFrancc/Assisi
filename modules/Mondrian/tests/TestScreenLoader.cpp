@@ -591,11 +591,60 @@ TEST_CASE("ScreenLoader: a node's looks in each state reach the node it becomes"
 
     const Node *resume = loaded->screen->Tree().Get(loaded->screen->Find("resume"));
     REQUIRE(resume != nullptr);
-    REQUIRE(resume->states.size() == 2);
+    // With the focus ring every button has of itself.
+    REQUIRE(resume->states.size() == 3);
     CHECK(std::ranges::find(resume->states, hover) != resume->states.end());
     CHECK(std::ranges::find(resume->states, off) != resume->states.end());
     // Nothing holds yet, so it wears its resting look.
     CHECK(resume->style == resume->resting.values);
+}
+
+TEST_CASE("ScreenLoader: a part's node dresses the control's own part, and what it holds goes inside it")
+{
+    EventQueue events;
+    TestWorld world{events};
+    EventQueue universal{Assisi::Core::EventScope::Universal};
+    Ui ui{universal};
+    const EventCatalog catalog = TwoEvents();
+
+    ScreenDocument document;
+    document.nodes.push_back(ScreenNode{});
+    ScreenNode slider;
+    slider.parent = 0;
+    slider.widget = BuiltinWidget::ContinuousSlider;
+    slider.range = SliderRange{.min = 0.f, .max = 1.f, .step = 0.1f};
+    slider.name = InternedString{"volume"};
+    document.nodes.push_back(slider);
+    ScreenNode thumb;
+    thumb.parent = 1;
+    thumb.part = InternedString{"thumb"};
+    thumb.style.background = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>{0.9f, 0.7f, 0.1f, 1.f};
+    thumb.written = PropertyBit(StyleProperty::Background);
+    document.nodes.push_back(thumb);
+    ScreenNode label;
+    label.parent = 2;
+    label.name = InternedString{"value"};
+    document.nodes.push_back(label);
+    ScreenNode track;
+    track.parent = 1;
+    track.part = InternedString{"track"};
+    track.visible = false;
+    document.nodes.push_back(track);
+
+    const std::expected<LoadedScreen, ScreenLoadError> loaded =
+        InstantiateScreen(ui, world, kScreenPath, document, catalog);
+    REQUIRE(loaded.has_value());
+    const NodeTree &tree = loaded->screen->Tree();
+    const NodeId volume = loaded->screen->Find("volume");
+    const NodeId part = tree.Part(volume, "thumb");
+    REQUIRE(part);
+    CHECK(tree.Get(part)->style.background == thumb.style.background);
+    CHECK(tree.Get(loaded->screen->Find("value"))->parent == part);
+    CHECK_FALSE(tree.Get(tree.Part(volume, "track"))->visible);
+
+    // A part its control does not have is a document no cook wrote.
+    document.nodes[2].part = InternedString{"knob"};
+    CHECK(InstantiateScreen(ui, world, kScreenPath, document, catalog).error() == ScreenLoadError::MisplacedNode);
 }
 
 TEST_CASE("ScreenLoader: a document that is not a walkable tree is refused")
@@ -1152,6 +1201,56 @@ TEST_CASE("ScreenLoader: a document's bindings read the screen's context")
     ui.Sync(kViewport);
     CHECK(title.text == "3 left");
     CHECK(quit.visible);
+}
+
+TEST_CASE("ScreenLoader: a document's attribute binding follows its field, and one that cannot is refused")
+{
+    // The most the bound height may reach, in UI pixels: under what Lives holds.
+    constexpr float kTallest = 20.f;
+    ScreenDocument document = PauseMenu();
+    document.nodes[kTitle].boundAttributes.push_back(
+        AttributeBinding{.length = Sizing{.value = Px(0.f), .min = {}, .max = Px(kTallest), .kind = SizingKind::Fixed},
+                         .binding = document.AddText("{Lives.left}"),
+                         .attribute = BoundAttribute::Height});
+    const Sizing unbound = document.nodes[kTitle].style.sizing[static_cast<std::size_t>(Axis::Y)];
+
+    SUBCASE("followed")
+    {
+        EventQueue events;
+        TestWorld world{events};
+        constexpr EntityId kPlayer{.index = 0, .generation = 1};
+        Lives lives{.left = 30, .shown = true};
+        world.components = {LivesMeta()};
+        world.alive = {kPlayer};
+        world.held = {{.component = "Lives", .data = &lives, .entity = kPlayer}};
+        EventQueue universal{Assisi::Core::EventScope::Universal};
+        Ui ui{universal};
+        const std::expected<LoadedScreen, ScreenLoadError> loaded =
+            InstantiateScreen(ui, world, kScreenPath, document, TwoEvents());
+        REQUIRE(loaded.has_value());
+        Screen &screen = *loaded->screen;
+        screen.Show();
+        const Node &title = *screen.Tree().Get(screen.Find("title"));
+        // Nothing to read yet: the height the file gives the node unbound.
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+        CHECK(title.style.sizing[static_cast<std::size_t>(Axis::Y)] == unbound);
+
+        screen.SetContext(kPlayer);
+        ui.ProcessInput({});
+        ui.Sync(kViewport);
+        const Sizing &height = title.style.sizing[static_cast<std::size_t>(Axis::Y)];
+        CHECK(height.kind == SizingKind::Fixed);
+        CHECK(height.value == Px(30.f));
+        CHECK(height.max == Px(kTallest));
+    }
+
+    SUBCASE("a field of a type the attribute cannot take")
+    {
+        document.nodes[kTitle].boundAttributes.push_back(
+            AttributeBinding{.binding = document.AddText("{Lives.shown}"), .attribute = BoundAttribute::Background});
+        CHECK(BoundRefusal(document) == ScreenLoadError::BadBinding);
+    }
 }
 
 namespace

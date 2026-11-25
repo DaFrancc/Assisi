@@ -1,0 +1,49 @@
+{
+  "Alpha": 0,
+  "AlphaCutoff": 0.5,
+  "BaseColorFactor": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "BaseColorTexture": {
+    "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "BaseDiffuseRoughness": 0.0,
+  "BaseWeight": 1.0,
+  "DoubleSided": false,
+  "EmissiveFactor": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "EmissiveTexture": {
+    "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "MetallicFactor": 0.0,
+  "MetallicRoughnessTexture": {
+    "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "NormalScale": 1.0,
+  "NormalTexture": {
+    "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "OcclusionStrength": 1.0,
+  "OcclusionTexture": {
+    "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "RoughnessFactor": 0.25,
+  "ShadowsFollowSmoothing": true,
+  "SpecularAaVarianceClamp": 0.20000000298023224,
+  "SpecularAntiAliasing": true,
+  "SpecularColor": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "SpecularIor": 1.5,
+  "SpecularWeight": 1.0,
+  "type": "MaterialData",
+  "version": 1
+}

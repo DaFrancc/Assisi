@@ -281,35 +281,6 @@ TEST_CASE("Widgets: the game sets a slider's value, except while the player is d
     REQUIRE(panel.events.Read<VolumeChanged>().empty()); // the game's own set announces nothing
 }
 
-TEST_CASE("Widgets: a slider's buttons step it, and the track keeps clear of them")
-{
-    Panel panel;
-    const ContinuousSliderId volume = panel.screen->AddContinuousSlider(panel.row, kPercent, 50.f);
-    panel.screen->SetButtons(volume, SliderButtons::Shown);
-    panel.screen->OnChange(volume, [](float value) { return VolumeChanged{value}; });
-    panel.Step({});
-
-    const Rect rect = panel.RectOf(volume.node);
-    const float middle = Middle(rect).y;
-    panel.Step(Pressing({.x = rect.x + 2.f, .y = middle}));
-    REQUIRE(panel.events.Read<VolumeChanged>().size() == 1);
-    CHECK(panel.events.Read<VolumeChanged>()[0].volume == doctest::Approx(50.f - kPercent.step));
-    panel.Step(Releasing({.x = rect.x + 2.f, .y = middle}));
-
-    panel.Step(Pressing({.x = rect.x + rect.width - 2.f, .y = middle}));
-    REQUIRE(panel.events.Read<VolumeChanged>().size() == 2);
-    CHECK(panel.events.Read<VolumeChanged>()[1].volume == doctest::Approx(50.f));
-    panel.Step(Releasing({.x = rect.x + rect.width - 2.f, .y = middle}));
-
-    // Dragging off a button does not throw the handle to the pointer.
-    panel.Step(Pressing({.x = rect.x + 2.f, .y = middle}));
-    panel.Step(Holding({.x = Middle(rect).x, .y = middle}));
-    CHECK(panel.screen->GetValue(volume) == doctest::Approx(50.f - kPercent.step));
-
-    // The handle sits inside the track, which starts past the first button.
-    CHECK(panel.screen->GetThumbRect(volume).x > rect.x);
-}
-
 TEST_CASE("Widgets: a slider says what it reads, where its handle is, and what each step stands for")
 {
     Panel panel;

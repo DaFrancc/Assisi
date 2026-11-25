@@ -190,6 +190,9 @@ EditorApp::EditorApp(EditorConfig config)
 
 EditorApp::~EditorApp()
 {
+    // The cache goes with this object; pictures released after it have no slot
+    // to give back.
+    ShowUiSurfacesThrough(nullptr);
     // The source is a member, so it goes with this object; nothing may reach it
     // through the installed pointer after that.
     if (Assisi::Render::GetAssetSource() == &_assetSource)
@@ -978,6 +981,8 @@ void EditorApp::SetupScene()
     // Creating a block-compressed texture on a device that did not enable the
     // feature is invalid, so the cache is told before it loads anything.
     _assetCache.SetTextureCompressionSupported(vulkanContext->SupportsTextureCompressionBc());
+    // Screens shown on surfaces in the world are read by materials through it.
+    ShowUiSurfacesThrough(&_assetCache);
 
     // Unit collider silhouettes, in a persistent arena that is never reset, so they
     // survive level loads. The editor scales these per collider to outline the

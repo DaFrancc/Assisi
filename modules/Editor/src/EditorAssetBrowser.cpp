@@ -457,7 +457,8 @@ void EditorApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
     Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc == nullptr)
         return;
-    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache);
+    Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache,
+                                               _scene->Get<Assisi::Runtime::SurfaceTexture>(entity));
 }
 
 void EditorApp::RescanAssetBrowser()

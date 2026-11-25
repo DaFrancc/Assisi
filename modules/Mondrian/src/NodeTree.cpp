@@ -28,7 +28,13 @@ const Node *NodeTree::Get(NodeId id) const
 
 Node *NodeTree::GetMutable(NodeId id)
 {
-    return const_cast<Node *>(std::as_const(*this).Get(id));
+    // Every change to a node comes through here, so counting here misses none.
+    Node *const node = const_cast<Node *>(std::as_const(*this).Get(id));
+    if (node != nullptr)
+    {
+        ++_revision;
+    }
+    return node;
 }
 
 std::expected<NodeId, NameError> NodeTree::Create(NodeId parent, std::string_view name)
@@ -118,6 +124,7 @@ void NodeTree::Destroy(NodeId id)
         return;
     }
     ASSISI_ASSERT(id != _root, "the UI root cannot be destroyed");
+    ++_revision;
     Unlink(id);
 
     // Depth-first over the subtree with an explicit stack, so a deep tree
@@ -179,6 +186,11 @@ std::expected<void, NameError> NodeTree::SetName(NodeId id, std::string_view nam
 
 void NodeTree::SetVisible(NodeId id, bool visible)
 {
+    // As SetValue: a binding writes this every frame.
+    if (const Node *const held = Get(id); held == nullptr || held->visible == visible)
+    {
+        return;
+    }
     if (Node *node = GetMutable(id))
     {
         node->visible = visible;
@@ -187,10 +199,79 @@ void NodeTree::SetVisible(NodeId id, bool visible)
 
 void NodeTree::Relook(Node &node) const
 {
-    ResolvedLook resolved = ResolveLook(node.look, _theme);
+    LookBase base;
+    if (node.part != kNoPart)
+    {
+        // A part's look follows its control's kind and the style its control
+        // names.
+        const Node &control = _slots[node.parent.index];
+        const WidgetType *type = _widgets.Get(control.behaviour);
+        if (type != nullptr && node.part < type->parts.size())
+        {
+            const WidgetPart &part = type->parts[node.part];
+            base = LookBase{
+                .defaults = &part.look, .kind = type->name, .part = part.name, .style = control.look.styleName};
+        }
+    }
+    else if (const WidgetType *type = _widgets.Get(node.behaviour); type != nullptr)
+    {
+        base = LookBase{.defaults = type->look, .kind = type->name, .part = {}, .style = {}};
+    }
+    ResolvedLook resolved = ResolveLook(node.look, _theme, base);
     node.resting = std::move(resolved.resting);
     node.states = std::move(resolved.states);
     node.style = node.resting.values;
+}
+
+void NodeTree::RelookParts(NodeId id)
+{
+    const Node *control = Get(id);
+    if (control == nullptr)
+    {
+        return;
+    }
+    for (NodeId child = control->firstChild; child; child = _slots[child.index].nextSibling)
+    {
+        if (_slots[child.index].part != kNoPart)
+        {
+            Relook(_slots[child.index]);
+        }
+    }
+}
+
+NodeId NodeTree::Part(NodeId control, std::string_view name) const
+{
+    const WidgetType *type = WidgetOf(control);
+    if (type == nullptr)
+    {
+        return {};
+    }
+    for (NodeId child = Get(control)->firstChild; child; child = _slots[child.index].nextSibling)
+    {
+        const uint8_t part = _slots[child.index].part;
+        if (part < type->parts.size() && type->parts[part].name == name)
+        {
+            return child;
+        }
+    }
+    return {};
+}
+
+NodeId NodeTree::Part(NodeId control, uint8_t part) const
+{
+    const Node *node = Get(control);
+    if (node == nullptr || part == kNoPart)
+    {
+        return {};
+    }
+    for (NodeId child = node->firstChild; child; child = _slots[child.index].nextSibling)
+    {
+        if (_slots[child.index].part == part)
+        {
+            return child;
+        }
+    }
+    return {};
 }
 
 void NodeTree::SetStyle(NodeId id, const Style &style)
@@ -202,6 +283,21 @@ void NodeTree::SetStyle(NodeId id, const Style &style)
         node->look.tokens.clear();
         Relook(*node);
     }
+}
+
+void NodeTree::SetOwnProperty(NodeId id, StyleProperty property, const Style &from)
+{
+    Node *node = GetMutable(id);
+    if (node == nullptr)
+    {
+        return;
+    }
+    StylePatch own{.values = node->look.style, .written = node->look.written, .state = StyleState::Focused};
+    own.Take(property, from);
+    node->look.style = own.values;
+    node->look.written = own.written;
+    std::erase_if(node->look.tokens, [property](const TokenUse &use) { return use.property == property; });
+    Relook(*node);
 }
 
 void NodeTree::SetStateStyle(NodeId id, const StylePatch &look)
@@ -225,12 +321,14 @@ void NodeTree::SetLook(NodeId id, NodeLook look)
     {
         node->look = std::move(look);
         Relook(*node);
+        RelookParts(id);
     }
 }
 
 void NodeTree::SetTheme(const ThemeView &theme)
 {
     _theme = theme;
+    ++_revision;
     for (Node &node : _slots)
     {
         if (node.alive)
@@ -267,9 +365,40 @@ void NodeTree::SetScrollOffset(NodeId id, Point offset)
 
 void NodeTree::SetBehaviour(NodeId id, uint32_t behaviour)
 {
-    if (Node *node = GetMutable(id))
+    const Node *held = Get(id);
+    if (held == nullptr || held->behaviour == behaviour)
     {
-        node->behaviour = behaviour;
+        return;
+    }
+    // The old kind's parts go first, so a part never outlives the control it
+    // belongs to.
+    std::vector<NodeId> parts;
+    for (NodeId child = held->firstChild; child; child = _slots[child.index].nextSibling)
+    {
+        if (_slots[child.index].part != kNoPart)
+        {
+            parts.push_back(child);
+        }
+    }
+    for (const NodeId part : parts)
+    {
+        Destroy(part);
+    }
+
+    Node *node = GetMutable(id);
+    node->behaviour = behaviour;
+    Relook(*node);
+    const WidgetType *type = _widgets.Get(behaviour);
+    if (type == nullptr)
+    {
+        return;
+    }
+    ASSISI_ASSERT(type->parts.size() <= kMaxWidgetParts, "a kind of control has more parts than a view carries");
+    for (std::size_t index = 0; index < type->parts.size(); ++index)
+    {
+        Node &part = _slots[Create(id).index];
+        part.part = static_cast<uint8_t>(index);
+        Relook(part);
     }
 }
 
@@ -347,6 +476,12 @@ void NodeTree::SetTextEdit(NodeId id, const TextEdit &edit)
 
 void NodeTree::SetValue(NodeId id, WidgetValue value)
 {
+    // A binding writes its value every frame; one that has not moved changes
+    // nothing, and must not make the screen look changed.
+    if (const Node *const held = Get(id); held == nullptr || held->value == value)
+    {
+        return;
+    }
     if (Node *node = GetMutable(id))
     {
         node->value = std::move(value);
@@ -366,14 +501,6 @@ void NodeTree::SetRange(NodeId id, SliderRange range)
     if (Node *node = GetMutable(id))
     {
         node->range = range;
-    }
-}
-
-void NodeTree::SetSliderButtons(NodeId id, SliderButtons buttons)
-{
-    if (Node *node = GetMutable(id))
-    {
-        node->sliderButtons = buttons;
     }
 }
 

@@ -128,6 +128,7 @@ enum class ScreenVerb : uint8_t
     case BuiltinWidget::Button:
     case BuiltinWidget::Scroll:
     case BuiltinWidget::TextField:
+    case BuiltinWidget::SelectableText:
     case BuiltinWidget::Count_:
         break;
     }
@@ -141,6 +142,24 @@ enum class ScreenVerb : uint8_t
     const Core::EventValueKind held = ChangeValueKind(widget);
     return held != Core::EventValueKind::None && (event == held || event == Core::EventValueKind::None);
 }
+
+/// @brief An attribute a node's file binds to a field, such as
+/// `background="{Team.colour}"`.
+ASTRUCT()
+struct AttributeBinding
+{
+    /// What was written after the binding, with the field's value to go in
+    /// place of its own: a width's or height's unit and limits, or a float
+    /// offset's unit, which both axes share. Kept here rather than in the
+    /// node's style, which shows what the node would have unbound until the
+    /// binding first reads. Unused for other attributes.
+    AFIELD() Sizing length = Sizing::Fixed(Px(0.f));
+    /// The binding alone, as written, such as `{Team.colour}`.
+    AFIELD() Core::PooledString binding;
+    AFIELD() BoundAttribute attribute = BoundAttribute::Background;
+
+    [[nodiscard]] friend bool operator==(const AttributeBinding &, const AttributeBinding &) = default;
+};
 
 /// @brief One node of a screen, as the file described it.
 ///
@@ -160,6 +179,11 @@ struct ScreenNode
     /// The resting properties the file took from the theme's tokens. Each is in
     /// written too, and its value in style is a default until a theme fills it.
     AFIELD() std::vector<TokenUse> tokens;
+
+    /// The attributes that follow fields, at most one binding each. A bound
+    /// style property is not in written: until its binding reads, the node
+    /// looks as though the file had not written it.
+    AFIELD() std::vector<AttributeBinding> boundAttributes;
 
     /// What a slider's ends mean, and how far one press moves it. A stepped
     /// slider moves a whole step at a time and ignores the step here.
@@ -191,6 +215,13 @@ struct ScreenNode
 
     /// The style this node names in whichever theme the UI has, or empty.
     AFIELD() Core::InternedString styleName;
+
+    /// Which part of its parent, a control, this node is, or empty for a node
+    /// of its own. A part is made with its control, so the loader dresses that
+    /// one, each of them where two share the name, rather than making another;
+    /// what it holds goes inside it. It carries only how it looks, whether it
+    /// shows, and its attribute bindings.
+    AFIELD() Core::InternedString part;
 
     /// The event this node pushes, by catalog name. Set only for ActionKind::Event.
     AFIELD() Core::InternedString eventName;
@@ -328,6 +359,10 @@ struct ScreenDocument
     AFIELD() int32_t sortKey = kSortMenu;
 
     AFIELD() ScreenTraits traits;
+
+    /// Which point of the screen lands on its anchor when code places it at
+    /// one, across then down. Unused while it is laid across the window.
+    AFIELD() std::array<Alignment, kAxisCount> attach{Alignment::Center, Alignment::Center};
 
     /// Whether players never see this screen, which exempts its text from a
     /// project's requirement that text come from string tables.

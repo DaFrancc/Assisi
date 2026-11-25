@@ -30,8 +30,9 @@ enum class InputGrant : uint8_t
     Count_
 };
 
-/// @brief Which device the player used last. The focus ring shows only for
-/// keys, since someone pointing can see where they are.
+/// @brief Which device the player used last. A node is in its focused state,
+/// which is what puts a ring around a control, only for keys, since someone
+/// pointing can see where they are; a field being typed into is the exception.
 enum class InputDevice : uint8_t
 {
     Pointer,
@@ -91,7 +92,15 @@ struct Interaction
     NodeId focused;
     NodeId activated; ///< the node clicked or accepted this frame
     InputDevice device = InputDevice::Pointer;
+    /// Whether a blinking caret shows this frame: for the first half of each
+    /// blink, counted from when its field took focus or the caret last moved,
+    /// so it stays visible while the player types or moves it.
+    bool caretShown = true;
 };
+
+/// How long a caret shows, and then how long it hides, in seconds: the pace
+/// desktop systems blink at.
+inline constexpr double kCaretBlinkSeconds = 0.53;
 
 /// Seconds a direction is held before it repeats, and between repeats after.
 /// The same for an editing key: a backspace held down erases at the rate a

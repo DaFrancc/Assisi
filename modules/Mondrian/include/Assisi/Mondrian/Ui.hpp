@@ -27,6 +27,7 @@
 #include <Assisi/Mondrian/StringTable.hpp>
 #include <Assisi/Mondrian/Theme.hpp>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
 
@@ -102,6 +103,61 @@ class Ui
     [[nodiscard]] bool IsHeld(const Screen &screen, NodeId id) const;
 
     // -------------------------------------------------------------------------
+    // Targets
+    // -------------------------------------------------------------------------
+
+    /// @brief A new target of @p size pixels for screens to draw into instead of
+    /// the window, made shown by whatever the host's TargetMaker makes. Its
+    /// screens are laid out against @p size and scaled by it alone, its shorter
+    /// side 1080 UI pixels: the player's UI size and scale match are about
+    /// their display, not a monitor in the world.
+    TargetId AddTarget(Extent size);
+
+    /// @brief Takes @p target away, letting the host release what showed it.
+    /// Screens still on it draw nowhere until given another target.
+    void RemoveTarget(TargetId target);
+
+    /// @brief How the host makes and releases what shows a target. Targets made
+    /// before it is set have nothing to show them.
+    void SetTargetHost(TargetMaker make, TargetReleaser release);
+
+    /// @brief What the host made to show @p target, or nullopt when it made
+    /// nothing or there is no such target.
+    [[nodiscard]] std::optional<TargetTexture> GetTargetTexture(TargetId target) const;
+
+    /// @brief @p target's size, or nullopt when there is no such target.
+    [[nodiscard]] std::optional<Extent> TargetSize(TargetId target) const;
+
+    /// @brief What the last Sync drew into @p target, or null when there is no
+    /// such target. Kept until the target is drawn again.
+    [[nodiscard]] const DrawList *TargetDrawList(TargetId target) const;
+
+    /// @brief Whether the last Sync drew @p target again. A target whose screens
+    /// did not change since it was last drawn is not drawn, so what shows it
+    /// keeps the picture it has: a room of idle monitors costs no layout, no
+    /// drawing and no GPU pass.
+    [[nodiscard]] bool TargetRedrawn(TargetId target) const;
+
+    /// @brief Where the window pointer lands on @p target, for when one of its
+    /// screens is used: the engine casts it into the world. Without one, a
+    /// used screen is worked by the keys alone.
+    void SetTargetPointer(TargetId target, PointerMap map);
+
+    /// @brief Gives the keys and the pointer to @p screen, a screen on a target
+    /// other than the window, while no window screen takes input: a monitor the
+    /// player walked up to. The pointer reaches it through its target's
+    /// PointerMap. Back, a hidden screen or StopUsing ends it. A screen on the
+    /// window is not used: it takes input by its kind.
+    void Use(Screen &screen);
+
+    /// @brief Ends the use of whichever screen is used.
+    void StopUsing();
+
+    /// @brief The screen being used, or null.
+    [[nodiscard]] Screen *InUse() { return _inUse; }
+    [[nodiscard]] const Screen *InUse() const { return _inUse; }
+
+    // -------------------------------------------------------------------------
     // Sources
     // -------------------------------------------------------------------------
 
@@ -153,9 +209,16 @@ class Ui
     /// whichever screen has the keys.
     [[nodiscard]] const Interaction &GetInteraction() const { return _session.interaction; }
 
-    /// @brief Lay every shown screen out against @p viewport and rebuild the
-    /// draw list from scratch. Must follow ProcessInput.
+    /// @brief Lay every shown screen on the window out against @p viewport and
+    /// rebuild the draw list from scratch, and draw again every target whose
+    /// screens changed. Must follow ProcessInput.
     void Sync(Extent viewport);
+
+    /// @brief The viewport the last Sync laid screens out against, in device
+    /// pixels; empty before the first. What the engine places a screen that
+    /// follows something in the world against, a frame ahead of the Sync that
+    /// draws it, so a resize lands a frame late.
+    [[nodiscard]] Extent Viewport() const { return _viewport; }
 
     /// @brief What the last Sync produced, finalized: every shown screen's
     /// quads, lowest sort key first. Stays valid until the next Sync, so a
@@ -178,6 +241,7 @@ class Ui
     {
         _font = font;
         _fontAtlas = atlas;
+        ++_lookRevision;
     }
 
     /// @brief The texture an image falls back to: what the engine registered
@@ -210,6 +274,19 @@ class Ui
     /// no known size, when it cannot be loaded.
     [[nodiscard]] Sprite TextureSprite(std::string_view vpath);
 
+    /// @brief Uploads the image an asset id names and registers it, as the
+    /// loader above does for a path; nullopt, logged, when it cannot.
+    using AssetTextureLoader = std::function<std::optional<Sprite>(Core::AssetId id)>;
+
+    /// @brief What a picture named by its asset id, as a bound texture is, is
+    /// loaded through. Until set, every such picture is the placeholder.
+    void SetAssetTextureLoader(AssetTextureLoader loader) { _assetTextureLoader = std::move(loader); }
+
+    /// @brief All of the image @p id names as one picture: loaded the first time
+    /// it is asked for, and kept until the UI goes. The placeholder, of no known
+    /// size, when it cannot be loaded.
+    [[nodiscard]] Sprite TextureSprite(Core::AssetId id);
+
     /// @brief How the UI reaches the system clipboard. Until set, it reads as
     /// empty and writes go nowhere.
     void SetClipboard(Clipboard clipboard) { _clipboard = std::move(clipboard); }
@@ -221,7 +298,11 @@ class Ui
 
     /// @brief Which side of the viewport a UI pixel is measured against. The
     /// shorter side until set.
-    void SetScaleMatch(ScaleMatch match) { _scaleMatch = match; }
+    void SetScaleMatch(ScaleMatch match)
+    {
+        _scaleMatch = match;
+        ++_lookRevision;
+    }
     [[nodiscard]] ScaleMatch GetScaleMatch() const { return _scaleMatch; }
 
     /// @brief The string tables keyed text is looked up in, and the text every
@@ -267,6 +348,59 @@ class Ui
     /// Puts @p theme on every screen.
     void PutOn(const ThemeView &theme);
 
+    /// What Screen::SetTarget does: moves @p screen onto @p target, handing the
+    /// keys on if it can no longer have them.
+    void Retarget(Screen &screen, TargetId target);
+
+    /// What a target's screens were when it was last drawn, one per screen, to
+    /// tell whether it needs drawing again.
+    struct DrawnScreen
+    {
+        std::optional<ScreenAnchor> anchor;
+        const Screen *screen = nullptr;
+        uint64_t revision = 0; ///< its tree's, after drawing
+        uint64_t shownAt = 0;
+        float scale = 0.f;
+        float opacity = 0.f;
+
+        bool operator==(const DrawnScreen &) const = default;
+    };
+
+    /// A surface other than the window that screens draw into.
+    struct Target
+    {
+        DrawList drawList;
+        std::vector<DrawnScreen> drawn;
+        PointerMap pointerMap;
+        /// The look revision it was last drawn at.
+        uint64_t drawnLook = 0;
+        Extent size;
+        TargetId id;
+        /// What the host made to show it, if anything.
+        std::optional<TargetTexture> texture;
+        /// Whether it has been drawn at all; the first Sync after it is made
+        /// always draws it.
+        bool everDrawn = false;
+        /// Whether a screen on it was being worked when it was last synced.
+        bool drawnWorked = false;
+        /// Whether the last Sync drew it.
+        bool redrawn = false;
+    };
+
+    [[nodiscard]] Target *FindTarget(TargetId target);
+    [[nodiscard]] const Target *FindTarget(TargetId target) const;
+
+    /// What @p screens look like now, for comparing with what was drawn.
+    [[nodiscard]] static std::vector<DrawnScreen> Snapshot(const std::vector<Screen *> &screens);
+
+    /// Draws @p target's shown screens again, if any of them changed since it
+    /// was last drawn.
+    void SyncTarget(Target &target);
+
+    /// Restyles, lays out and draws @p screen into @p list, against @p area at
+    /// @p scale. Its bindings have been refreshed already.
+    void DrawScreen(Screen &screen, Extent area, float scale, DrawList &list);
+
     /// Which step the host loop owes next.
     enum class FrameStep : uint8_t
     {
@@ -281,6 +415,18 @@ class Ui
     /// a slot in one screen's tree, and the same slot in another screen holds
     /// an unrelated node. Kept in one struct and cleared by assigning a fresh
     /// one, so a field added here later cannot be the one somebody forgets.
+    /// Where a caret is: its field, the caret and the other end of any
+    /// selection, and how much text there is. Any change restarts the blink.
+    struct CaretSeen
+    {
+        std::size_t length = 0;
+        NodeId field;
+        uint32_t caret = 0;
+        uint32_t anchor = 0;
+
+        [[nodiscard]] friend bool operator==(const CaretSeen &, const CaretSeen &) = default;
+    };
+
     struct InputSession
     {
         Interaction interaction;
@@ -290,6 +436,10 @@ class Ui
         NodeId lastPressed;               ///< what it landed on
         NodeId focusedLast;               ///< what had focus when the last frame ended
         uint32_t clicks = 0;              ///< presses in the run the last one belongs to
+        /// Where the focused node's caret was last frame, and since when it
+        /// has been there, which its blink is counted from.
+        CaretSeen caretSeen;
+        double caretSince = 0.0;
     };
 
     /// A struct on no entity that bindings can reach. Not owned.
@@ -303,7 +453,8 @@ class Ui
     /// which was shown later.
     [[nodiscard]] static bool Above(const Screen &screen, const Screen &other);
 
-    /// The topmost shown screen whose kind takes input, or null.
+    /// The topmost shown screen on the window whose kind takes input, or the
+    /// screen in use when there is none, or null.
     [[nodiscard]] Screen *TopInputScreen();
 
     /// Hands the keys from the screen that had them to whichever should have
@@ -311,10 +462,10 @@ class Ui
     /// the old screen's ids meant goes with them.
     void RefreshInputScreen();
 
-    /// Every shown screen, lowest first, from the topmost one that hides what
-    /// is beneath it. What is under such a screen is not drawn and not laid
-    /// out: it cannot be seen, so placing it would be work for nothing.
-    [[nodiscard]] std::vector<Screen *> DrawOrder();
+    /// Every shown screen on @p target, lowest first, from the topmost one that
+    /// hides what is beneath it. What is under such a screen is not drawn and
+    /// not laid out: it cannot be seen, so placing it would be work for nothing.
+    [[nodiscard]] std::vector<Screen *> DrawOrder(TargetId target);
 
     /// Carries every scrolling node on every shown screen closer to where it is
     /// headed, over @p seconds since the last frame.
@@ -322,6 +473,9 @@ class Ui
 
     /// Moves hover, presses and focus for @p input on @p screen.
     InputResult Interact(Screen &screen, const UiInput &input);
+    /// @p input as @p screen sees it: with the pointer passed through its
+    /// target's PointerMap when it is on one, and claimed where that misses.
+    [[nodiscard]] UiInput OnTarget(const Screen &screen, const UiInput &input) const;
     /// Answers what happened to every screen's contexts since the last input
     /// step. Here rather than in Sync, which runs after the frame's systems:
     /// an event pushed there would be dropped before any of them read it.
@@ -359,7 +513,12 @@ class Ui
     /// Moves focus for the directions pressed this frame, and again for one
     /// still held once it has been held long enough.
     void Navigate(Screen &screen, const UiInput &input);
-    void DrawFocusRing(const Screen &screen);
+    /// Starts the caret's blink again when its field or where it stands
+    /// changed since last frame, and says whether it shows at @p now.
+    void Blink(const Screen *screen, double now);
+    /// Lays @p screen out against @p viewport at @p scale: across the whole of
+    /// it, or at its own size where its anchor puts it.
+    void LayOut(Screen &screen, Extent viewport, float scale);
 
     /// Every screen that exists, in the order it was made. Not owned: a screen
     /// puts itself here and takes itself away, and whatever owns it outlives
@@ -367,6 +526,10 @@ class Ui
     std::vector<Screen *> _screens;
     /// Few, so a scan finds one.
     std::vector<Source> _sources;
+    /// Every target but the window. Few, so a scan finds one.
+    std::vector<Target> _targets;
+    TargetMaker _makeTarget;
+    TargetReleaser _releaseTarget;
     Clipboard _clipboard;
     DrawList _drawList;
     /// Nodes on the input screen whose value moved this frame, announced once
@@ -377,6 +540,8 @@ class Ui
     InputSession _session;
     /// Which screen the session belongs to; null when none takes input.
     Screen *_inputScreen = nullptr;
+    /// The screen on a target the player is using, if any.
+    Screen *_inUse = nullptr;
     Core::EventQueue &_universal;
     const Font *_font = nullptr;
     const StringTables *_tables = nullptr;
@@ -389,13 +554,22 @@ class Ui
     /// by that path, the placeholder standing in for one that did not load.
     std::unordered_map<Core::InternedString, Sprite> _textures;
     TextureLoader _textureLoader;
+    /// The same for pictures named by asset id.
+    std::unordered_map<Core::AssetId, Sprite> _assetTextures;
+    AssetTextureLoader _assetTextureLoader;
     /// How many screens have ever been shown, which orders those sharing a
     /// sort key.
     uint64_t _showSequence = 0;
+    /// Moves when something every screen is drawn with changes — the font, the
+    /// sprite sheets, how a UI pixel is measured — so every target draws again.
+    uint64_t _lookRevision = 0;
+    /// The id the next target is given; the window's is zero.
+    uint32_t _nextTarget = 1;
     double _lastTime = 0.0; ///< the previous frame's clock, for what moves over time
     Point _lastPointer;
     TextureId _fontAtlas = kWhiteTexture;
     TextureId _placeholderTexture = kWhiteTexture;
+    Extent _viewport;
     float _userScale = 1.f;
     FrameStep _nextStep = FrameStep::AwaitingInput;
     NavWrap _navWrap = NavWrap::Around;

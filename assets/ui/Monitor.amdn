@@ -1,0 +1,30 @@
+<!-- A screen on a monitor in the world. A ScreenSurface names this file, and the
+     ScreenSurfaces system draws it into a picture the monitor's mesh shows. The
+     monitor in levels/Test.alvl wears one: walk up to it and press E to use it,
+     and Escape to leave it.
+
+     The picture's shorter side is 1080 UI pixels, as the window's is, so this
+     screen is laid out as though it were a 1728 by 1080 display.
+
+     The toggle writes TuningSettings, which the HUD reads, so switching it here
+     hides the HUD on the player's own display. It is drawn larger than a
+     toggle's own size, to suit the screen, with its parts restyled to match:
+     a knob the toggle's height, and a track that turns green while it is on. -->
+<screen>
+
+  <column name="desk" width="grow" height="grow" padding="64" gap="40" background="#10161f">
+
+    <text text_size="110" text_color="#7fd1ff">Terminal</text>
+
+    <row width="grow" gap="40" align="start center">
+      <text width="grow" text_size="64">Show the HUD: {TuningSettings.showHud:#tuning:switch}</text>
+      <toggle name="show_hud" on="{=TuningSettings.showHud}" width="160" height="80"
+              knob:width="80" knob:height="80" track:on:background="#2fbf71"
+              knob:border_width="4" knob:border_color="#10161f" />
+    </row>
+
+    <text_field name="note" width="grow" lines="single" text_size="64" placeholder="type here" max_length="40" />
+
+  </column>
+
+</screen>

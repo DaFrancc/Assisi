@@ -165,6 +165,28 @@ UiInput PointerAt(Point pointer)
     return input;
 }
 
+/// A frame of @p field at @p time, in seconds, with nothing typed or moved.
+void WaitUntil(Field &field, double time)
+{
+    UiInput input = Keys();
+    input.time = time;
+    field.Step(input);
+}
+
+/// How many quads starting inside @p field's box are drawn in @p color.
+uint32_t QuadsIn(const Field &field, const Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> &color)
+{
+    const Rect box = field.Box();
+    uint32_t count = 0;
+    for (const QuadInstance &quad : field.ui.GetDrawList().Instances())
+    {
+        const bool inside = quad.rect.x >= box.x && quad.rect.x <= box.x + box.width && quad.rect.y >= box.y &&
+                            quad.rect.y <= box.y + box.height;
+        count += inside && quad.color == color ? 1U : 0U;
+    }
+    return count;
+}
+
 /// The characters of @p text from @p first up to @p last, for saying what a
 /// selection holds.
 std::string_view Between(std::string_view text, uint32_t first, uint32_t last)
@@ -608,6 +630,66 @@ TEST_CASE("TextField: a placeholder is drawn fainter than the text it stands in 
     field.screen->SetPlaceholder(field.field, {});
     field.Type("AAAA");
     CHECK(glyphAlpha() > ghost);
+}
+
+TEST_CASE("TextField: the caret blinks, and stays visible while the player types or moves it")
+{
+    Field field;
+    const Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> caret = Style{}.caretColor;
+    const auto waitUntil = [&field](double time) { WaitUntil(field, time); };
+    waitUntil(0.0);
+    CHECK(QuadsIn(field, caret) == 1);
+    waitUntil(kCaretBlinkSeconds * 1.5);
+    CHECK(QuadsIn(field, caret) == 0);
+    waitUntil(kCaretBlinkSeconds * 2.5);
+    CHECK(QuadsIn(field, caret) == 1);
+
+    // Typing shows it at once, and it stays visible for a full half-blink
+    // before it starts blinking again.
+    UiInput typing = Keys();
+    typing.time = kCaretBlinkSeconds * 3.5;
+    typing.typed = "A";
+    field.Step(typing);
+    CHECK(QuadsIn(field, caret) == 1);
+    waitUntil(kCaretBlinkSeconds * 4.4);
+    CHECK(QuadsIn(field, caret) == 1);
+    waitUntil(kCaretBlinkSeconds * 4.6);
+    CHECK(QuadsIn(field, caret) == 0);
+
+    // Moving it with the arrow keys does the same.
+    UiInput moving = Press(UiAction::Left);
+    moving.time = kCaretBlinkSeconds * 4.8;
+    field.Step(moving);
+    CHECK(QuadsIn(field, caret) == 1);
+}
+
+TEST_CASE("TextField: the caret, the selection and the placeholder wear the colours the field's look gives them")
+{
+    using Color = Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb>;
+    constexpr Color kCaret{0.9f, 0.1f, 0.1f, 1.f};
+    constexpr Color kSelection{0.1f, 0.1f, 0.9f, 1.f};
+    constexpr Color kPlaceholder{0.1f, 0.9f, 0.1f, 1.f};
+
+    Field field;
+    Style colours;
+    colours.caretColor = kCaret;
+    colours.selectionColor = kSelection;
+    colours.placeholderColor = kPlaceholder;
+    NodeTree &tree = field.screen->Tree();
+    tree.SetOwnProperty(field.field.node, StyleProperty::CaretColor, colours);
+    tree.SetOwnProperty(field.field.node, StyleProperty::SelectionColor, colours);
+    tree.SetOwnProperty(field.field.node, StyleProperty::PlaceholderColor, colours);
+    field.screen->SetPlaceholder(field.field, "AAAA");
+    field.Step({});
+
+    CHECK(QuadsIn(field, kPlaceholder) == 4);
+
+    field.Type("AAAA");
+    CHECK(QuadsIn(field, kPlaceholder) == 0);
+    CHECK(QuadsIn(field, kCaret) == 1);
+
+    field.Step(Press(EditKey::SelectAll));
+    CHECK(QuadsIn(field, kSelection) == 1);
 }
 
 TEST_CASE("TextField: a click on a placeholder leaves the caret where it must be")

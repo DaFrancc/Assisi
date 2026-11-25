@@ -2,6 +2,7 @@
 #include <Assisi/Runtime/AnimatorParams.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Math/Interpolate.hpp>
 #include <Assisi/Sigil/Bytecode.hpp>
 
 #include <algorithm>
@@ -214,12 +215,8 @@ requires std::same_as<T, float>
     {
         return false;
     }
-    // Exponential in time rather than a share per frame, so the feel is the
-    // same at every frame rate (Driscoll, "Frame Rate Independent Damping Using
-    // Lerp").
     const float current = Sigil::ToFloat(run.block[*slot]);
-    const float eased = seconds > 0.f ? target + (current - target) * std::exp(-dt / seconds) : target;
-    run.block[*slot] = Sigil::FromFloat(eased);
+    run.block[*slot] = Sigil::FromFloat(Math::Damp(current, target, seconds, dt));
     return true;
 }
 

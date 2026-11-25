@@ -165,6 +165,48 @@ TEST_CASE("NodeTree: setters reach the node their id names")
     CHECK_FALSE(tree.Get(node)->hasImage);
 }
 
+namespace
+{
+
+/// Whether @p tree's revision moved since @p seen, which it then becomes.
+bool Moved(const NodeTree &tree, uint64_t &seen)
+{
+    const bool changed = tree.Revision() != seen;
+    seen = tree.Revision();
+    return changed;
+}
+
+} // namespace
+
+TEST_CASE("NodeTree: the revision moves with every change and with nothing else")
+{
+    NodeTree tree;
+    uint64_t seen = tree.Revision();
+    const auto moved = [&tree, &seen] { return Moved(tree, seen); };
+
+    const NodeId node = tree.Create(tree.Root());
+    CHECK(moved());
+    tree.SetText(node, "a");
+    CHECK(moved());
+    (void)tree.Get(node);
+    (void)tree.Find("nothing");
+    CHECK_FALSE(moved());
+    // Set to what it already holds, as a binding does every frame.
+    tree.SetVisible(node, true);
+    tree.SetValue(node, WidgetValue{});
+    CHECK_FALSE(moved());
+    tree.SetVisible(node, false);
+    CHECK(moved());
+    tree.SetValue(node, WidgetValue{true});
+    CHECK(moved());
+    (void)tree.Editable(node);
+    CHECK(moved());
+    tree.SetTheme(ThemeView{});
+    CHECK(moved());
+    tree.Destroy(node);
+    CHECK(moved());
+}
+
 #ifndef NDEBUG
 TEST_CASE("NodeTree: the root cannot be destroyed")
 {

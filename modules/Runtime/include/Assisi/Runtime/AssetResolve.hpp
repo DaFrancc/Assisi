@@ -26,7 +26,11 @@ namespace Assisi::Runtime
 /// path uses the cache's fallback. Safe to call repeatedly: while the cache is
 /// still streaming, a null meshBuffer (billboard placeholder) or fallback
 /// material upgrades in place on a later call (see ResolveSceneAssets).
-void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache);
+///
+/// Pass the entity's @p shown when it has one, so the slot it names shows its
+/// texture; without it that slot shows its own material.
+void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &cache,
+                               const SurfaceTexture *shown = nullptr);
 
 /// @brief ResolveMeshRendererAssets over every MeshRenderer in @p scene.
 ///

@@ -72,6 +72,11 @@ enum class HandledAttribute : uint8_t
     BorderColor, ///< as Background
     TextColor,   ///< as Background
     Tint,        ///< as Background
+    ShadowColor, ///< as Background
+    OutlineColor,     ///< as Background
+    CaretColor,       ///< as Background
+    SelectionColor,   ///< as Background
+    PlaceholderColor, ///< as Background
     Count_
 };
 
@@ -141,12 +146,39 @@ struct AttributeSpec
 [[nodiscard]] std::expected<void, MarkupError> ApplyStyleAttribute(const AttributeSpec &spec,
                                                                    const MarkupAttribute &attribute, Style &style);
 
-/// The state @p attribute is written for, or none for one written with no
-/// prefix. A prefix that is no state, or more than one, is refused.
-[[nodiscard]] std::expected<std::optional<StyleState>, MarkupError> StateOf(const MarkupAttribute &attribute);
+/// @p words with a comma between each, for a message listing them.
+[[nodiscard]] std::string Listed(std::span<const std::string_view> words);
 
-/// What @p name says after its prefix, or all of it when it has none.
-[[nodiscard]] std::string_view AfterPrefix(std::string_view name);
+/// The parts an attribute's prefix may name where it is written, and whose they
+/// are, for the message naming them when it names another.
+struct PartNames
+{
+    std::vector<std::string_view> names;
+    /// Whose parts they are: "slider", or empty for those of any control. None
+    /// at all where names is empty.
+    std::string_view owner;
+};
+
+/// The parts @p widget has, or none for a node that is no control with parts.
+[[nodiscard]] PartNames PartsOf(BuiltinWidget widget);
+
+/// The parts of every built-in control, for a style any of them may name.
+[[nodiscard]] PartNames EveryControlsParts();
+
+/// What an attribute's name says about where it goes: the part it is for and
+/// the state it is for, each optional, and the attribute itself.
+struct AttributePrefix
+{
+    std::string_view part;
+    std::optional<StyleState> state;
+    std::string_view name;
+};
+
+/// Reads @p attribute's prefixes, written `part:state:name` with either left
+/// out, a part one of @p parts. A prefix that is neither, or prefixes in any
+/// other order, are refused naming what may be written.
+[[nodiscard]] std::expected<AttributePrefix, MarkupError> PrefixOf(const MarkupAttribute &attribute,
+                                                                   const PartNames &parts);
 
 /// The state a file spells @p name, or nullopt.
 [[nodiscard]] std::optional<StyleState> LookUpState(std::string_view name);
