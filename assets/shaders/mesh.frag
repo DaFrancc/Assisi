@@ -162,7 +162,7 @@ void main()
         vec3 radiance = dirLights[i].colorPad.xyz * (dirLights[i].directionIntensity.w * cloudLight);
         if (shadowCascadeCount > 0u && i == shadowLightIndex)
         {
-            shadowCascade = SelectCascade(abs(vViewZ));
+            shadowCascade = SelectCascade(CascadeDepth());
 
             float NgdotL = dot(Ng, L);
             float NdotL  = dot(N, L);

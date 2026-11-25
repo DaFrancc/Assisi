@@ -119,6 +119,15 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     constants.fog = params.fog;
     constants.fogVolumes = params.fogVolumes;
     constants.cloudShadow = params.cloudShadow;
+    // Zero, and the shader picks cascades by its own view's depth, unless the
+    // cascades were fitted to another camera.
+    constants.cascadeEye = glm::vec4(0.f);
+    constants.cascadeEyeForward = glm::vec4(0.f);
+    if (params.cascadeEye)
+    {
+        constants.cascadeEye = glm::vec4(params.cascadeEye->position, 1.f);
+        constants.cascadeEyeForward = glm::vec4(params.cascadeEye->forward, 0.f);
+    }
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

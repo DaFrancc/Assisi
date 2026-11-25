@@ -44,6 +44,11 @@ layout(binding = 256) uniform FrameConstants
     uvec4 fogVolumes;
     // The clouds' shadow on the ground; area.w is zero without one.
     CloudShadowConstants cloudShadow;
+    // The camera the sun's cascades were fitted to, from this view's origin:
+    // xyz = its position, w = 1 when it is another view's camera.
+    vec4  cascadeEye;
+    // xyz = the way that camera looks.
+    vec4  cascadeEyeForward;
 } uFrame;
 
 // Must match Render::MaterialDebugView.

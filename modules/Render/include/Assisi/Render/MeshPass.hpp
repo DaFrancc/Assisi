@@ -16,6 +16,7 @@
 /// built either on the CPU (Submit) or by a MeshCuller (SubmitIndirect).
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -234,6 +235,20 @@ public:
         bool pcss = false;
     };
 
+    /// @brief The camera the sun's cascades were fitted to, as a view that is
+    /// not that camera sees it.
+    ///
+    /// The cascades' splits are distances along the camera they were fitted
+    /// to, so a pixel another camera draws picks its cascade by its distance
+    /// along this one rather than along its own.
+    struct CascadeEye
+    {
+        /// Where that camera is, measured from this view's origin.
+        glm::vec3 position{0.f};
+        /// The way it looks, a unit vector.
+        glm::vec3 forward{0.f, 0.f, -1.f};
+    };
+
     /// @brief What the mesh shader needs to sample the local-light atlas.
     struct LocalShadowFrame
     {
@@ -268,6 +283,9 @@ public:
         /// answer and never asks which provider gave it.
         IndirectConstants indirect;
         SunShadowFrame sunShadows;
+        /// The camera the cascades were fitted to, when it is not this view's
+        /// own; empty for the view whose camera they were fitted to.
+        std::optional<CascadeEye> cascadeEye;
         LocalShadowFrame localShadows;
         /// The level's fog, already resolved against its sky. A default one is
         /// off, and the shader takes none of it.

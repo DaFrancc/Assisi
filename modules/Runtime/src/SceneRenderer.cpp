@@ -484,7 +484,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
 void SceneRenderer::CountFrame() const
 {
-    const Passes::SunShadowPass &sun = _main->_passes->passes.sunShadow;
+    const Passes::SunShadowPass &sun = _graph->passes.sunShadow;
     const Passes::ShadowAtlasPass &atlas = _graph->passes.shadowAtlas;
 
     // What the frame actually drew, on their own tracks. These are the numbers you
@@ -603,7 +603,7 @@ void SceneRenderer::OnSceneReplaced()
     // Reset rather than carried, because the incoming scene's clock starts its own
     // count and a serial that happened to match would skip the very Forget the
     // load needs.
-    _main->_passes->passes.sunShadow.jumpSerial = 0;
+    _graph->passes.sunShadow.jumpSerial = 0;
     _lastSky = SkyResolution{};
 
     // The incoming scene's clock counts its cuts from zero too, so a serial that
@@ -638,7 +638,7 @@ void SceneRenderer::SetCloudQuality(const Render::CloudQuality &quality)
 void SceneRenderer::SetShadowSettings(const Render::ShadowSettings &settings)
 {
     _settings.shadows = settings;
-    _main->_passes->passes.sunShadow.failed = false;
+    _graph->passes.sunShadow.failed = false;
     _graph->passes.shadowAtlas.failed = false;
 }
 
@@ -648,7 +648,7 @@ void SceneRenderer::SetShadowDiagnosticsEnabled(bool enabled)
     // The sun's half is gathered inside its pass, where the draw list it reads
     // lives and dies within the call — so the pass is told directly rather than
     // asked afterwards.
-    _main->_passes->passes.sunShadow.shadowPass.SetCascadeCountsEnabled(enabled);
+    _graph->passes.sunShadow.shadowPass.SetCascadeCountsEnabled(enabled);
     if (!enabled)
     {
         _shadowDiagnostics.Clear();
@@ -662,12 +662,12 @@ const Render::SkyProbe &SceneRenderer::SkyProbe() const
 
 Render::ShadowPass::Stats SceneRenderer::LastShadowStats() const
 {
-    return _main->_passes->passes.sunShadow.stats;
+    return _graph->passes.sunShadow.stats;
 }
 
 std::uint32_t SceneRenderer::LastShadowLodCoarser() const
 {
-    return _main->_passes->passes.sunShadow.casters.Result().coarserViews;
+    return _graph->passes.sunShadow.casters.Result().coarserViews;
 }
 
 Render::LocalShadowPass::Stats SceneRenderer::LastLocalShadowStats() const

@@ -59,6 +59,10 @@ constexpr const char *kWaterPixelShader = "shaders/water.frag.spv";
 constexpr const char *kOcclusionTimer = "ssao-occlusion";
 constexpr const char *kBlurTimer = "ssao-blur";
 
+// The column of a camera's world matrix that points behind it; it looks the
+// other way, as Runtime::ViewMatrix builds it.
+constexpr glm::length_t kCameraBackColumn = 2;
+
 /// Where @p light's shadow is drawn from, measured from @p origin as the
 /// gathered light is: where it is drawn, or, with @p followSteps, where its
 /// Transform chain holds it. That pose changes only when a fixed step or a
@@ -364,10 +368,11 @@ void SunShadowPass::Release()
     fit = Render::CascadeFit{};
 }
 
-bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
-                           Reads<PosedVertices> /*in*/,
+bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> /*in*/,
                            Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out)
 {
+    // Once a frame, so fitted to the main camera.
+    const ViewFrame &view = frame.main;
     stats = Render::ShadowPass::Stats{};
     fit = Render::CascadeFit{};
     if (!shadowPass.Configure(frame.settings.shadows.sun, /*active=*/ true))
@@ -670,6 +675,20 @@ void FrameConstantsPass::Record(
     meshPass.SetEnvironment(reflections.specularCube);
     meshPass.SetAmbientOcclusion(view.occlusion.texture);
     meshPass.SetCloudShadow(clouds.shadow);
+
+    // The cascades are the main camera's. Each cascade's matrix is moved by
+    // where this view's camera stands in them, so a position measured from this
+    // view finds its texel; a view other than the main one picks its cascade
+    // along the main camera.
+    Render::MeshPass::SunShadowFrame sunFrame = sun.frame;
+    sunFrame.sampledFrom = Math::TranslationOf(view.cameraInShadow);
+    std::optional<Render::MeshPass::CascadeEye> cascadeEye;
+    if (&view != &frame.main)
+    {
+        cascadeEye = Render::MeshPass::CascadeEye{
+            .position = glm::vec3(frame.main.viewOrigin - view.viewOrigin),
+            .forward = glm::normalize(-glm::vec3(frame.main.cameraInView[kCameraBackColumn]))};
+    }
     meshPass.UpdateFrameConstants(
         rec.CommandList(),
         Render::MeshPass::FrameConstantsParams{.viewProjection = view.projection * view.view,
@@ -683,7 +702,8 @@ void FrameConstantsPass::Record(
                                                .shadowDebugView = frame.settings.shadowDebugView,
                                                .indirect = ResolveIndirect(frame.sky, frame.settings.ambient,
                                                                            reflections.probe),
-                                               .sunShadows = sun.frame,
+                                               .sunShadows = sunFrame,
+                                               .cascadeEye = cascadeEye,
                                                .localShadows = local.frame,
                                                .fog = view.fog,
                                                .fogVolumes = view.fogVolumeLanes,

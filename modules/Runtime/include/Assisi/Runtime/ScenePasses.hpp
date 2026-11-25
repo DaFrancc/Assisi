@@ -247,16 +247,17 @@ struct SkyProbePass
     bool failed = false;
 };
 
-/// @brief Fits the sun's cascades to the view's camera and redraws the ones
-/// whose depth went stale. Per view, since each camera's cascades cover what it
-/// sees; the depth it keeps between frames is that view's.
+/// @brief Fits the sun's cascades to the main camera and redraws the ones whose
+/// depth went stale. Once a frame: every view samples the main camera's
+/// cascades, so a second camera costs no shadow maps of its own and sees no sun
+/// shadow where they do not reach.
 APASS(name = "shadow-cascades")
 struct SunShadowPass
 {
     bool Initialize(const ScenePassInit &init);
     bool Wanted(const SceneFrame &frame) const;
     void Release();
-    bool Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<PosedVertices> in,
+    bool Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> in,
                 Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out);
 
     Render::ShadowPass shadowPass;
@@ -278,7 +279,7 @@ struct SunShadowPass
 
 /// @brief Chooses which spot and point lights hold atlas tiles, and draws the
 /// faces that need it. Once a frame: every view samples the same tiles.
-APASS(name = "shadow-atlas")
+APASS(name = "shadow-atlas", after = "shadow-cascades")
 struct ShadowAtlasPass
 {
     bool Initialize(const ScenePassInit &init);

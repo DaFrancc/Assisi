@@ -109,6 +109,13 @@ struct MeshPassFrameConstants
     /// The clouds' shadow on the ground (see CloudShadowConstants); area.w is
     /// zero without one, and the shader then reads no map.
     CloudShadowConstants cloudShadow;
+    /// The camera the sun's cascades were fitted to, measured from this view's
+    /// origin: xyz = its position, w = 1 when it is another view's camera, and
+    /// the shader then picks a pixel's cascade by its distance along that
+    /// camera's cascadeEyeForward (xyz) rather than by its own view depth. All
+    /// zero for the view the cascades were fitted to.
+    glm::vec4 cascadeEye{0.f};
+    glm::vec4 cascadeEyeForward{0.f};
 };
 
 // std140, not std430 — this is a uniform block. The two agree on everything this
@@ -141,6 +148,8 @@ ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowViewProjection, shadowCasca
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fog, shadowViewProjection);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fogVolumes, fog);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, cloudShadow, fogVolumes);
-ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, cloudShadow);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, cascadeEye, cloudShadow);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, cascadeEyeForward, cascadeEye);
+ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, cascadeEyeForward);
 
 } // namespace Assisi::Render

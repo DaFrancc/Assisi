@@ -217,7 +217,7 @@ void main()
         vec3 radiance = dirLights[i].colorPad.xyz * (dirLights[i].directionIntensity.w * cloudLight);
         if (shadowCascadeCount > 0u && i == shadowLightIndex && L.y > 0.0)
         {
-            uint cascade = SelectCascade(abs(vViewZ));
+            uint cascade = SelectCascade(CascadeDepth());
             radiance *= SunVisibility(cascade, ShadowSurfaceToward(Ng, receiver, L, L.y));
         }
         specular += radiance * SunSpecular(slopes, V, L);
