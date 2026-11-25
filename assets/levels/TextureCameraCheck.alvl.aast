@@ -1,0 +1,10 @@
+{
+  "guid": "8a245852-3850-4bf4-a63c-acdc66ba86b6",
+  "type": "AssetSidecar",
+  "uses": [
+    {
+      "kind": "scene"
+    }
+  ],
+  "version": 1
+}

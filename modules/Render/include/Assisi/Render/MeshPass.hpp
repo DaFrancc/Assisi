@@ -235,13 +235,15 @@ public:
         bool pcss = false;
     };
 
-    /// @brief The camera the sun's cascades were fitted to, as a view that is
-    /// not that camera sees it.
+    /// @brief The camera the frame's shadow maps are measured from, as a view
+    /// that is not that camera sees it.
     ///
-    /// The cascades' splits are distances along the camera they were fitted
-    /// to, so a pixel another camera draws picks its cascade by its distance
-    /// along this one rather than along its own.
-    struct CascadeEye
+    /// The cascades' splits are distances along that camera, so a pixel
+    /// another camera draws picks its cascade by its distance along this one
+    /// rather than along its own; and the spot and point lights' shadow views
+    /// take positions measured from it, so the pixel's position is moved to it
+    /// first.
+    struct ShadowEye
     {
         /// Where that camera is, measured from this view's origin.
         glm::vec3 position{0.f};
@@ -283,9 +285,9 @@ public:
         /// answer and never asks which provider gave it.
         IndirectConstants indirect;
         SunShadowFrame sunShadows;
-        /// The camera the cascades were fitted to, when it is not this view's
-        /// own; empty for the view whose camera they were fitted to.
-        std::optional<CascadeEye> cascadeEye;
+        /// The camera the shadow maps are measured from, when it is not this
+        /// view's own; empty for the view whose camera it is.
+        std::optional<ShadowEye> shadowEye;
         LocalShadowFrame localShadows;
         /// The level's fog, already resolved against its sky. A default one is
         /// off, and the shader takes none of it.

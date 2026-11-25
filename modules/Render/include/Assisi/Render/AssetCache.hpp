@@ -166,13 +166,13 @@ public:
     ///        lent again, so a frame still drawing with it reads nothing freed.
     void ReturnTextureSlot(uint32_t slot);
 
-    /// @brief @p base as it looks with its base colour and emissive channels
-    ///        showing the texture in lent slot @p textureSlot: everything else,
-    ///        how strongly it glows included, is @p base's. Made once per base
-    ///        and slot, and kept until Clear(). Never null.
+    /// @brief @p base as it looks showing the texture in lent slot
+    ///        @p textureSlot, the way @p look says. Made once per base, slot
+    ///        and look, and kept until Clear(). Never null.
     ///
     /// A factor edit to @p base (UpdateMaterialFactors) reaches it too.
-    const Material *ResolveShownMaterial(const Material &base, uint32_t textureSlot);
+    const Material *ResolveShownMaterial(const Material &base, uint32_t textureSlot,
+                                         SurfaceLook look = SurfaceLook::Screen);
 
     /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
     /// roughness 0.6 — the engine's pre-material look, also shown while a real
@@ -456,13 +456,18 @@ private:
     {
         uint32_t base = 0;
         uint32_t slot = 0;
+        SurfaceLook look = SurfaceLook::Screen;
         bool operator==(const ShownKey &) const = default;
     };
     struct ShownKeyHash
     {
+        // The look in the top bits of the slot's half: a slot index is far
+        // narrower than 32 bits.
+        static constexpr uint32_t kLookShift = 24u;
         std::size_t operator()(const ShownKey &key) const
         {
-            return (static_cast<std::size_t>(key.base) << 32u) ^ static_cast<std::size_t>(key.slot);
+            const uint32_t slotAndLook = key.slot ^ (static_cast<uint32_t>(key.look) << kLookShift);
+            return (static_cast<std::size_t>(key.base) << 32u) ^ static_cast<std::size_t>(slotAndLook);
         }
     };
     std::unordered_map<ShownKey, Material, ShownKeyHash> _shownMaterials;

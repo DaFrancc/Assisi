@@ -28,7 +28,8 @@ void ShowSurfaceTexture(const MeshRenderer &meshRenderer, const SurfaceTexture &
     {
         const Render::Material *base = materials[shown.materialSlot];
         materials[shown.materialSlot] =
-            cache.ResolveShownMaterial(base != nullptr ? *base : *cache.FallbackMaterial(), shown.textureSlot);
+            cache.ResolveShownMaterial(base != nullptr ? *base : *cache.FallbackMaterial(), shown.textureSlot,
+                                       shown.look);
     }
 }
 

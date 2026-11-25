@@ -15,6 +15,10 @@ constexpr uint32_t kNoCandidate = std::numeric_limits<uint32_t>::max();
 /// Whether @p camera draws whether or not anything shows it.
 bool DrawsRegardless(const TextureCameraCandidate &camera)
 {
+    if (camera.redraw)
+    {
+        return true;
+    }
     switch (camera.update)
     {
     case TextureCameraUpdate::Always:

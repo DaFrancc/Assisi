@@ -95,8 +95,8 @@ struct ViewFrame
     glm::mat4 view{1.f};
     /// The camera measured from the lit pass's origin: its rotation alone.
     glm::mat4 cameraInView{1.f};
-    /// The camera measured from the shadow origin, which its cascades are
-    /// fitted from.
+    /// The camera measured from the shadow origin: where it stands in the
+    /// shadow maps. The main camera's cascades are fitted from its own.
     glm::mat4 cameraInShadow{1.f};
     /// The lit pass's origin: the camera.
     glm::dvec3 viewOrigin{0.0};
@@ -115,6 +115,9 @@ struct ViewFrame
     /// The blueprint instance the camera belongs to, whose own hidden meshes it
     /// does not draw.
     ECS::InstanceId viewerInstance;
+    /// The texture camera this view draws for, whose own surfaces it leaves
+    /// out; none for the main view.
+    ECS::Entity textureCamera = ECS::NullEntity;
     /// Whether the water reads the scene's distance this view, which then
     /// runs whether or not ambient occlusion does.
     bool waterReadsDistance = false;
@@ -140,6 +143,9 @@ struct SceneFrame
     /// Casters moving this frame, and those whose shadows changed sides.
     std::span<const Render::ShadowMover> dynamicCasters;
     std::span<const Render::ShadowMover> casterInvalidations;
+    /// The water whose waves are brought up to time: every body any view
+    /// sees this frame.
+    const Render::WaterFrame *waves = nullptr;
     /// The time the water's waves are drawn at on the shared clock.
     double waterSeconds = 0.0;
     std::optional<LightingSystem::ShadowSun> shadowSun;

@@ -3,7 +3,7 @@
 
 /// @file TextureCamera.hpp
 /// @brief A camera that draws into a picture a mesh in the world shows, such as
-/// a rifle scope's glass, a mirror or a security monitor.
+/// a rifle scope's glass or a security monitor.
 ///
 /// TextureCamera goes on an entity with a Camera and a Transform; CameraSurface
 /// goes on a mesh and names the camera whose picture it shows. The renderer
@@ -36,7 +36,7 @@ enum class TextureCameraUpdate : uint8_t
 {
     Always,    ///< Every frame.
     WhileSeen, ///< On a frame when a surface showing it is in view of a camera that draws.
-    WhenAsked, ///< Once, on the frame after RequestTextureCameraPicture.
+    WhenAsked, ///< Once, the next time the scene is drawn after RequestTextureCameraPicture.
     WhileOn,   ///< Every frame while switched on with SwitchTextureCamera.
     Count_,
 };
@@ -82,9 +82,9 @@ struct TextureCameraRequest
 /// entity's mesh.
 ///
 /// The slot shows the picture as light, at the brightness the camera saw, so a
-/// scope or a mirror matches the world around it; the rest of the slot's
-/// material is not drawn. The camera never draws this surface itself, so a
-/// mirror doesn't show its own picture.
+/// scope's glass matches the world around it; the rest of the slot's material
+/// is not drawn. The camera never draws this surface itself, so a camera that
+/// can see its own screen doesn't show the screen inside its picture.
 ///
 /// Saved with its level. Not sent, since the camera it names is an entity of
 /// this machine's own: put it on the mesh in the level or blueprint, where
@@ -104,7 +104,8 @@ struct CameraSurface
 void SwitchTextureCamera(ECS::Scene &scene, ECS::Entity camera, TextureCameraSwitch to);
 
 /// @brief Asks the WhenAsked TextureCamera on @p camera for one picture, drawn
-/// on the next frame. Asking again before it is drawn asks for the same one.
+/// the next time the scene is drawn: this frame when asked from an update.
+/// Asking again before it is drawn asks for the same one.
 void RequestTextureCameraPicture(ECS::Scene &scene, ECS::Entity camera);
 
 /// @brief A texture camera as the choice of which ones draw sees it.
@@ -118,6 +119,9 @@ struct TextureCameraCandidate
     bool on = true;
     /// Whether a picture was asked for.
     bool asked = false;
+    /// Whether it draws this frame whatever its mode says, as when its picture
+    /// was made again at a new size and holds nothing yet.
+    bool redraw = false;
 };
 
 /// @brief A surface showing a camera's picture, as the choice sees it.
@@ -132,7 +136,7 @@ struct CameraSurfaceBounds
 /// @brief Which texture cameras draw this frame, written to @p order in the
 /// order they draw.
 ///
-/// A camera draws when its mode says so, or, WhileSeen, when a surface showing
+/// A camera draws when its mode says so or it must redraw, or, WhileSeen, when a surface showing
 /// it is in the frustum of the main camera (@p main) or of another camera that
 /// draws. A camera never counts as seeing its own surfaces. Each camera comes
 /// after every camera whose surface it sees, so the picture it shows is this

@@ -80,6 +80,23 @@ struct MaterialTextures
     bool hasOcclusionTexture = false;  ///< False when the occlusion channel is the white default.
 };
 
+/// @brief How a material slot shows a texture an engine system draws.
+enum class SurfaceLook : uint8_t
+{
+    /// As its base colour and its glow, the rest of its material kept, so how
+    /// brightly it glows is the material's: a UI screen on a monitor.
+    Screen,
+    /// As light at the brightness the texture holds, and nothing else: no base
+    /// colour and no reflections. A camera's picture on a scope's glass.
+    Light,
+    Count_,
+};
+
+/// @brief @p base as a slot showing a texture the way @p look says needs it:
+/// unchanged for a screen; black, unreflective and glowing at full strength
+/// for light.
+[[nodiscard]] Geometry::MaterialData ShownMaterialSource(const Geometry::MaterialData &base, SurfaceLook look);
+
 class Material
 {
 public:

@@ -119,14 +119,14 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const Fram
     constants.fog = params.fog;
     constants.fogVolumes = params.fogVolumes;
     constants.cloudShadow = params.cloudShadow;
-    // Zero, and the shader picks cascades by its own view's depth, unless the
-    // cascades were fitted to another camera.
-    constants.cascadeEye = glm::vec4(0.f);
-    constants.cascadeEyeForward = glm::vec4(0.f);
-    if (params.cascadeEye)
+    // Zero, and the shader looks shadows up from its own camera, unless the
+    // shadow maps are measured from another.
+    constants.shadowEye = glm::vec4(0.f);
+    constants.shadowEyeForward = glm::vec4(0.f);
+    if (params.shadowEye)
     {
-        constants.cascadeEye = glm::vec4(params.cascadeEye->position, 1.f);
-        constants.cascadeEyeForward = glm::vec4(params.cascadeEye->forward, 0.f);
+        constants.shadowEye = glm::vec4(params.shadowEye->position, 1.f);
+        constants.shadowEyeForward = glm::vec4(params.shadowEye->forward, 0.f);
     }
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));

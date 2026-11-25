@@ -30,6 +30,7 @@
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
 #include <Assisi/Runtime/ScenePasses.hpp>
+#include <Assisi/Runtime/TextureCamera.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -38,6 +39,11 @@
 #include <optional>
 #include <span>
 #include <vector>
+
+namespace Assisi::Render
+{
+class AssetCache;
+} // namespace Assisi::Render
 
 namespace Assisi::Runtime
 {
@@ -51,9 +57,9 @@ class SceneViewPasses;
 /// frame, and the objects sized to its picture, so two views drawn in one frame
 /// never overwrite each other's.
 ///
-/// The world's work (transforms, skinning, the sky, the shadow atlas) is the
-/// SceneRenderer's and runs once a frame; each view then draws from its own:
-/// its light clusters, sun cascades, LOD choices, culling, screen-space
+/// The world's work (transforms, skinning, the sky, the sun's cascades and the
+/// shadow atlas) is the SceneRenderer's and runs once a frame; each view then
+/// draws from its own: its light clusters, LOD choices, culling, screen-space
 /// occlusion and targets.
 class SceneView
 {
@@ -85,6 +91,10 @@ private:
     Render::WaterFrame _waterFrame;
     // The point the view's lit pass is measured from: its camera.
     glm::dvec3 _viewOrigin{0.0};
+    // Latched so fog volumes past what one view draws are reported when they
+    // first are, not at the frame rate; each view's own, so two views that
+    // disagree don't report it every frame.
+    bool _droppedFogVolumesWarned = false;
 };
 
 class SceneRenderer
@@ -112,6 +122,10 @@ public:
         nvrhi::IBindingLayout *bindlessLayout = nullptr;
         nvrhi::IDescriptorTable *bindlessTable = nullptr;
         nvrhi::IBuffer *materialTable = nullptr;
+        /// The cache whose bindless table texture cameras' pictures are lent
+        /// slots in, and whose materials show them. Null draws no texture
+        /// camera. Must outlive the renderer.
+        Render::AssetCache *assetCache = nullptr;
     };
 
     /// @brief Bring up clustered lighting and the scene mesh pipeline against the
@@ -131,6 +145,11 @@ public:
     /// scene's transforms, refreshes lighting, rebuilds the froxel grid if the
     /// projection changed since last frame, and draws every mesh entity. No-op
     /// until Initialize() succeeds.
+    ///
+    /// Draws each TextureCamera that is needed into its picture first, and so
+    /// changes `scene`: each mesh with a CameraSurface is given a
+    /// SurfaceTexture showing the picture, or has it taken away, and a
+    /// TextureCameraRequest is removed once its picture is drawn.
     void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
                 const Camera &camera)
     {
@@ -460,13 +479,15 @@ private:
     /// @brief Redraw every kept cascade and atlas tile on the next frame.
     void ForgetKeptShadows();
 
-    /// @brief Hold the scene distance target and occlusion's targets for
-    /// @p frame: the distance while occlusion or @p waterReadsDistance wants it,
+    /// @brief Hold @p view's scene distance target and occlusion's targets, at
+    /// @p width by @p height over @p depthTexture: the distance while
+    /// occlusion or @p waterReadsDistance wants it,
     /// occlusion's own while its setting is on. Releases what neither wants,
     /// and turns occlusion's setting off if its targets fail.
     ///
     /// @return the occlusion's texture, empty when this frame runs none.
-    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(const Render::RenderFrame &frame, bool waterReadsDistance);
+    [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
+                                                         nvrhi::ITexture *depthTexture, bool waterReadsDistance);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world
@@ -496,7 +517,125 @@ private:
     /// @brief Log each sky warning that was not raised last frame.
     void WarnNewSkyWarnings(const SkyWarnings &warnings);
 
+    /// @brief A texture camera's view and the picture it draws into.
+    struct TextureView
+    {
+        std::unique_ptr<SceneView> view{};
+        /// Drawn into, in the scene target's format and sample count, so every
+        /// pipeline built for the main view's targets draws here too.
+        nvrhi::TextureHandle color{};
+        nvrhi::TextureHandle depth{};
+        /// What surfaces show, one sample a pixel: the colour target itself
+        /// when the scene draws without MSAA, which is resolved into it
+        /// otherwise.
+        nvrhi::TextureHandle picture{};
+        nvrhi::FramebufferHandle framebuffer{};
+        ECS::Entity camera = ECS::NullEntity;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        /// The picture's lent slot in the asset cache's bindless table.
+        uint32_t slot = 0;
+        /// Whether the picture has been cleared since it was made, so a surface
+        /// never shows what new memory held before the camera first draws.
+        bool cleared = false;
+        /// Whether it draws on the next frame whatever its mode says: its
+        /// picture was made again at a new size, and holds nothing of the last.
+        bool redraw = false;
+    };
+
+    /// @brief A texture view taken away, its picture kept lent until no frame
+    /// in flight can still read it.
+    struct RetiredTextureView
+    {
+        TextureView texture;
+        uint64_t retiredAt = 0;
+    };
+
+    /// @brief Bring up @p view's own objects for targets like @p targets,
+    /// @p width by @p height, seen through @p camera. False, logged, when the
+    /// lighting or the mesh pass fails to start; the rest stay off and say so.
+    [[nodiscard]] bool InitializeView(SceneView &view, const nvrhi::FramebufferInfo &targets, int32_t width,
+                                      int32_t height, const Camera &camera);
+
+    /// @brief Gather into @p view the fog volumes its camera sees through
+    /// @p viewProjection, on a @p width by @p height picture.
+    void GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, uint32_t width,
+                             uint32_t height);
+
+    /// @brief Gather into @p view the water its camera sees through
+    /// @p viewProjection, out to @p drawDistance.
+    void GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, float drawDistance);
+
+    /// @brief Keep a texture view for each TextureCamera in @p scene, at its
+    /// size, and retire those whose camera went.
+    void KeepTextureViews(ECS::Scene &scene);
+
+    /// @brief Make @p texture's targets at its size, like the scene target's,
+    /// and its picture with a lent slot unless it already has one: a picture is
+    /// the same whether the scene draws with MSAA or not, so it outlives a
+    /// change of the targets, and a camera keeps showing its last picture.
+    /// False, logged, when they cannot be made.
+    [[nodiscard]] bool MakeTextureTargets(TextureView &texture);
+
+    /// @brief Take @p texture away, its picture kept lent for the frames in
+    /// flight that may read it.
+    void RetireTextureView(TextureView &&texture);
+
+    /// @brief Give back the slots of the retired texture views no frame in
+    /// flight can read, or of all of them with @p all.
+    void FreeRetiredTextureViews(bool all);
+
+    /// @brief Show each CameraSurface's camera picture on its mesh, and take
+    /// the picture off meshes that no longer show one.
+    void ShowCameraPictures(ECS::Scene &scene);
+
+    /// @brief Which texture cameras draw this frame, in the order they draw,
+    /// into _textureOrder, against the main camera's @p mainViewProjection
+    /// measured from its origin.
+    void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection);
+
+    /// @brief Gather what @p texture's camera sees, and the frame its passes
+    /// read. After the main view's lights are gathered, which it shares.
+    [[nodiscard]] Passes::ViewFrame PrepareTextureView(ECS::Scene &scene, TextureView &texture,
+                                                       const FogResolution &fog, bool fogged);
+
+    /// @brief Clear every picture made since the last frame to black, and leave
+    /// it readable.
+    void ClearNewPictures(nvrhi::ICommandList *commandList);
+
+    /// @brief Draw @p texture's view, prepared as @p viewFrame, into its
+    /// picture after the world's passes, and leave the picture readable.
+    void DrawTextureView(nvrhi::ICommandList *commandList, Passes::SceneImports &imports,
+                         const Passes::SceneFrame &sceneFrame, TextureView &texture,
+                         const Passes::ViewFrame &viewFrame);
+
+    /// @brief Every body any view sees this frame: the main view's water, and
+    /// a union with the texture views' when they see any it does not.
+    [[nodiscard]] const Render::WaterFrame &WavesFrame();
+
+    /// @brief The texture view drawing for @p camera, or null.
+    [[nodiscard]] TextureView *TextureViewFor(ECS::Entity camera);
+
     nvrhi::IDevice *_device = nullptr;
+    // What each view's own objects are built with, kept for the texture views
+    // made after Initialize; its camera is unread.
+    InitParams _viewParams;
+    // Each texture camera's view, the ones taken away while frames in flight
+    // may still read their pictures, and the meshes given a picture to show.
+    std::vector<TextureView> _textureViews;
+    std::vector<RetiredTextureView> _retiredTextureViews;
+    std::vector<ECS::Entity> _shownSurfaces;
+    // This frame's choice of texture views, and the frames they draw with;
+    // kept for their capacity.
+    std::vector<TextureCameraCandidate> _textureCandidates;
+    std::vector<CameraSurfaceBounds> _surfaceBounds;
+    std::vector<ECS::Entity> _textureOrder;
+    std::vector<Passes::ViewFrame> _textureFrames;
+    // Every body any view sees, when the texture views see some the main view
+    // does not.
+    Render::WaterFrame _wavesFrame;
+    // Counts Render calls, which a retired texture view waits out.
+    uint64_t _renderCount = 0;
     // The frame's passes, in the order their declarations fix, and what they
     // hand one another. Behind a pointer so this header need not include the
     // generated one.
@@ -592,8 +731,6 @@ private:
     bool _severalFogsWarned = false;
     // The same for a scene with several Winds.
     bool _severalWindsWarned = false;
-    // The same for fog volumes past what a frame draws.
-    bool _droppedFogVolumesWarned = false;
     // The same for several PostProcessVolumes covering the whole level.
     bool _severalLevelPostProcessWarned = false;
     DrawStats &_lastDrawStats; // drawn/culled from the last Render(), for the overlay

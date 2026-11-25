@@ -4,16 +4,23 @@
 
 #include <Assisi/Runtime/SkyResolve.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <utility>
+#include <vector>
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/Math/Matrix.hpp>
+#include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
+#include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
 #include <Assisi/Runtime/PostProcessResolve.hpp>
@@ -96,6 +103,21 @@ Render::FogConstants FrameFog(const FogResolution &fog, bool drawn, const SkyRes
     return constants;
 }
 
+// The largest side a texture camera's picture is made at, in pixels: past it
+// a picture costs more memory than any surface could show.
+constexpr uint32_t kMaxTextureCameraSide = 4096u;
+
+// How many Render calls a retired texture view's picture stays lent for: the
+// context keeps two frames in flight and one more covers a redraw between
+// them, as for the UI's surfaces. Render is called once a frame.
+constexpr uint64_t kTextureViewRetireRenders = 3u;
+
+// Whether @p frame holds the body @p key names.
+bool HoldsBody(const Render::WaterFrame &frame, uint64_t key)
+{
+    return std::ranges::any_of(frame.bodies, [key](const Render::WaterBody &body) { return body.key == key; });
+}
+
 // The blueprint instance @p camera belongs to, or none for a camera in no
 // instance or no camera at all.
 ECS::InstanceId ViewerInstance(const ECS::Scene &scene, ECS::Entity camera)
@@ -132,23 +154,7 @@ SceneRenderer::~SceneRenderer() = default;
 bool SceneRenderer::Initialize(const InitParams &params)
 {
     _device = params.device;
-
-    const glm::mat4 projection = ProjectionMatrix(params.camera, AspectRatio(params.width, params.height));
-
-    // The cluster grid's light buffers must exist before MeshPass::Initialize,
-    // which binds them into every binding set it creates — so build lighting first.
-    nvrhi::CommandListHandle setupCommandList = _device->createCommandList();
-    setupCommandList->open();
-    const bool lightingOk = _lighting.Initialize(_device, setupCommandList, params.width, params.height,
-                                                 params.camera.nearZ, params.camera.farZ, projection);
-    setupCommandList->close();
-    _device->executeCommandList(setupCommandList);
-
-    if (!lightingOk)
-    {
-        Core::Log::Error("SceneRenderer: failed to initialise the clustered lighting pipeline.");
-        return false;
-    }
+    _viewParams = params;
 
     // A failure is non-fatal — the scene renders unshadowed rather than not at
     // all: both shadow passes then fail to start, and say so.
@@ -172,23 +178,9 @@ bool SceneRenderer::Initialize(const InitParams &params)
         return false;
     }
 
-    if (!_meshPass.Initialize(
-            Render::MeshPass::InitParams{.device = _device,
-                                         .framebufferInfo = params.framebufferInfo,
-                                         .vertexShaderSpvPath = kSceneVertexShader,
-                                         .pixelShaderSpvPath = kScenePixelShader,
-                                         .blendedPixelShaderSpvPath = kSceneBlendedPixelShader,
-                                         .depthVertexShaderSpvPath = kSceneDepthVertexShader,
-                                         .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
-                                         .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
-                                         .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
-                                         .clusterGrid = &_lighting.Grid(),
-                                         .fogVolumes = &_fogVolumeBuffers,
-                                         .bindlessLayout = params.bindlessLayout,
-                                         .bindlessTable = params.bindlessTable,
-                                         .materialTable = params.materialTable}))
+    // The main view's own objects and passes.
+    if (!InitializeView(*_main, params.framebufferInfo, params.width, params.height, params.camera))
     {
-        Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
     }
 
@@ -204,9 +196,58 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
     }
 
+    // The frame's passes' own pieces; each that fails to start says so and
+    // stays off.
+    const Passes::ScenePassInit passInit{.device = _device,
+                                         .shadowDepthRenderer = &_shadowDepthRenderer,
+                                         .meshFrameLayout = _meshPass.FrameBindingLayout()};
+    _graph->Initialize(passInit, params.framebufferInfo);
+    return true;
+}
+
+bool SceneRenderer::InitializeView(SceneView &view, const nvrhi::FramebufferInfo &targets, int32_t width,
+                                   int32_t height, const Camera &camera)
+{
+    const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(width, height));
+
+    // The cluster grid's light buffers must exist before MeshPass::Initialize,
+    // which binds them into every binding set it creates — so build lighting first.
+    nvrhi::CommandListHandle setupCommandList = _device->createCommandList();
+    setupCommandList->open();
+    const bool lightingOk =
+        view._lighting.Initialize(_device, setupCommandList, width, height, camera.nearZ, camera.farZ, projection);
+    setupCommandList->close();
+    _device->executeCommandList(setupCommandList);
+
+    if (!lightingOk)
+    {
+        Core::Log::Error("SceneRenderer: failed to initialise the clustered lighting pipeline.");
+        return false;
+    }
+
+    if (!view._meshPass.Initialize(
+            Render::MeshPass::InitParams{.device = _device,
+                                         .framebufferInfo = targets,
+                                         .vertexShaderSpvPath = kSceneVertexShader,
+                                         .pixelShaderSpvPath = kScenePixelShader,
+                                         .blendedPixelShaderSpvPath = kSceneBlendedPixelShader,
+                                         .depthVertexShaderSpvPath = kSceneDepthVertexShader,
+                                         .maskedDepthVertexShaderSpvPath = kSceneMaskedDepthVertexShader,
+                                         .maskedDepthPixelShaderSpvPath = kSceneMaskedDepthPixelShader,
+                                         .invariantVertexShaderSpvPath = kSceneInvariantVertexShader,
+                                         .clusterGrid = &view._lighting.Grid(),
+                                         .fogVolumes = &_fogVolumeBuffers,
+                                         .bindlessLayout = _viewParams.bindlessLayout,
+                                         .bindlessTable = _viewParams.bindlessTable,
+                                         .materialTable = _viewParams.materialTable}))
+    {
+        Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
+        return false;
+    }
+
     // Non-fatal: without it no screen-space feature runs, and the frame is the
     // one there was before any of them existed.
-    if (!_sceneDistancePass.Initialize(
+    if (!view._sceneDistancePass.Initialize(
             Render::SceneDistancePass::InitParams{.device = _device,
                                                   .vertexShaderSpvPath = kFullscreenVertexShader,
                                                   .distanceShaderSpvPath = kSceneDistanceShader,
@@ -218,28 +259,27 @@ bool SceneRenderer::Initialize(const InitParams &params)
 
     // Non-fatal too: without it the indirect term is unoccluded, which is what
     // it was before there was any occlusion.
-    if (!_ssaoPass.Initialize(Render::SsaoPass::InitParams{.device = _device,
-                                                           .vertexShaderSpvPath = kFullscreenVertexShader,
-                                                           .occlusionShaderSpvPath = kSsaoOcclusionShader,
-                                                           .blurShaderSpvPath = kSsaoBlurShader}))
+    if (!view._ssaoPass.Initialize(Render::SsaoPass::InitParams{.device = _device,
+                                                                .vertexShaderSpvPath = kFullscreenVertexShader,
+                                                                .occlusionShaderSpvPath = kSsaoOcclusionShader,
+                                                                .blurShaderSpvPath = kSsaoBlurShader}))
     {
         Core::Log::Warn("SceneRenderer: ambient occlusion unavailable (its pipelines failed to initialise).");
     }
 
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
     // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
-    if (!_meshCuller.Initialize(_device))
+    if (!view._meshCuller.Initialize(_device))
     {
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
-    // The passes' own pieces, the frame's and the main view's; each that fails
-    // to start says so and stays off.
+    // The view's passes' own pieces; each that fails to start says so and
+    // stays off.
     const Passes::ScenePassInit passInit{.device = _device,
                                          .shadowDepthRenderer = &_shadowDepthRenderer,
-                                         .meshFrameLayout = _meshPass.FrameBindingLayout()};
-    _graph->Initialize(passInit, params.framebufferInfo);
-    _graph->InitializeView(*_main->_passes, passInit, params.framebufferInfo);
+                                         .meshFrameLayout = view._meshPass.FrameBindingLayout()};
+    _graph->InitializeView(*view._passes, passInit, targets);
     return true;
 }
 
@@ -270,6 +310,23 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     }
     _graph->OnTargetsChanged(framebufferInfo);
     _graph->OnViewTargetsChanged(*_main->_passes, framebufferInfo);
+    // The texture views draw into targets like the scene's, so theirs and
+    // their pipelines follow; each keeps its picture, the same with MSAA or
+    // without, and with it the last thing it drew.
+    _viewParams.framebufferInfo = framebufferInfo;
+    for (TextureView &texture : _textureViews)
+    {
+        if (texture.picture == nullptr)
+        {
+            continue;
+        }
+        _graph->OnViewTargetsChanged(*texture.view->_passes, framebufferInfo);
+        if (!texture.view->_meshPass.RebuildPipeline(framebufferInfo))
+        {
+            Core::Log::Warn("SceneRenderer: a texture camera's mesh pipeline failed to rebuild.");
+        }
+        (void)MakeTextureTargets(texture);
+    }
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
@@ -346,24 +403,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
 
-    // The placed fog volumes, which the player's fog setting turns off with
-    // the level's own fog.
-    _fogVolumeFrame.Clear();
-    if (_settings.fogEnabled)
-    {
-        ASSISI_PROFILE_SCOPE("fog-volumes");
-        const FogVolumeGatherResult gathered = GatherFogVolumes(scene,
-                                                                FogVolumeView{.viewProjection = projection * view,
-                                                                              .origin = _viewOrigin,
-                                                                              .width = frame.width,
-                                                                              .height = frame.height},
-                                                                _fogVolumeFrame);
-        if (gathered.dropped > 0u && !_droppedFogVolumesWarned)
-        {
-            Core::Log::Warn("SceneRenderer: {} fog volumes past what one frame draws are left out.", gathered.dropped);
-        }
-        _droppedFogVolumesWarned = gathered.dropped > 0u;
-    }
+    GatherFogVolumesFor(scene, *_main, projection * view, frame.width, frame.height);
     const glm::uvec4 fogVolumeLanes = _fogVolumeFrame.Lanes();
     // Uploaded now, ahead of every pass: only the lit pass and the sky read it.
     _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
@@ -388,18 +428,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _shadowDepthRenderer.BeginFrame(Math::TranslationOf(cameraInShadow));
 
     // The water in view, before the scene's distance is prepared, which it reads.
-    _waterFrame.Clear();
-    if (_settings.waterEnabled)
-    {
-        ASSISI_PROFILE_SCOPE("water-gather");
-        const Render::Frustum frustum = Render::Frustum::FromViewProjection(projection * view);
-        GatherWater(scene, WaterGatherView{.camera = _viewOrigin, .frustum = &frustum, .drawDistance = camera.farZ},
-                    _waterFrame);
-    }
+    GatherWaterFor(scene, *_main, projection * view, camera.farZ);
     const bool waterReadsDistance = _settings.waterEnabled && !_waterFrame.bodies.empty();
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const ScreenOcclusion occlusion = PrepareScreenOcclusion(frame, waterReadsDistance);
+    const ScreenOcclusion occlusion =
+        PrepareScreenOcclusion(*_main, frame.width, frame.height, frame.depthTexture, waterReadsDistance);
 
     // The passes, in the order their declarations fix: each hands what it makes
     // to the ones after it.
@@ -439,6 +473,26 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         .height = frame.height,
         .viewerInstance = ViewerInstance(scene, _viewingCamera),
         .waterReadsDistance = waterReadsDistance && main._sceneDistancePass.DistanceTexture() != nullptr};
+
+    // The texture cameras, kept, shown and chosen, and what each one drawing
+    // sees gathered, before the world's passes: the water's waves are brought
+    // up to time for every view.
+    _textureFrames.clear();
+    _textureOrder.clear();
+    if (_viewParams.assetCache != nullptr)
+    {
+        ASSISI_PROFILE_SCOPE("texture-cameras");
+        FreeRetiredTextureViews(/*all=*/ false);
+        KeepTextureViews(scene);
+        ShowCameraPictures(scene);
+        ChooseTextureViews(scene, projection * view);
+        for (const ECS::Entity textureCamera : _textureOrder)
+        {
+            _textureFrames.push_back(PrepareTextureView(scene, *TextureViewFor(textureCamera), fog, fogged));
+        }
+    }
+    ++_renderCount;
+
     const Passes::SceneFrame sceneFrame{.scene = scene,
                                         .sky = sky,
                                         .settings = _settings,
@@ -448,14 +502,29 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                         .shadowPoints = _lighting.ShadowCastingPointLights(),
                                         .dynamicCasters = _dynamicCasters,
                                         .casterInvalidations = _casterInvalidations,
+                                        .waves = &WavesFrame(),
                                         .waterSeconds = _waterSeconds,
                                         .shadowSun = _lighting.ShadowCastingSun(),
                                         .fogColor = fog.settings.color,
                                         .shadowFrameIndex = _shadowFrameIndex,
                                         .fogged = fogged,
                                         .skyAvailable = _skyPass.IsValid()};
-    // The world's work once, then the view's.
+    // The world's work once, then each texture camera's view, deepest first,
+    // so a picture is drawn before the view that shows it, and the main view.
     _graph->RunFrame(imports, frame.commandList, sceneFrame);
+    ClearNewPictures(frame.commandList);
+    for (std::size_t drawn = 0; drawn < _textureOrder.size(); ++drawn)
+    {
+        TextureView &texture = *TextureViewFor(_textureOrder[drawn]);
+        DrawTextureView(frame.commandList, imports, sceneFrame, texture, _textureFrames[drawn]);
+        texture.redraw = false;
+        (void)scene.Remove<TextureCameraRequest>(_textureOrder[drawn]);
+    }
+    if (!_textureOrder.empty())
+    {
+        // Each texture view uploaded its own; the main view's go back.
+        _fogVolumeBuffers.Upload(frame.commandList, _fogVolumeFrame);
+    }
     _graph->RunView(*main._passes, imports, viewImports, frame.commandList, sceneFrame, viewFrame);
 
     // After both shadow halves, because it reports on both — and outside them,
@@ -496,6 +565,9 @@ void SceneRenderer::CountFrame() const
     ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
     // Fog volumes on screen, which the lit pass and the sky test per pixel.
     ASSISI_PROFILE_COUNTER("render/fog-volumes", static_cast<double>(_fogVolumeFrame.volumes.size()));
+    // Texture cameras that drew a picture this frame. Zero is what a camera
+    // nobody sees costs.
+    ASSISI_PROFILE_COUNTER("render/texture-cameras", static_cast<double>(_textureOrder.size()));
 
     // The shadow pass on its own tracks, for the same reason: a jump in
     // `shadow-cascades` is explained by one of these or by none of them, and
@@ -553,13 +625,15 @@ void SceneRenderer::CountFrame() const
     ASSISI_PROFILE_COUNTER("sky-probe/age", static_cast<double>(probeStats.ageFrames));
 }
 
-ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame &frame, bool waterReadsDistance)
+ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
+                                                      nvrhi::ITexture *depthTexture, bool waterReadsDistance)
 {
+    Render::SceneDistancePass &distancePass = view._sceneDistancePass;
+    Render::SsaoPass &ssaoPass = view._ssaoPass;
     // Released rather than kept while off — pay for what you place.
-    const bool occlusionWanted = _settings.ssao.enabled && _ssaoPass.IsValid() && _sceneDistancePass.IsValid();
-    const bool distanceWanted = (occlusionWanted || waterReadsDistance) && _sceneDistancePass.IsValid();
-    const bool distanceHeld =
-        distanceWanted && _sceneDistancePass.Configure(frame.width, frame.height, frame.depthTexture);
+    const bool occlusionWanted = _settings.ssao.enabled && ssaoPass.IsValid() && distancePass.IsValid();
+    const bool distanceWanted = (occlusionWanted || waterReadsDistance) && distancePass.IsValid();
+    const bool distanceHeld = distanceWanted && distancePass.Configure(width, height, depthTexture);
     if (distanceWanted && !distanceHeld)
     {
         Core::Log::Warn("SceneRenderer: the scene's distance failed to allocate; ambient occlusion is off and water "
@@ -567,22 +641,463 @@ ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(const Render::RenderFrame 
     }
     if (!distanceHeld)
     {
-        _sceneDistancePass.Release();
+        distancePass.Release();
     }
-    if (occlusionWanted &&
-        (!distanceHeld || !_ssaoPass.Configure(frame.width, frame.height, _sceneDistancePass.DistanceTexture())))
+    if (occlusionWanted && (!distanceHeld || !ssaoPass.Configure(width, height, distancePass.DistanceTexture())))
     {
         Core::Log::Warn("SceneRenderer: ambient occlusion disabled (its targets failed to allocate).");
         _settings.ssao.enabled = false;
     }
     if (!occlusionWanted || !_settings.ssao.enabled)
     {
-        _ssaoPass.Release();
+        ssaoPass.Release();
         return ScreenOcclusion{};
     }
     // After Configure: a reallocation swaps the texture handle, and the mesh
     // pass rebuilds its binding set when it notices.
-    return ScreenOcclusion{.texture = _ssaoPass.OcclusionTexture()};
+    return ScreenOcclusion{.texture = ssaoPass.OcclusionTexture()};
+}
+
+void SceneRenderer::GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection,
+                                        uint32_t width, uint32_t height)
+{
+    // The placed fog volumes, which the player's fog setting turns off with
+    // the level's own fog.
+    view._fogVolumeFrame.Clear();
+    if (!_settings.fogEnabled)
+    {
+        return;
+    }
+    ASSISI_PROFILE_SCOPE("fog-volumes");
+    const FogVolumeGatherResult gathered = GatherFogVolumes(
+        scene,
+        FogVolumeView{.viewProjection = viewProjection, .origin = view._viewOrigin, .width = width, .height = height},
+        view._fogVolumeFrame);
+    if (gathered.dropped > 0u && !view._droppedFogVolumesWarned)
+    {
+        Core::Log::Warn("SceneRenderer: {} fog volumes past what one frame draws are left out.", gathered.dropped);
+    }
+    view._droppedFogVolumesWarned = gathered.dropped > 0u;
+}
+
+void SceneRenderer::GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection,
+                                   float drawDistance)
+{
+    view._waterFrame.Clear();
+    if (!_settings.waterEnabled)
+    {
+        return;
+    }
+    ASSISI_PROFILE_SCOPE("water-gather");
+    const Render::Frustum frustum = Render::Frustum::FromViewProjection(viewProjection);
+    GatherWater(scene, WaterGatherView{.camera = view._viewOrigin, .frustum = &frustum, .drawDistance = drawDistance},
+                view._waterFrame);
+}
+
+SceneRenderer::TextureView *SceneRenderer::TextureViewFor(ECS::Entity camera)
+{
+    for (TextureView &texture : _textureViews)
+    {
+        if (texture.camera == camera)
+        {
+            return &texture;
+        }
+    }
+    return nullptr;
+}
+
+void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
+{
+    // Those whose camera went, or stopped being a texture camera, are retired;
+    // those whose size changed get new targets.
+    for (std::size_t at = 0; at < _textureViews.size();)
+    {
+        TextureView &texture = _textureViews[at];
+        const TextureCamera *const wanted = scene.Get<TextureCamera>(texture.camera);
+        if (wanted == nullptr || !scene.Has<Camera>(texture.camera) || !scene.Has<ECS::WorldMatrix>(texture.camera))
+        {
+            RetireTextureView(std::move(texture));
+            _textureViews.erase(_textureViews.begin() + static_cast<std::ptrdiff_t>(at));
+            continue;
+        }
+        const uint32_t width = std::clamp(wanted->width, 1u, kMaxTextureCameraSide);
+        const uint32_t height = std::clamp(wanted->height, 1u, kMaxTextureCameraSide);
+        if (width != texture.width || height != texture.height)
+        {
+            // The old picture waits out the frames in flight on its own; the
+            // view goes on with new targets.
+            RetireTextureView(TextureView{.color = std::move(texture.color),
+                                          .depth = std::move(texture.depth),
+                                          .picture = std::move(texture.picture),
+                                          .framebuffer = std::move(texture.framebuffer),
+                                          .slot = texture.slot});
+            texture.width = width;
+            texture.height = height;
+            texture.slot = 0;
+            texture.redraw = true;
+            (void)MakeTextureTargets(texture);
+        }
+        ++at;
+    }
+
+    for (auto [entity, textureCamera, camera] : scene.Query<TextureCamera, Camera>())
+    {
+        if (TextureViewFor(entity) != nullptr || !scene.Has<ECS::WorldMatrix>(entity))
+        {
+            continue;
+        }
+        // Kept even when it fails to start, without a picture, so it is not
+        // tried and logged again every frame.
+        TextureView texture{.view = std::make_unique<SceneView>(),
+                            .camera = entity,
+                            .width = std::clamp(textureCamera.width, 1u, kMaxTextureCameraSide),
+                            .height = std::clamp(textureCamera.height, 1u, kMaxTextureCameraSide)};
+        if (InitializeView(*texture.view, _viewParams.framebufferInfo, static_cast<int32_t>(texture.width),
+                           static_cast<int32_t>(texture.height), camera))
+        {
+            (void)MakeTextureTargets(texture);
+        }
+        _textureViews.push_back(std::move(texture));
+    }
+}
+
+bool SceneRenderer::MakeTextureTargets(TextureView &texture)
+{
+    const nvrhi::FramebufferInfo &targets = _viewParams.framebufferInfo;
+    const uint32_t samples = std::max(targets.sampleCount, 1u);
+    const bool multisampled = samples > 1u;
+    const nvrhi::Format colorFormat = targets.colorFormats.empty() ? nvrhi::Format::UNKNOWN : targets.colorFormats[0];
+
+    if (texture.picture == nullptr)
+    {
+        // Drawn into without MSAA and resolved into with it, so it is a render
+        // target either way; and read by the scene through the bindless table,
+        // which tracks no states, so it rests readable.
+        nvrhi::TextureDesc picture;
+        picture.width = texture.width;
+        picture.height = texture.height;
+        picture.format = colorFormat;
+        picture.isRenderTarget = true;
+        picture.isShaderResource = true;
+        picture.initialState = nvrhi::ResourceStates::ShaderResource;
+        picture.keepInitialState = true;
+        picture.debugName = "SceneRenderer::TextureCameraPicture";
+        texture.picture = _device->createTexture(picture);
+        const std::optional<uint32_t> slot =
+            texture.picture != nullptr ? _viewParams.assetCache->LendTextureSlot(texture.picture, colorFormat)
+                                       : std::nullopt;
+        if (!slot)
+        {
+            Core::Log::Error("SceneRenderer: a {}x{} picture for a texture camera could not be made; it shows "
+                             "nothing.",
+                             texture.width, texture.height);
+            texture.picture = nullptr;
+            return false;
+        }
+        texture.slot = *slot;
+        texture.cleared = false;
+    }
+
+    if (multisampled)
+    {
+        nvrhi::TextureDesc color;
+        color.width = texture.width;
+        color.height = texture.height;
+        color.format = colorFormat;
+        color.sampleCount = samples;
+        color.isRenderTarget = true;
+        color.initialState = nvrhi::ResourceStates::RenderTarget;
+        color.keepInitialState = true;
+        color.debugName = "SceneRenderer::TextureCameraColor";
+        texture.color = _device->createTexture(color);
+    }
+    else
+    {
+        texture.color = texture.picture;
+    }
+
+    nvrhi::TextureDesc depth;
+    depth.width = texture.width;
+    depth.height = texture.height;
+    depth.format = targets.depthFormat;
+    depth.sampleCount = samples;
+    depth.isRenderTarget = true;
+    // The scene distance pass reads it when occlusion or water wants it.
+    depth.isShaderResource = true;
+    depth.initialState = nvrhi::ResourceStates::DepthWrite;
+    depth.keepInitialState = true;
+    depth.debugName = "SceneRenderer::TextureCameraDepth";
+    texture.depth = _device->createTexture(depth);
+
+    texture.framebuffer = nullptr;
+    if (texture.color != nullptr && texture.depth != nullptr)
+    {
+        nvrhi::FramebufferDesc framebuffer;
+        framebuffer.addColorAttachment(texture.color).setDepthAttachment(texture.depth);
+        texture.framebuffer = _device->createFramebuffer(framebuffer);
+    }
+    if (texture.framebuffer == nullptr)
+    {
+        Core::Log::Error("SceneRenderer: the {}x{} targets of a texture camera could not be made; it keeps its last "
+                         "picture.",
+                         texture.width, texture.height);
+        return false;
+    }
+    return true;
+}
+
+void SceneRenderer::RetireTextureView(TextureView &&texture)
+{
+    _retiredTextureViews.push_back(RetiredTextureView{.texture = std::move(texture), .retiredAt = _renderCount});
+}
+
+void SceneRenderer::FreeRetiredTextureViews(bool all)
+{
+    for (std::size_t at = 0; at < _retiredTextureViews.size();)
+    {
+        if (!all && _renderCount - _retiredTextureViews[at].retiredAt <= kTextureViewRetireRenders)
+        {
+            ++at;
+            continue;
+        }
+        _viewParams.assetCache->ReturnTextureSlot(_retiredTextureViews[at].texture.slot);
+        _retiredTextureViews.erase(_retiredTextureViews.begin() + static_cast<std::ptrdiff_t>(at));
+    }
+}
+
+void SceneRenderer::ShowCameraPictures(ECS::Scene &scene)
+{
+    // Gathered first: giving a mesh its picture changes components, which a
+    // query being walked must not see.
+    std::vector<std::pair<ECS::Entity, SurfaceTexture>> wanted;
+    for (auto [entity, surface, meshRenderer] : scene.Query<CameraSurface, MeshRenderer>())
+    {
+        const TextureView *const texture = TextureViewFor(surface.camera);
+        if (texture != nullptr && texture->picture != nullptr)
+        {
+            wanted.emplace_back(entity, SurfaceTexture{.materialSlot = surface.materialSlot,
+                                                       .textureSlot = texture->slot,
+                                                       .look = Render::SurfaceLook::Light});
+        }
+    }
+
+    for (const ECS::Entity entity : _shownSurfaces)
+    {
+        const bool stillWanted = std::ranges::any_of(
+            wanted, [entity](const std::pair<ECS::Entity, SurfaceTexture> &shown) { return shown.first == entity; });
+        const SurfaceTexture *const held = scene.Get<SurfaceTexture>(entity);
+        if (!stillWanted && held != nullptr && held->look == Render::SurfaceLook::Light &&
+            scene.Remove<SurfaceTexture>(entity) == ECS::RemoveResult::Removed)
+        {
+            if (MeshRenderer *const meshRenderer = scene.GetMut<MeshRenderer>(entity))
+            {
+                ResolveMeshRendererAssets(*meshRenderer, *_viewParams.assetCache, nullptr);
+            }
+        }
+    }
+
+    _shownSurfaces.clear();
+    for (const auto &[entity, shown] : wanted)
+    {
+        _shownSurfaces.push_back(entity);
+        const SurfaceTexture *const held = scene.Get<SurfaceTexture>(entity);
+        if (held != nullptr && held->materialSlot == shown.materialSlot && held->textureSlot == shown.textureSlot &&
+            held->look == shown.look)
+        {
+            continue;
+        }
+        (void)scene.Remove<SurfaceTexture>(entity);
+        (void)scene.Add(entity, shown);
+        ResolveMeshRendererAssets(*scene.GetMut<MeshRenderer>(entity), *_viewParams.assetCache,
+                                  scene.Get<SurfaceTexture>(entity));
+    }
+}
+
+void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection)
+{
+    _textureCandidates.clear();
+    _surfaceBounds.clear();
+    _textureOrder.clear();
+    if (_textureViews.empty())
+    {
+        return;
+    }
+    // Every frustum and bound measured from the main camera, which they are
+    // tested against.
+    for (const TextureView &texture : _textureViews)
+    {
+        if (texture.framebuffer == nullptr)
+        {
+            continue;
+        }
+        const TextureCamera &wanted = *scene.Get<TextureCamera>(texture.camera);
+        const Camera &camera = *scene.Get<Camera>(texture.camera);
+        const glm::mat4 placed = ECS::MatrixFrom(*scene.Get<ECS::WorldMatrix>(texture.camera), _viewOrigin);
+        const glm::mat4 viewProjection =
+            ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(texture.width),
+                                                 static_cast<int32_t>(texture.height))) *
+            ViewMatrix(placed);
+        _textureCandidates.push_back(
+            TextureCameraCandidate{.frustum = Render::Frustum::FromViewProjection(viewProjection),
+                                   .camera = texture.camera,
+                                   .update = wanted.update,
+                                   .on = wanted.on,
+                                   .asked = scene.Has<TextureCameraRequest>(texture.camera),
+                                   .redraw = texture.redraw});
+    }
+    for (auto [entity, surface, worldMatrix, meshRenderer] :
+         scene.Query<CameraSurface, ECS::WorldMatrix, MeshRenderer>())
+    {
+        if (meshRenderer.meshBuffer != nullptr)
+        {
+            _surfaceBounds.push_back(CameraSurfaceBounds{
+                    .bounds = Geometry::TransformedBoundingSphere(meshRenderer.meshBuffer->LocalBounds(),
+                                                                  ECS::MatrixFrom(worldMatrix, _viewOrigin)),
+                    .camera = surface.camera});
+        }
+    }
+    OrderTextureCameras(Render::Frustum::FromViewProjection(mainViewProjection), _textureCandidates, _surfaceBounds,
+                        _textureOrder);
+}
+
+Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureView &texture,
+                                                    const FogResolution &fog, bool fogged)
+{
+    SceneView &view = *texture.view;
+    const ECS::WorldMatrix &cameraWorld = *scene.Get<ECS::WorldMatrix>(texture.camera);
+    Camera camera = *scene.Get<Camera>(texture.camera);
+    if (fog.present)
+    {
+        camera.farZ = Render::FogDrawDistance(camera.farZ, fog.settings);
+    }
+
+    view._viewOrigin = ECS::WorldPositionOf(cameraWorld);
+    const glm::mat4 cameraInView = ECS::MatrixFrom(cameraWorld, view._viewOrigin);
+    const glm::mat4 projection = ProjectionMatrix(
+        camera, AspectRatio(static_cast<int32_t>(texture.width), static_cast<int32_t>(texture.height)));
+    const glm::mat4 viewMatrix = ViewMatrix(cameraInView);
+
+    GatherFogVolumesFor(scene, view, projection * viewMatrix, texture.width, texture.height);
+    // The main view's lights, measured from this camera.
+    view._lighting.ShareFrom(_lighting, glm::vec3(_viewOrigin - view._viewOrigin));
+    if (!(view._lodSelector.Settings() == _lodSelector.Settings()))
+    {
+        view._lodSelector.SetSettings(_lodSelector.Settings());
+    }
+    view._lodSelector.SetHoldsDeadBand(!GpuCullDraws());
+    view._lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
+    GatherWaterFor(scene, view, projection * viewMatrix, camera.farZ);
+    const bool waterReadsDistance = _settings.waterEnabled && !view._waterFrame.bodies.empty();
+    const ScreenOcclusion occlusion =
+        PrepareScreenOcclusion(view, texture.width, texture.height, texture.depth, waterReadsDistance);
+
+    const Render::RenderTarget target{.framebuffer = texture.framebuffer,
+                                      .colorTexture = texture.color,
+                                      .depthTexture = texture.depth,
+                                      .width = texture.width,
+                                      .height = texture.height};
+    view._sceneColor.target = target;
+    view._sceneDepth.target = target;
+    return Passes::ViewFrame{
+        .projection = projection,
+        .view = viewMatrix,
+        .cameraInView = cameraInView,
+        .cameraInShadow = ECS::MatrixFrom(cameraWorld, _shadowOrigin),
+        .viewOrigin = view._viewOrigin,
+        .water = &view._waterFrame,
+        .occlusion = occlusion,
+        .fog = FrameFog(fog, fogged, _lastSky, static_cast<float>(view._viewOrigin.y), camera.farZ),
+        .camera = camera,
+        .fogVolumeLanes = view._fogVolumeFrame.Lanes(),
+        .width = texture.width,
+        .height = texture.height,
+        .viewerInstance = ViewerInstance(scene, texture.camera),
+        .textureCamera = texture.camera,
+        .waterReadsDistance = waterReadsDistance && view._sceneDistancePass.DistanceTexture() != nullptr};
+}
+
+void SceneRenderer::ClearNewPictures(nvrhi::ICommandList *commandList)
+{
+    bool cleared = false;
+    for (TextureView &texture : _textureViews)
+    {
+        if (texture.picture != nullptr && !texture.cleared)
+        {
+            commandList->clearTextureFloat(texture.picture, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 1.f));
+            commandList->setTextureState(texture.picture, nvrhi::AllSubresources,
+                                         nvrhi::ResourceStates::ShaderResource);
+            texture.cleared = true;
+            cleared = true;
+        }
+    }
+    if (cleared)
+    {
+        commandList->commitBarriers();
+    }
+}
+
+void SceneRenderer::DrawTextureView(nvrhi::ICommandList *commandList, Passes::SceneImports &imports,
+                                    const Passes::SceneFrame &sceneFrame, TextureView &texture,
+                                    const Passes::ViewFrame &viewFrame)
+{
+    ASSISI_PROFILE_GPU_SCOPE(commandList, "texture-camera");
+    SceneView &view = *texture.view;
+    // Black where nothing is drawn, as where a level has no sky.
+    commandList->clearTextureFloat(texture.color, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 1.f));
+    commandList->clearDepthStencilTexture(texture.depth, nvrhi::AllSubresources, true, Render::kSceneDepthFar, false,
+                                          0);
+    // What this camera sees, in the buffers every view's lit pass and sky read.
+    _fogVolumeBuffers.Upload(commandList, view._fogVolumeFrame);
+
+    Passes::SceneViewImports viewImports{.meshPass = view._meshPass,
+                                         .lightingSystem = view._lighting,
+                                         .lodSelector = view._lodSelector,
+                                         .meshCuller = view._meshCuller,
+                                         .sceneDistancePass = view._sceneDistancePass,
+                                         .ssaoPass = view._ssaoPass,
+                                         .sceneColor = view._sceneColor,
+                                         .sceneDepth = view._sceneDepth,
+                                         .drawStats = view._drawStats};
+    _graph->RunView(*view._passes, imports, viewImports, commandList, sceneFrame, viewFrame);
+
+    if (texture.picture != texture.color)
+    {
+        commandList->resolveTexture(texture.picture, nvrhi::AllSubresources, texture.color, nvrhi::AllSubresources);
+    }
+    // The scene reads it through the bindless table, which tracks no states.
+    commandList->setTextureState(texture.picture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
+}
+
+const Render::WaterFrame &SceneRenderer::WavesFrame()
+{
+    bool more = false;
+    for (const Passes::ViewFrame &frame : _textureFrames)
+    {
+        for (const Render::WaterBody &body : frame.water->bodies)
+        {
+            more = more || !HoldsBody(_waterFrame, body.key);
+        }
+    }
+    if (!more)
+    {
+        return _waterFrame;
+    }
+    _wavesFrame.Clear();
+    _wavesFrame.bodies = _waterFrame.bodies;
+    _wavesFrame.gusts = _waterFrame.gusts;
+    _wavesFrame.placed = _waterFrame.placed;
+    for (const Passes::ViewFrame &frame : _textureFrames)
+    {
+        for (const Render::WaterBody &body : frame.water->bodies)
+        {
+            if (!HoldsBody(_wavesFrame, body.key))
+            {
+                _wavesFrame.bodies.push_back(body);
+            }
+        }
+    }
+    return _wavesFrame;
 }
 
 void SceneRenderer::OnSceneReplaced()
@@ -615,6 +1130,15 @@ void SceneRenderer::OnSceneReplaced()
     // its first frame rather than read from zero.
     _casterMobility.Clear();
     _moverTickPrimed = false;
+
+    // Each texture view belongs to a camera of the scene that was here, and
+    // the meshes shown its picture are gone with it.
+    for (TextureView &texture : _textureViews)
+    {
+        RetireTextureView(std::move(texture));
+    }
+    _textureViews.clear();
+    _shownSurfaces.clear();
 }
 
 void SceneRenderer::SetEnvironmentSettings(const Render::EnvironmentSettings &settings)

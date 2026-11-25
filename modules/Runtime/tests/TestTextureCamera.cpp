@@ -6,6 +6,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/TextureCamera.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -142,6 +143,14 @@ TEST_CASE("Each mode draws when it says, whether or not anything shows it")
     }
 }
 
+TEST_CASE("A camera that must redraw draws whatever its mode says")
+{
+    TextureCameraCandidate camera = Aside(kFirst, TextureCameraUpdate::WhileOn);
+    camera.on = false;
+    camera.redraw = true;
+    CHECK(Order(std::vector<TextureCameraCandidate>{camera}, {}) == std::vector<ECS::Entity>{kFirst});
+}
+
 TEST_CASE("A camera drawn regardless makes what it sees draw too")
 {
     // The second camera draws always; the first camera's surface is only in
@@ -163,6 +172,21 @@ TEST_CASE("Two cameras showing each other both draw, once each")
     const std::vector<ECS::Entity> order = Order(cameras, surfaces);
     REQUIRE(order.size() == 2u);
     CHECK(order[0] != order[1]);
+}
+
+TEST_CASE("A surface is left out of the view of the camera it shows, and only that one")
+{
+    ECS::Scene scene;
+    const ECS::Entity camera = scene.Create();
+    const ECS::Entity other = scene.Create();
+    const ECS::Entity mirror = scene.Create();
+    (void)scene.Add(mirror, Runtime::MeshRenderer{});
+    (void)scene.Add(mirror, Runtime::CameraSurface{.camera = camera});
+    const Runtime::MeshRenderer &mesh = *scene.Get<Runtime::MeshRenderer>(mirror);
+
+    CHECK(Runtime::LeftOutOfView(scene, mirror, mesh, ECS::InstanceId{}, camera));
+    CHECK_FALSE(Runtime::LeftOutOfView(scene, mirror, mesh, ECS::InstanceId{}, other));
+    CHECK_FALSE(Runtime::LeftOutOfView(scene, mirror, mesh, ECS::InstanceId{}, ECS::NullEntity));
 }
 
 TEST_CASE("Switching a camera the way it already is changes nothing")

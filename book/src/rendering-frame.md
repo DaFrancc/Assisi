@@ -42,6 +42,10 @@ Passes 2 to 7 are the world's: they come out the same whichever camera looks,
 so they run once a frame. Passes 8 to 16 depend on the camera, and run for each
 view after the world's (see
 [Once a frame or once per view](render-passes.md#once-a-frame-or-once-per-view)).
+Each [texture camera](rendering-camera.md#showing-a-camera-on-a-surface) that
+draws this frame runs them into its picture first, inside `texture-camera` in a
+capture, and the main camera runs them last. Passes 17 and 18 run only for the
+main camera.
 
 ### 1. Clear (`clear-targets`)
 

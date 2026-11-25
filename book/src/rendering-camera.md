@@ -51,7 +51,8 @@ cut off; 0.1 m (the default) suits most games.
 ## Which camera draws
 
 **In the game**, the view comes from the first `Camera` with `isActive` set
-that also has a `Transform`.
+that also has a `Transform`. A camera with a
+[`TextureCamera`](#showing-a-camera-on-a-surface) is never chosen.
 
 - If two cameras are active, the log warns, and one of them is used. Which one
   depends on the order the entities happen to be stored in, so clear `isActive`
@@ -141,6 +142,103 @@ The first-person template uses it for its look: its `LookAhead` system draws
 your player's camera turned as far as the mouse has moved, every frame, before
 the next fixed step uses the turning (see
 [Looking ahead of the step](players.md#looking-ahead-of-the-step)).
+
+## Showing a camera on a surface
+
+A camera can draw into a **picture** instead of to the screen, and a mesh in
+the level can show that picture. That is how you make a rifle scope's glass, a
+security monitor, or a screen showing a room the player can't see.
+
+You need two components, both in `<Assisi/Runtime/TextureCamera.hpp>`:
+
+- **`TextureCamera`** goes on an entity that already has a `Camera` and a
+  `Transform`. The camera then draws into its picture.
+- **`CameraSurface`** goes on the mesh that shows the picture.
+
+| `TextureCamera` field | Meaning |
+|---|---|
+| `width`, `height` | The picture's size, in pixels. Default 512 by 512. Match its shape to the surface's, or the picture is stretched. |
+| `update` | When it draws: see the table below. Default `WhileSeen`. |
+| `on` | Whether a `WhileOn` camera is drawing. Default on. |
+
+| `CameraSurface` field | Meaning |
+|---|---|
+| `camera` | The entity with the `TextureCamera` whose picture it shows. |
+| `materialSlot` | Which material slot of the mesh shows it. A built-in shape like the cube has one slot, 0. |
+
+The camera's own `Camera` still sets its field of view and draw distance. Its
+`isActive` is ignored: a texture camera is never the camera the player looks
+through.
+
+### When it draws
+
+Drawing a picture costs about as much as drawing the scene again at the
+picture's size, so a texture camera draws only when it needs to. On a frame
+it doesn't draw, its surfaces keep showing the last picture.
+
+| `update` | Draws |
+|---|---|
+| `Always` | Every frame. |
+| `WhileSeen` | On a frame when one of its surfaces is in view of a camera that draws. A surface behind a wall still counts, as long as it is in front of the camera. |
+| `WhenAsked` | Once, the next time the frame is drawn after you ask. Asked from a system's update, that is the same frame. |
+| `WhileOn` | Every frame while switched on. |
+
+`WhileSeen` also follows pictures inside pictures: if the player sees a
+monitor that shows a second monitor, the camera of the second one draws too,
+and draws first, so the first monitor shows its newest picture.
+
+From code, ask a `WhenAsked` camera for a picture, or start and stop a
+`WhileOn` one:
+
+```cpp
+using namespace Assisi;
+
+// Take one picture, such as a photo the player snaps.
+Runtime::RequestTextureCameraPicture(scene, cameraEntity);
+
+// Turn a security monitor on and off. Starting a camera that is already on,
+// or stopping one that is off, does nothing.
+Runtime::SwitchTextureCamera(scene, cameraEntity, Runtime::TextureCameraSwitch::Start);
+Runtime::SwitchTextureCamera(scene, cameraEntity, Runtime::TextureCameraSwitch::Stop);
+```
+
+To see how many texture cameras drew in a frame, look at the
+`render/texture-cameras` counter in a [profiler
+capture](rendering-debugging.md#the-profiler). It reads 0 when nobody can see
+any of their surfaces.
+
+### How the picture looks
+
+The surface shows the picture as light, as bright as the scene the camera saw.
+The main camera's exposure then applies to it like everything else on screen.
+So a scope's glass at dusk is as dark as the dusk around it, and through a
+bright window it is as bright as the window. The rest of the slot's material,
+its colour and its shine, isn't drawn.
+
+A few things to know:
+
+- **A camera never draws its own surfaces.** A security camera that can see
+  its own monitor shows the room with the monitor missing, not a tunnel of
+  monitors.
+- **Two pictures that show each other** both draw, but one of them shows the
+  other's picture from the frame before.
+- **Sun shadows come from the main camera.** A texture camera uses the sun's
+  shadows the main camera has, so nothing outside them has a sun shadow in its
+  picture, such as what is behind the player. Shadows of spot and point lights
+  show everywhere.
+- **Where nothing is drawn, the picture is black**, such as the sky in a level
+  with neither a `Skybox` nor a `Fog`.
+- **Changing `width` or `height`** makes the camera draw once at the new size,
+  whatever its `update` says, since the new picture holds nothing yet.
+- **It isn't a mirror.** The picture is what the camera sees from where it
+  stands. It doesn't change as the player walks past, as a reflection would.
+- **Each machine draws its own pictures.** Neither component is sent over the
+  network, so put both in the level or in a blueprint, where every machine has
+  them.
+
+The editor draws texture cameras while you edit, too. The sandbox level,
+`levels/Test.alvl`, has a security screen beside the monitor that shows a
+camera watching the player.
 
 ## Camera paths for benchmarks
 

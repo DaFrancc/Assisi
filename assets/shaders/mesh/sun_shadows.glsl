@@ -262,11 +262,11 @@ ShadowProbe ProbeCascade(uint cascade, ShadowSurface surface)
 // another view's camera.
 float CascadeDepth()
 {
-    if (uFrame.cascadeEye.w == 0.0)
+    if (uFrame.shadowEye.w == 0.0)
     {
         return abs(vViewZ);
     }
-    return abs(dot(vWorldPos - uFrame.cascadeEye.xyz, uFrame.cascadeEyeForward.xyz));
+    return abs(dot(vWorldPos - uFrame.shadowEye.xyz, uFrame.shadowEyeForward.xyz));
 }
 
 // The cascade covering @p viewDepth: the number of splits at or below it,

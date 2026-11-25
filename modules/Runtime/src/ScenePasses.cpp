@@ -676,18 +676,25 @@ void FrameConstantsPass::Record(
     meshPass.SetAmbientOcclusion(view.occlusion.texture);
     meshPass.SetCloudShadow(clouds.shadow);
 
-    // The cascades are the main camera's. Each cascade's matrix is moved by
-    // where this view's camera stands in them, so a position measured from this
-    // view finds its texel; a view other than the main one picks its cascade
-    // along the main camera.
+    // The shadow maps and the clouds' shadow are the main camera's. Each
+    // cascade's matrix is moved by where this view's camera stands in them, so
+    // a position measured from this view finds its texel; a view other than the
+    // main one picks its cascade along the main camera, moves its positions to
+    // the main camera for the spot and point lights' views, and finds the
+    // clouds' shadow map from its own camera.
     Render::MeshPass::SunShadowFrame sunFrame = sun.frame;
     sunFrame.sampledFrom = Math::TranslationOf(view.cameraInShadow);
-    std::optional<Render::MeshPass::CascadeEye> cascadeEye;
+    std::optional<Render::MeshPass::ShadowEye> shadowEye;
+    Render::CloudShadowConstants cloudShadow = clouds.shadowConstants;
     if (&view != &frame.main)
     {
-        cascadeEye = Render::MeshPass::CascadeEye{
-            .position = glm::vec3(frame.main.viewOrigin - view.viewOrigin),
+        const glm::dvec3 fromMain = view.viewOrigin - frame.main.viewOrigin;
+        shadowEye = Render::MeshPass::ShadowEye{
+            .position = glm::vec3(-fromMain),
             .forward = glm::normalize(-glm::vec3(frame.main.cameraInView[kCameraBackColumn]))};
+        cloudShadow.area.x -= static_cast<float>(fromMain.x);
+        cloudShadow.area.y -= static_cast<float>(fromMain.z);
+        cloudShadow.outside.y = static_cast<float>(view.viewOrigin.y);
     }
     meshPass.UpdateFrameConstants(
         rec.CommandList(),
@@ -703,12 +710,12 @@ void FrameConstantsPass::Record(
                                                .indirect = ResolveIndirect(frame.sky, frame.settings.ambient,
                                                                            reflections.probe),
                                                .sunShadows = sunFrame,
-                                               .cascadeEye = cascadeEye,
+                                               .shadowEye = shadowEye,
                                                .localShadows = local.frame,
                                                .fog = view.fog,
                                                .fogVolumes = view.fogVolumeLanes,
                                                .screenOcclusion = view.occlusion.texture != nullptr,
-                                               .cloudShadow = clouds.shadowConstants});
+                                               .cloudShadow = cloudShadow});
 }
 
 // --- depth-prepass ----------------------------------------------------------
@@ -735,6 +742,7 @@ void DepthPrepassPass::Record(Recorder &rec, const SceneFrame &frame, const View
                                                      .cullBuilder = &cullTables,
                                                      .lodSelector = &out.Get<LodSelector>(),
                                                      .viewerInstance = view.viewerInstance,
+                                                     .textureCamera = view.textureCamera,
                                                      .blendedItems = &out.Get<BlendedDraws>().items});
 }
 
@@ -841,9 +849,8 @@ bool WaterWavesPass::OnTargetsChanged(const nvrhi::FramebufferInfo &targets)
 
 bool WaterWavesPass::Wanted(const SceneFrame &frame) const
 {
-    // Once a frame, so the water the main camera sees is what is brought up
-    // to time.
-    return frame.settings.waterEnabled && frame.main.water != nullptr && frame.main.water->placed > 0u;
+    // Once a frame, for the water every view sees.
+    return frame.settings.waterEnabled && frame.waves != nullptr && frame.waves->placed > 0u;
 }
 
 void WaterWavesPass::Release()
@@ -854,8 +861,8 @@ void WaterWavesPass::Release()
 bool WaterWavesPass::Record(Recorder &rec, const SceneFrame &frame, Writes<WaterFields> out)
 {
     // With nothing in view the textures only age, and nothing is recorded.
-    nvrhi::ICommandList *commandList = frame.main.water->bodies.empty() ? nullptr : rec.CommandList();
-    if (!renderer.Simulate(commandList, *frame.main.water, frame.waterSeconds))
+    nvrhi::ICommandList *commandList = frame.waves->bodies.empty() ? nullptr : rec.CommandList();
+    if (!renderer.Simulate(commandList, *frame.waves, frame.waterSeconds))
     {
         return false;
     }

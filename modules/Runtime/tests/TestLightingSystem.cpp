@@ -282,7 +282,8 @@ TEST_CASE("A second view sharing the lights sees them where a gather from its ow
                   glm::vec3(gathered.PointLights()[0].positionRadius)));
     CHECK(shared.PointLights()[0].positionRadius.w == gathered.PointLights()[0].positionRadius.w);
     CHECK(shared.PointLights()[0].shadowView.x == Assisi::Render::kNoShadowView);
-    CHECK(Approx3(glm::vec3(shared.SpotLights()[0].positionRadius), glm::vec3(gathered.SpotLights()[0].positionRadius)));
+    CHECK(Approx3(glm::vec3(shared.SpotLights()[0].positionRadius),
+                  glm::vec3(gathered.SpotLights()[0].positionRadius)));
     CHECK(Approx3(glm::vec3(shared.SpotLights()[0].directionInner),
                   glm::vec3(gathered.SpotLights()[0].directionInner)));
     CHECK(shared.PointLightShadowFlags()[0] == Assisi::Runtime::ShadowCaster::Yes);
