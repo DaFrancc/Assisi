@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace Assisi::Render
 {
@@ -199,6 +200,16 @@ public:
     [[nodiscard]] size_t FieldCount() const { return _fields.size(); }
 
 private:
+    /// @brief The surface's set for one view, and what it was built against.
+    struct DrawSet
+    {
+        nvrhi::BindingSetHandle set;
+        const nvrhi::ITexture *distance = nullptr;
+        const nvrhi::IBuffer *nodes = nullptr;
+        /// The Simulate call of the frame it last drew in.
+        uint64_t usedAt = 0;
+    };
+
     /// @brief One body's wave textures, and what its spectrum was written for.
     struct Field
     {
@@ -209,10 +220,11 @@ private:
         nvrhi::BindingSetHandle rowsSet;
         nvrhi::BindingSetHandle columnsSet;
         std::array<nvrhi::BindingSetHandle, kWaterMipCount - 1u> mipSets;
-        /// The surface's set, and what it was built against.
-        nvrhi::BindingSetHandle drawSet;
-        const nvrhi::ITexture *drawSetDistance = nullptr;
-        const nvrhi::IBuffer *drawSetNodes = nullptr;
+        /// The surface's sets, one for each view that drew the body this frame
+        /// or the last: each view reads its own scene distance, so one set
+        /// shared between them would be built again for every view, every
+        /// frame.
+        std::vector<DrawSet> drawSets;
         WaterCascades cascades;
         WaterWaves waves;
         /// How each cascade's slopes divide, for the waves the spectrum holds.
@@ -228,6 +240,10 @@ private:
     [[nodiscard]] bool CreateScratch();
     [[nodiscard]] bool CreatePatch();
     [[nodiscard]] bool EnsureNodeCapacity(size_t count);
+
+    /// @brief @p field's surface set for the view reading @p distance, built
+    /// if it has none yet. Null when it fails to build.
+    [[nodiscard]] nvrhi::IBindingSet *DrawSetFor(Field &field, nvrhi::ITexture *distance);
 
     /// @brief The FFT and the mips for one body.
     void SimulateField(nvrhi::ICommandList *commandList, Field &field, const WaterBody &body, float loopSeconds);
@@ -258,6 +274,8 @@ private:
     nvrhi::TextureHandle _scratch23;
 
     std::unordered_map<uint64_t, Field> _fields;
+    /// Counts Simulate calls, one a frame, which the surface's sets are aged by.
+    uint64_t _simulations = 0;
     /// Whether the surface's pipeline built for the scene target.
     bool _built = false;
 };

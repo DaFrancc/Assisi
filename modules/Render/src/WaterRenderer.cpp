@@ -395,9 +395,14 @@ bool WaterRenderer::Simulate(nvrhi::ICommandList *commandList, const WaterFrame 
     {
         return false;
     }
+    // A view that drew neither this frame nor the last has gone, or reads a
+    // scene distance made again; its sets go with it.
+    ++_simulations;
     for (std::pair<const uint64_t, Field> &entry : _fields)
     {
         ++entry.second.idleFrames;
+        std::erase_if(entry.second.drawSets,
+                      [this](const DrawSet &drawSet) { return drawSet.usedAt + 1u < _simulations; });
     }
     if (_scratch01 == nullptr && !frame.bodies.empty() && !CreateScratch())
     {
@@ -475,6 +480,35 @@ bool WaterRenderer::EnsureNodeCapacity(size_t count)
     return _nodes != nullptr;
 }
 
+nvrhi::IBindingSet *WaterRenderer::DrawSetFor(Field &field, nvrhi::ITexture *distance)
+{
+    for (DrawSet &drawSet : field.drawSets)
+    {
+        if (drawSet.distance == distance && drawSet.nodes == _nodes)
+        {
+            drawSet.usedAt = _simulations;
+            return drawSet.set;
+        }
+    }
+    using nvrhi::BindingSetItem;
+    nvrhi::BindingSetDesc set;
+    set.addItem(BindingSetItem::ConstantBuffer(0, _constants));
+    set.addItem(BindingSetItem::Texture_SRV(0, field.displacement));
+    set.addItem(BindingSetItem::Texture_SRV(1, field.slopes));
+    set.addItem(BindingSetItem::Texture_SRV(2, distance));
+    set.addItem(BindingSetItem::StructuredBuffer_SRV(3, _nodes));
+    set.addItem(BindingSetItem::Sampler(0, _sampler));
+    nvrhi::BindingSetHandle made = _device->createBindingSet(set, _drawLayout);
+    if (made == nullptr)
+    {
+        return nullptr;
+    }
+    // One built against a node buffer since grown is never matched again.
+    std::erase_if(field.drawSets, [distance](const DrawSet &drawSet) { return drawSet.distance == distance; });
+    field.drawSets.push_back(DrawSet{.set = made, .distance = distance, .nodes = _nodes, .usedAt = _simulations});
+    return made;
+}
+
 void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, const WaterDrawView &view)
 {
     if (!IsValid() || frame.bodies.empty() || view.frameBindings == nullptr || view.sceneDistance == nullptr)
@@ -494,7 +528,6 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
     nvrhi::ICommandList *commandList = target.commandList;
     commandList->writeBuffer(_nodes, frame.nodes.data(), frame.nodes.size() * sizeof(WaterNode));
 
-    using nvrhi::BindingSetItem;
     for (const WaterBody &body : frame.bodies)
     {
         const std::unordered_map<uint64_t, Field>::iterator found = _fields.find(body.key);
@@ -502,24 +535,12 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
         {
             continue;
         }
-        Field &field = found->second;
-        if (field.drawSet == nullptr || field.drawSetDistance != view.sceneDistance || field.drawSetNodes != _nodes)
-        {
-            nvrhi::BindingSetDesc set;
-            set.addItem(BindingSetItem::ConstantBuffer(0, _constants));
-            set.addItem(BindingSetItem::Texture_SRV(0, field.displacement));
-            set.addItem(BindingSetItem::Texture_SRV(1, field.slopes));
-            set.addItem(BindingSetItem::Texture_SRV(2, view.sceneDistance));
-            set.addItem(BindingSetItem::StructuredBuffer_SRV(3, _nodes));
-            set.addItem(BindingSetItem::Sampler(0, _sampler));
-            field.drawSet = _device->createBindingSet(set, _drawLayout);
-            field.drawSetDistance = view.sceneDistance;
-            field.drawSetNodes = _nodes;
-        }
-        if (field.drawSet == nullptr)
+        nvrhi::IBindingSet *drawSet = DrawSetFor(found->second, view.sceneDistance);
+        if (drawSet == nullptr)
         {
             continue;
         }
+        const Field &field = found->second;
 
         const WaterDrawConstants constants =
             MakeWaterDrawConstants(body, field.shares, frame.gusts, view.camera, view.seconds);
@@ -529,7 +550,7 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
         state.pipeline = pipeline;
         state.framebuffer = target.framebuffer;
         state.addBindingSet(view.frameBindings);
-        state.addBindingSet(field.drawSet);
+        state.addBindingSet(drawSet);
         state.indexBuffer =
             nvrhi::IndexBufferBinding{.buffer = _patchIndices, .format = nvrhi::Format::R16_UINT, .offset = 0u};
         state.viewport.addViewportAndScissorRect(

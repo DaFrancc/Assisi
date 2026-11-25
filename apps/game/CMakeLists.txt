@@ -300,7 +300,7 @@ if (ASSISI_BUILD_TESTS)
   # other than the screen's. Their accepted pictures are kept apart from the
   # default run's, which are named after the same levels.
   file(WRITE "${_gpu_dir}/msaa.json" "{\"antiAliasing\": {\"mode\": \"msaa\", \"msaaSamples\": 4}}\n")
-  foreach (_name IN ITEMS FoliageCheck WaterCheck CameraFeaturesCheck)
+  foreach (_name IN ITEMS FoliageCheck WaterCheck CameraFeaturesCheck WaterCameraCheck)
     add_test(NAME Gpu-${_name}-Msaa
       COMMAND Assisi-GameEditor -l "levels/${_name}.alvl" --no-editor-visuals --vulkan-validation
               --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}
