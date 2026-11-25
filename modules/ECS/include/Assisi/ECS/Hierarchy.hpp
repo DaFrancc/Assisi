@@ -54,7 +54,8 @@ struct Parent
 /// matrix. Visits only what can have changed: Transforms and Parent links written
 /// since `lastTick`, Parent links removed since then, entities blending between
 /// two fixed steps (when the blend alpha moved), entities whose blend just ended,
-/// entities with a RenderOffset, and the children of anything recomputed. A
+/// entities with a DrawPose or a RenderOffset, and the children of anything
+/// recomputed. A
 /// static scene costs a scan of two change-tick arrays.
 ///
 /// A Transform written inside a FixedStepScope is drawn between its pose before

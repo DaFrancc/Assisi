@@ -25,6 +25,7 @@
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/Bitmask.hpp>
 #include <Assisi/Core/InternedString.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Geometry/AnimationBlend.hpp>
@@ -479,6 +480,19 @@ struct Animator
     AFIELD() Core::AssetId machine;
 };
 
+/// @brief A feature a Camera can leave out of what it draws.
+AENUM()
+enum class CameraFeature : std::uint8_t
+{
+    Shadows,          ///< Sun, lamp and cloud shadows.
+    AmbientOcclusion, ///< Darkening in creases and corners.
+    Sky,              ///< The sky behind everything; black without it.
+    Fog,              ///< The level's fog and its fog volumes.
+    Water,            ///< Oceans, lakes and rivers.
+    SeeThrough,       ///< See-through surfaces, such as glass.
+    Count_,
+};
+
 /// @brief Projection and activation parameters for a camera entity.
 ///
 /// Pair with Transform to form a complete camera: the Transform
@@ -492,30 +506,22 @@ struct Animator
 /// gating: an arriving `isActive` would let the host hand a client a different
 /// view than the one that client chose. Which camera a machine looks through is
 /// that machine's business.
+///
+/// `features` and `lodBias` make what this camera draws cheaper, for this
+/// camera alone; nothing turns on what the game's graphics settings have off.
+/// `farZ` is the camera's draw distance.
 ACOMP()
 struct Camera
 {
     AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
     AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.
     AFIELD() float farZ       = 200.f; ///< Far clip plane distance.
+    /// Multiplies the game's level-of-detail bias for this camera: below 1 it
+    /// switches to coarser meshes sooner.
+    AFIELD() float lodBias = 1.f;
+    /// The features this camera draws: a set bit is on, a clear one off.
+    AFIELD() Core::Bitmask<CameraFeature, std::uint8_t> features = Core::Bitmask<CameraFeature, std::uint8_t>::All();
     AFIELD() bool isActive   = false;  ///< True for the scene's active camera.
-};
-
-/// @brief How a camera is drawn this frame, in place of the rotation its
-/// Transform gives it: for whatever moves the view every frame without moving
-/// what is simulated, such as a look that follows the mouse between fixed
-/// steps, head bob or screen shake.
-///
-/// Set each frame by whatever moves the view. The engine applies it when it
-/// draws through the camera and changes nothing else: the Transform, what is
-/// simulated and what is sent stay as they are. The camera still stands where
-/// the blend between fixed steps puts it, `offset` from there. Remove it to
-/// draw the camera as its Transform has it again.
-ACOMP(transient)
-struct CameraDrawPose
-{
-    AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f}; ///< The rotation in the world it is drawn with.
-    AFIELD() glm::vec3 offset{0.f};                  ///< Added to where it stands, in the world (m).
 };
 
 /// @brief Drives an entity's Transform back and forth along a fixed axis.

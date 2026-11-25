@@ -47,11 +47,10 @@ struct SceneView
 /// Runtime::SceneDrawDistance), so whatever projects through it agrees with
 /// what was drawn.
 ///
-/// A camera with a Runtime::CameraDrawPose is drawn with its rotation, and
-/// standing its offset from where the blend between steps puts it: what a game
-/// moves the view with every frame, such as a look that follows the mouse
-/// between fixed steps, and nothing simulated or sent changes. Every other
-/// camera is drawn as propagated. Nothing here knows about players.
+/// The world matrix is the camera as propagated, an ECS::DrawPose included:
+/// what a game turns the view with every frame, such as a look that follows the
+/// mouse between fixed steps, which the transform pass applies so whatever
+/// hangs from the camera turns with it. Nothing here knows about players.
 ///
 /// A camera with a Runtime::TextureCamera is never the one looked through: it
 /// draws into its picture.

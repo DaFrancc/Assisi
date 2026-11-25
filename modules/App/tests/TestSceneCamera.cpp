@@ -9,6 +9,7 @@
 
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/SceneCamera.hpp>
+#include <Assisi/ECS/DrawPose.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -131,8 +132,8 @@ TEST_CASE("A camera with a draw pose is drawn turned and moved by it, and its Tr
     // look, without moving anything simulated or sent.
     Assisi::ECS::Scene scene;
     const Assisi::ECS::Entity camera = AddCamera(scene, /*active=*/ true, kCameraPosition);
-    (void)scene.Add<Assisi::Runtime::CameraDrawPose>(
-        camera, Assisi::Runtime::CameraDrawPose{.rotation = kDrawnRotation, .offset = kDrawnOffset});
+    (void)scene.Add<Assisi::ECS::DrawPose>(camera,
+                                           Assisi::ECS::DrawPose{.rotation = kDrawnRotation, .offset = kDrawnOffset});
     (void)Assisi::ECS::PropagateTransforms(scene, 0);
 
     const std::optional<SceneView> view = ActiveSceneCamera(scene);
@@ -160,15 +161,16 @@ TEST_CASE("The player's camera is drawn where the blend puts it unless the game 
     controls->lookYaw = 0.7f;
     const Assisi::ECS::Entity camera = AddCamera(scene, /*active=*/ true, glm::vec3{0.f});
     (void)scene.Add<Assisi::ECS::Parent>(camera, Assisi::ECS::Parent{player});
-    (void)Assisi::ECS::PropagateTransforms(scene, 0);
+    const uint64_t tick = Assisi::ECS::PropagateTransforms(scene, 0);
 
     // The turning not yet stepped is the game's to draw, not the engine's.
     const std::optional<SceneView> blended = ActiveSceneCamera(scene);
     REQUIRE(blended.has_value());
     CHECK(Near(blended->world.inCell, glm::mat4(1.f)));
 
-    (void)scene.Add<Assisi::Runtime::CameraDrawPose>(
-        camera, Assisi::Runtime::CameraDrawPose{.rotation = kDrawnRotation, .offset = glm::vec3{0.f}});
+    (void)scene.Add<Assisi::ECS::DrawPose>(camera,
+                                           Assisi::ECS::DrawPose{.rotation = kDrawnRotation, .offset = glm::vec3{0.f}});
+    (void)Assisi::ECS::PropagateTransforms(scene, tick);
     const std::optional<SceneView> drawn = ActiveSceneCamera(scene);
     REQUIRE(drawn.has_value());
     CHECK(Near(drawn->world.inCell, glm::mat4_cast(kDrawnRotation)));

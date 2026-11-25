@@ -189,6 +189,50 @@ TEST_CASE("A surface is left out of the view of the camera it shows, and only th
     CHECK_FALSE(Runtime::LeftOutOfView(scene, mirror, mesh, ECS::InstanceId{}, ECS::NullEntity));
 }
 
+TEST_CASE("A camera's MSAA samples are a power of two from 1 to 8, within what the GPU does")
+{
+    CHECK(Runtime::TextureCameraSamples(4u, 8u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(1u, 8u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(0u, 8u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(6u, 8u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(16u, 64u) == 8u);
+    CHECK(Runtime::TextureCameraSamples(8u, 4u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(4u, 1u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(4u, 0u) == 1u);
+}
+
+TEST_CASE("A picture draws at about as many pixels as its surface covers on screen, up to its own size")
+{
+    using Runtime::kPictureDrawSteps;
+    using Runtime::PictureDrawSteps;
+    // A 512-pixel picture on a surface 100 pixels across: a quarter of it.
+    CHECK(PictureDrawSteps(100.f, 512u, 0u) == 2u);
+    CHECK(PictureDrawSteps(512.f, 512u, 0u) == kPictureDrawSteps);
+    CHECK(PictureDrawSteps(2000.f, 512u, 0u) == kPictureDrawSteps);
+    CHECK(PictureDrawSteps(1.f, 512u, 0u) == 1u);
+    // Nothing on screen: full size.
+    CHECK(PictureDrawSteps(0.f, 512u, 2u) == kPictureDrawSteps);
+}
+
+TEST_CASE("A picture's drawn size grows at once and shrinks only by more than one step")
+{
+    using Runtime::PictureDrawSteps;
+    // 300 of 512 pixels wants five eighths.
+    CHECK(PictureDrawSteps(300.f, 512u, 4u) == 5u);
+    CHECK(PictureDrawSteps(300.f, 512u, 6u) == 6u);
+    CHECK(PictureDrawSteps(300.f, 512u, 7u) == 5u);
+}
+
+TEST_CASE("A drawn side is a whole number of pixels, rounded up and never zero")
+{
+    using Runtime::PictureDrawnSide;
+    CHECK(PictureDrawnSide(512u, 8u) == 512u);
+    CHECK(PictureDrawnSide(512u, 4u) == 256u);
+    CHECK(PictureDrawnSide(320u, 3u) == 120u);
+    CHECK(PictureDrawnSide(321u, 3u) == 121u);
+    CHECK(PictureDrawnSide(1u, 1u) == 1u);
+}
+
 TEST_CASE("Switching a camera the way it already is changes nothing")
 {
     ECS::Scene scene;

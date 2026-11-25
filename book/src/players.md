@@ -190,10 +190,11 @@ which one it is (see
 Turning is applied by the fixed step, 60 times a second. A view turned only
 there would turn in steps on a faster screen. The template's `LookAhead`
 draws your player's camera turned on by the turning the step hasn't used yet,
-every frame, by setting its `CameraDrawPose` (see
+every frame, by setting its `DrawPose` (see
 [Moving the view every frame](rendering-camera.md#moving-the-view-every-frame)).
-Only the drawing turns. Where the character faces, what the host is sent, and
-what everyone else sees all come from the step.
+Only the drawing turns, along with anything attached to the camera, such as a
+held weapon. Where the character faces, what the host is sent, and what
+everyone else sees all come from the step.
 
 ## Your own actions
 

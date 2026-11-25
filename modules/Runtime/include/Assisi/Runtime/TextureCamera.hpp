@@ -29,6 +29,10 @@ namespace Assisi::Runtime
 /// pixels a side.
 inline constexpr uint32_t kDefaultTextureCameraSide = 512;
 
+/// @brief A texture camera's MSAA samples a pixel when nothing says otherwise:
+/// smooth edges on a screen seen up close, at a small cost for a small picture.
+inline constexpr uint32_t kDefaultTextureCameraSamples = 4;
+
 /// @brief When a TextureCamera draws its picture. A camera that doesn't draw
 /// on a frame leaves its last picture on its surfaces.
 AENUM()
@@ -64,12 +68,41 @@ struct TextureCamera
     /// The picture's size, in pixels.
     AFIELD(min = 1) uint32_t width = kDefaultTextureCameraSide;
     AFIELD(min = 1) uint32_t height = kDefaultTextureCameraSide;
+    /// MSAA samples a pixel, whatever the game's own anti-aliasing: 1 for
+    /// none, up to 8. A count that isn't a power of two takes the one below,
+    /// and one past what the GPU can do takes the most it can.
+    AFIELD(min = 1, max = 8) uint32_t samples = kDefaultTextureCameraSamples;
     /// When it draws.
     AFIELD() TextureCameraUpdate update = TextureCameraUpdate::WhileSeen;
     /// Whether a WhileOn camera is drawing, which SwitchTextureCamera sets. A
     /// level can place one switched off.
     AFIELD() bool on = true;
+    /// Whether it draws at about as many pixels as its surface covers on the
+    /// main camera's screen, up to its own size: a distant monitor draws few.
+    /// A camera whose surfaces are all off screen draws at its full size.
+    AFIELD() bool followScreenSize = true;
 };
+
+/// @brief How many steps a texture camera's drawn size is chosen in: its full
+/// size, or a whole number of these fractions of it.
+inline constexpr uint32_t kPictureDrawSteps = 8;
+
+/// @brief How many kPictureDrawSteps of its size a picture whose longer side
+/// is @p pictureSide draws at, when its surface covers @p surfacePixels on
+/// screen and it drew at @p current steps last time (0 before it first
+/// drew). None on screen, a @p surfacePixels of 0, draws at full size. It
+/// grows at once and shrinks only by more than one step, so a surface on the
+/// edge between two sizes doesn't switch between them every frame.
+[[nodiscard]] uint32_t PictureDrawSteps(float surfacePixels, uint32_t pictureSide, uint32_t current);
+
+/// @brief The side @p steps of kPictureDrawSteps make of @p side: at least
+/// one pixel, rounded up.
+[[nodiscard]] uint32_t PictureDrawnSide(uint32_t side, uint32_t steps);
+
+/// @brief The MSAA samples a texture camera asking @p asked draws with on a
+/// GPU that does at most @p most: a power of two from 1 to 8, the one at or
+/// below what it asked, and no more than the GPU does.
+[[nodiscard]] uint32_t TextureCameraSamples(uint32_t asked, uint32_t most);
 
 /// @brief Asks a WhenAsked TextureCamera for one picture. Put on by
 /// RequestTextureCameraPicture and taken off by the renderer when it draws.

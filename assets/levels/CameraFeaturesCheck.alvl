@@ -1,0 +1,156 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Clouds": {"changeRate": 0.0, "preset": 1},
+        "DirectionalLight": {"castsShadows": true, "intensity": 2.0, "tintedBySky": true},
+        "Skybox": {"preset": 0},
+        "Sun": {"axialTiltDegrees": 23.44, "bearingDegrees": 200.0, "latitudeDegrees": 45.0},
+        "TimeOfDay": {"hour": 15.0, "paused": true, "seasonsPaused": true}
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [{"guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd", "path": "materials/checker.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {
+          "position": [0.0, -1.0, 0.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [40.0, 1.0, 40.0]
+        }
+      },
+      "name": "Ground"
+    },
+    {
+      "components": {
+        "CameraSurface": {
+          "camera": "Full",
+          "materialSlot": 0
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [{"guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc", "path": "materials/shadow_white.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {
+          "position": [-1.6, 2.5, 3.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [3.2, 2.0, 0.1]
+        }
+      },
+      "name": "FullMonitor"
+    },
+    {
+      "components": {
+        "CameraSurface": {
+          "camera": "Cheap",
+          "materialSlot": 0
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [{"guid": "eae01c9e-6ef3-4d74-9ca3-0d02e5d427dc", "path": "materials/shadow_white.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {
+          "position": [1.8, 2.5, 3.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [3.2, 2.0, 0.1]
+        }
+      },
+      "name": "CheapMonitor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [{"guid": "b56684e7-4836-45f1-8e17-69d960255806", "path": "materials/ibl_gold_rough.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000006", "path": "prim://sphere"}
+        },
+        "Transform": {
+          "position": [-12.0, 0.5, 0.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.5, 1.5, 1.5]
+        }
+      },
+      "name": "Subject"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [{"guid": "ce6d77de-3e3b-47d8-a5f9-dee0aec544bf", "path": "materials/ibl_plastic.amat"}],
+          "mesh": {"guid": "00000000-0000-0000-0000-000000000001", "path": "prim://cube"}
+        },
+        "Transform": {
+          "position": [-9.5, 0.0, 0.5],
+          "rotation": [0.9238795042037964, 0.0, 0.3826834261417389, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "name": "Subject_2"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "castsShadows": true,
+          "color": [1.0, 0.30000001192092896, 0.20000000298023224],
+          "intensity": 200.0,
+          "radius": 12.0
+        },
+        "Transform": {
+          "position": [-10.5, 1.8, 2.5],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "name": "Lamp"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 40.0,
+          "isActive": false,
+          "nearZ": 0.10000000149011612
+        },
+        "TextureCamera": {
+          "height": 200,
+          "width": 320
+        },
+        "Transform": {
+          "position": [-11.0, 1.5, 6.0],
+          "rotation": [0.9961947202682495, -0.08715574443340302, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "name": "Full"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "features": ["Fog", "Water", "SeeThrough"],
+          "fovDegrees": 40.0,
+          "isActive": false,
+          "nearZ": 0.10000000149011612
+        },
+        "TextureCamera": {
+          "height": 200,
+          "samples": 1,
+          "width": 320
+        },
+        "Transform": {
+          "position": [-11.0, 1.5, 6.0],
+          "rotation": [0.9961947202682495, -0.08715574443340302, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "name": "Cheap"
+    }
+  ],
+  "version": 2
+}

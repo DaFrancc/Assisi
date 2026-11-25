@@ -20,6 +20,7 @@
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/ECS/DrawPose.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -125,6 +126,9 @@ struct Looker
         world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
         App::SystemContext frame = Context();
         Game::LookAheadSystem(frame);
+        // As the game draws: its update systems, then the transform pass, which
+        // applies the view's draw pose.
+        world.propagationTick = ECS::PropagateTransforms(world.scene, world.propagationTick);
         const std::optional<App::SceneView> view = App::ActiveSceneCamera(world.scene);
         REQUIRE(view.has_value());
         return view->world.inCell;
@@ -266,10 +270,10 @@ TEST_CASE("Another player's view camera is drawn where the blend puts it, with n
     // This machine's player first, so its camera has a pose to leave behind.
     looker.Turn(0.5f, 0.f);
     (void)looker.Frame(clock, halfStep);
-    REQUIRE(scene.Get<Runtime::CameraDrawPose>(looker.eye) != nullptr);
+    REQUIRE(scene.Get<ECS::DrawPose>(looker.eye) != nullptr);
 
     (void)scene.Remove<App::LocalPlayer>(looker.character);
     const glm::mat4 drawn = looker.Frame(clock, halfStep);
-    CHECK(scene.Get<Runtime::CameraDrawPose>(looker.eye) == nullptr);
+    CHECK(scene.Get<ECS::DrawPose>(looker.eye) == nullptr);
     CHECK(YawOf(drawn) == doctest::Approx(YawOf(scene.Get<ECS::WorldMatrix>(looker.eye)->inCell)));
 }

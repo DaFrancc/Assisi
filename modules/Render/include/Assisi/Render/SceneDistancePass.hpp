@@ -42,8 +42,10 @@ public:
 
     [[nodiscard]] bool IsValid() const { return _pipeline != nullptr && _multisamplePipeline != nullptr; }
 
-    /// @brief Hold a @p width x @p height target reading @p depth, rebuilding
-    /// only what a changed size or a changed depth buffer invalidates.
+    /// @brief Hold a target the size of @p depth, drawn in its top-left
+    /// @p width x @p height, the part of @p depth a view drew; rebuilding only
+    /// what a changed depth buffer or its size invalidates, so a view drawing
+    /// smaller from one frame to the next allocates nothing.
     /// @return false if the target could not be allocated; the pass then holds
     /// nothing.
     [[nodiscard]] bool Configure(std::uint32_t width, std::uint32_t height, nvrhi::ITexture *depth);
@@ -70,6 +72,7 @@ private:
     nvrhi::GraphicsPipelineHandle _multisamplePipeline;
     nvrhi::BufferHandle _constants;
 
+    // The part of the target drawn: the view's size, at most the target's.
     std::uint32_t _width = 0;
     std::uint32_t _height = 0;
     nvrhi::ITexture *_depth = nullptr;

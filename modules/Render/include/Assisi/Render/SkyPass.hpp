@@ -14,6 +14,7 @@
 #include <Assisi/Render/FogVolumeBuffers.hpp>
 #include <Assisi/Render/GpuLayout.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/SampleCountPipelines.hpp>
 #include <Assisi/Render/Sky.hpp>
 #include <Assisi/Render/Texture.hpp>
 
@@ -92,7 +93,7 @@ public:
     /// Initialize().
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
 
-    [[nodiscard]] bool IsValid() const { return _pipeline != nullptr; }
+    [[nodiscard]] bool IsValid() const { return _built; }
 
     /// @brief Shade the frame's empty pixels.
     ///
@@ -176,7 +177,10 @@ private:
     const FogVolumeBuffers *_fogVolumeBuffers = nullptr;
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::BindingSetHandle _bindingSet;
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    // The scene's pipeline, built for each sample count a view draws at:
+    // the main view's at the game's MSAA setting, a texture camera's at its own.
+    nvrhi::GraphicsPipelineDesc _pipelineDesc;
+    SampleCountPipelines _pipelines{"SkyPass"};
     // DrawInto's: colour only, no depth test. Independent of the scene target,
     // so a render-target change leaves it alone.
     nvrhi::GraphicsPipelineHandle _capturePipeline;
@@ -201,6 +205,8 @@ private:
     Texture _moon;
     nvrhi::SamplerHandle _moonSampler;
     MoonTexture _moonState = MoonTexture::NotLoaded;
+    /// Whether the scene's pipeline built for the targets Initialize was given.
+    bool _built = false;
 };
 
 } // namespace Assisi::Render

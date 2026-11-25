@@ -139,18 +139,20 @@ bool SsaoPass::Configure(uint32_t width, uint32_t height, nvrhi::ITexture *dista
         Release();
         return false;
     }
-    const bool resized = width != _width || height != _height || _occlusion == nullptr;
+    const nvrhi::TextureDesc &distanceDesc = distance->getDesc();
+    _width = std::min(width, distanceDesc.width);
+    _height = std::min(height, distanceDesc.height);
+    const bool resized = _occlusion == nullptr || _occlusion->getDesc().width != distanceDesc.width ||
+                         _occlusion->getDesc().height != distanceDesc.height;
     if (!resized && distance == _distance)
     {
         return true;
     }
 
-    _width = width;
-    _height = height;
     _distance = distance;
-    if (resized && !CreateTargets())
+    if (resized && !CreateTargets(distanceDesc.width, distanceDesc.height))
     {
-        Core::Log::Error("SsaoPass: failed to allocate the {}x{} targets.", width, height);
+        Core::Log::Error("SsaoPass: failed to allocate the {}x{} targets.", distanceDesc.width, distanceDesc.height);
         Release();
         return false;
     }
@@ -158,13 +160,13 @@ bool SsaoPass::Configure(uint32_t width, uint32_t height, nvrhi::ITexture *dista
     return true;
 }
 
-bool SsaoPass::CreateTargets()
+bool SsaoPass::CreateTargets(uint32_t width, uint32_t height)
 {
-    const auto makeTarget = [this](nvrhi::Format format, const char *debugName)
+    const auto makeTarget = [this, width, height](nvrhi::Format format, const char *debugName)
     {
         nvrhi::TextureDesc desc;
-        desc.width = _width;
-        desc.height = _height;
+        desc.width = width;
+        desc.height = height;
         desc.format = format;
         desc.isRenderTarget = true;
         desc.isShaderResource = true;

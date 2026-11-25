@@ -20,9 +20,12 @@
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
+#include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
+#include <Assisi/Runtime/LodSelection.hpp>
 #include <Assisi/Runtime/PostProcessResolve.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/ScenePasses.generated.hpp>
@@ -65,6 +68,10 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 // material casts a shadow with its hole in it.
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
+
+// A texture camera's picture's levels: the first stretched from what it drew,
+// each smaller one the average of the one above (see Render::PictureLevels).
+constexpr const char *kPictureLevelsShader = "shaders/picture_levels.frag.spv";
 
 // The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
 // plane, so its vertex stage is its own rather than the shared one: that one
@@ -196,6 +203,16 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
     }
 
+    // Non-fatal: without it a texture camera's picture stays black.
+    const nvrhi::Format pictureFormat =
+        params.framebufferInfo.colorFormats.empty() ? nvrhi::Format::UNKNOWN : params.framebufferInfo.colorFormats[0];
+    if (!_pictureLevels.Initialize(_device, pictureFormat, kFullscreenVertexShader, kPictureLevelsShader))
+    {
+        Core::Log::Warn("SceneRenderer: texture cameras show nothing (their pictures' pass failed to start).");
+    }
+    const Render::Vulkan::VulkanContext *const vulkan = Render::RenderSystem::GetVulkanContext();
+    _mostSamples = vulkan != nullptr ? vulkan->GetMaxUsableSampleCount() : 1u;
+
     // The frame's passes' own pieces; each that fails to start says so and
     // stays off.
     const Passes::ScenePassInit passInit{.device = _device,
@@ -310,9 +327,9 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     }
     _graph->OnTargetsChanged(framebufferInfo);
     _graph->OnViewTargetsChanged(*_main->_passes, framebufferInfo);
-    // The texture views draw into targets like the scene's, so theirs and
-    // their pipelines follow; each keeps its picture, the same with MSAA or
-    // without, and with it the last thing it drew.
+    // The texture views draw in the scene target's format at their own sample
+    // counts, so theirs and their pipelines follow; each keeps its picture,
+    // and with it the last thing it drew.
     _viewParams.framebufferInfo = framebufferInfo;
     for (TextureView &texture : _textureViews)
     {
@@ -320,14 +337,28 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
         {
             continue;
         }
-        _graph->OnViewTargetsChanged(*texture.view->_passes, framebufferInfo);
-        if (!texture.view->_meshPass.RebuildPipeline(framebufferInfo))
-        {
-            Core::Log::Warn("SceneRenderer: a texture camera's mesh pipeline failed to rebuild.");
-        }
+        RetargetTextureView(texture);
         (void)MakeTextureTargets(texture);
     }
     return _meshPass.RebuildPipeline(framebufferInfo);
+}
+
+void SceneRenderer::RetargetTextureView(TextureView &texture)
+{
+    const nvrhi::FramebufferInfo targets = TextureTargets(texture.samples);
+    _graph->OnViewTargetsChanged(*texture.view->_passes, targets);
+    if (!texture.view->_meshPass.RebuildPipeline(targets))
+    {
+        Core::Log::Warn("SceneRenderer: a texture camera's mesh pipeline failed to rebuild.");
+    }
+}
+
+nvrhi::FramebufferInfo SceneRenderer::TextureTargets(uint32_t samples) const
+{
+    nvrhi::FramebufferInfo targets = _viewParams.framebufferInfo;
+    targets.sampleCount = samples;
+    targets.sampleQuality = 0;
+    return targets;
 }
 
 void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
@@ -338,10 +369,15 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         return;
     }
 
-    // Before anything is built from the camera: the fog says how far it draws.
+    // What the main camera draws, which everything gathered for it follows.
+    const Passes::ViewFeatures features = Passes::ResolveViewFeatures(_settings, viewCamera);
+    _main->_features = features;
+
+    // Before anything is built from the camera: the fog says how far it draws,
+    // unless the camera leaves the fog out, and with it what hides that edge.
     const FogResolution fog = ResolveFog(scene);
     Camera camera = viewCamera;
-    if (fog.present)
+    if (fog.present && viewCamera.features.Has(CameraFeature::Fog))
     {
         camera.farZ = Render::FogDrawDistance(viewCamera.farZ, fog.settings);
     }
@@ -399,7 +435,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lastSky = ResolveSky(scene);
     const SkyResolution &sky = _lastSky;
 
-    const bool fogged = _settings.fogEnabled && fog.present;
+    const bool fogged = features.fog && fog.present;
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
 
@@ -419,7 +455,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Before the shadow halves, because they select from it too: a caster's
     // shadow is drawn from the level the camera sees it at, or one coarser, and
     // all three passes measure with the one view set here. The GPU cull holds no
-    // dead band, so while it draws the gathers hold none either.
+    // dead band, so while it draws the gathers hold none either. A new bias
+    // from the camera redraws the kept shadows, cast at the levels it chooses.
+    if (ApplyLodBias(_lodSelector, features.lodBias))
+    {
+        ForgetKeptShadows();
+    }
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
@@ -429,11 +470,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     // The water in view, before the scene's distance is prepared, which it reads.
     GatherWaterFor(scene, *_main, projection * view, camera.farZ);
-    const bool waterReadsDistance = _settings.waterEnabled && !_waterFrame.bodies.empty();
+    const bool waterReadsDistance = !_waterFrame.bodies.empty();
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const ScreenOcclusion occlusion =
-        PrepareScreenOcclusion(*_main, frame.width, frame.height, frame.depthTexture, waterReadsDistance);
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(*_main, frame.width, frame.height, frame.depthTexture);
 
     // The passes, in the order their declarations fix: each hands what it makes
     // to the ones after it.
@@ -468,11 +508,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         .occlusion = occlusion,
         .fog = fogConstants,
         .camera = camera,
+        .features = features,
         .fogVolumeLanes = fogVolumeLanes,
         .width = frame.width,
         .height = frame.height,
         .viewerInstance = ViewerInstance(scene, _viewingCamera),
-        .waterReadsDistance = waterReadsDistance && main._sceneDistancePass.DistanceTexture() != nullptr};
+        .waterReadsDistance = waterReadsDistance && main._sceneDistancePass.DistanceTexture() != nullptr,
+        .fogged = fogged};
 
     // The texture cameras, kept, shown and chosen, and what each one drawing
     // sees gathered, before the world's passes: the water's waves are brought
@@ -485,13 +527,29 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         FreeRetiredTextureViews(/*all=*/ false);
         KeepTextureViews(scene);
         ShowCameraPictures(scene);
-        ChooseTextureViews(scene, projection * view);
+        ChooseTextureViews(scene, projection * view, camera, frame.height);
         for (const ECS::Entity textureCamera : _textureOrder)
         {
-            _textureFrames.push_back(PrepareTextureView(scene, *TextureViewFor(textureCamera), fog, fogged));
+            _textureFrames.push_back(PrepareTextureView(scene, *TextureViewFor(textureCamera), fog));
         }
     }
     ++_renderCount;
+
+    // The shadow maps are drawn while any view kept samples them, drawing
+    // this frame or not: freed the frames a texture camera rests, they would
+    // be made and drawn whole again each time it starts.
+    bool sunShadowsSampled = features.sunShadows;
+    bool localShadowsSampled = features.localShadows;
+    for (const TextureView &texture : _textureViews)
+    {
+        const Camera *const textureCamera = scene.Get<Camera>(texture.camera);
+        if (texture.framebuffer != nullptr && textureCamera != nullptr)
+        {
+            const Passes::ViewFeatures kept = Passes::ResolveViewFeatures(_settings, *textureCamera);
+            sunShadowsSampled = sunShadowsSampled || kept.sunShadows;
+            localShadowsSampled = localShadowsSampled || kept.localShadows;
+        }
+    }
 
     const Passes::SceneFrame sceneFrame{.scene = scene,
                                         .sky = sky,
@@ -507,7 +565,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                         .shadowSun = _lighting.ShadowCastingSun(),
                                         .fogColor = fog.settings.color,
                                         .shadowFrameIndex = _shadowFrameIndex,
-                                        .fogged = fogged,
+                                        .sunShadowsSampled = sunShadowsSampled,
+                                        .localShadowsSampled = localShadowsSampled,
                                         .skyAvailable = _skyPass.IsValid()};
     // The world's work once, then each texture camera's view, deepest first,
     // so a picture is drawn before the view that shows it, and the main view.
@@ -626,12 +685,13 @@ void SceneRenderer::CountFrame() const
 }
 
 ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
-                                                      nvrhi::ITexture *depthTexture, bool waterReadsDistance)
+                                                      nvrhi::ITexture *depthTexture)
 {
     Render::SceneDistancePass &distancePass = view._sceneDistancePass;
     Render::SsaoPass &ssaoPass = view._ssaoPass;
     // Released rather than kept while off — pay for what you place.
-    const bool occlusionWanted = _settings.ssao.enabled && ssaoPass.IsValid() && distancePass.IsValid();
+    const bool occlusionWanted = view._features.ambientOcclusion && ssaoPass.IsValid() && distancePass.IsValid();
+    const bool waterReadsDistance = !view._waterFrame.bodies.empty();
     const bool distanceWanted = (occlusionWanted || waterReadsDistance) && distancePass.IsValid();
     const bool distanceHeld = distanceWanted && distancePass.Configure(width, height, depthTexture);
     if (distanceWanted && !distanceHeld)
@@ -661,10 +721,10 @@ ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(SceneView &view, uint32_t 
 void SceneRenderer::GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection,
                                         uint32_t width, uint32_t height)
 {
-    // The placed fog volumes, which the player's fog setting turns off with
-    // the level's own fog.
+    // The placed fog volumes, which the player's fog setting and the camera's
+    // turn off with the level's own fog.
     view._fogVolumeFrame.Clear();
-    if (!_settings.fogEnabled)
+    if (!view._features.fog)
     {
         return;
     }
@@ -684,7 +744,7 @@ void SceneRenderer::GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm
                                    float drawDistance)
 {
     view._waterFrame.Clear();
-    if (!_settings.waterEnabled)
+    if (!view._features.water)
     {
         return;
     }
@@ -722,19 +782,35 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
         }
         const uint32_t width = std::clamp(wanted->width, 1u, kMaxTextureCameraSide);
         const uint32_t height = std::clamp(wanted->height, 1u, kMaxTextureCameraSide);
-        if (width != texture.width || height != texture.height)
+        const uint32_t samples = TextureCameraSamples(wanted->samples, _mostSamples);
+        const bool resized = width != texture.width || height != texture.height;
+        const bool resampled = samples != texture.samples;
+        if (resized)
         {
             // The old picture waits out the frames in flight on its own; the
             // view goes on with new targets.
             RetireTextureView(TextureView{.color = std::move(texture.color),
                                           .depth = std::move(texture.depth),
+                                          .drawn = std::move(texture.drawn),
                                           .picture = std::move(texture.picture),
                                           .framebuffer = std::move(texture.framebuffer),
+                                          .levels = std::move(texture.levels),
                                           .slot = texture.slot});
             texture.width = width;
             texture.height = height;
             texture.slot = 0;
+            texture.drawSteps = 0;
             texture.redraw = true;
+        }
+        texture.samples = samples;
+        // A view that failed to start keeps no targets.
+        const bool started = texture.view->_meshPass.IsValid();
+        if (resampled && started)
+        {
+            RetargetTextureView(texture);
+        }
+        if ((resized || resampled) && started)
+        {
             (void)MakeTextureTargets(texture);
         }
         ++at;
@@ -751,8 +827,9 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
         TextureView texture{.view = std::make_unique<SceneView>(),
                             .camera = entity,
                             .width = std::clamp(textureCamera.width, 1u, kMaxTextureCameraSide),
-                            .height = std::clamp(textureCamera.height, 1u, kMaxTextureCameraSide)};
-        if (InitializeView(*texture.view, _viewParams.framebufferInfo, static_cast<int32_t>(texture.width),
+                            .height = std::clamp(textureCamera.height, 1u, kMaxTextureCameraSide),
+                            .samples = TextureCameraSamples(textureCamera.samples, _mostSamples)};
+        if (InitializeView(*texture.view, TextureTargets(texture.samples), static_cast<int32_t>(texture.width),
                            static_cast<int32_t>(texture.height), camera))
         {
             (void)MakeTextureTargets(texture);
@@ -764,18 +841,18 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
 bool SceneRenderer::MakeTextureTargets(TextureView &texture)
 {
     const nvrhi::FramebufferInfo &targets = _viewParams.framebufferInfo;
-    const uint32_t samples = std::max(targets.sampleCount, 1u);
+    const uint32_t samples = std::max(texture.samples, 1u);
     const bool multisampled = samples > 1u;
     const nvrhi::Format colorFormat = targets.colorFormats.empty() ? nvrhi::Format::UNKNOWN : targets.colorFormats[0];
 
     if (texture.picture == nullptr)
     {
-        // Drawn into without MSAA and resolved into with it, so it is a render
-        // target either way; and read by the scene through the bindless table,
-        // which tracks no states, so it rests readable.
+        // Each level is drawn into, and the scene reads it through the
+        // bindless table, which tracks no states, so it rests readable.
         nvrhi::TextureDesc picture;
         picture.width = texture.width;
         picture.height = texture.height;
+        picture.mipLevels = Render::PictureMipCount(texture.width, texture.height);
         picture.format = colorFormat;
         picture.isRenderTarget = true;
         picture.isShaderResource = true;
@@ -796,6 +873,31 @@ bool SceneRenderer::MakeTextureTargets(TextureView &texture)
         }
         texture.slot = *slot;
         texture.cleared = false;
+
+        // What the camera drew, which the picture's first level is stretched
+        // from: drawn into without MSAA and resolved into with it, so a
+        // render target either way, and the same whatever the sample count.
+        nvrhi::TextureDesc drawn;
+        drawn.width = texture.width;
+        drawn.height = texture.height;
+        drawn.format = colorFormat;
+        drawn.isRenderTarget = true;
+        drawn.isShaderResource = true;
+        drawn.initialState = nvrhi::ResourceStates::ShaderResource;
+        drawn.keepInitialState = true;
+        drawn.debugName = "SceneRenderer::TextureCameraDrawn";
+        texture.drawn = _device->createTexture(drawn);
+        if (texture.drawn == nullptr)
+        {
+            Core::Log::Error("SceneRenderer: a {}x{} picture for a texture camera could not be made; it shows "
+                             "nothing.",
+                             texture.width, texture.height);
+            _viewParams.assetCache->ReturnTextureSlot(texture.slot);
+            texture.picture = nullptr;
+            texture.slot = 0;
+            return false;
+        }
+        texture.levels = _pictureLevels.Prepare(texture.picture, texture.drawn);
     }
 
     if (multisampled)
@@ -813,7 +915,7 @@ bool SceneRenderer::MakeTextureTargets(TextureView &texture)
     }
     else
     {
-        texture.color = texture.picture;
+        texture.color = texture.drawn;
     }
 
     nvrhi::TextureDesc depth;
@@ -913,7 +1015,8 @@ void SceneRenderer::ShowCameraPictures(ECS::Scene &scene)
     }
 }
 
-void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection)
+void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection,
+                                       const Camera &mainCamera, uint32_t mainHeight)
 {
     _textureCandidates.clear();
     _surfaceBounds.clear();
@@ -924,8 +1027,9 @@ void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainV
     }
     // Every frustum and bound measured from the main camera, which they are
     // tested against.
-    for (const TextureView &texture : _textureViews)
+    for (TextureView &texture : _textureViews)
     {
+        texture.seenPixels = 0.f;
         if (texture.framebuffer == nullptr)
         {
             continue;
@@ -956,20 +1060,46 @@ void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainV
                     .camera = surface.camera});
         }
     }
-    OrderTextureCameras(Render::Frustum::FromViewProjection(mainViewProjection), _textureCandidates, _surfaceBounds,
-                        _textureOrder);
+    const Render::Frustum mainFrustum = Render::Frustum::FromViewProjection(mainViewProjection);
+    OrderTextureCameras(mainFrustum, _textureCandidates, _surfaceBounds, _textureOrder);
+
+    // How large each camera's surfaces are on the main camera's screen, which
+    // is what its picture needs to fill. The bounds are measured from the
+    // main camera, so it stands at their origin.
+    const LodView mainLens{.tanHalfFovY = std::tan(glm::radians(mainCamera.fovDegrees) * 0.5f)};
+    for (const CameraSurfaceBounds &surface : _surfaceBounds)
+    {
+        TextureView *const texture = TextureViewFor(surface.camera);
+        if (texture != nullptr && mainFrustum.IntersectsSphere(surface.bounds))
+        {
+            const float pixels = LodScreenSize(surface.bounds, mainLens) * static_cast<float>(mainHeight);
+            texture->seenPixels = std::max(texture->seenPixels, pixels);
+        }
+    }
 }
 
 Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureView &texture,
-                                                    const FogResolution &fog, bool fogged)
+                                                    const FogResolution &fog)
 {
     SceneView &view = *texture.view;
     const ECS::WorldMatrix &cameraWorld = *scene.Get<ECS::WorldMatrix>(texture.camera);
     Camera camera = *scene.Get<Camera>(texture.camera);
-    if (fog.present)
+    view._features = Passes::ResolveViewFeatures(_settings, camera);
+    const bool fogged = view._features.fog && fog.present;
+    if (fog.present && camera.features.Has(CameraFeature::Fog))
     {
         camera.farZ = Render::FogDrawDistance(camera.farZ, fog.settings);
     }
+
+    // Drawn into the top-left of its targets at the size its surfaces cover on
+    // screen, through the lens of the picture's own shape.
+    const TextureCamera &wanted = *scene.Get<TextureCamera>(texture.camera);
+    texture.drawSteps =
+        wanted.followScreenSize
+            ? PictureDrawSteps(texture.seenPixels, std::max(texture.width, texture.height), texture.drawSteps)
+            : kPictureDrawSteps;
+    const uint32_t drawnWidth = PictureDrawnSide(texture.width, texture.drawSteps);
+    const uint32_t drawnHeight = PictureDrawnSide(texture.height, texture.drawSteps);
 
     view._viewOrigin = ECS::WorldPositionOf(cameraWorld);
     const glm::mat4 cameraInView = ECS::MatrixFrom(cameraWorld, view._viewOrigin);
@@ -977,25 +1107,21 @@ Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureVi
         camera, AspectRatio(static_cast<int32_t>(texture.width), static_cast<int32_t>(texture.height)));
     const glm::mat4 viewMatrix = ViewMatrix(cameraInView);
 
-    GatherFogVolumesFor(scene, view, projection * viewMatrix, texture.width, texture.height);
+    GatherFogVolumesFor(scene, view, projection * viewMatrix, drawnWidth, drawnHeight);
     // The main view's lights, measured from this camera.
     view._lighting.ShareFrom(_lighting, glm::vec3(_viewOrigin - view._viewOrigin));
-    if (!(view._lodSelector.Settings() == _lodSelector.Settings()))
-    {
-        view._lodSelector.SetSettings(_lodSelector.Settings());
-    }
+    (void)ApplyLodBias(view._lodSelector, view._features.lodBias);
     view._lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     view._lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
     GatherWaterFor(scene, view, projection * viewMatrix, camera.farZ);
-    const bool waterReadsDistance = _settings.waterEnabled && !view._waterFrame.bodies.empty();
-    const ScreenOcclusion occlusion =
-        PrepareScreenOcclusion(view, texture.width, texture.height, texture.depth, waterReadsDistance);
+    const bool waterReadsDistance = !view._waterFrame.bodies.empty();
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(view, drawnWidth, drawnHeight, texture.depth);
 
     const Render::RenderTarget target{.framebuffer = texture.framebuffer,
                                       .colorTexture = texture.color,
                                       .depthTexture = texture.depth,
-                                      .width = texture.width,
-                                      .height = texture.height};
+                                      .width = drawnWidth,
+                                      .height = drawnHeight};
     view._sceneColor.target = target;
     view._sceneDepth.target = target;
     return Passes::ViewFrame{
@@ -1008,12 +1134,14 @@ Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureVi
         .occlusion = occlusion,
         .fog = FrameFog(fog, fogged, _lastSky, static_cast<float>(view._viewOrigin.y), camera.farZ),
         .camera = camera,
+        .features = view._features,
         .fogVolumeLanes = view._fogVolumeFrame.Lanes(),
-        .width = texture.width,
-        .height = texture.height,
+        .width = drawnWidth,
+        .height = drawnHeight,
         .viewerInstance = ViewerInstance(scene, texture.camera),
         .textureCamera = texture.camera,
-        .waterReadsDistance = waterReadsDistance && view._sceneDistancePass.DistanceTexture() != nullptr};
+        .waterReadsDistance = waterReadsDistance && view._sceneDistancePass.DistanceTexture() != nullptr,
+        .fogged = fogged};
 }
 
 void SceneRenderer::ClearNewPictures(nvrhi::ICommandList *commandList)
@@ -1060,10 +1188,13 @@ void SceneRenderer::DrawTextureView(nvrhi::ICommandList *commandList, Passes::Sc
                                          .drawStats = view._drawStats};
     _graph->RunView(*view._passes, imports, viewImports, commandList, sceneFrame, viewFrame);
 
-    if (texture.picture != texture.color)
+    if (texture.drawn != texture.color)
     {
-        commandList->resolveTexture(texture.picture, nvrhi::AllSubresources, texture.color, nvrhi::AllSubresources);
+        commandList->resolveTexture(texture.drawn, nvrhi::AllSubresources, texture.color, nvrhi::AllSubresources);
     }
+    // What it drew stretched over the picture, whatever size it drew at, and
+    // the smaller levels made from that.
+    _pictureLevels.Build(commandList, texture.levels, viewFrame.width, viewFrame.height);
     // The scene reads it through the bindless table, which tracks no states.
     commandList->setTextureState(texture.picture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     commandList->commitBarriers();
@@ -1211,12 +1342,25 @@ uint32_t SceneRenderer::LastShadowDroppedByCap() const
 
 void SceneRenderer::SetLodSettings(const Runtime::LodSettings &settings)
 {
-    if (settings == _lodSelector.Settings())
+    if (settings == _lodSettings)
     {
         return;
     }
-    _lodSelector.SetSettings(settings);
+    _lodSettings = settings;
+    (void)ApplyLodBias(_lodSelector, _main->_features.lodBias);
     ForgetKeptShadows();
+}
+
+bool SceneRenderer::ApplyLodBias(LodSelector &selector, float bias) const
+{
+    Runtime::LodSettings wanted = _lodSettings;
+    wanted.bias *= bias;
+    if (selector.Settings() == wanted)
+    {
+        return false;
+    }
+    selector.SetSettings(wanted);
+    return true;
 }
 
 void SceneRenderer::PinLod(ECS::Entity entity, int32_t level)

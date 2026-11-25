@@ -58,7 +58,7 @@ void LocalPlayerSystem(SystemContext &ctx);
 ///
 /// What is gathered here and no step has used yet is still in the controls
 /// when a frame draws, so a game can draw its view turned on by it every frame
-/// (Runtime::CameraDrawPose), as the first-person template does.
+/// (ECS::DrawPose), as the first-person template does.
 ///
 /// `activeWorldOnly`, and it does nothing without devices: a headless host has
 /// none.

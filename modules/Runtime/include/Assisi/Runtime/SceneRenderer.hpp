@@ -26,6 +26,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/FogVolume.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
+#include <Assisi/Render/PictureLevels.hpp>
 #include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
@@ -91,6 +92,8 @@ private:
     Render::WaterFrame _waterFrame;
     // The point the view's lit pass is measured from: its camera.
     glm::dvec3 _viewOrigin{0.0};
+    // What the view draws this frame, set before anything is gathered for it.
+    Passes::ViewFeatures _features;
     // Latched so fog volumes past what one view draws are reported when they
     // first are, not at the frame rate; each view's own, so two views that
     // disagree don't report it every frame.
@@ -229,7 +232,11 @@ public:
     /// A change redraws every kept shadow map, which hold casters at the
     /// levels the old settings chose.
     void SetLodSettings(const Runtime::LodSettings &settings);
-    [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSelector.Settings(); }
+    [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSettings; }
+
+    /// @brief The bias the main view's levels were chosen with this frame:
+    /// the game's, times its camera's `lodBias`.
+    [[nodiscard]] float DrawnLodBias() const { return _lodSelector.Settings().bias; }
 
     /// @brief Draw @p entity at @p level whatever its size asks for, or release
     /// the pin with a negative @p level. One entity at a time.
@@ -481,13 +488,13 @@ private:
 
     /// @brief Hold @p view's scene distance target and occlusion's targets, at
     /// @p width by @p height over @p depthTexture: the distance while
-    /// occlusion or @p waterReadsDistance wants it,
-    /// occlusion's own while its setting is on. Releases what neither wants,
-    /// and turns occlusion's setting off if its targets fail.
+    /// occlusion or the water @p view gathered wants it, occlusion's own while
+    /// the view draws it. Releases what neither wants, and turns occlusion's
+    /// setting off if its targets fail.
     ///
     /// @return the occlusion's texture, empty when this frame runs none.
     [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
-                                                         nvrhi::ITexture *depthTexture, bool waterReadsDistance);
+                                                         nvrhi::ITexture *depthTexture);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world
@@ -521,18 +528,31 @@ private:
     struct TextureView
     {
         std::unique_ptr<SceneView> view{};
-        /// Drawn into, in the scene target's format and sample count, so every
-        /// pipeline built for the main view's targets draws here too.
+        /// Drawn into, in the scene target's format at the camera's own sample
+        /// count, all at the picture's size: a camera drawing smaller draws in
+        /// their top-left corner.
         nvrhi::TextureHandle color{};
         nvrhi::TextureHandle depth{};
-        /// What surfaces show, one sample a pixel: the colour target itself
-        /// when the scene draws without MSAA, which is resolved into it
-        /// otherwise.
+        /// What the camera drew, one sample a pixel: the colour target itself
+        /// without MSAA, resolved into with it.
+        nvrhi::TextureHandle drawn{};
+        /// What surfaces show, with its smaller levels: what the camera drew,
+        /// stretched over it.
         nvrhi::TextureHandle picture{};
         nvrhi::FramebufferHandle framebuffer{};
+        /// The draws that make the picture's levels.
+        Render::PictureLevels::Chain levels{};
         ECS::Entity camera = ECS::NullEntity;
+        /// The largest any of its surfaces is on the main camera's screen this
+        /// frame, in pixels; 0 when none is on it.
+        float seenPixels = 0.f;
         uint32_t width = 0;
         uint32_t height = 0;
+        /// MSAA samples a pixel, as TextureCameraSamples gave them.
+        uint32_t samples = 1;
+        /// How many kPictureDrawSteps of its size it drew at last; 0 before
+        /// it first drew.
+        uint32_t drawSteps = 0;
         /// The picture's lent slot in the asset cache's bindless table.
         uint32_t slot = 0;
         /// Whether the picture has been cleared since it was made, so a surface
@@ -558,24 +578,33 @@ private:
                                       int32_t height, const Camera &camera);
 
     /// @brief Gather into @p view the fog volumes its camera sees through
-    /// @p viewProjection, on a @p width by @p height picture.
+    /// @p viewProjection, on a @p width by @p height picture: none when the
+    /// view draws no fog.
     void GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, uint32_t width,
                              uint32_t height);
 
     /// @brief Gather into @p view the water its camera sees through
-    /// @p viewProjection, out to @p drawDistance.
+    /// @p viewProjection, out to @p drawDistance: none when the view draws no
+    /// water.
     void GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, float drawDistance);
 
     /// @brief Keep a texture view for each TextureCamera in @p scene, at its
     /// size, and retire those whose camera went.
     void KeepTextureViews(ECS::Scene &scene);
 
-    /// @brief Make @p texture's targets at its size, like the scene target's,
-    /// and its picture with a lent slot unless it already has one: a picture is
-    /// the same whether the scene draws with MSAA or not, so it outlives a
-    /// change of the targets, and a camera keeps showing its last picture.
-    /// False, logged, when they cannot be made.
+    /// @brief Make @p texture's targets at its size and sample count, in the
+    /// scene target's format, and its picture with a lent slot unless it
+    /// already has one: a picture is the same whatever the sample count, so it
+    /// outlives a change of the targets, and a camera keeps showing its last
+    /// picture. False, logged, when they cannot be made.
     [[nodiscard]] bool MakeTextureTargets(TextureView &texture);
+
+    /// @brief Rebuild @p texture's pipelines for its targets, after their
+    /// format or sample count changed.
+    void RetargetTextureView(TextureView &texture);
+
+    /// @brief Targets like the scene target's, at @p samples a pixel.
+    [[nodiscard]] nvrhi::FramebufferInfo TextureTargets(uint32_t samples) const;
 
     /// @brief Take @p texture away, its picture kept lent for the frames in
     /// flight that may read it.
@@ -591,13 +620,20 @@ private:
 
     /// @brief Which texture cameras draw this frame, in the order they draw,
     /// into _textureOrder, against the main camera's @p mainViewProjection
-    /// measured from its origin.
-    void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection);
+    /// measured from its origin, and how large each one's surfaces are on its
+    /// @p mainHeight pixels tall screen, seen through @p mainCamera.
+    void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection, const Camera &mainCamera,
+                            uint32_t mainHeight);
 
-    /// @brief Gather what @p texture's camera sees, and the frame its passes
-    /// read. After the main view's lights are gathered, which it shares.
+    /// @brief Gather what @p texture's camera sees under the level's @p fog,
+    /// and the frame its passes read. After the main view's lights are
+    /// gathered, which it shares.
     [[nodiscard]] Passes::ViewFrame PrepareTextureView(ECS::Scene &scene, TextureView &texture,
-                                                       const FogResolution &fog, bool fogged);
+                                                       const FogResolution &fog);
+
+    /// @brief Give @p selector the game's level-of-detail settings with its
+    /// camera's @p bias. True when they changed.
+    bool ApplyLodBias(LodSelector &selector, float bias) const;
 
     /// @brief Clear every picture made since the last frame to black, and leave
     /// it readable.
@@ -634,8 +670,12 @@ private:
     // Every body any view sees, when the texture views see some the main view
     // does not.
     Render::WaterFrame _wavesFrame;
+    // Draws every texture camera's picture's levels.
+    Render::PictureLevels _pictureLevels;
     // Counts Render calls, which a retired texture view waits out.
     uint64_t _renderCount = 0;
+    // The most MSAA samples this GPU draws a texture camera with.
+    uint32_t _mostSamples = 1;
     // The frame's passes, in the order their declarations fix, and what they
     // hand one another. Behind a pointer so this header need not include the
     // generated one.
@@ -714,6 +754,8 @@ private:
     // draw path, both shadow gathers and the selection outline, so every one of
     // them draws the same instance as the same geometry.
     LodSelector &_lodSelector;
+    // The game's level-of-detail settings, before each camera's bias.
+    Runtime::LodSettings _lodSettings;
 
     /// Whether the GPU cull is what draws the scene: asked for, and able to.
     /// DrawScene falls back to the CPU path otherwise, and whatever follows the

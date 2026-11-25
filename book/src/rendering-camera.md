@@ -14,6 +14,8 @@ local −Z axis.
 | `fovDegrees` | The **field of view**: how much of the scene fits on screen from top to bottom, as an angle. A smaller value zooms in. Default 60. |
 | `nearZ` | The **near plane**: anything closer to the camera than this, in metres, is not drawn. Default 0.1. |
 | `farZ` | The **far plane**, or draw distance: anything further than this, in metres, is not drawn. Default 200. |
+| `lodBias` | Multiplies the game's [level-of-detail](rendering-lod.md) bias for this camera. Below 1, it switches to simpler meshes sooner. Default 1. |
+| `features` | Which features this camera draws. Default `All`. See [Making a camera cheaper](#making-a-camera-cheaper). |
 | `isActive` | Whether this is the camera the game looks through. |
 
 The field of view is vertical. On a wider window the player sees more to the
@@ -113,7 +115,7 @@ A camera's `Transform` moves with the fixed step, and between steps the camera
 is drawn where the blend between them puts it. To move the view every frame
 without moving anything the game simulates, for head bob, a screen shake or a
 look of your own that follows the mouse between steps, give the camera a
-**`CameraDrawPose`** and set it each frame:
+**`DrawPose`** (in `<Assisi/ECS/DrawPose.hpp>`) and set it each frame:
 
 | Field | Meaning |
 |---|---|
@@ -121,22 +123,27 @@ look of your own that follows the mouse between steps, give the camera a
 | `offset` | Added to where the camera stands, in the world, in metres. |
 
 ```cpp
-// In an Update system: bob the view while keeping the way the camera faces.
+// In an Update system: bob the view of a camera with no parent, keeping the
+// way it faces.
 using namespace Assisi;
 
-const ECS::WorldMatrix &world = *scene.Get<ECS::WorldMatrix>(camera);
-Runtime::CameraDrawPose *pose = scene.GetMut<Runtime::CameraDrawPose>(camera);
+ECS::DrawPose *pose = scene.GetMut<ECS::DrawPose>(camera);
 if (pose == nullptr)
 {
-    pose = scene.Add<Runtime::CameraDrawPose>(camera);
+    pose = scene.Add<ECS::DrawPose>(camera);
 }
-pose->rotation = glm::quat_cast(glm::mat3(world.inCell));
+pose->rotation = scene.Get<ECS::Transform>(camera)->rotation;
 pose->offset = glm::vec3{0.f, 0.02f * std::sin(bobPhase), 0.f};
 ```
 
 Only the drawing changes. The `Transform`, what the game simulates and what is
 sent over the network stay as they are. Remove the component to draw the camera
 as its `Transform` has it again. It is never saved with a level.
+
+Everything attached to the camera with a `Parent` is drawn under its draw pose,
+so it turns with the view every frame: a weapon or arms held in front of the
+camera, a flashlight, or another camera, such as a rifle scope's. `DrawPose`
+works on any entity, not only cameras.
 
 The first-person template uses it for its look: its `LookAhead` system draws
 your player's camera turned as far as the mouse has moved, every frame, before
@@ -158,8 +165,10 @@ You need two components, both in `<Assisi/Runtime/TextureCamera.hpp>`:
 | `TextureCamera` field | Meaning |
 |---|---|
 | `width`, `height` | The picture's size, in pixels. Default 512 by 512. Match its shape to the surface's, or the picture is stretched. |
+| `samples` | How many samples each pixel takes for anti-aliasing (MSAA), whatever the game's own anti-aliasing setting: 1 for none, 2, 4 or 8. Default 4. More samples smooth the picture's edges and cost more. |
 | `update` | When it draws: see the table below. Default `WhileSeen`. |
 | `on` | Whether a `WhileOn` camera is drawing. Default on. |
+| `followScreenSize` | Whether the camera draws at about as many pixels as its surface covers on screen, up to `width` by `height`. Default on. See below. |
 
 | `CameraSurface` field | Meaning |
 |---|---|
@@ -228,6 +237,9 @@ A few things to know:
   show everywhere.
 - **Where nothing is drawn, the picture is black**, such as the sky in a level
   with neither a `Skybox` nor a `Fog`.
+- **The picture stays smooth at any size on screen.** Each time the camera
+  draws, smaller copies of the picture are made too (**mipmaps**), and a
+  surface far away shows a smaller copy, so it doesn't shimmer.
 - **Changing `width` or `height`** makes the camera draw once at the new size,
   whatever its `update` says, since the new picture holds nothing yet.
 - **It isn't a mirror.** The picture is what the camera sees from where it
@@ -239,6 +251,76 @@ A few things to know:
 The editor draws texture cameras while you edit, too. The sandbox level,
 `levels/Test.alvl`, has a security screen beside the monitor that shows a
 camera watching the player.
+
+## Making a camera cheaper
+
+Every camera can leave features out of what it draws. This matters most for
+texture cameras: a small security monitor in a corner doesn't need everything
+the player's own view has, and every feature it skips is time saved on each
+frame it draws.
+
+`Camera`'s `features` field is a set of these. A camera draws the features in
+the set and skips the rest:
+
+| Feature | When left out |
+|---|---|
+| `Shadows` | No sun, lamp or cloud shadows. |
+| `AmbientOcclusion` | No darkening in creases and corners. |
+| `Sky` | Black behind everything instead of the sky. |
+| `Fog` | No level fog and no fog volumes. The camera then draws all the way to its `farZ`, rather than stopping where the fog would hide everything. |
+| `Water` | No oceans, lakes or rivers. |
+| `SeeThrough` | No see-through surfaces, such as glass. |
+
+A texture camera also draws fewer pixels when its surface is small on screen,
+while its `followScreenSize` is on. A 512 by 512 monitor across the room that
+covers 100 pixels of the screen draws at a quarter of its size, 128 by 128,
+and the picture is stretched to fill the monitor; walk up to it and it draws
+at full size again. It changes size in eighths, and only once it has shrunk
+by more than one, so it doesn't flicker between two sizes. Only surfaces the
+player's camera sees count: a camera whose surfaces are all off screen, or
+seen only in another camera's picture, draws at full size. Turn it off for a
+camera whose picture must stay sharp however far away its surface is, such as
+a photo the player will look at later.
+
+Fewer pixels only save the work done per pixel, such as lighting and shadows.
+The work done per mesh stays the same, so pair it with the next two fields.
+
+Two more fields make a camera cheaper:
+
+- **`farZ`**, its draw distance. Anything further away isn't drawn at all.
+- **`lodBias`**, which makes it switch to simpler meshes sooner. 0.5 picks
+  each mesh's simpler versions at half the distance it otherwise would.
+
+A camera can only turn a feature off. If the player has turned shadows off in
+the graphics settings, no camera draws them, whatever its `features` say.
+
+The player's own camera takes the same fields. A level that never shows water
+can leave `Water` out of its camera, but the graphics settings are usually the
+better place for that choice.
+
+For example, a cheap security monitor: the camera skips shadows, ambient
+occlusion and see-through surfaces, draws 30 m, and uses simpler meshes
+sooner. In a level file, its `Camera` reads:
+
+```json
+"Camera": {
+    "fovDegrees": 70.0,
+    "farZ": 30.0,
+    "lodBias": 0.5,
+    "features": ["Sky", "Fog", "Water"]
+}
+```
+
+Or from code:
+
+```cpp
+using namespace Assisi;
+
+Runtime::Camera &camera = *scene.GetMut<Runtime::Camera>(monitorCamera);
+camera.features = camera.features.Without(Runtime::CameraFeature::Shadows)
+                      .Without(Runtime::CameraFeature::AmbientOcclusion)
+                      .Without(Runtime::CameraFeature::SeeThrough);
+```
 
 ## Camera paths for benchmarks
 

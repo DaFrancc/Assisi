@@ -42,9 +42,10 @@ public:
 
     [[nodiscard]] bool IsValid() const { return _occlusionPipeline != nullptr; }
 
-    /// @brief Hold targets of @p width x @p height reading @p distance — the
-    /// scene's distance per pixel, from SceneDistancePass — rebuilding only what a
-    /// changed size or a changed input invalidates.
+    /// @brief Hold targets the size of @p distance — the scene's distance per
+    /// pixel, from SceneDistancePass — drawn in their top-left @p width x
+    /// @p height; rebuilding only what a changed input or its size
+    /// invalidates, so a view drawing smaller allocates nothing.
     /// @return false if a target could not be allocated; the pass then holds
     /// nothing.
     [[nodiscard]] bool Configure(uint32_t width, uint32_t height, nvrhi::ITexture *distance);
@@ -83,7 +84,8 @@ private:
     };
     static constexpr uint32_t kStepCount = static_cast<uint32_t>(Step::Count_);
 
-    [[nodiscard]] bool CreateTargets();
+    /// @brief Make the occlusion's two targets at @p width x @p height.
+    [[nodiscard]] bool CreateTargets(uint32_t width, uint32_t height);
     void CreateBindingSets();
     void RunStep(nvrhi::ICommandList *commandList, Step step) const;
 
@@ -96,6 +98,7 @@ private:
     nvrhi::GraphicsPipelineHandle _blurPipeline;
     nvrhi::BufferHandle _constants;
 
+    // The part of the targets drawn: the view's size, at most theirs.
     uint32_t _width = 0;
     uint32_t _height = 0;
     // SceneDistancePass's target. Not owned.
