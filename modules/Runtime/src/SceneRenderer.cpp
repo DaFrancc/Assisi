@@ -105,7 +105,24 @@ ECS::InstanceId ViewerInstance(const ECS::Scene &scene, ECS::Entity camera)
 }
 } // namespace
 
-SceneRenderer::SceneRenderer() : _graph(std::make_unique<Passes::ScenePassGraph>()) {}
+SceneView::SceneView() : _passes(std::make_unique<Passes::SceneViewPasses>()) {}
+
+SceneView::~SceneView() = default;
+
+SceneRenderer::SceneRenderer()
+    : _graph(std::make_unique<Passes::ScenePassGraph>()),
+      _main(std::make_unique<SceneView>()),
+      _lighting(_main->_lighting),
+      _meshPass(_main->_meshPass),
+      _meshCuller(_main->_meshCuller),
+      _sceneDistancePass(_main->_sceneDistancePass),
+      _ssaoPass(_main->_ssaoPass),
+      _sceneColor(_main->_sceneColor),
+      _sceneDepth(_main->_sceneDepth),
+      _lodSelector(_main->_lodSelector),
+      _lastDrawStats(_main->_drawStats)
+{
+}
 
 SceneRenderer::~SceneRenderer() = default;
 
@@ -213,11 +230,13 @@ bool SceneRenderer::Initialize(const InitParams &params)
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
-    // The passes' own pieces; each that fails to start says so and stays off.
-    _graph->Initialize(Passes::ScenePassInit{.device = _device,
-                                             .shadowDepthRenderer = &_shadowDepthRenderer,
-                                             .meshFrameLayout = _meshPass.FrameBindingLayout()},
-                       params.framebufferInfo);
+    // The passes' own pieces, the frame's and the main view's; each that fails
+    // to start says so and stays off.
+    const Passes::ScenePassInit passInit{.device = _device,
+                                         .shadowDepthRenderer = &_shadowDepthRenderer,
+                                         .meshFrameLayout = _meshPass.FrameBindingLayout()};
+    _graph->Initialize(passInit, params.framebufferInfo);
+    _graph->InitializeView(*_main->_passes, passInit, params.framebufferInfo);
     return true;
 }
 
@@ -247,6 +266,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
         Core::Log::Warn("SceneRenderer: sky pipeline rebuild failed; sky disabled.");
     }
     _graph->OnTargetsChanged(framebufferInfo);
+    _graph->OnViewTargetsChanged(*_main->_passes, framebufferInfo);
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
 
@@ -387,18 +407,20 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                       .height = frame.height};
     _sceneColor.target = target;
     _sceneDepth.target = target;
-    Passes::SceneImports imports{.meshPass = _meshPass,
-                                 .skyPass = _skyPass,
-                                 .lightingSystem = _lighting,
+    Passes::SceneImports imports{.skyPass = _skyPass,
                                  .lodSelector = _lodSelector,
                                  .shadowDepthRenderer = _shadowDepthRenderer,
-                                 .shadowCasterMobility = _casterMobility,
-                                 .meshCuller = _meshCuller,
-                                 .sceneDistancePass = _sceneDistancePass,
-                                 .ssaoPass = _ssaoPass,
-                                 .sceneColor = _sceneColor,
-                                 .sceneDepth = _sceneDepth,
-                                 .drawStats = _lastDrawStats};
+                                 .shadowCasterMobility = _casterMobility};
+    SceneView &main = *_main;
+    Passes::SceneViewImports viewImports{.meshPass = main._meshPass,
+                                         .lightingSystem = main._lighting,
+                                         .lodSelector = main._lodSelector,
+                                         .meshCuller = main._meshCuller,
+                                         .sceneDistancePass = main._sceneDistancePass,
+                                         .ssaoPass = main._ssaoPass,
+                                         .sceneColor = main._sceneColor,
+                                         .sceneDepth = main._sceneDepth,
+                                         .drawStats = main._drawStats};
     const Passes::SceneFrame sceneFrame{.scene = scene,
                                         .sky = sky,
                                         .settings = _settings,
@@ -427,7 +449,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                       .view = view,
                                       .cameraInView = cameraInView,
                                       .viewerInstance = ViewerInstance(scene, _viewingCamera)};
-    _graph->Run(imports, frame.commandList, sceneFrame, viewFrame);
+    // The world's work once, then the view's.
+    _graph->RunFrame(imports, frame.commandList, sceneFrame);
+    _graph->RunView(*main._passes, imports, viewImports, frame.commandList, sceneFrame, viewFrame);
 
     // After both shadow halves, because it reports on both — and outside them,
     // because every early return either of them takes is still a frame with an
@@ -455,7 +479,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
 void SceneRenderer::CountFrame() const
 {
-    const Passes::SunShadowPass &sun = _graph->passes.sunShadow;
+    const Passes::SunShadowPass &sun = _main->_passes->passes.sunShadow;
     const Passes::ShadowAtlasPass &atlas = _graph->passes.shadowAtlas;
 
     // What the frame actually drew, on their own tracks. These are the numbers you
@@ -574,7 +598,7 @@ void SceneRenderer::OnSceneReplaced()
     // Reset rather than carried, because the incoming scene's clock starts its own
     // count and a serial that happened to match would skip the very Forget the
     // load needs.
-    _graph->passes.sunShadow.jumpSerial = 0;
+    _main->_passes->passes.sunShadow.jumpSerial = 0;
     _lastSky = SkyResolution{};
 
     // The incoming scene's clock counts its cuts from zero too, so a serial that
@@ -609,7 +633,7 @@ void SceneRenderer::SetCloudQuality(const Render::CloudQuality &quality)
 void SceneRenderer::SetShadowSettings(const Render::ShadowSettings &settings)
 {
     _settings.shadows = settings;
-    _graph->passes.sunShadow.failed = false;
+    _main->_passes->passes.sunShadow.failed = false;
     _graph->passes.shadowAtlas.failed = false;
 }
 
@@ -619,7 +643,7 @@ void SceneRenderer::SetShadowDiagnosticsEnabled(bool enabled)
     // The sun's half is gathered inside its pass, where the draw list it reads
     // lives and dies within the call — so the pass is told directly rather than
     // asked afterwards.
-    _graph->passes.sunShadow.shadowPass.SetCascadeCountsEnabled(enabled);
+    _main->_passes->passes.sunShadow.shadowPass.SetCascadeCountsEnabled(enabled);
     if (!enabled)
     {
         _shadowDiagnostics.Clear();
@@ -633,12 +657,12 @@ const Render::SkyProbe &SceneRenderer::SkyProbe() const
 
 Render::ShadowPass::Stats SceneRenderer::LastShadowStats() const
 {
-    return _graph->passes.sunShadow.stats;
+    return _main->_passes->passes.sunShadow.stats;
 }
 
 std::uint32_t SceneRenderer::LastShadowLodCoarser() const
 {
-    return _graph->passes.sunShadow.casters.Result().coarserViews;
+    return _main->_passes->passes.sunShadow.casters.Result().coarserViews;
 }
 
 Render::LocalShadowPass::Stats SceneRenderer::LastLocalShadowStats() const

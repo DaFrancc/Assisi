@@ -148,16 +148,28 @@ struct ScenePassInit
     nvrhi::IBindingLayout *meshFrameLayout = nullptr;
 };
 
-/// @brief The objects SceneRenderer owns and several passes use.
+/// @brief The objects SceneRenderer owns for the world and several passes use.
+///
+/// The LOD selector here is the main view's: the shadow atlas, drawn once a
+/// frame, casts each caster at the level the main camera sees it at.
 APASSIMPORTS()
 struct SceneImports
 {
-    MeshPass &meshPass;
     SkyPass &skyPass;
-    LightingSystem &lightingSystem;
     LodSelector &lodSelector;
     ShadowDepthRenderer &shadowDepthRenderer;
     ShadowCasterMobility &shadowCasterMobility;
+};
+
+/// @brief What each view owns for itself: state a view keeps from one frame to
+/// the next, or sizes to its own target, which a second view sharing it would
+/// overwrite.
+APASSVIEWIMPORTS()
+struct SceneViewImports
+{
+    MeshPass &meshPass;
+    LightingSystem &lightingSystem;
+    LodSelector &lodSelector;
     MeshCuller &meshCuller;
     SceneDistancePass &sceneDistancePass;
     SsaoPass &ssaoPass;
@@ -222,14 +234,16 @@ struct SkyProbePass
     bool failed = false;
 };
 
-/// @brief Fits the sun's cascades and redraws the ones whose depth went stale.
+/// @brief Fits the sun's cascades to the view's camera and redraws the ones
+/// whose depth went stale. Per view, since each camera's cascades cover what it
+/// sees; the depth it keeps between frames is that view's.
 APASS(name = "shadow-cascades")
 struct SunShadowPass
 {
     bool Initialize(const ScenePassInit &init);
     bool Wanted(const SceneFrame &frame) const;
     void Release();
-    bool Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> in,
+    bool Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<PosedVertices> in,
                 Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out);
 
     Render::ShadowPass shadowPass;
@@ -250,8 +264,8 @@ struct SunShadowPass
 };
 
 /// @brief Chooses which spot and point lights hold atlas tiles, and draws the
-/// faces that need it.
-APASS(name = "shadow-atlas", after = "shadow-cascades")
+/// faces that need it. Once a frame: every view samples the same tiles.
+APASS(name = "shadow-atlas")
 struct ShadowAtlasPass
 {
     bool Initialize(const ScenePassInit &init);

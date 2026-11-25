@@ -361,7 +361,8 @@ void SunShadowPass::Release()
     fit = Render::CascadeFit{};
 }
 
-bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> /*in*/,
+bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame & /*view*/,
+                           Reads<PosedVertices> /*in*/,
                            Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out)
 {
     stats = Render::ShadowPass::Stats{};

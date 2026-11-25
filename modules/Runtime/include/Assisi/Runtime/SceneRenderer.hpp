@@ -44,7 +44,41 @@ namespace Assisi::Runtime
 namespace Passes
 {
 class ScenePassGraph;
+class SceneViewPasses;
 } // namespace Passes
+
+/// @brief One camera's own drawing state: what its passes keep from frame to
+/// frame, and the objects sized to its picture, so two views drawn in one frame
+/// never overwrite each other's.
+///
+/// The world's work (transforms, skinning, the sky, the shadow atlas) is the
+/// SceneRenderer's and runs once a frame; each view then draws from its own:
+/// its light clusters, sun cascades, LOD choices, culling, screen-space
+/// occlusion and targets.
+class SceneView
+{
+public:
+    SceneView();
+    ~SceneView();
+    SceneView(const SceneView &) = delete;
+    SceneView &operator=(const SceneView &) = delete;
+
+private:
+    friend class SceneRenderer;
+
+    // The view's own passes and what they produce. Behind a pointer so this
+    // header need not include the generated one.
+    std::unique_ptr<Passes::SceneViewPasses> _passes;
+    LightingSystem _lighting;
+    Render::MeshPass _meshPass;
+    Render::MeshCuller _meshCuller;
+    Render::SceneDistancePass _sceneDistancePass;
+    Render::SsaoPass _ssaoPass;
+    SceneColor _sceneColor;
+    SceneDepth _sceneDepth;
+    LodSelector _lodSelector;
+    DrawStats _drawStats;
+};
 
 class SceneRenderer
 {
@@ -460,11 +494,16 @@ private:
     // hand one another. Behind a pointer so this header need not include the
     // generated one.
     std::unique_ptr<Passes::ScenePassGraph> _graph;
-    LightingSystem _lighting;
-    Render::MeshPass _meshPass;
+    // The main camera's view. The references below are its objects, by the
+    // names the renderer reads them under: the main view's lights are the
+    // ones the world's shadow passes choose from, and its LOD choices are the
+    // ones the shadow atlas casts at.
+    std::unique_ptr<SceneView> _main;
+    LightingSystem &_lighting;
+    Render::MeshPass &_meshPass;
     // GPU-driven cull (stage F1): the compute cull pass. The draw path uses it
     // only when GPU culling is on (else the CPU path runs).
-    Render::MeshCuller _meshCuller;
+    Render::MeshCuller &_meshCuller;
     // Every shadow map's depth drawing. Shared because the sun's cascades and
     // the local-light atlas draw through the same one, into the same view
     // table, from the same instance buffer.
@@ -514,20 +553,20 @@ private:
     // and occlusion, which reads it. Configured before the passes run, since
     // the frame constants say whether the lit pass reads occlusion; each holds
     // nothing while the setting is off.
-    Render::SceneDistancePass _sceneDistancePass;
-    Render::SsaoPass _ssaoPass;
+    Render::SceneDistancePass &_sceneDistancePass;
+    Render::SsaoPass &_ssaoPass;
     Render::PostProcessSettings _postProcess;
     // The knobs the passes read.
     Passes::SceneSettings _settings;
     // The scene's colour and depth targets, as the passes that draw into them
     // are handed them: refreshed from each frame's target.
-    SceneColor _sceneColor;
-    SceneDepth _sceneDepth;
+    SceneColor &_sceneColor;
+    SceneDepth &_sceneDepth;
 
     // The chosen level per entity, and the knobs that chose it. Shared by the
     // draw path, both shadow gathers and the selection outline, so every one of
     // them draws the same instance as the same geometry.
-    LodSelector _lodSelector;
+    LodSelector &_lodSelector;
 
     /// Whether the GPU cull is what draws the scene: asked for, and able to.
     /// DrawScene falls back to the CPU path otherwise, and whatever follows the
@@ -549,7 +588,7 @@ private:
     bool _droppedFogVolumesWarned = false;
     // The same for several PostProcessVolumes covering the whole level.
     bool _severalLevelPostProcessWarned = false;
-    DrawStats _lastDrawStats; // drawn/culled from the last Render(), for the overlay
+    DrawStats &_lastDrawStats; // drawn/culled from the last Render(), for the overlay
     // Per-light shadow outcomes for an editor readout. Gathered only while
     // something is looking, which is what keeps a closed panel free.
     Render::ShadowDiagnostics _shadowDiagnostics;
