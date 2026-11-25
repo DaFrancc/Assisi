@@ -279,14 +279,15 @@ class Screen
     ///
     /// A bound style property is the node's own, so its named style gives way
     /// and its states' looks go on over it. A bound width or height becomes
-    /// @p size with the field's value in place of its own, so @p size gives the
-    /// unit and the limits; other attributes ignore it. A bound sprite or
-    /// background image is found by name among the UI's sheets, and a bound
-    /// texture is loaded by its asset id; an empty name or a nil id shows no
-    /// picture. Until it has read once, and while there is nothing to read,
-    /// the attribute stays as it was.
+    /// @p length with the field's value in place of its own, so @p length gives
+    /// the unit and the limits. A bound float offset puts each axis of its vec2
+    /// in @p length's unit and ignores its limits. Other attributes ignore
+    /// @p length. A bound sprite or background image is found by name among
+    /// the UI's sheets, and a bound texture is loaded by its asset id; an empty
+    /// name or a nil id shows no picture. Until it has read once, and while
+    /// there is nothing to read, the attribute stays as it was.
     std::expected<void, BindingError> BindAttribute(NodeId node, BoundAttribute attribute, std::string_view binding,
-                                                    Sizing size = Sizing::Fixed(Px(0.f)));
+                                                    Sizing length = Sizing::Fixed(Px(0.f)));
 
     [[nodiscard]] NodeTree &Tree() { return _tree; }
     [[nodiscard]] const NodeTree &Tree() const { return _tree; }
@@ -586,8 +587,9 @@ class Screen
     {
         BoundField field;
         AttributeValue shown;
-        /// For a width or height, what it becomes with the field's value in it.
-        Sizing size;
+        /// For a width or height, what it becomes with the field's value in it;
+        /// for a float offset, the unit of each axis.
+        Sizing length;
         NodeId node;
         BoundAttribute attribute = BoundAttribute::Background;
     };

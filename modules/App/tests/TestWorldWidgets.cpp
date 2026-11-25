@@ -76,7 +76,7 @@ Mondrian::ScreenDocument Nameplate()
     bar.parent = 0;
     bar.style.sizing[static_cast<std::size_t>(Mondrian::Axis::Y)] = Mondrian::Sizing::Fixed(Mondrian::Px(kBarHeight));
     bar.written = Mondrian::PropertyBit(Mondrian::StyleProperty::Height);
-    bar.boundAttributes.push_back(Mondrian::AttributeBinding{.size = Mondrian::Sizing::Fixed(Mondrian::Px(0.f)),
+    bar.boundAttributes.push_back(Mondrian::AttributeBinding{.length = Mondrian::Sizing::Fixed(Mondrian::Px(0.f)),
                                                              .binding = document.AddText("{TestHealth.current}"),
                                                              .attribute = Mondrian::BoundAttribute::Width});
     document.nodes.push_back(bar);

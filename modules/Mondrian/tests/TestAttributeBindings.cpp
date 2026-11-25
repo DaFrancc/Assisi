@@ -15,6 +15,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -66,6 +67,8 @@ struct Banner
     Srgb4 colour{0.f, 0.f, 0.f, 0.f};
     Assisi::Math::Color3<ColorSpace::Linear> glow{0.f, 0.f, 0.f};
     glm::vec4 direction{0.f};
+    glm::vec3 heading{0.f};
+    glm::vec2 aim{0.f};
     AssetId portrait;
     Assisi::Core::ShortString icon;
     Assisi::Core::InternedString frame;
@@ -89,6 +92,8 @@ ComponentMeta BannerMeta()
                          .fields = {Field("colour", FieldType::SrgbColor4, offsetof(Banner, colour)),
                                     Field("glow", FieldType::LinearColor3, offsetof(Banner, glow)),
                                     Field("direction", FieldType::Vec4, offsetof(Banner, direction)),
+                                    Field("heading", FieldType::Vec3, offsetof(Banner, heading)),
+                                    Field("aim", FieldType::Vec2, offsetof(Banner, aim)),
                                     Field("portrait", FieldType::AssetId, offsetof(Banner, portrait)),
                                     Field("icon", FieldType::String, offsetof(Banner, icon)),
                                     Field("frame", FieldType::InternedString, offsetof(Banner, frame)),
@@ -169,10 +174,24 @@ struct Stage
         ui.Sync(kViewport);
     }
 
-    void Bind(BoundAttribute attribute, std::string_view written, Sizing size = Sizing::Fixed(Px(0.f)))
+    void Bind(BoundAttribute attribute, std::string_view written, Sizing length = Sizing::Fixed(Px(0.f)))
     {
-        REQUIRE(screen.BindAttribute(box, attribute, written, size).has_value());
+        REQUIRE(screen.BindAttribute(box, attribute, written, length).has_value());
     }
+
+    /// Makes the box float against the whole screen, its top left on the
+    /// screen's top left and moved by @p offset.
+    void Float(std::array<Length, kAxisCount> offset)
+    {
+        Style floating;
+        floating.floating.enabled = true;
+        floating.floating.target = FloatAnchor::Root;
+        floating.floating.offset = offset;
+        floating.sizing = {Sizing::Fixed(Px(10.f)), Sizing::Fixed(Px(10.f))};
+        screen.Tree().SetStyle(box, floating);
+    }
+
+    [[nodiscard]] Rect Placed() const { return screen.GetLayout().Get(box)->rect; }
 
     [[nodiscard]] const Node &Box() const { return *screen.Tree().Get(box); }
 };
@@ -204,6 +223,12 @@ TEST_CASE("AttributeBindings: each attribute takes only fields of the types it c
 
     CHECK(Resolves(banner, "{Banner.portrait}", BindingUse::Texture));
     CHECK(Refusal(banner, "{Banner.icon}", BindingUse::Texture) == BindingError::WrongAttribute);
+
+    CHECK(Resolves(banner, "{Banner.aim}", BindingUse::Offset));
+    CHECK(Refusal(banner, "{Banner.fill}", BindingUse::Offset) == BindingError::WrongAttribute);
+    CHECK(Refusal(banner, "{Banner.heading}", BindingUse::Offset) == BindingError::WrongAttribute);
+    CHECK(Refusal(banner, "{Banner.direction}", BindingUse::Offset) == BindingError::WrongAttribute);
+    CHECK(Refusal(banner, "{Banner.aim:.1f}", BindingUse::Offset) == BindingError::BadFormat);
 }
 
 TEST_CASE("AttributeBindings: an attribute's binding takes no format and writes nothing back")
@@ -386,6 +411,68 @@ TEST_CASE("AttributeBindings: a bound texture loads the image its asset id names
     stage.Frame();
     REQUIRE(stage.Box().hasImage);
     CHECK(stage.Box().image.texture == kPlaceholder);
+}
+
+TEST_CASE("AttributeBindings: a bound float offset moves the node the frame its field changes")
+{
+    // At 1280 by 720 a UI pixel is two thirds of a device pixel.
+    constexpr float kDevicePerUiPixel = 2.f / 3.f;
+
+    Stage stage;
+    stage.Float({Px(0.f), Px(0.f)});
+    stage.Bind(BoundAttribute::FloatOffset, "{Banner.aim}");
+    stage.banner.aim = glm::vec2{30.f, 60.f};
+    stage.screen.SetContext(kPlayer);
+    stage.Frame();
+    CHECK(stage.Box().style.floating.offset == std::array<Length, kAxisCount>{Px(30.f), Px(60.f)});
+    CHECK(stage.Placed().x == doctest::Approx(30.f * kDevicePerUiPixel));
+    CHECK(stage.Placed().y == doctest::Approx(60.f * kDevicePerUiPixel));
+
+    stage.banner.aim = glm::vec2{-15.f, 90.f};
+    stage.Frame();
+    CHECK(stage.Placed().x == doctest::Approx(-15.f * kDevicePerUiPixel));
+    CHECK(stage.Placed().y == doctest::Approx(90.f * kDevicePerUiPixel));
+}
+
+TEST_CASE("AttributeBindings: a bound float offset in % is a share of what the node floats against")
+{
+    Stage stage;
+    stage.Float({Px(0.f), Px(0.f)});
+    stage.Bind(BoundAttribute::FloatOffset, "{Banner.aim}", Sizing::Fixed(Percent(0.f)));
+    stage.banner.aim = glm::vec2{25.f, 50.f};
+    stage.screen.SetContext(kPlayer);
+    stage.Frame();
+    CHECK(stage.Box().style.floating.offset == std::array<Length, kAxisCount>{Percent(25.f), Percent(50.f)});
+    CHECK(stage.Placed().x == doctest::Approx(0.25f * static_cast<float>(kViewport.width)));
+    CHECK(stage.Placed().y == doctest::Approx(0.5f * static_cast<float>(kViewport.height)));
+
+    stage.banner.aim = glm::vec2{75.f, 10.f};
+    stage.Frame();
+    CHECK(stage.Placed().x == doctest::Approx(0.75f * static_cast<float>(kViewport.width)));
+    CHECK(stage.Placed().y == doctest::Approx(0.1f * static_cast<float>(kViewport.height)));
+}
+
+TEST_CASE("AttributeBindings: until it reads, a bound float offset is the node's own, and a state's goes over it")
+{
+    Stage stage;
+    stage.Float({Px(6.f), Px(9.f)});
+    StylePatch disabled;
+    disabled.state = StyleState::Disabled;
+    disabled.values.floating.offset = {Px(1.f), Px(2.f)};
+    disabled.written = PropertyBit(StyleProperty::FloatOffset);
+    stage.screen.Tree().SetStateStyle(stage.box, disabled);
+    stage.Bind(BoundAttribute::FloatOffset, "{Banner.aim}");
+    stage.Frame();
+    CHECK(stage.Box().style.floating.offset == std::array<Length, kAxisCount>{Px(6.f), Px(9.f)});
+
+    stage.banner.aim = glm::vec2{40.f, 50.f};
+    stage.screen.SetContext(kPlayer);
+    stage.Frame();
+    CHECK(stage.Box().style.floating.offset == std::array<Length, kAxisCount>{Px(40.f), Px(50.f)});
+
+    stage.screen.Tree().SetEnabled(stage.box, false);
+    stage.Frame();
+    CHECK(stage.Box().style.floating.offset == std::array<Length, kAxisCount>{Px(1.f), Px(2.f)});
 }
 
 TEST_CASE("AttributeBindings: binding an attribute the world cannot resolve is refused")

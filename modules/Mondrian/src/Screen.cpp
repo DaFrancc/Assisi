@@ -49,9 +49,9 @@ SrgbColor *ColourOf(Style &style, BoundAttribute attribute)
 }
 
 /// Puts @p value into the part of @p style @p attribute names: a colour, a
-/// size that is @p size with the number in place of its value, or a
-/// background image.
-void PutAttribute(Style &style, BoundAttribute attribute, const AttributeValue &value, const Sizing &size)
+/// size that is @p length with the number in place of its value, a
+/// background image, or a float offset whose axes are in @p length's unit.
+void PutAttribute(Style &style, BoundAttribute attribute, const AttributeValue &value, const Sizing &length)
 {
     if (const SrgbColor *const colour = std::get_if<SrgbColor>(&value))
     {
@@ -64,13 +64,18 @@ void PutAttribute(Style &style, BoundAttribute attribute, const AttributeValue &
     {
         const Axis axis = attribute == BoundAttribute::Width ? Axis::X : Axis::Y;
         Sizing &sizing = style.sizing[static_cast<std::size_t>(axis)];
-        sizing = size;
+        sizing = length;
         sizing.value.value = *number;
         sizing.kind = SizingKind::Fixed;
     }
     else if (const std::string *const name = std::get_if<std::string>(&value))
     {
         style.backgroundImage = Core::InternedString{*name};
+    }
+    else if (const glm::vec2 *const offset = std::get_if<glm::vec2>(&value))
+    {
+        const LengthUnit unit = length.value.unit;
+        style.floating.offset = {Length{.value = offset->x, .unit = unit}, Length{.value = offset->y, .unit = unit}};
     }
 }
 
@@ -297,7 +302,7 @@ std::expected<void, BindingError> Screen::BindControl(NodeId id, std::string_vie
 }
 
 std::expected<void, BindingError> Screen::BindAttribute(NodeId node, BoundAttribute attribute,
-                                                        std::string_view binding, Sizing size)
+                                                        std::string_view binding, Sizing length)
 {
     const std::expected<BindingSource, BindingError> source = ReadSoleBinding(binding);
     if (!source)
@@ -314,7 +319,7 @@ std::expected<void, BindingError> Screen::BindAttribute(NodeId node, BoundAttrib
                   { return held.node == node && held.attribute == attribute; });
     _boundStyles.push_back(BoundStyle{.field = {.binding = *std::move(resolved), .warned = {}, .looked = false},
                                       .shown = {},
-                                      .size = size,
+                                      .length = length,
                                       .node = node,
                                       .attribute = attribute});
     return {};
@@ -372,7 +377,7 @@ void Screen::ShowAttribute(const BoundStyle &bound)
         return;
     }
     Style from = node->look.style;
-    PutAttribute(from, bound.attribute, bound.shown, bound.size);
+    PutAttribute(from, bound.attribute, bound.shown, bound.length);
     _tree.SetOwnProperty(bound.node, *property, from);
 }
 

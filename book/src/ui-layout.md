@@ -209,7 +209,7 @@ parent — a badge on a corner, for example.
 | `float_target` | `parent`, `root` | What it is placed against: its parent, or the whole screen. |
 | `float_anchor` | two alignment words | The point on the target to attach to. |
 | `float_attach` | two alignment words | The point on the element that goes on the anchor. |
-| `float_offset` | two lengths, `x y` | A further shift after attaching. |
+| `float_offset` | two lengths, `x y`, or a binding | A further shift after attaching. A binding lets game code move the element every frame: see [Positions](ui-bindings.md#positions). |
 | `float_clip` | `true`, `false` | Whether the parent's edges clip it. |
 
 ## Scrolling

@@ -4,7 +4,7 @@
 /// @file Binding.hpp
 /// @brief A field shown in a node: `{Component.field}` in its text, a bool
 /// deciding whether it is visible, what a control shows, and with
-/// `{=Component.field}` writes, or a colour, size or picture.
+/// `{=Component.field}` writes, or a colour, size, picture or float offset.
 ///
 /// Reflection says what `CharacterState.groundSpeed` is; the screen's context
 /// says whose. A field can also sit in a registered source, a struct on no
@@ -22,6 +22,7 @@
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 #include <Assisi/Core/Reflect/StructMeta.hpp>
 #include <Assisi/Math/Color.hpp>
+#include <Assisi/Math/GLM.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -127,6 +128,7 @@ enum class BindingUse : uint8_t
     Length,     ///< a width or height, from a number
     SpriteName, ///< a sprite, from a string naming it `sheet:name`
     Texture,    ///< a whole image, from the asset id of its file
+    Offset,     ///< a floating node's offset, from a vec2 holding x then y
     Count_
 };
 
@@ -148,6 +150,7 @@ enum class BoundAttribute : uint8_t
     BackgroundImage,
     Sprite,
     Texture,
+    FloatOffset,
     Count_
 };
 
@@ -166,10 +169,10 @@ enum class BoundAttribute : uint8_t
 [[nodiscard]] std::optional<StyleProperty> PropertyOf(BoundAttribute attribute);
 
 /// @brief What a bound attribute last read: nothing before its first read, then
-/// a colour, a number, a sprite's name or an image's asset id. A name is plain
-/// text, compared every frame and interned only when it changes.
-using AttributeValue =
-    std::variant<std::monostate, Math::Color4<Math::ColorSpace::Srgb>, float, std::string, Core::AssetId>;
+/// a colour, a number, a sprite's name, an image's asset id or an offset. A
+/// name is plain text, compared every frame and interned only when it changes.
+using AttributeValue = std::variant<std::monostate, Math::Color4<Math::ColorSpace::Srgb>, float, std::string,
+                                    Core::AssetId, glm::vec2>;
 
 /// @brief What a binding's name found.
 struct BindingOwner
@@ -242,7 +245,7 @@ void WriteControlField(const FieldBinding &binding, void *owner, const WidgetVal
 
 /// @brief The field @p binding names, in @p owner, as the attribute it drives
 /// takes it: a colour in sRGB, opaque when the field has no alpha, a number, a
-/// sprite's name, or an asset id.
+/// sprite's name, an asset id, or an offset.
 [[nodiscard]] AttributeValue ReadAttributeField(const FieldBinding &binding, const void *owner);
 
 } // namespace Assisi::Mondrian

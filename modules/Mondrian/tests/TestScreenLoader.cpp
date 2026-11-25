@@ -1209,7 +1209,7 @@ TEST_CASE("ScreenLoader: a document's attribute binding follows its field, and o
     constexpr float kTallest = 20.f;
     ScreenDocument document = PauseMenu();
     document.nodes[kTitle].boundAttributes.push_back(
-        AttributeBinding{.size = Sizing{.value = Px(0.f), .min = {}, .max = Px(kTallest), .kind = SizingKind::Fixed},
+        AttributeBinding{.length = Sizing{.value = Px(0.f), .min = {}, .max = Px(kTallest), .kind = SizingKind::Fixed},
                          .binding = document.AddText("{Lives.left}"),
                          .attribute = BoundAttribute::Height});
     const Sizing unbound = document.nodes[kTitle].style.sizing[static_cast<std::size_t>(Axis::Y)];

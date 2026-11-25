@@ -8,6 +8,7 @@
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Math/Color.hpp>
+#include <Assisi/Math/GLM.hpp>
 
 #include <doctest/doctest.h>
 
@@ -60,6 +61,8 @@ struct Banner
     Assisi::Math::Color4<Assisi::Math::ColorSpace::Srgb> colour{0.f, 0.f, 0.f, 0.f};
     Assisi::Core::AssetId portrait;
     Assisi::Core::ShortString icon;
+    glm::vec3 heading{0.f};
+    glm::vec2 aim{0.f};
     float fill = 0.f;
 };
 
@@ -75,6 +78,8 @@ const std::vector<ComponentMeta> &Components()
                       .fields = {Field("colour", FieldType::SrgbColor4, offsetof(Banner, colour)),
                                  Field("portrait", FieldType::AssetId, offsetof(Banner, portrait)),
                                  Field("icon", FieldType::String, offsetof(Banner, icon)),
+                                 Field("heading", FieldType::Vec3, offsetof(Banner, heading)),
+                                 Field("aim", FieldType::Vec2, offsetof(Banner, aim)),
                                  Field("fill", FieldType::Float, offsetof(Banner, fill))},
                       .typeIndex = typeid(Banner)}};
     return components;
@@ -363,7 +368,7 @@ TEST_CASE("ScreenBindings: a colour, a picture and a size can each follow a fiel
     CHECK((column.written & PropertyBit(StyleProperty::Background)) == 0);
     CHECK((column.written & PropertyBit(StyleProperty::Width)) == 0);
     // The unit and the limits wait beside the binding; the style keeps its own.
-    const Sizing &width = Kept(column, BoundAttribute::Width)->size;
+    const Sizing &width = Kept(column, BoundAttribute::Width)->length;
     CHECK(width.kind == SizingKind::Fixed);
     CHECK(width.value == Percent(0.f));
     CHECK(width.max == Px(400.f));
@@ -373,7 +378,7 @@ TEST_CASE("ScreenBindings: a colour, a picture and a size can each follow a fiel
     CHECK(BindingOf(document, text, BoundAttribute::BorderColor) == "{Banner.colour}");
     CHECK(BindingOf(document, text, BoundAttribute::TextColor) == "{Banner.colour}");
     CHECK(BindingOf(document, text, BoundAttribute::Height) == "{Banner.fill}");
-    CHECK(Kept(text, BoundAttribute::Height)->size.value == Px(0.f));
+    CHECK(Kept(text, BoundAttribute::Height)->length.value == Px(0.f));
 
     CHECK(BindingOf(document, NodeNamed(document, "i"), BoundAttribute::Sprite) == "{Banner.icon}");
     const ScreenNode &texture = NodeNamed(document, "t");
@@ -399,6 +404,36 @@ TEST_CASE("ScreenBindings: an attribute's binding is the whole value, with no fo
     CHECK(Says(RefusedInside(R"amdn(<column width="grow max {Banner.fill}" />)amdn"), "comes first"));
 }
 
+TEST_CASE("ScreenBindings: a float offset can follow a vec2 field, in the unit written after it")
+{
+    const ScreenDocument document = Bound(R"amdn(<screen>
+    <column name="px" float="true" float_offset="{Banner.aim}" />
+    <column name="pc" float="true" float_offset="{Banner.aim}%" />
+</screen>)amdn");
+    const ScreenNode &pixels = NodeNamed(document, "px");
+    CHECK(BindingOf(document, pixels, BoundAttribute::FloatOffset) == "{Banner.aim}");
+    CHECK(Kept(pixels, BoundAttribute::FloatOffset)->length.value == Px(0.f));
+    CHECK((pixels.written & PropertyBit(StyleProperty::FloatOffset)) == 0);
+
+    const ScreenNode &percent = NodeNamed(document, "pc");
+    CHECK(BindingOf(document, percent, BoundAttribute::FloatOffset) == "{Banner.aim}");
+    CHECK(Kept(percent, BoundAttribute::FloatOffset)->length.value == Percent(0.f));
+}
+
+TEST_CASE("ScreenBindings: a float offset takes only a vec2, with a unit and no limits")
+{
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="{Banner.fill}" />)amdn"),
+               "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="{Banner.heading}" />)amdn"),
+               "attribute cannot take"));
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="{Banner.aim:.1f}" />)amdn"), "format"));
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="{Banner.aim}% max 40" />)amdn"),
+               "after its binding"));
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="{Banner.aim} 10" />)amdn"),
+               "after its binding"));
+    CHECK(Says(RefusedInside(R"amdn(<column float="true" float_offset="10 {Banner.aim}" />)amdn"), "comes first"));
+}
+
 TEST_CASE("ScreenBindings: a node bound to one picture names no other")
 {
     CHECK(Says(RefusedInside(R"amdn(<image sprite="{Banner.icon}" texture="{Banner.portrait}" />)amdn"),
@@ -421,6 +456,6 @@ TEST_CASE("ScreenBindings: what an instance writes for an attribute wins over it
     const ScreenNode &plain = NodeNamed(document, "p");
     CHECK(BindingOf(document, plain, BoundAttribute::Width) == "{Banner.fill}");
     CHECK((plain.written & PropertyBit(StyleProperty::Width)) == 0);
-    CHECK(Kept(plain, BoundAttribute::Width)->size.value == Percent(0.f));
+    CHECK(Kept(plain, BoundAttribute::Width)->length.value == Percent(0.f));
     CHECK((plain.written & PropertyBit(StyleProperty::Background)) != 0);
 }

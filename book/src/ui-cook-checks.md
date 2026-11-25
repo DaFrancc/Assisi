@@ -49,12 +49,13 @@ Every one of these fails the cook with the file, line and column:
   type the control can't hold, or giving a format.
 - `steps`, `min` or `max` on a stepped slider bound to an enum, or no `steps` on
   one bound to a whole number.
-- A binding in a colour, `width`, `height`, `sprite`, `background_image` or
-  `texture` that holds anything but one binding, names a field of a type the
-  attribute can't take, gives a format, or is written with a state such as
-  `hover:`. Anything after a `width` or `height` binding but a unit and `min`
-  and `max`. A bound `sprite` and a `texture`, or a bound `texture` and a
-  `sprite`, on one element.
+- A binding in a colour, `width`, `height`, `sprite`, `background_image`,
+  `texture` or `float_offset` that holds anything but one binding, names a field
+  of a type the attribute can't take, gives a format, or is written with a state
+  such as `hover:`. Anything after a `width` or `height` binding but a unit and
+  `min` and `max`, and anything after a `float_offset` binding but a unit. A
+  bound `sprite` and a `texture`, or a bound `texture` and a `sprite`, on one
+  element.
 - A key on a binding that names no table, a table `config/ui.json` doesn't list,
   a table with no entry for one of the enum's enumerators or for `true` or
   `false`, or a key on a field that is neither an enum nor a `bool`.

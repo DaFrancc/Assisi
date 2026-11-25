@@ -177,7 +177,7 @@ inventory slot shows whatever its item's icon is:
 <image sprite="{Item.icon}" />
 ```
 
-See [Colours, sizes and pictures](ui-bindings.md#colours-sizes-and-pictures).
+See [Colours, sizes, pictures and positions](ui-bindings.md#colours-sizes-pictures-and-positions).
 
 ## Images in C++
 

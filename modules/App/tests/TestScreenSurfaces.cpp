@@ -82,7 +82,7 @@ Mondrian::ScreenDocument MonitorScreen()
     bar.style.background = Math::Color4<Math::ColorSpace::Srgb>{0.f, 1.f, 0.f, 1.f};
     bar.written = Mondrian::PropertyBit(Mondrian::StyleProperty::Height) |
                   Mondrian::PropertyBit(Mondrian::StyleProperty::Background);
-    bar.boundAttributes.push_back(Mondrian::AttributeBinding{.size = Mondrian::Sizing::Fixed(Mondrian::Px(0.f)),
+    bar.boundAttributes.push_back(Mondrian::AttributeBinding{.length = Mondrian::Sizing::Fixed(Mondrian::Px(0.f)),
                                                              .binding = document.AddText("{TestHealth.current}"),
                                                              .attribute = Mondrian::BoundAttribute::Width});
     document.nodes.push_back(bar);
