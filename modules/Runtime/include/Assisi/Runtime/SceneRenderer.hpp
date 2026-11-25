@@ -542,6 +542,8 @@ private:
         nvrhi::FramebufferHandle framebuffer{};
         /// The draws that make the picture's levels.
         Render::PictureLevels::Chain levels{};
+        /// The darkening the picture's levels were last made with.
+        Render::Vignette vignette{};
         ECS::Entity camera = ECS::NullEntity;
         /// The largest any of its surfaces is on the main camera's screen this
         /// frame, in pixels; 0 when none is on it.
@@ -644,6 +646,16 @@ private:
     void DrawTextureView(nvrhi::ICommandList *commandList, Passes::SceneImports &imports,
                          const Passes::SceneFrame &sceneFrame, TextureView &texture,
                          const Passes::ViewFrame &viewFrame);
+
+    /// @brief Make @p texture's picture levels from what its camera last drew,
+    /// at the size it drew at, darkened by @p vignette, and leave the picture
+    /// readable.
+    void BuildPicture(nvrhi::ICommandList *commandList, TextureView &texture, const Render::Vignette &vignette);
+
+    /// @brief Darken again, from what they last drew, the pictures of the
+    /// texture cameras in @p scene not drawing this frame whose PictureVignette
+    /// changed, so their surfaces show it this frame.
+    void ShadeRestingPictures(const ECS::Scene &scene, nvrhi::ICommandList *commandList);
 
     /// @brief Every body any view sees this frame: the main view's water, and
     /// a union with the texture views' when they see any it does not.

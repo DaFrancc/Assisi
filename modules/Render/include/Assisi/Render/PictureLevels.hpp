@@ -13,12 +13,33 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Math/GLM.hpp>
+
 namespace Assisi::Render
 {
 
 /// @brief How many levels a @p width by @p height picture has, down to one
 /// pixel on its longer side.
 [[nodiscard]] uint32_t PictureMipCount(uint32_t width, uint32_t height);
+
+/// @brief How a picture darkens toward its edge, as a rifle scope's does when
+/// the eye is off its axis: clear inside a circle, fading over a band past it,
+/// and as dark as the strength says beyond. Distances are in picture heights,
+/// so the circle stays round on a wide picture.
+struct Vignette
+{
+    /// The clear circle's middle, in the picture's own coordinates: 0 to 1
+    /// across and down from its top-left corner.
+    glm::vec2 centre{0.5f, 0.5f};
+    /// How far from the centre the picture stays clear.
+    float radius = 0.f;
+    /// How wide the fade from clear to dark is, past the radius.
+    float softness = 0.f;
+    /// How dark it gets beyond the fade: 0 for no darkening, 1 for black.
+    float strength = 0.f;
+
+    [[nodiscard]] bool operator==(const Vignette &) const = default;
+};
 
 /// @brief Draws a picture's levels: the first from what a camera drew, each
 /// pixel of the others the average of the four above it, or close to it where
@@ -56,19 +77,31 @@ public:
     [[nodiscard]] Chain Prepare(nvrhi::ITexture *picture, nvrhi::ITexture *drawn) const;
 
     /// @brief Stretches the top-left @p drawnWidth x @p drawnHeight of the
-    /// drawn texture over the picture's first level, then draws every level
-    /// below from the one above.
-    void Build(nvrhi::ICommandList *commandList, const Chain &chain, uint32_t drawnWidth, uint32_t drawnHeight) const;
+    /// drawn texture over the picture's first level, darkened by
+    /// @p vignette, then draws every level below from the one above, so each
+    /// carries the same darkening.
+    void Build(nvrhi::ICommandList *commandList, const Chain &chain, uint32_t drawnWidth, uint32_t drawnHeight,
+               const Vignette &vignette) const;
 
 private:
     /// @brief What part of the level above a draw reads, in its texture
-    /// coordinates. Matches picture_levels.frag.
+    /// coordinates, and how the level is darkened. Matches
+    /// picture_levels.frag.
     struct Constants
     {
         float scaleX = 1.f;
         float scaleY = 1.f;
         float mostX = 1.f;
         float mostY = 1.f;
+        float centreX = 0.f;
+        float centreY = 0.f;
+        float radius = 0.f;
+        /// The fade's width, never zero so the shader never divides by it.
+        float softness = 1.f;
+        /// Zero on every level but the first, which leaves the others as read.
+        float strength = 0.f;
+        /// The level's width over its height, so distances are in heights.
+        float aspect = 1.f;
     };
 
     void Draw(nvrhi::ICommandList *commandList, const Level &level, const Constants &constants) const;

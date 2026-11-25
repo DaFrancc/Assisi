@@ -572,6 +572,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // so a picture is drawn before the view that shows it, and the main view.
     _graph->RunFrame(imports, frame.commandList, sceneFrame);
     ClearNewPictures(frame.commandList);
+    // Before any view draws, so one showing a resting camera's picture shows
+    // its new darkening.
+    ShadeRestingPictures(scene, frame.commandList);
     for (std::size_t drawn = 0; drawn < _textureOrder.size(); ++drawn)
     {
         TextureView &texture = *TextureViewFor(_textureOrder[drawn]);
@@ -1192,12 +1195,36 @@ void SceneRenderer::DrawTextureView(nvrhi::ICommandList *commandList, Passes::Sc
     {
         commandList->resolveTexture(texture.drawn, nvrhi::AllSubresources, texture.color, nvrhi::AllSubresources);
     }
+    BuildPicture(commandList, texture, PictureVignetteOf(sceneFrame.scene, texture.camera));
+}
+
+void SceneRenderer::BuildPicture(nvrhi::ICommandList *commandList, TextureView &texture,
+                                 const Render::Vignette &vignette)
+{
     // What it drew stretched over the picture, whatever size it drew at, and
     // the smaller levels made from that.
-    _pictureLevels.Build(commandList, texture.levels, viewFrame.width, viewFrame.height);
+    _pictureLevels.Build(commandList, texture.levels, PictureDrawnSide(texture.width, texture.drawSteps),
+                         PictureDrawnSide(texture.height, texture.drawSteps), vignette);
+    texture.vignette = vignette;
     // The scene reads it through the bindless table, which tracks no states.
     commandList->setTextureState(texture.picture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     commandList->commitBarriers();
+}
+
+void SceneRenderer::ShadeRestingPictures(const ECS::Scene &scene, nvrhi::ICommandList *commandList)
+{
+    for (TextureView &texture : _textureViews)
+    {
+        // drawSteps is set when a camera draws and cleared when its targets
+        // are made again, so it says whether there is a drawing to darken.
+        const bool drawing = std::ranges::find(_textureOrder, texture.camera) != _textureOrder.end();
+        const bool holdsDrawing = texture.picture != nullptr && texture.drawSteps != 0u;
+        const Render::Vignette wanted = PictureVignetteOf(scene, texture.camera);
+        if (ShadePictureAgain(drawing, holdsDrawing, wanted, texture.vignette))
+        {
+            BuildPicture(commandList, texture, wanted);
+        }
+    }
 }
 
 const Render::WaterFrame &SceneRenderer::WavesFrame()
