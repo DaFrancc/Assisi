@@ -11,7 +11,7 @@ add_executable(Assisi-Render-Tests
   TestLocalShadowCache.cpp
   TestLocalShadowViews.cpp
   TestMeshSkinner.cpp
-  TestPictureMips.cpp
+  TestPictureLevels.cpp
   TestPostProcessChain.cpp
   TestShadowAtlas.cpp
   TestShadowCadence.cpp

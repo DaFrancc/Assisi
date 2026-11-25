@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 
@@ -108,6 +109,28 @@ void Place(Choice &choice, uint32_t camera, std::vector<ECS::Entity> &order)
 uint32_t TextureCameraSamples(uint32_t asked, uint32_t most)
 {
     return std::bit_floor(std::clamp(asked, 1u, std::clamp(most, 1u, kMostTextureCameraSamples)));
+}
+
+uint32_t PictureDrawSteps(float surfacePixels, uint32_t pictureSide, uint32_t current)
+{
+    if (!(surfacePixels > 0.f) || pictureSide == 0u)
+    {
+        return kPictureDrawSteps;
+    }
+    const float fraction = std::min(surfacePixels / static_cast<float>(pictureSide), 1.f);
+    const float steps = std::ceil(fraction * static_cast<float>(kPictureDrawSteps));
+    const uint32_t wanted = std::clamp(static_cast<uint32_t>(steps), 1u, kPictureDrawSteps);
+    if (wanted >= current || wanted + 1u < current)
+    {
+        return wanted;
+    }
+    return current;
+}
+
+uint32_t PictureDrawnSide(uint32_t side, uint32_t steps)
+{
+    const uint32_t drawn = (side * std::min(steps, kPictureDrawSteps) + kPictureDrawSteps - 1u) / kPictureDrawSteps;
+    return std::max(drawn, 1u);
 }
 
 void SwitchTextureCamera(ECS::Scene &scene, ECS::Entity camera, TextureCameraSwitch to)

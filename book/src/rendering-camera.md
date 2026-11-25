@@ -163,6 +163,7 @@ You need two components, both in `<Assisi/Runtime/TextureCamera.hpp>`:
 | `samples` | How many samples each pixel takes for anti-aliasing (MSAA), whatever the game's own anti-aliasing setting: 1 for none, 2, 4 or 8. Default 4. More samples smooth the picture's edges and cost more. |
 | `update` | When it draws: see the table below. Default `WhileSeen`. |
 | `on` | Whether a `WhileOn` camera is drawing. Default on. |
+| `followScreenSize` | Whether the camera draws at about as many pixels as its surface covers on screen, up to `width` by `height`. Default on. See below. |
 
 | `CameraSurface` field | Meaning |
 |---|---|
@@ -264,6 +265,20 @@ the set and skips the rest:
 | `Fog` | No level fog and no fog volumes. |
 | `Water` | No oceans, lakes or rivers. |
 | `SeeThrough` | No see-through surfaces, such as glass. |
+
+A texture camera also draws fewer pixels when its surface is small on screen,
+while its `followScreenSize` is on. A 512 by 512 monitor across the room that
+covers 100 pixels of the screen draws at a quarter of its size, 128 by 128,
+and the picture is stretched to fill the monitor; walk up to it and it draws
+at full size again. It changes size in eighths, and only once it has shrunk
+by more than one, so it doesn't flicker between two sizes. Only surfaces the
+player's camera sees count: a camera whose surfaces are all off screen, or
+seen only in another camera's picture, draws at full size. Turn it off for a
+camera whose picture must stay sharp however far away its surface is, such as
+a photo the player will look at later.
+
+Fewer pixels only save the work done per pixel, such as lighting and shadows.
+The work done per mesh stays the same, so pair it with the next two fields.
 
 Two more fields make a camera cheaper:
 

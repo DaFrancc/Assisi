@@ -26,7 +26,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/FogVolume.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
-#include <Assisi/Render/PictureMips.hpp>
+#include <Assisi/Render/PictureLevels.hpp>
 #include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
@@ -525,21 +525,30 @@ private:
     {
         std::unique_ptr<SceneView> view{};
         /// Drawn into, in the scene target's format at the camera's own sample
-        /// count.
+        /// count, all at the picture's size: a camera drawing smaller draws in
+        /// their top-left corner.
         nvrhi::TextureHandle color{};
         nvrhi::TextureHandle depth{};
-        /// What surfaces show, one sample a pixel, with its smaller levels:
-        /// the colour target itself, its first level drawn into, when the
-        /// camera draws without MSAA, and resolved into otherwise.
+        /// What the camera drew, one sample a pixel: the colour target itself
+        /// without MSAA, resolved into with it.
+        nvrhi::TextureHandle drawn{};
+        /// What surfaces show, with its smaller levels: what the camera drew,
+        /// stretched over it.
         nvrhi::TextureHandle picture{};
         nvrhi::FramebufferHandle framebuffer{};
-        /// The draws that make the picture's smaller levels.
-        Render::PictureMips::Chain mips{};
+        /// The draws that make the picture's levels.
+        Render::PictureLevels::Chain levels{};
         ECS::Entity camera = ECS::NullEntity;
+        /// The largest any of its surfaces is on the main camera's screen this
+        /// frame, in pixels; 0 when none is on it.
+        float seenPixels = 0.f;
         uint32_t width = 0;
         uint32_t height = 0;
         /// MSAA samples a pixel, as TextureCameraSamples gave them.
         uint32_t samples = 1;
+        /// How many kPictureDrawSteps of its size it drew at last; 0 before
+        /// it first drew.
+        uint32_t drawSteps = 0;
         /// The picture's lent slot in the asset cache's bindless table.
         uint32_t slot = 0;
         /// Whether the picture has been cleared since it was made, so a surface
@@ -607,8 +616,10 @@ private:
 
     /// @brief Which texture cameras draw this frame, in the order they draw,
     /// into _textureOrder, against the main camera's @p mainViewProjection
-    /// measured from its origin.
-    void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection);
+    /// measured from its origin, and how large each one's surfaces are on its
+    /// @p mainHeight pixels tall screen, seen through @p mainCamera.
+    void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection, const Camera &mainCamera,
+                            uint32_t mainHeight);
 
     /// @brief Gather what @p texture's camera sees under the level's @p fog,
     /// and the frame its passes read. After the main view's lights are
@@ -655,8 +666,8 @@ private:
     // Every body any view sees, when the texture views see some the main view
     // does not.
     Render::WaterFrame _wavesFrame;
-    // Draws every texture camera's picture's smaller levels.
-    Render::PictureMips _pictureMips;
+    // Draws every texture camera's picture's levels.
+    Render::PictureLevels _pictureLevels;
     // Counts Render calls, which a retired texture view waits out.
     uint64_t _renderCount = 0;
     // The most MSAA samples this GPU draws a texture camera with.

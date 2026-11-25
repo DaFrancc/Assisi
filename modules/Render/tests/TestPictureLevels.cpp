@@ -2,7 +2,7 @@
 
 #include <doctest/doctest.h>
 
-#include <Assisi/Render/PictureMips.hpp>
+#include <Assisi/Render/PictureLevels.hpp>
 
 using Assisi::Render::PictureMipCount;
 

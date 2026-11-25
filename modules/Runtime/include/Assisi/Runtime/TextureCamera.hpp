@@ -77,7 +77,27 @@ struct TextureCamera
     /// Whether a WhileOn camera is drawing, which SwitchTextureCamera sets. A
     /// level can place one switched off.
     AFIELD() bool on = true;
+    /// Whether it draws at about as many pixels as its surface covers on the
+    /// main camera's screen, up to its own size: a distant monitor draws few.
+    /// A camera whose surfaces are all off screen draws at its full size.
+    AFIELD() bool followScreenSize = true;
 };
+
+/// @brief How many steps a texture camera's drawn size is chosen in: its full
+/// size, or a whole number of these fractions of it.
+inline constexpr uint32_t kPictureDrawSteps = 8;
+
+/// @brief How many kPictureDrawSteps of its size a picture whose longer side
+/// is @p pictureSide draws at, when its surface covers @p surfacePixels on
+/// screen and it drew at @p current steps last time (0 before it first
+/// drew). None on screen, a @p surfacePixels of 0, draws at full size. It
+/// grows at once and shrinks only by more than one step, so a surface on the
+/// edge between two sizes doesn't switch between them every frame.
+[[nodiscard]] uint32_t PictureDrawSteps(float surfacePixels, uint32_t pictureSide, uint32_t current);
+
+/// @brief The side @p steps of kPictureDrawSteps make of @p side: at least
+/// one pixel, rounded up.
+[[nodiscard]] uint32_t PictureDrawnSide(uint32_t side, uint32_t steps);
 
 /// @brief The MSAA samples a texture camera asking @p asked draws with on a
 /// GPU that does at most @p most: a power of two from 1 to 8, the one at or

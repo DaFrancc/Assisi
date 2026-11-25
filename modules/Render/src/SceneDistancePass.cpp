@@ -7,6 +7,8 @@
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Ssao.hpp>
 
+#include <algorithm>
+
 namespace Assisi::Render
 {
 
@@ -98,20 +100,22 @@ bool SceneDistancePass::Configure(std::uint32_t width, std::uint32_t height, nvr
         Release();
         return false;
     }
-    const bool resized = width != _width || height != _height || _distance == nullptr;
+    const nvrhi::TextureDesc &depthDesc = depth->getDesc();
+    _width = std::min(width, depthDesc.width);
+    _height = std::min(height, depthDesc.height);
+    const bool resized = _distance == nullptr || _distance->getDesc().width != depthDesc.width ||
+                         _distance->getDesc().height != depthDesc.height;
     if (!resized && depth == _depth)
     {
         return true;
     }
 
-    _width = width;
-    _height = height;
     _depth = depth;
     if (resized)
     {
         nvrhi::TextureDesc desc;
-        desc.width = _width;
-        desc.height = _height;
+        desc.width = depthDesc.width;
+        desc.height = depthDesc.height;
         desc.format = kDistanceFormat;
         desc.isRenderTarget = true;
         desc.isShaderResource = true;
@@ -124,7 +128,8 @@ bool SceneDistancePass::Configure(std::uint32_t width, std::uint32_t height, nvr
                            : nullptr;
         if (_framebuffer == nullptr)
         {
-            Core::Log::Error("SceneDistancePass: failed to allocate the {}x{} target.", width, height);
+            Core::Log::Error("SceneDistancePass: failed to allocate the {}x{} target.", depthDesc.width,
+                             depthDesc.height);
             Release();
             return false;
         }
