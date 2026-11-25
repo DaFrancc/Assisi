@@ -262,7 +262,7 @@ the set and skips the rest:
 | `Shadows` | No sun, lamp or cloud shadows. |
 | `AmbientOcclusion` | No darkening in creases and corners. |
 | `Sky` | Black behind everything instead of the sky. |
-| `Fog` | No level fog and no fog volumes. |
+| `Fog` | No level fog and no fog volumes. The camera then draws all the way to its `farZ`, rather than stopping where the fog would hide everything. |
 | `Water` | No oceans, lakes or rivers. |
 | `SeeThrough` | No see-through surfaces, such as glass. |
 

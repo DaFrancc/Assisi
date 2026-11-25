@@ -92,12 +92,22 @@ struct ViewFeatures
 {
     /// The camera's level-of-detail bias, which multiplies the game's.
     float lodBias = 1.f;
+    /// Whether it samples the sun's cascades.
     bool sunShadows = true;
+    /// Whether it samples the spot and point lights' shadow atlas.
     bool localShadows = true;
+    /// Whether it samples the clouds' shadow map, which the clouds' own
+    /// setting draws whatever the sun's shadow setting says.
+    bool cloudShadows = true;
+    /// Whether it runs screen-space ambient occlusion.
     bool ambientOcclusion = true;
+    /// Whether it draws the sky behind everything.
     bool sky = true;
+    /// Whether it draws the level's fog and its fog volumes.
     bool fog = true;
+    /// Whether it draws oceans, lakes and rivers.
     bool water = true;
+    /// Whether it draws see-through surfaces.
     bool seeThrough = true;
 };
 
@@ -174,9 +184,10 @@ struct SceneFrame
     std::optional<LightingSystem::ShadowSun> shadowSun;
     glm::vec3 fogColor{1.f};
     std::uint32_t shadowFrameIndex = 0;
-    /// Whether any view drawn this frame samples the sun's shadows, and the
-    /// lamps': with none, they are not drawn.
+    /// Whether any view kept samples the sun's shadows: with none, they are
+    /// not drawn.
     bool sunShadowsSampled = false;
+    /// The same for the spot and point lights' shadow atlas.
     bool localShadowsSampled = false;
     /// Whether the sky pass built, which the clouds and the probe draw through.
     bool skyAvailable = false;

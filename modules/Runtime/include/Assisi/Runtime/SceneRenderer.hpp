@@ -234,6 +234,10 @@ public:
     void SetLodSettings(const Runtime::LodSettings &settings);
     [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSettings; }
 
+    /// @brief The bias the main view's levels were chosen with this frame:
+    /// the game's, times its camera's `lodBias`.
+    [[nodiscard]] float DrawnLodBias() const { return _lodSelector.Settings().bias; }
+
     /// @brief Draw @p entity at @p level whatever its size asks for, or release
     /// the pin with a negative @p level. One entity at a time.
     ///

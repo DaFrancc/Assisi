@@ -2072,8 +2072,9 @@ void EditorApp::DrawLodVerdict()
     // passes 1; the bias only when it is doing something, since the value it
     // produces can pass 1 and would read as impossible on its own.
     // Within the slider's display precision of 1, or a drag that lands at
-    // 1.0000001 would print "x 1.00 bias".
-    const float bias = _sceneRenderer->LodSettings().bias;
+    // 1.0000001 would print "x 1.00 bias". The bias the levels were chosen
+    // with, the camera's included, so the product is the size shown after it.
+    const float bias = _sceneRenderer->DrawnLodBias();
     if (std::abs(bias - 1.f) < 0.005f)
     {
         ImGui::TextDisabled("size %.4f", static_cast<double>(lod.screenSize));

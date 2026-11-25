@@ -51,6 +51,7 @@ TEST_CASE("A camera draws everything the settings allow until a switch turns a f
     const ViewFeatures unshadowed = ResolveViewFeatures(EverythingOn(), CameraWithout(CameraFeature::Shadows));
     CHECK_FALSE(unshadowed.sunShadows);
     CHECK_FALSE(unshadowed.localShadows);
+    CHECK_FALSE(unshadowed.cloudShadows);
     CHECK(unshadowed.ambientOcclusion);
     CHECK_FALSE(ResolveViewFeatures(EverythingOn(), CameraWithout(CameraFeature::AmbientOcclusion)).ambientOcclusion);
     CHECK_FALSE(ResolveViewFeatures(EverythingOn(), CameraWithout(CameraFeature::Sky)).sky);
@@ -69,6 +70,8 @@ TEST_CASE("A camera never draws a feature the settings turned off")
     const ViewFeatures features = ResolveViewFeatures(settings, Camera{});
     CHECK_FALSE(features.sunShadows);
     CHECK(features.localShadows);
+    // The clouds' shadow has its own setting, so the sun's leaves it on.
+    CHECK(features.cloudShadows);
     CHECK_FALSE(features.ambientOcclusion);
     CHECK_FALSE(features.fog);
     CHECK_FALSE(features.water);

@@ -21,7 +21,8 @@ namespace Assisi::Render
 [[nodiscard]] uint32_t PictureMipCount(uint32_t width, uint32_t height);
 
 /// @brief Draws a picture's levels: the first from what a camera drew, each
-/// pixel of the others the average of the four above it.
+/// pixel of the others the average of the four above it, or close to it where
+/// a side of the level above is odd.
 class PictureLevels
 {
 public:

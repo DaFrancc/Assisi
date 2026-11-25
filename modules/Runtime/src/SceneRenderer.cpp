@@ -373,10 +373,11 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     const Passes::ViewFeatures features = Passes::ResolveViewFeatures(_settings, viewCamera);
     _main->_features = features;
 
-    // Before anything is built from the camera: the fog says how far it draws.
+    // Before anything is built from the camera: the fog says how far it draws,
+    // unless the camera leaves the fog out, and with it what hides that edge.
     const FogResolution fog = ResolveFog(scene);
     Camera camera = viewCamera;
-    if (fog.present)
+    if (fog.present && viewCamera.features.Has(CameraFeature::Fog))
     {
         camera.farZ = Render::FogDrawDistance(viewCamera.farZ, fog.settings);
     }
@@ -534,13 +535,20 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     }
     ++_renderCount;
 
-    // The shadow maps are drawn while any view drawn samples them.
+    // The shadow maps are drawn while any view kept samples them, drawing
+    // this frame or not: freed the frames a texture camera rests, they would
+    // be made and drawn whole again each time it starts.
     bool sunShadowsSampled = features.sunShadows;
     bool localShadowsSampled = features.localShadows;
-    for (const Passes::ViewFrame &textureFrame : _textureFrames)
+    for (const TextureView &texture : _textureViews)
     {
-        sunShadowsSampled = sunShadowsSampled || textureFrame.features.sunShadows;
-        localShadowsSampled = localShadowsSampled || textureFrame.features.localShadows;
+        const Camera *const textureCamera = scene.Get<Camera>(texture.camera);
+        if (texture.framebuffer != nullptr && textureCamera != nullptr)
+        {
+            const Passes::ViewFeatures kept = Passes::ResolveViewFeatures(_settings, *textureCamera);
+            sunShadowsSampled = sunShadowsSampled || kept.sunShadows;
+            localShadowsSampled = localShadowsSampled || kept.localShadows;
+        }
     }
 
     const Passes::SceneFrame sceneFrame{.scene = scene,
@@ -879,6 +887,16 @@ bool SceneRenderer::MakeTextureTargets(TextureView &texture)
         drawn.keepInitialState = true;
         drawn.debugName = "SceneRenderer::TextureCameraDrawn";
         texture.drawn = _device->createTexture(drawn);
+        if (texture.drawn == nullptr)
+        {
+            Core::Log::Error("SceneRenderer: a {}x{} picture for a texture camera could not be made; it shows "
+                             "nothing.",
+                             texture.width, texture.height);
+            _viewParams.assetCache->ReturnTextureSlot(texture.slot);
+            texture.picture = nullptr;
+            texture.slot = 0;
+            return false;
+        }
         texture.levels = _pictureLevels.Prepare(texture.picture, texture.drawn);
     }
 
@@ -1068,7 +1086,7 @@ Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureVi
     Camera camera = *scene.Get<Camera>(texture.camera);
     view._features = Passes::ResolveViewFeatures(_settings, camera);
     const bool fogged = view._features.fog && fog.present;
-    if (fog.present)
+    if (fog.present && camera.features.Has(CameraFeature::Fog))
     {
         camera.farZ = Render::FogDrawDistance(camera.farZ, fog.settings);
     }

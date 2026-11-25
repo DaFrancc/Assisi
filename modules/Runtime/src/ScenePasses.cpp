@@ -147,6 +147,7 @@ ViewFeatures ResolveViewFeatures(const SceneSettings &settings, const Camera &ca
     return ViewFeatures{.lodBias = camera.lodBias > 0.f && std::isfinite(camera.lodBias) ? camera.lodBias : 1.f,
                         .sunShadows = settings.shadows.sun.enabled && drawn.Has(CameraFeature::Shadows),
                         .localShadows = settings.shadows.local.enabled && drawn.Has(CameraFeature::Shadows),
+                        .cloudShadows = drawn.Has(CameraFeature::Shadows),
                         .ambientOcclusion = settings.ssao.enabled && drawn.Has(CameraFeature::AmbientOcclusion),
                         .sky = drawn.Has(CameraFeature::Sky),
                         .fog = settings.fogEnabled && drawn.Has(CameraFeature::Fog),
@@ -716,11 +717,14 @@ void FrameConstantsPass::Record(
     if (!view.features.sunShadows)
     {
         sunFrame.fit = nullptr;
-        cloudShadow.area.w = 0.f;
     }
     if (!view.features.localShadows)
     {
         localFrame.active = false;
+    }
+    if (!view.features.cloudShadows)
+    {
+        cloudShadow.area.w = 0.f;
     }
     meshPass.UpdateFrameConstants(
         rec.CommandList(),

@@ -3,7 +3,10 @@
 // One level of a texture camera's picture (see Render::PictureLevels). The
 // first is stretched from the part of a target the camera drew; each smaller
 // one is half the size of the level above, its pixels one bilinear tap at the
-// corner four pixels above share, which is their average.
+// corner four pixels above share, which is their average. Where a side of the
+// level above is odd, the taps fall between corners and that side's last row
+// weighs a little less: a small blur no one sees on a level a surface shows
+// only from far away.
 
 layout(location = 0) in  vec2 vTexCoords;
 layout(location = 0) out vec4 outColor;
