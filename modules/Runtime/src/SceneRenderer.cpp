@@ -338,6 +338,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         return;
     }
 
+    // What the main camera draws, which everything gathered for it follows.
+    const Passes::ViewFeatures features = Passes::ResolveViewFeatures(_settings, viewCamera);
+    _main->_features = features;
+
     // Before anything is built from the camera: the fog says how far it draws.
     const FogResolution fog = ResolveFog(scene);
     Camera camera = viewCamera;
@@ -399,7 +403,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     _lastSky = ResolveSky(scene);
     const SkyResolution &sky = _lastSky;
 
-    const bool fogged = _settings.fogEnabled && fog.present;
+    const bool fogged = features.fog && fog.present;
     const Render::FogConstants fogConstants =
         FrameFog(fog, fogged, sky, static_cast<float>(_viewOrigin.y), camera.farZ);
 
@@ -419,7 +423,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
     // Before the shadow halves, because they select from it too: a caster's
     // shadow is drawn from the level the camera sees it at, or one coarser, and
     // all three passes measure with the one view set here. The GPU cull holds no
-    // dead band, so while it draws the gathers hold none either.
+    // dead band, so while it draws the gathers hold none either. A new bias
+    // from the camera redraws the kept shadows, cast at the levels it chooses.
+    if (ApplyLodBias(_lodSelector, features.lodBias))
+    {
+        ForgetKeptShadows();
+    }
     _lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     _lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
 
@@ -429,11 +438,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
 
     // The water in view, before the scene's distance is prepared, which it reads.
     GatherWaterFor(scene, *_main, projection * view, camera.farZ);
-    const bool waterReadsDistance = _settings.waterEnabled && !_waterFrame.bodies.empty();
+    const bool waterReadsDistance = !_waterFrame.bodies.empty();
 
     // Before the frame constants, which say whether the lit pass reads occlusion.
-    const ScreenOcclusion occlusion =
-        PrepareScreenOcclusion(*_main, frame.width, frame.height, frame.depthTexture, waterReadsDistance);
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(*_main, frame.width, frame.height, frame.depthTexture);
 
     // The passes, in the order their declarations fix: each hands what it makes
     // to the ones after it.
@@ -468,11 +476,13 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         .occlusion = occlusion,
         .fog = fogConstants,
         .camera = camera,
+        .features = features,
         .fogVolumeLanes = fogVolumeLanes,
         .width = frame.width,
         .height = frame.height,
         .viewerInstance = ViewerInstance(scene, _viewingCamera),
-        .waterReadsDistance = waterReadsDistance && main._sceneDistancePass.DistanceTexture() != nullptr};
+        .waterReadsDistance = waterReadsDistance && main._sceneDistancePass.DistanceTexture() != nullptr,
+        .fogged = fogged};
 
     // The texture cameras, kept, shown and chosen, and what each one drawing
     // sees gathered, before the world's passes: the water's waves are brought
@@ -488,10 +498,19 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
         ChooseTextureViews(scene, projection * view);
         for (const ECS::Entity textureCamera : _textureOrder)
         {
-            _textureFrames.push_back(PrepareTextureView(scene, *TextureViewFor(textureCamera), fog, fogged));
+            _textureFrames.push_back(PrepareTextureView(scene, *TextureViewFor(textureCamera), fog));
         }
     }
     ++_renderCount;
+
+    // The shadow maps are drawn while any view drawn samples them.
+    bool sunShadowsSampled = features.sunShadows;
+    bool localShadowsSampled = features.localShadows;
+    for (const Passes::ViewFrame &textureFrame : _textureFrames)
+    {
+        sunShadowsSampled = sunShadowsSampled || textureFrame.features.sunShadows;
+        localShadowsSampled = localShadowsSampled || textureFrame.features.localShadows;
+    }
 
     const Passes::SceneFrame sceneFrame{.scene = scene,
                                         .sky = sky,
@@ -507,7 +526,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, 
                                         .shadowSun = _lighting.ShadowCastingSun(),
                                         .fogColor = fog.settings.color,
                                         .shadowFrameIndex = _shadowFrameIndex,
-                                        .fogged = fogged,
+                                        .sunShadowsSampled = sunShadowsSampled,
+                                        .localShadowsSampled = localShadowsSampled,
                                         .skyAvailable = _skyPass.IsValid()};
     // The world's work once, then each texture camera's view, deepest first,
     // so a picture is drawn before the view that shows it, and the main view.
@@ -626,12 +646,13 @@ void SceneRenderer::CountFrame() const
 }
 
 ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
-                                                      nvrhi::ITexture *depthTexture, bool waterReadsDistance)
+                                                      nvrhi::ITexture *depthTexture)
 {
     Render::SceneDistancePass &distancePass = view._sceneDistancePass;
     Render::SsaoPass &ssaoPass = view._ssaoPass;
     // Released rather than kept while off — pay for what you place.
-    const bool occlusionWanted = _settings.ssao.enabled && ssaoPass.IsValid() && distancePass.IsValid();
+    const bool occlusionWanted = view._features.ambientOcclusion && ssaoPass.IsValid() && distancePass.IsValid();
+    const bool waterReadsDistance = !view._waterFrame.bodies.empty();
     const bool distanceWanted = (occlusionWanted || waterReadsDistance) && distancePass.IsValid();
     const bool distanceHeld = distanceWanted && distancePass.Configure(width, height, depthTexture);
     if (distanceWanted && !distanceHeld)
@@ -661,10 +682,10 @@ ScreenOcclusion SceneRenderer::PrepareScreenOcclusion(SceneView &view, uint32_t 
 void SceneRenderer::GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection,
                                         uint32_t width, uint32_t height)
 {
-    // The placed fog volumes, which the player's fog setting turns off with
-    // the level's own fog.
+    // The placed fog volumes, which the player's fog setting and the camera's
+    // turn off with the level's own fog.
     view._fogVolumeFrame.Clear();
-    if (!_settings.fogEnabled)
+    if (!view._features.fog)
     {
         return;
     }
@@ -684,7 +705,7 @@ void SceneRenderer::GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm
                                    float drawDistance)
 {
     view._waterFrame.Clear();
-    if (!_settings.waterEnabled)
+    if (!view._features.water)
     {
         return;
     }
@@ -961,11 +982,13 @@ void SceneRenderer::ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainV
 }
 
 Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureView &texture,
-                                                    const FogResolution &fog, bool fogged)
+                                                    const FogResolution &fog)
 {
     SceneView &view = *texture.view;
     const ECS::WorldMatrix &cameraWorld = *scene.Get<ECS::WorldMatrix>(texture.camera);
     Camera camera = *scene.Get<Camera>(texture.camera);
+    view._features = Passes::ResolveViewFeatures(_settings, camera);
+    const bool fogged = view._features.fog && fog.present;
     if (fog.present)
     {
         camera.farZ = Render::FogDrawDistance(camera.farZ, fog.settings);
@@ -980,16 +1003,12 @@ Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureVi
     GatherFogVolumesFor(scene, view, projection * viewMatrix, texture.width, texture.height);
     // The main view's lights, measured from this camera.
     view._lighting.ShareFrom(_lighting, glm::vec3(_viewOrigin - view._viewOrigin));
-    if (!(view._lodSelector.Settings() == _lodSelector.Settings()))
-    {
-        view._lodSelector.SetSettings(_lodSelector.Settings());
-    }
+    (void)ApplyLodBias(view._lodSelector, view._features.lodBias);
     view._lodSelector.SetHoldsDeadBand(!GpuCullDraws());
     view._lodSelector.BeginFrame(CameraLodView(cameraInView, camera));
     GatherWaterFor(scene, view, projection * viewMatrix, camera.farZ);
-    const bool waterReadsDistance = _settings.waterEnabled && !view._waterFrame.bodies.empty();
-    const ScreenOcclusion occlusion =
-        PrepareScreenOcclusion(view, texture.width, texture.height, texture.depth, waterReadsDistance);
+    const bool waterReadsDistance = !view._waterFrame.bodies.empty();
+    const ScreenOcclusion occlusion = PrepareScreenOcclusion(view, texture.width, texture.height, texture.depth);
 
     const Render::RenderTarget target{.framebuffer = texture.framebuffer,
                                       .colorTexture = texture.color,
@@ -1008,12 +1027,14 @@ Passes::ViewFrame SceneRenderer::PrepareTextureView(ECS::Scene &scene, TextureVi
         .occlusion = occlusion,
         .fog = FrameFog(fog, fogged, _lastSky, static_cast<float>(view._viewOrigin.y), camera.farZ),
         .camera = camera,
+        .features = view._features,
         .fogVolumeLanes = view._fogVolumeFrame.Lanes(),
         .width = texture.width,
         .height = texture.height,
         .viewerInstance = ViewerInstance(scene, texture.camera),
         .textureCamera = texture.camera,
-        .waterReadsDistance = waterReadsDistance && view._sceneDistancePass.DistanceTexture() != nullptr};
+        .waterReadsDistance = waterReadsDistance && view._sceneDistancePass.DistanceTexture() != nullptr,
+        .fogged = fogged};
 }
 
 void SceneRenderer::ClearNewPictures(nvrhi::ICommandList *commandList)
@@ -1211,12 +1232,25 @@ uint32_t SceneRenderer::LastShadowDroppedByCap() const
 
 void SceneRenderer::SetLodSettings(const Runtime::LodSettings &settings)
 {
-    if (settings == _lodSelector.Settings())
+    if (settings == _lodSettings)
     {
         return;
     }
-    _lodSelector.SetSettings(settings);
+    _lodSettings = settings;
+    (void)ApplyLodBias(_lodSelector, _main->_features.lodBias);
     ForgetKeptShadows();
+}
+
+bool SceneRenderer::ApplyLodBias(LodSelector &selector, float bias) const
+{
+    Runtime::LodSettings wanted = _lodSettings;
+    wanted.bias *= bias;
+    if (selector.Settings() == wanted)
+    {
+        return false;
+    }
+    selector.SetSettings(wanted);
+    return true;
 }
 
 void SceneRenderer::PinLod(ECS::Entity entity, int32_t level)

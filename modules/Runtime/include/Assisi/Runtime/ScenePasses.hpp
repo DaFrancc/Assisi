@@ -86,6 +86,26 @@ struct SceneSettings
     bool gpuCulling = false;
 };
 
+/// @brief What one view draws: the graphics settings, less what its camera's
+/// switches turn off.
+struct ViewFeatures
+{
+    /// The camera's level-of-detail bias, which multiplies the game's.
+    float lodBias = 1.f;
+    bool sunShadows = true;
+    bool localShadows = true;
+    bool ambientOcclusion = true;
+    bool sky = true;
+    bool fog = true;
+    bool water = true;
+    bool seeThrough = true;
+};
+
+/// @brief What a view through @p camera draws under @p settings. A camera's
+/// switch only turns its feature off; a bias that is not a positive number
+/// counts as 1.
+[[nodiscard]] ViewFeatures ResolveViewFeatures(const SceneSettings &settings, const Camera &camera);
+
 /// @brief One view of the scene: the camera's, and later each eye's. What a
 /// pass run per view reads about the camera it draws for, all of it decided
 /// before the view's first pass runs.
@@ -108,6 +128,7 @@ struct ViewFrame
     Render::FogConstants fog;
     /// The camera's lens, its far plane drawn in to the fog.
     Camera camera;
+    ViewFeatures features;
     /// Which of the frame's fog volumes this view's pixels test.
     glm::uvec4 fogVolumeLanes{0u};
     std::uint32_t width = 0;
@@ -121,6 +142,8 @@ struct ViewFrame
     /// Whether the water reads the scene's distance this view, which then
     /// runs whether or not ambient occlusion does.
     bool waterReadsDistance = false;
+    /// Whether the level's fog is drawn in this view.
+    bool fogged = false;
 };
 
 /// @brief What the scene's passes read and never write in a frame, all of it
@@ -151,8 +174,10 @@ struct SceneFrame
     std::optional<LightingSystem::ShadowSun> shadowSun;
     glm::vec3 fogColor{1.f};
     std::uint32_t shadowFrameIndex = 0;
-    /// Whether the level's fog is drawn.
-    bool fogged = false;
+    /// Whether any view drawn this frame samples the sun's shadows, and the
+    /// lamps': with none, they are not drawn.
+    bool sunShadowsSampled = false;
+    bool localShadowsSampled = false;
     /// Whether the sky pass built, which the clouds and the probe draw through.
     bool skyAvailable = false;
 };
@@ -370,7 +395,7 @@ struct LitPass
 APASS(name = "sky", after = "draw-scene")
 struct SkyBackgroundPass
 {
-    bool Wanted(const SceneFrame &frame) const;
+    bool Wanted(const SceneFrame &frame, const ViewFrame &view) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<SceneDepth, CloudMap> in,
                 Writes<SceneColor, SkyPass> out);
 };
@@ -408,6 +433,7 @@ struct WaterPass
 APASS(name = "draw-blended", after = "sky")
 struct BlendedPass
 {
+    bool Wanted(const SceneFrame &frame, const ViewFrame &view) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<BlendedDraws, SceneDepth> in,
                 Writes<SceneColor, MeshPass, DrawStats> out);
 };

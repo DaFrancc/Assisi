@@ -141,6 +141,19 @@ void AddLocalCandidates(std::span<const LightingSystem::LocalLight> pool, Render
 }
 } // namespace
 
+ViewFeatures ResolveViewFeatures(const SceneSettings &settings, const Camera &camera)
+{
+    const Core::Bitmask<CameraFeature, std::uint8_t> drawn = camera.features;
+    return ViewFeatures{.lodBias = camera.lodBias > 0.f && std::isfinite(camera.lodBias) ? camera.lodBias : 1.f,
+                        .sunShadows = settings.shadows.sun.enabled && drawn.Has(CameraFeature::Shadows),
+                        .localShadows = settings.shadows.local.enabled && drawn.Has(CameraFeature::Shadows),
+                        .ambientOcclusion = settings.ssao.enabled && drawn.Has(CameraFeature::AmbientOcclusion),
+                        .sky = drawn.Has(CameraFeature::Sky),
+                        .fog = settings.fogEnabled && drawn.Has(CameraFeature::Fog),
+                        .water = settings.waterEnabled && drawn.Has(CameraFeature::Water),
+                        .seeThrough = drawn.Has(CameraFeature::SeeThrough)};
+}
+
 // --- skin -------------------------------------------------------------------
 
 bool SkinPass::Initialize(const ScenePassInit &init)
@@ -354,7 +367,8 @@ bool SunShadowPass::Wanted(const SceneFrame &frame) const
 {
     // No shadow-casting sun means no allocation and no pass — which is the
     // blank-scene rule, and the reason this is a scene fact as well as a setting.
-    return frame.settings.shadows.sun.enabled && !failed && frame.shadowSun.has_value();
+    // No view sampling them means the same.
+    return frame.sunShadowsSampled && !failed && frame.shadowSun.has_value();
 }
 
 void SunShadowPass::Release()
@@ -508,7 +522,7 @@ bool ShadowAtlasPass::Wanted(const SceneFrame &frame) const
 {
     // No shadow-casting local light means no allocation and no pass — the same
     // blank-scene rule the cascades keep.
-    return frame.settings.shadows.local.enabled && !failed &&
+    return frame.localShadowsSampled && !failed &&
            !(frame.shadowSpots.empty() && frame.shadowPoints.empty());
 }
 
@@ -696,6 +710,18 @@ void FrameConstantsPass::Record(
         cloudShadow.area.y -= static_cast<float>(fromMain.z);
         cloudShadow.outside.y = static_cast<float>(view.viewOrigin.y);
     }
+    // A view without shadows takes no lookup into any of them, though another
+    // view may have had them drawn.
+    Render::MeshPass::LocalShadowFrame localFrame = local.frame;
+    if (!view.features.sunShadows)
+    {
+        sunFrame.fit = nullptr;
+        cloudShadow.area.w = 0.f;
+    }
+    if (!view.features.localShadows)
+    {
+        localFrame.active = false;
+    }
     meshPass.UpdateFrameConstants(
         rec.CommandList(),
         Render::MeshPass::FrameConstantsParams{.viewProjection = view.projection * view.view,
@@ -711,7 +737,7 @@ void FrameConstantsPass::Record(
                                                                            reflections.probe),
                                                .sunShadows = sunFrame,
                                                .shadowEye = shadowEye,
-                                               .localShadows = local.frame,
+                                               .localShadows = localFrame,
                                                .fog = view.fog,
                                                .fogVolumes = view.fogVolumeLanes,
                                                .screenOcclusion = view.occlusion.texture != nullptr,
@@ -788,11 +814,12 @@ void LitPass::Record(Recorder &rec, const SceneFrame & /*frame*/, const ViewFram
 
 // --- sky --------------------------------------------------------------------
 
-bool SkyBackgroundPass::Wanted(const SceneFrame &frame) const
+bool SkyBackgroundPass::Wanted(const SceneFrame &frame, const ViewFrame &view) const
 {
     // A foggy level with no sky still draws the pass, in the fog's own colour,
-    // so that what the fog fades into is what is behind it.
-    return frame.skyAvailable && (frame.sky.status == SkyStatus::Ready || frame.fogged);
+    // so that what the fog fades into is what is behind it. A camera without
+    // the sky keeps its clear colour behind everything.
+    return view.features.sky && frame.skyAvailable && (frame.sky.status == SkyStatus::Ready || view.fogged);
 }
 
 void SkyBackgroundPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<SceneDepth, CloudMap> in,
@@ -809,7 +836,7 @@ void SkyBackgroundPass::Record(Recorder &rec, const SceneFrame &frame, const Vie
     const glm::vec3 eye = Math::TranslationOf(view.cameraInView);
     if (frame.sky.status == SkyStatus::Ready)
     {
-        skyPass.SetFog(frame.fogged ? Render::SkyFogMode::BelowHorizon : Render::SkyFogMode::Off, frame.fogColor);
+        skyPass.SetFog(view.fogged ? Render::SkyFogMode::BelowHorizon : Render::SkyFogMode::Off, frame.fogColor);
         skyPass.Draw(rec.Frame(out.Get<SceneColor>()), viewProjection, eye, frame.sky.sun, frame.sky.moon,
                      frame.sky.settings);
     }
@@ -870,9 +897,9 @@ bool WaterWavesPass::Record(Recorder &rec, const SceneFrame &frame, Writes<Water
     return true;
 }
 
-bool WaterPass::Wanted(const SceneFrame &frame, const ViewFrame &view) const
+bool WaterPass::Wanted(const SceneFrame & /*frame*/, const ViewFrame &view) const
 {
-    return frame.settings.waterEnabled && view.water != nullptr && !view.water->bodies.empty();
+    return view.features.water && view.water != nullptr && !view.water->bodies.empty();
 }
 
 void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
@@ -893,6 +920,11 @@ void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &
 }
 
 // --- draw-blended -----------------------------------------------------------
+
+bool BlendedPass::Wanted(const SceneFrame & /*frame*/, const ViewFrame &view) const
+{
+    return view.features.seeThrough;
+}
 
 void BlendedPass::Record(Recorder &rec, const SceneFrame & /*frame*/, const ViewFrame & /*view*/,
                          Reads<BlendedDraws, SceneDepth> in, Writes<SceneColor, MeshPass, DrawStats> out)

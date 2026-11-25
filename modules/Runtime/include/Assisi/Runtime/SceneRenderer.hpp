@@ -91,6 +91,8 @@ private:
     Render::WaterFrame _waterFrame;
     // The point the view's lit pass is measured from: its camera.
     glm::dvec3 _viewOrigin{0.0};
+    // What the view draws this frame, set before anything is gathered for it.
+    Passes::ViewFeatures _features;
     // Latched so fog volumes past what one view draws are reported when they
     // first are, not at the frame rate; each view's own, so two views that
     // disagree don't report it every frame.
@@ -229,7 +231,7 @@ public:
     /// A change redraws every kept shadow map, which hold casters at the
     /// levels the old settings chose.
     void SetLodSettings(const Runtime::LodSettings &settings);
-    [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSelector.Settings(); }
+    [[nodiscard]] const Runtime::LodSettings &LodSettings() const { return _lodSettings; }
 
     /// @brief Draw @p entity at @p level whatever its size asks for, or release
     /// the pin with a negative @p level. One entity at a time.
@@ -481,13 +483,13 @@ private:
 
     /// @brief Hold @p view's scene distance target and occlusion's targets, at
     /// @p width by @p height over @p depthTexture: the distance while
-    /// occlusion or @p waterReadsDistance wants it,
-    /// occlusion's own while its setting is on. Releases what neither wants,
-    /// and turns occlusion's setting off if its targets fail.
+    /// occlusion or the water @p view gathered wants it, occlusion's own while
+    /// the view draws it. Releases what neither wants, and turns occlusion's
+    /// setting off if its targets fail.
     ///
     /// @return the occlusion's texture, empty when this frame runs none.
     [[nodiscard]] ScreenOcclusion PrepareScreenOcclusion(SceneView &view, uint32_t width, uint32_t height,
-                                                         nvrhi::ITexture *depthTexture, bool waterReadsDistance);
+                                                         nvrhi::ITexture *depthTexture);
 
     /// @brief Measure this frame from the camera at @p cameraWorld: the lit pass
     /// from the camera itself, the shadow maps from the centre of its world
@@ -558,12 +560,14 @@ private:
                                       int32_t height, const Camera &camera);
 
     /// @brief Gather into @p view the fog volumes its camera sees through
-    /// @p viewProjection, on a @p width by @p height picture.
+    /// @p viewProjection, on a @p width by @p height picture: none when the
+    /// view draws no fog.
     void GatherFogVolumesFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, uint32_t width,
                              uint32_t height);
 
     /// @brief Gather into @p view the water its camera sees through
-    /// @p viewProjection, out to @p drawDistance.
+    /// @p viewProjection, out to @p drawDistance: none when the view draws no
+    /// water.
     void GatherWaterFor(ECS::Scene &scene, SceneView &view, const glm::mat4 &viewProjection, float drawDistance);
 
     /// @brief Keep a texture view for each TextureCamera in @p scene, at its
@@ -594,10 +598,15 @@ private:
     /// measured from its origin.
     void ChooseTextureViews(ECS::Scene &scene, const glm::mat4 &mainViewProjection);
 
-    /// @brief Gather what @p texture's camera sees, and the frame its passes
-    /// read. After the main view's lights are gathered, which it shares.
+    /// @brief Gather what @p texture's camera sees under the level's @p fog,
+    /// and the frame its passes read. After the main view's lights are
+    /// gathered, which it shares.
     [[nodiscard]] Passes::ViewFrame PrepareTextureView(ECS::Scene &scene, TextureView &texture,
-                                                       const FogResolution &fog, bool fogged);
+                                                       const FogResolution &fog);
+
+    /// @brief Give @p selector the game's level-of-detail settings with its
+    /// camera's @p bias. True when they changed.
+    bool ApplyLodBias(LodSelector &selector, float bias) const;
 
     /// @brief Clear every picture made since the last frame to black, and leave
     /// it readable.
@@ -714,6 +723,8 @@ private:
     // draw path, both shadow gathers and the selection outline, so every one of
     // them draws the same instance as the same geometry.
     LodSelector &_lodSelector;
+    // The game's level-of-detail settings, before each camera's bias.
+    Runtime::LodSettings _lodSettings;
 
     /// Whether the GPU cull is what draws the scene: asked for, and able to.
     /// DrawScene falls back to the CPU path otherwise, and whatever follows the

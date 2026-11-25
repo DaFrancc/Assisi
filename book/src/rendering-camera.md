@@ -14,6 +14,8 @@ local −Z axis.
 | `fovDegrees` | The **field of view**: how much of the scene fits on screen from top to bottom, as an angle. A smaller value zooms in. Default 60. |
 | `nearZ` | The **near plane**: anything closer to the camera than this, in metres, is not drawn. Default 0.1. |
 | `farZ` | The **far plane**, or draw distance: anything further than this, in metres, is not drawn. Default 200. |
+| `lodBias` | Multiplies the game's [level-of-detail](rendering-lod.md) bias for this camera. Below 1, it switches to simpler meshes sooner. Default 1. |
+| `features` | Which features this camera draws. Default `All`. See [Making a camera cheaper](#making-a-camera-cheaper). |
 | `isActive` | Whether this is the camera the game looks through. |
 
 The field of view is vertical. On a wider window the player sees more to the
@@ -239,6 +241,62 @@ A few things to know:
 The editor draws texture cameras while you edit, too. The sandbox level,
 `levels/Test.alvl`, has a security screen beside the monitor that shows a
 camera watching the player.
+
+## Making a camera cheaper
+
+Every camera can leave features out of what it draws. This matters most for
+texture cameras: a small security monitor in a corner doesn't need everything
+the player's own view has, and every feature it skips is time saved on each
+frame it draws.
+
+`Camera`'s `features` field is a set of these. A camera draws the features in
+the set and skips the rest:
+
+| Feature | When left out |
+|---|---|
+| `Shadows` | No sun, lamp or cloud shadows. |
+| `AmbientOcclusion` | No darkening in creases and corners. |
+| `Sky` | Black behind everything instead of the sky. |
+| `Fog` | No level fog and no fog volumes. |
+| `Water` | No oceans, lakes or rivers. |
+| `SeeThrough` | No see-through surfaces, such as glass. |
+
+Two more fields make a camera cheaper:
+
+- **`farZ`**, its draw distance. Anything further away isn't drawn at all.
+- **`lodBias`**, which makes it switch to simpler meshes sooner. 0.5 picks
+  each mesh's simpler versions at half the distance it otherwise would.
+
+A camera can only turn a feature off. If the player has turned shadows off in
+the graphics settings, no camera draws them, whatever its `features` say.
+
+The player's own camera takes the same fields. A level that never shows water
+can leave `Water` out of its camera, but the graphics settings are usually the
+better place for that choice.
+
+For example, a cheap security monitor: the camera skips shadows, ambient
+occlusion and see-through surfaces, draws 30 m, and uses simpler meshes
+sooner. In a level file, its `Camera` reads:
+
+```json
+"Camera": {
+    "fovDegrees": 70.0,
+    "farZ": 30.0,
+    "lodBias": 0.5,
+    "features": ["Sky", "Fog", "Water"]
+}
+```
+
+Or from code:
+
+```cpp
+using namespace Assisi;
+
+Runtime::Camera &camera = *scene.GetMut<Runtime::Camera>(monitorCamera);
+camera.features = camera.features.Without(Runtime::CameraFeature::Shadows)
+                      .Without(Runtime::CameraFeature::AmbientOcclusion)
+                      .Without(Runtime::CameraFeature::SeeThrough);
+```
 
 ## Camera paths for benchmarks
 
