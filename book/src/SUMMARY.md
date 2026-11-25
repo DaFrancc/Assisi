@@ -14,6 +14,7 @@
 - [Entities and components](entities-and-components.md)
 - [Your first system](first-system.md)
 - [Your own components](your-own-components.md)
+- [Blending and smoothing values](math.md)
 - [Splines](splines.md)
 - [Strings](strings.md)
 - [Input](input.md)

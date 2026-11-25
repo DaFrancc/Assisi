@@ -2,6 +2,8 @@
 
 #include <Assisi/Render/Exposure.hpp>
 
+#include <Assisi/Math/Interpolate.hpp>
+
 #include <cmath>
 
 namespace Assisi::Render
@@ -88,8 +90,12 @@ float TargetExposureStops(float meteredLog2, const ExposureSettings &settings)
 
 float AdaptExposureStops(float current, float target, float rate, float seconds)
 {
-    const float covered = 1.0f - std::exp(-std::max(rate, 0.0f) * std::max(seconds, 0.0f));
-    return current + (target - current) * covered;
+    // A rate of 0 never adapts; Damp reads a time constant of 0 as arriving at once.
+    if (rate <= 0.0f)
+    {
+        return current;
+    }
+    return Math::Damp(current, target, 1.0f / rate, seconds);
 }
 
 } // namespace Assisi::Render
