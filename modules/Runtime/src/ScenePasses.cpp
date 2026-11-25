@@ -116,9 +116,10 @@ void AddLocalCandidates(std::span<const LightingSystem::LocalLight> pool, Render
                         const SceneFrame &frame, std::vector<Render::LocalShadowCandidate> &candidates)
 {
     // The lights and their tiles are measured from the shadow origin, so the
-    // camera they are scored against is too.
-    const glm::vec3 cameraPosition = Math::TranslationOf(frame.cameraInShadow);
-    const float tanHalfFovY = std::tan(glm::radians(frame.camera.fovDegrees) * 0.5f);
+    // camera they are scored against is too. The atlas is drawn once a frame,
+    // so that camera is the main one.
+    const glm::vec3 cameraPosition = Math::TranslationOf(frame.main.cameraInShadow);
+    const float tanHalfFovY = std::tan(glm::radians(frame.main.camera.fovDegrees) * 0.5f);
     for (const LightingSystem::LocalLight &light : pool)
     {
         candidates.push_back(Render::LocalShadowCandidate{
@@ -161,7 +162,7 @@ void SkinPass::Record(Recorder &rec, const SceneFrame &frame, Writes<PosedVertic
 
 // --- cluster-rebuild --------------------------------------------------------
 
-void ClusterRebuildPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
+void ClusterRebuildPass::Record(Recorder &rec, const SceneFrame & /*frame*/, const ViewFrame &view,
                                 Writes<LightingSystem> out)
 {
     // Keep the froxel grid aligned with the render projection; a drift (window
@@ -172,8 +173,8 @@ void ClusterRebuildPass::Record(Recorder &rec, const SceneFrame &frame, const Vi
     {
         return;
     }
-    out.Get<LightingSystem>().Resize(rec.CommandList(), static_cast<int32_t>(frame.width),
-                                     static_cast<int32_t>(frame.height), frame.camera.nearZ, frame.camera.farZ,
+    out.Get<LightingSystem>().Resize(rec.CommandList(), static_cast<int32_t>(view.width),
+                                     static_cast<int32_t>(view.height), view.camera.nearZ, view.camera.farZ,
                                      view.projection);
     builtFor = view.projection;
 }
@@ -231,16 +232,17 @@ bool CloudMapPass::Record(Recorder &rec, const SceneFrame &frame, Writes<CloudMa
 
     // The fog's constants carry the sky's scatter whenever there is a sky,
     // with or without a Fog, and the clouds are seen against that sky.
-    Render::CloudMapConstants map{.clouds = Render::PlaceClouds(settings, frame.viewOrigin, motion,
+    // Once a frame, so placed around the main camera.
+    Render::CloudMapConstants map{.clouds = Render::PlaceClouds(settings, frame.main.viewOrigin, motion,
                                                                 frame.settings.cloudQuality.steps,
                                                                 frame.settings.cloudQuality.resolution),
-                                  .fog = frame.fog};
+                                  .fog = frame.main.fog};
     Render::LightClouds(map.clouds, frame.sky.sun, frame.sky.moon, frame.sky.settings);
     const Render::SkyAmbient clear = Render::AmbientFromSky(frame.sky.sun, frame.sky.moon, frame.sky.settings);
     Render::AmbientLightClouds(map.clouds, glm::vec3(clear.sky), glm::vec3(clear.ground));
 
     const Render::CloudShadowPlacement placement =
-        Render::PlaceCloudShadow(settings, frame.viewOrigin, frame.sky.light.direction);
+        Render::PlaceCloudShadow(settings, frame.main.viewOrigin, frame.sky.light.direction);
     const Render::CloudShadowMapConstants shadow{
         .clouds = map.clouds,
         .area = glm::vec4(placement.centre, Render::kCloudShadowWidth, static_cast<float>(Render::kCloudShadowSteps)),
@@ -250,7 +252,7 @@ bool CloudMapPass::Record(Recorder &rec, const SceneFrame &frame, Writes<CloudMa
     // After Render: a reallocation swaps the textures, and each pass that reads
     // them rebuilds its binding set when it notices.
     out.Get<CloudMap>() = CloudMap{.shadowConstants = Render::MakeCloudShadowConstants(
-                                       settings, placement, static_cast<float>(frame.viewOrigin.y)),
+                                       settings, placement, static_cast<float>(frame.main.viewOrigin.y)),
                                    .drift = motion.drift,
                                    .sky = maps.MapTexture(),
                                    .shadow = maps.ShadowTexture()};
@@ -307,8 +309,9 @@ bool SkyProbePass::Record(Recorder &rec, const SceneFrame &frame, Reads<CloudMap
     {
         inputs.clouds = Render::SkyProbeClouds{
             .settings = sky.clouds.settings,
-            .across = glm::dvec2(frame.viewOrigin.x, frame.viewOrigin.z) - clouds.drift,
-            .heightAbove = static_cast<float>(static_cast<double>(sky.clouds.settings.baseHeight) - frame.viewOrigin.y),
+            .across = glm::dvec2(frame.main.viewOrigin.x, frame.main.viewOrigin.z) - clouds.drift,
+            .heightAbove =
+                static_cast<float>(static_cast<double>(sky.clouds.settings.baseHeight) - frame.main.viewOrigin.y),
             .present = true};
     }
     if (probe.NeedsBake(inputs, sky.jumpSerial))
@@ -361,7 +364,7 @@ void SunShadowPass::Release()
     fit = Render::CascadeFit{};
 }
 
-bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame & /*view*/,
+bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
                            Reads<PosedVertices> /*in*/,
                            Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out)
 {
@@ -378,17 +381,17 @@ bool SunShadowPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFra
         return false;
     }
     const LightingSystem::ShadowSun &sun = *frame.shadowSun;
-    const glm::vec3 sampledFrom = Math::TranslationOf(frame.cameraInShadow);
+    const glm::vec3 sampledFrom = Math::TranslationOf(view.cameraInShadow);
 
     // Fitted, snapped and kept in the shadow origin's frame, which holds still
     // while the camera moves: a cascade fitted from the camera would slide its
     // texels with every step and never be kept.
     Render::CascadeFitParams fitParams;
-    fitParams.cameraView = ViewMatrix(frame.cameraInShadow);
-    fitParams.tanHalfFovY = std::tan(glm::radians(frame.camera.fovDegrees) * 0.5f);
-    fitParams.aspectRatio = AspectRatio(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height));
-    fitParams.nearZ = frame.camera.nearZ;
-    fitParams.farZ = frame.camera.farZ;
+    fitParams.cameraView = ViewMatrix(view.cameraInShadow);
+    fitParams.tanHalfFovY = std::tan(glm::radians(view.camera.fovDegrees) * 0.5f);
+    fitParams.aspectRatio = AspectRatio(static_cast<int32_t>(view.width), static_cast<int32_t>(view.height));
+    fitParams.nearZ = view.camera.nearZ;
+    fitParams.farZ = view.camera.farZ;
     fitParams.lightDirection = sun.direction;
     // The pass's own copy, not the setting: Configure sanitized it, and the fit
     // has to agree with the array that was actually allocated.
@@ -520,7 +523,8 @@ void ShadowAtlasPass::Release()
 bool ShadowAtlasPass::Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> /*in*/,
                              Writes<LocalShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out)
 {
-    const glm::vec3 cameraPosition = Math::TranslationOf(frame.cameraInShadow);
+    // Once a frame, so measured from the main camera.
+    const glm::vec3 cameraPosition = Math::TranslationOf(frame.main.cameraInShadow);
     const Render::ShadowSettings &settings = frame.settings.shadows;
     stats = Render::LocalShadowPass::Stats{};
     selection.Clear();
@@ -664,16 +668,16 @@ void FrameConstantsPass::Record(
     meshPass.SetShadowAtlas(local.atlas);
     meshPass.SetShadowViewTable(in.Get<ShadowDepthRenderer>().ViewTable());
     meshPass.SetEnvironment(reflections.specularCube);
-    meshPass.SetAmbientOcclusion(frame.occlusion.texture);
+    meshPass.SetAmbientOcclusion(view.occlusion.texture);
     meshPass.SetCloudShadow(clouds.shadow);
     meshPass.UpdateFrameConstants(
         rec.CommandList(),
         Render::MeshPass::FrameConstantsParams{.viewProjection = view.projection * view.view,
                                                .view = view.view,
-                                               .screenWidth = frame.width,
-                                               .screenHeight = frame.height,
-                                               .nearZ = frame.camera.nearZ,
-                                               .farZ = frame.camera.farZ,
+                                               .screenWidth = view.width,
+                                               .screenHeight = view.height,
+                                               .nearZ = view.camera.nearZ,
+                                               .farZ = view.camera.farZ,
                                                .dirLightCount = in.Get<LightingSystem>().DirLightCount(),
                                                .debugView = frame.settings.debugView,
                                                .shadowDebugView = frame.settings.shadowDebugView,
@@ -681,9 +685,9 @@ void FrameConstantsPass::Record(
                                                                            reflections.probe),
                                                .sunShadows = sun.frame,
                                                .localShadows = local.frame,
-                                               .fog = frame.fog,
-                                               .fogVolumes = frame.fogVolumeLanes,
-                                               .screenOcclusion = frame.occlusion.texture != nullptr,
+                                               .fog = view.fog,
+                                               .fogVolumes = view.fogVolumeLanes,
+                                               .screenOcclusion = view.occlusion.texture != nullptr,
                                                .cloudShadow = clouds.shadowConstants});
 }
 
@@ -701,9 +705,9 @@ void DepthPrepassPass::Record(Recorder &rec, const SceneFrame &frame, const View
                                                      .target = out.Get<SceneDepth>().target,
                                                      .view = view.view,
                                                      .projection = view.projection,
-                                                     .origin = frame.viewOrigin,
-                                                     .nearZ = frame.camera.nearZ,
-                                                     .farZ = frame.camera.farZ,
+                                                     .origin = view.viewOrigin,
+                                                     .nearZ = view.camera.nearZ,
+                                                     .farZ = view.camera.farZ,
                                                      .frustumCulling = settings.frustumCulling,
                                                      .sortDraws = settings.sortDraws,
                                                      .gpuCulling = settings.gpuCulling,
@@ -716,9 +720,9 @@ void DepthPrepassPass::Record(Recorder &rec, const SceneFrame &frame, const View
 
 // --- scene-distance and ssao ------------------------------------------------
 
-bool DistancePass::Wanted(const SceneFrame &frame) const
+bool DistancePass::Wanted(const SceneFrame & /*frame*/, const ViewFrame &view) const
 {
-    return frame.occlusion.texture != nullptr || frame.waterReadsDistance;
+    return view.occlusion.texture != nullptr || view.waterReadsDistance;
 }
 
 void DistancePass::Record(Recorder &rec, const SceneFrame & /*frame*/, const ViewFrame &view,
@@ -727,9 +731,9 @@ void DistancePass::Record(Recorder &rec, const SceneFrame & /*frame*/, const Vie
     out.Get<SceneDistancePass>().Render(rec.CommandList(), view.projection);
 }
 
-bool OcclusionPass::Wanted(const SceneFrame &frame) const
+bool OcclusionPass::Wanted(const SceneFrame & /*frame*/, const ViewFrame &view) const
 {
-    return frame.occlusion.texture != nullptr;
+    return view.occlusion.texture != nullptr;
 }
 
 void OcclusionPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
@@ -738,7 +742,7 @@ void OcclusionPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFra
     const SsaoPass &ssao = out.Get<SsaoPass>();
     rec.Begin(kOcclusionTimer);
     ssao.RenderOcclusion(rec.CommandList(), Render::SsaoPass::Frame{.projection = view.projection,
-                                                                    .farZ = frame.camera.farZ,
+                                                                    .farZ = view.camera.farZ,
                                                                     .settings = frame.settings.ssao});
     rec.Begin(kBlurTimer);
     ssao.RenderBlur(rec.CommandList());
@@ -772,7 +776,7 @@ void SkyBackgroundPass::Record(Recorder &rec, const SceneFrame &frame, const Vie
     // own world and a light that moves takes the sky with it.
     SkyPass &skyPass = out.Get<SkyPass>();
     skyPass.SetClouds(in.Get<CloudMap>().sky);
-    skyPass.SetFogVolumes(frame.fog, frame.fogVolumeLanes);
+    skyPass.SetFogVolumes(view.fog, view.fogVolumeLanes);
     const glm::mat4 viewProjection = view.projection * view.view;
     const glm::vec3 eye = Math::TranslationOf(view.cameraInView);
     if (frame.sky.status == SkyStatus::Ready)
@@ -817,7 +821,9 @@ bool WaterWavesPass::OnTargetsChanged(const nvrhi::FramebufferInfo &targets)
 
 bool WaterWavesPass::Wanted(const SceneFrame &frame) const
 {
-    return frame.settings.waterEnabled && frame.water != nullptr && frame.water->placed > 0u;
+    // Once a frame, so the water the main camera sees is what is brought up
+    // to time.
+    return frame.settings.waterEnabled && frame.main.water != nullptr && frame.main.water->placed > 0u;
 }
 
 void WaterWavesPass::Release()
@@ -828,8 +834,8 @@ void WaterWavesPass::Release()
 bool WaterWavesPass::Record(Recorder &rec, const SceneFrame &frame, Writes<WaterFields> out)
 {
     // With nothing in view the textures only age, and nothing is recorded.
-    nvrhi::ICommandList *commandList = frame.water->bodies.empty() ? nullptr : rec.CommandList();
-    if (!renderer.Simulate(commandList, *frame.water, frame.waterSeconds))
+    nvrhi::ICommandList *commandList = frame.main.water->bodies.empty() ? nullptr : rec.CommandList();
+    if (!renderer.Simulate(commandList, *frame.main.water, frame.waterSeconds))
     {
         return false;
     }
@@ -837,12 +843,12 @@ bool WaterWavesPass::Record(Recorder &rec, const SceneFrame &frame, Writes<Water
     return true;
 }
 
-bool WaterPass::Wanted(const SceneFrame &frame) const
+bool WaterPass::Wanted(const SceneFrame &frame, const ViewFrame &view) const
 {
-    return frame.settings.waterEnabled && frame.water != nullptr && !frame.water->bodies.empty();
+    return frame.settings.waterEnabled && view.water != nullptr && !view.water->bodies.empty();
 }
 
-void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame & /*view*/,
+void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
                        Reads<WaterFields, SceneDistance, SceneDistancePass, FrameConstants, LightingSystem> in,
                        Writes<SceneColor, MeshPass> out)
 {
@@ -852,8 +858,8 @@ void WaterPass::Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &
     {
         return;
     }
-    renderer->Draw(rec.Frame(out.Get<SceneColor>()), *frame.water,
-                   Render::WaterDrawView{.camera = frame.viewOrigin,
+    renderer->Draw(rec.Frame(out.Get<SceneColor>()), *view.water,
+                   Render::WaterDrawView{.camera = view.viewOrigin,
                                          .seconds = frame.waterSeconds,
                                          .frameBindings = out.Get<MeshPass>().FrameBindingSet(),
                                          .sceneDistance = distance});

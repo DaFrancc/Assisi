@@ -6,9 +6,10 @@
 ///
 /// reflectgen reads this header and writes ScenePassGraph, which records the
 /// passes in the order their Reads<> and Writes<> fix (see
-/// Assisi/Render/FramePass.hpp); SceneRenderer owns the graph and the objects
-/// SceneImports hands it. A new pass is a struct here: what it reads and writes
-/// puts it in the frame.
+/// Assisi/Render/FramePass.hpp): those run once a frame first, then each view's.
+/// SceneRenderer owns the graph and the objects SceneImports hands it; each
+/// SceneView owns its pass set and the objects SceneViewImports hands it. A new
+/// pass is a struct here: what it reads and writes puts it in the frame.
 
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -85,6 +86,40 @@ struct SceneSettings
     bool gpuCulling = false;
 };
 
+/// @brief One view of the scene: the camera's, and later each eye's. What a
+/// pass run per view reads about the camera it draws for, all of it decided
+/// before the view's first pass runs.
+struct ViewFrame
+{
+    glm::mat4 projection{1.f};
+    glm::mat4 view{1.f};
+    /// The camera measured from the lit pass's origin: its rotation alone.
+    glm::mat4 cameraInView{1.f};
+    /// The camera measured from the shadow origin, which its cascades are
+    /// fitted from.
+    glm::mat4 cameraInShadow{1.f};
+    /// The lit pass's origin: the camera.
+    glm::dvec3 viewOrigin{0.0};
+    /// The water in view.
+    const Render::WaterFrame *water = nullptr;
+    ScreenOcclusion occlusion;
+    /// The level's fog as this camera sees it: from its height, out to its
+    /// draw distance.
+    Render::FogConstants fog;
+    /// The camera's lens, its far plane drawn in to the fog.
+    Camera camera;
+    /// Which of the frame's fog volumes this view's pixels test.
+    glm::uvec4 fogVolumeLanes{0u};
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    /// The blueprint instance the camera belongs to, whose own hidden meshes it
+    /// does not draw.
+    ECS::InstanceId viewerInstance;
+    /// Whether the water reads the scene's distance this view, which then
+    /// runs whether or not ambient occlusion does.
+    bool waterReadsDistance = false;
+};
+
 /// @brief What the scene's passes read and never write in a frame, all of it
 /// decided before the first pass runs.
 struct SceneFrame
@@ -93,49 +128,27 @@ struct SceneFrame
     ECS::Scene &scene;
     const SkyResolution &sky;
     const SceneSettings &settings;
-    /// The lit pass's origin, the camera; and the shadow maps', its cell's centre.
-    glm::dvec3 viewOrigin{0.0};
+    /// The main camera's view. A pass run once a frame that is placed by a
+    /// camera, such as the clouds around it or the shadow atlas scoring lights
+    /// by how much of the screen they cover, is placed by this one; a pass run
+    /// per view reads its own view instead.
+    const ViewFrame &main;
+    /// The shadow maps' origin: the main camera's cell's centre.
     glm::dvec3 shadowOrigin{0.0};
     std::span<const LightingSystem::LocalLight> shadowSpots;
     std::span<const LightingSystem::LocalLight> shadowPoints;
     /// Casters moving this frame, and those whose shadows changed sides.
     std::span<const Render::ShadowMover> dynamicCasters;
     std::span<const Render::ShadowMover> casterInvalidations;
-    /// The water in view, and the time its waves are drawn at on the shared
-    /// clock.
-    const Render::WaterFrame *water = nullptr;
+    /// The time the water's waves are drawn at on the shared clock.
     double waterSeconds = 0.0;
-    ScreenOcclusion occlusion;
-    Render::FogConstants fog;
-    /// The camera measured from the shadow origin.
-    glm::mat4 cameraInShadow{1.f};
     std::optional<LightingSystem::ShadowSun> shadowSun;
-    /// The camera's lens, its far plane drawn in to the fog.
-    Camera camera;
-    glm::uvec4 fogVolumeLanes{0u};
     glm::vec3 fogColor{1.f};
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
     std::uint32_t shadowFrameIndex = 0;
     /// Whether the level's fog is drawn.
     bool fogged = false;
     /// Whether the sky pass built, which the clouds and the probe draw through.
     bool skyAvailable = false;
-    /// Whether the water reads the scene's distance this frame, which then
-    /// runs whether or not ambient occlusion does.
-    bool waterReadsDistance = false;
-};
-
-/// @brief One view of the scene: the camera's, and later each eye's.
-struct ViewFrame
-{
-    glm::mat4 projection{1.f};
-    glm::mat4 view{1.f};
-    /// The camera measured from the lit pass's origin: its rotation alone.
-    glm::mat4 cameraInView{1.f};
-    /// The blueprint instance the camera belongs to, whose own hidden meshes it
-    /// does not draw.
-    ECS::InstanceId viewerInstance;
 };
 
 /// @brief What the scene's passes start from.
@@ -321,7 +334,7 @@ struct DepthPrepassPass
 APASS(name = "scene-distance")
 struct DistancePass
 {
-    bool Wanted(const SceneFrame &frame) const;
+    bool Wanted(const SceneFrame &frame, const ViewFrame &view) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<SceneDepth> in,
                 Writes<SceneDistance, SceneDistancePass> out);
 };
@@ -331,7 +344,7 @@ struct DistancePass
 APASS(name = "ssao", timers = {"ssao-occlusion", "ssao-blur"})
 struct OcclusionPass
 {
-    bool Wanted(const SceneFrame &frame) const;
+    bool Wanted(const SceneFrame &frame, const ViewFrame &view) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<SceneDistance> in,
                 Writes<Occlusion, SsaoPass> out);
 };
@@ -355,8 +368,8 @@ struct SkyBackgroundPass
                 Writes<SceneColor, SkyPass> out);
 };
 
-/// @brief Brings every Ocean and Lake in view to this frame's time: their
-/// waves' FFT and its mips.
+/// @brief Brings every Ocean and Lake the main camera sees to this frame's
+/// time: their waves' FFT and its mips.
 ///
 /// On while the level holds water, in view or not, so a body's textures are
 /// kept while the camera looks away; off, they are freed.
@@ -377,7 +390,7 @@ struct WaterWavesPass
 APASS(name = "draw-water", after = "sky", before = "draw-blended")
 struct WaterPass
 {
-    bool Wanted(const SceneFrame &frame) const;
+    bool Wanted(const SceneFrame &frame, const ViewFrame &view) const;
     void Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view,
                 Reads<WaterFields, SceneDistance, SceneDistancePass, FrameConstants, LightingSystem> in,
                 Writes<SceneColor, MeshPass> out);

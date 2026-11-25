@@ -78,6 +78,13 @@ private:
     SceneDepth _sceneDepth;
     LodSelector _lodSelector;
     DrawStats _drawStats;
+    // What the view's camera sees this frame, gathered before its passes and
+    // kept for their capacity: the fog volumes its pixels test and the water
+    // in view.
+    Render::FogVolumeFrame _fogVolumeFrame;
+    Render::WaterFrame _waterFrame;
+    // The point the view's lit pass is measured from: its camera.
+    glm::dvec3 _viewOrigin{0.0};
 };
 
 class SceneRenderer
@@ -525,9 +532,8 @@ private:
     double _simulationSeconds = 0.0;
     // See SetWaterSeconds.
     double _waterSeconds = 0.0;
-    // The water in view this frame, gathered before the passes and kept for
-    // its capacity.
-    Render::WaterFrame _waterFrame;
+    // The water the main view sees this frame: the main view's.
+    Render::WaterFrame &_waterFrame;
     // See SetViewingCamera.
     ECS::Entity _viewingCamera = ECS::NullEntity;
     // Entities that lost their Transform or MeshRenderer since the last look,
@@ -536,15 +542,17 @@ private:
     // Counts frames for the atlas's throttle phase and its tile ages. Its own
     // counter rather than the scene's tick, which advances per write.
     std::uint32_t _shadowFrameIndex = 0;
-    // What this frame is measured from (see PlaceOrigins), and the cell the
-    // kept shadow maps were measured from; none before the first frame.
-    glm::dvec3 _viewOrigin{0.0};
+    // What the main view is measured from (see PlaceOrigins): the main view's.
+    glm::dvec3 &_viewOrigin;
+    // The cell the kept shadow maps were measured from, and its centre; none
+    // before the first frame.
     glm::dvec3 _shadowOrigin{0.0};
     std::optional<glm::ivec3> _shadowCell;
-    // The placed fog volumes, gathered each frame into _fogVolumeFrame and read
-    // by both the mesh pass and the sky pass.
+    // The placed fog volumes in view, gathered each frame into the main view's
+    // _fogVolumeFrame and uploaded into the buffers both the mesh pass and the
+    // sky pass read.
     Render::FogVolumeBuffers _fogVolumeBuffers;
-    Render::FogVolumeFrame _fogVolumeFrame;
+    Render::FogVolumeFrame &_fogVolumeFrame;
     // Drawn after the opaque geometry, into the pixels it left at the depth
     // clear, and captured into the reflection probe. See SkyPass for why that
     // ordering is the cheap one.
