@@ -48,6 +48,7 @@ add_executable(Assisi-Runtime-Tests
   TestLightingSystem.cpp
   TestLodSelection.cpp
   TestSkyResolve.cpp
+  TestTextureCamera.cpp
   TestTimeOfDay.cpp
   TestWaterGather.cpp
   TestWindResolve.cpp

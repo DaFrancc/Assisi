@@ -6,6 +6,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/ECS/WorldMatrix.hpp>
 #include <Assisi/Runtime/SkyResolve.hpp>
+#include <Assisi/Runtime/TextureCamera.hpp>
 
 namespace Assisi::App
 {
@@ -16,7 +17,8 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
 
     for (auto [entity, sceneCamera] : scene.Query<Runtime::Camera>())
     {
-        if (!sceneCamera.isActive)
+        // A texture camera draws into its picture, never to the screen.
+        if (!sceneCamera.isActive || scene.Has<Runtime::TextureCamera>(entity))
         {
             continue;
         }
