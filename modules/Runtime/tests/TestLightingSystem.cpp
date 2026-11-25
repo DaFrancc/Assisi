@@ -249,6 +249,45 @@ TEST_CASE("A shadow-casting light far out is measured from the shadow origin, as
     CHECK(lighting.ShadowCastingSpotLights()[0].position == glm::vec3(-kIntoCell));
 }
 
+TEST_CASE("A second view sharing the lights sees them where a gather from its own origin would")
+{
+    using Assisi::ECS::Transform;
+    using Assisi::Runtime::PointLight;
+    using Assisi::Runtime::SpotLight;
+
+    constexpr glm::dvec3 kMainOrigin{100.0, 2.0, -40.0};
+    constexpr glm::dvec3 kOtherOrigin{112.5, 3.0, -36.0};
+    ECS::Scene scene;
+    const ECS::Entity point = scene.Create();
+    (void)scene.Add(point, Transform{.position = glm::dvec3{104.0, 5.0, -30.0}});
+    (void)scene.Add(point, PointLight{.radius = 6.f, .castsShadows = true});
+    const ECS::Entity spot = scene.Create();
+    (void)scene.Add(spot, Transform{.position = glm::dvec3{95.0, 8.0, -44.0}});
+    (void)scene.Add(spot, SpotLight{.radius = 9.f});
+    (void)ECS::PropagateTransforms(scene, 0u);
+
+    LightingSystem main;
+    main.Gather(scene, nullptr, Assisi::Runtime::LightFrame{.view = kMainOrigin});
+    // The main view's shadow pass stamps its own copy; the shared one starts
+    // without the stamp, for its own pass to give it.
+    main.SetPointShadowView(0u, 3u);
+    LightingSystem shared;
+    shared.ShareFrom(main, glm::vec3(kMainOrigin - kOtherOrigin));
+    LightingSystem gathered;
+    gathered.Gather(scene, nullptr, Assisi::Runtime::LightFrame{.view = kOtherOrigin});
+
+    REQUIRE(shared.PointLights().size() == 1u);
+    REQUIRE(shared.SpotLights().size() == 1u);
+    CHECK(Approx3(glm::vec3(shared.PointLights()[0].positionRadius),
+                  glm::vec3(gathered.PointLights()[0].positionRadius)));
+    CHECK(shared.PointLights()[0].positionRadius.w == gathered.PointLights()[0].positionRadius.w);
+    CHECK(shared.PointLights()[0].shadowView.x == Assisi::Render::kNoShadowView);
+    CHECK(Approx3(glm::vec3(shared.SpotLights()[0].positionRadius), glm::vec3(gathered.SpotLights()[0].positionRadius)));
+    CHECK(Approx3(glm::vec3(shared.SpotLights()[0].directionInner),
+                  glm::vec3(gathered.SpotLights()[0].directionInner)));
+    CHECK(shared.PointLightShadowFlags()[0] == Assisi::Runtime::ShadowCaster::Yes);
+}
+
 TEST_CASE("Past the buffer's capacity, the lights nearest the camera are the ones kept")
 {
     using Assisi::ECS::Transform;
