@@ -20,6 +20,8 @@
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Render/GpuMarker.hpp>
+#include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/FogVolumeGather.hpp>
@@ -66,6 +68,10 @@ constexpr const char *kShadowVertexShader = "shaders/shadow_depth.vert.spv";
 constexpr const char *kShadowMaskedVertexShader = "shaders/shadow_depth.vert.masked.spv";
 constexpr const char *kShadowMaskedPixelShader = "shaders/shadow_depth.frag.spv";
 
+// A texture camera's picture's smaller levels, each the average of the one
+// above (see Render::PictureMips).
+constexpr const char *kPictureMipsShader = "shaders/picture_mips.frag.spv";
+
 // The analytic sky (see Render::SkyPass). A fullscreen triangle at the far
 // plane, so its vertex stage is its own rather than the shared one: that one
 // emits depth 0, and the sky has to land on the 1.0 the depth clear left.
@@ -106,6 +112,10 @@ Render::FogConstants FrameFog(const FogResolution &fog, bool drawn, const SkyRes
 // The largest side a texture camera's picture is made at, in pixels: past it
 // a picture costs more memory than any surface could show.
 constexpr uint32_t kMaxTextureCameraSide = 4096u;
+
+// A texture camera's picture's first level, the one a view draws: every other
+// level is drawn from it.
+const nvrhi::TextureSubresourceSet kFirstLevel{0, 1, 0, 1};
 
 // How many Render calls a retired texture view's picture stays lent for: the
 // context keeps two frames in flight and one more covers a redraw between
@@ -195,6 +205,17 @@ bool SceneRenderer::Initialize(const InitParams &params)
     {
         Core::Log::Warn("SceneRenderer: sky unavailable (the sky pass failed to initialise).");
     }
+
+    // Non-fatal: without it a texture camera's picture has no smaller levels,
+    // and shimmers on a surface smaller than it.
+    const nvrhi::Format pictureFormat =
+        params.framebufferInfo.colorFormats.empty() ? nvrhi::Format::UNKNOWN : params.framebufferInfo.colorFormats[0];
+    if (!_pictureMips.Initialize(_device, pictureFormat, kFullscreenVertexShader, kPictureMipsShader))
+    {
+        Core::Log::Warn("SceneRenderer: texture camera pictures have no smaller levels.");
+    }
+    const Render::Vulkan::VulkanContext *const vulkan = Render::RenderSystem::GetVulkanContext();
+    _mostSamples = vulkan != nullptr ? vulkan->GetMaxUsableSampleCount() : 1u;
 
     // The frame's passes' own pieces; each that fails to start says so and
     // stays off.
@@ -310,9 +331,9 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     }
     _graph->OnTargetsChanged(framebufferInfo);
     _graph->OnViewTargetsChanged(*_main->_passes, framebufferInfo);
-    // The texture views draw into targets like the scene's, so theirs and
-    // their pipelines follow; each keeps its picture, the same with MSAA or
-    // without, and with it the last thing it drew.
+    // The texture views draw in the scene target's format at their own sample
+    // counts, so theirs and their pipelines follow; each keeps its picture,
+    // and with it the last thing it drew.
     _viewParams.framebufferInfo = framebufferInfo;
     for (TextureView &texture : _textureViews)
     {
@@ -320,14 +341,28 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
         {
             continue;
         }
-        _graph->OnViewTargetsChanged(*texture.view->_passes, framebufferInfo);
-        if (!texture.view->_meshPass.RebuildPipeline(framebufferInfo))
-        {
-            Core::Log::Warn("SceneRenderer: a texture camera's mesh pipeline failed to rebuild.");
-        }
+        RetargetTextureView(texture);
         (void)MakeTextureTargets(texture);
     }
     return _meshPass.RebuildPipeline(framebufferInfo);
+}
+
+void SceneRenderer::RetargetTextureView(TextureView &texture)
+{
+    const nvrhi::FramebufferInfo targets = TextureTargets(texture.samples);
+    _graph->OnViewTargetsChanged(*texture.view->_passes, targets);
+    if (!texture.view->_meshPass.RebuildPipeline(targets))
+    {
+        Core::Log::Warn("SceneRenderer: a texture camera's mesh pipeline failed to rebuild.");
+    }
+}
+
+nvrhi::FramebufferInfo SceneRenderer::TextureTargets(uint32_t samples) const
+{
+    nvrhi::FramebufferInfo targets = _viewParams.framebufferInfo;
+    targets.sampleCount = samples;
+    targets.sampleQuality = 0;
+    return targets;
 }
 
 void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene, const ECS::WorldMatrix &cameraWorld,
@@ -743,7 +778,10 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
         }
         const uint32_t width = std::clamp(wanted->width, 1u, kMaxTextureCameraSide);
         const uint32_t height = std::clamp(wanted->height, 1u, kMaxTextureCameraSide);
-        if (width != texture.width || height != texture.height)
+        const uint32_t samples = TextureCameraSamples(wanted->samples, _mostSamples);
+        const bool resized = width != texture.width || height != texture.height;
+        const bool resampled = samples != texture.samples;
+        if (resized)
         {
             // The old picture waits out the frames in flight on its own; the
             // view goes on with new targets.
@@ -751,11 +789,22 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
                                           .depth = std::move(texture.depth),
                                           .picture = std::move(texture.picture),
                                           .framebuffer = std::move(texture.framebuffer),
+                                          .mips = std::move(texture.mips),
                                           .slot = texture.slot});
             texture.width = width;
             texture.height = height;
             texture.slot = 0;
             texture.redraw = true;
+        }
+        texture.samples = samples;
+        // A view that failed to start keeps no targets.
+        const bool started = texture.view->_meshPass.IsValid();
+        if (resampled && started)
+        {
+            RetargetTextureView(texture);
+        }
+        if ((resized || resampled) && started)
+        {
             (void)MakeTextureTargets(texture);
         }
         ++at;
@@ -772,8 +821,9 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
         TextureView texture{.view = std::make_unique<SceneView>(),
                             .camera = entity,
                             .width = std::clamp(textureCamera.width, 1u, kMaxTextureCameraSide),
-                            .height = std::clamp(textureCamera.height, 1u, kMaxTextureCameraSide)};
-        if (InitializeView(*texture.view, _viewParams.framebufferInfo, static_cast<int32_t>(texture.width),
+                            .height = std::clamp(textureCamera.height, 1u, kMaxTextureCameraSide),
+                            .samples = TextureCameraSamples(textureCamera.samples, _mostSamples)};
+        if (InitializeView(*texture.view, TextureTargets(texture.samples), static_cast<int32_t>(texture.width),
                            static_cast<int32_t>(texture.height), camera))
         {
             (void)MakeTextureTargets(texture);
@@ -785,18 +835,20 @@ void SceneRenderer::KeepTextureViews(ECS::Scene &scene)
 bool SceneRenderer::MakeTextureTargets(TextureView &texture)
 {
     const nvrhi::FramebufferInfo &targets = _viewParams.framebufferInfo;
-    const uint32_t samples = std::max(targets.sampleCount, 1u);
+    const uint32_t samples = std::max(texture.samples, 1u);
     const bool multisampled = samples > 1u;
     const nvrhi::Format colorFormat = targets.colorFormats.empty() ? nvrhi::Format::UNKNOWN : targets.colorFormats[0];
 
     if (texture.picture == nullptr)
     {
         // Drawn into without MSAA and resolved into with it, so it is a render
-        // target either way; and read by the scene through the bindless table,
-        // which tracks no states, so it rests readable.
+        // target either way, as is each smaller level; and read by the scene
+        // through the bindless table, which tracks no states, so it rests
+        // readable.
         nvrhi::TextureDesc picture;
         picture.width = texture.width;
         picture.height = texture.height;
+        picture.mipLevels = Render::PictureMipCount(texture.width, texture.height);
         picture.format = colorFormat;
         picture.isRenderTarget = true;
         picture.isShaderResource = true;
@@ -817,6 +869,7 @@ bool SceneRenderer::MakeTextureTargets(TextureView &texture)
         }
         texture.slot = *slot;
         texture.cleared = false;
+        texture.mips = _pictureMips.Prepare(texture.picture);
     }
 
     if (multisampled)
@@ -854,7 +907,7 @@ bool SceneRenderer::MakeTextureTargets(TextureView &texture)
     if (texture.color != nullptr && texture.depth != nullptr)
     {
         nvrhi::FramebufferDesc framebuffer;
-        framebuffer.addColorAttachment(texture.color).setDepthAttachment(texture.depth);
+        framebuffer.addColorAttachment(texture.color, kFirstLevel).setDepthAttachment(texture.depth);
         texture.framebuffer = _device->createFramebuffer(framebuffer);
     }
     if (texture.framebuffer == nullptr)
@@ -1064,7 +1117,7 @@ void SceneRenderer::DrawTextureView(nvrhi::ICommandList *commandList, Passes::Sc
     ASSISI_PROFILE_GPU_SCOPE(commandList, "texture-camera");
     SceneView &view = *texture.view;
     // Black where nothing is drawn, as where a level has no sky.
-    commandList->clearTextureFloat(texture.color, nvrhi::AllSubresources, nvrhi::Color(0.f, 0.f, 0.f, 1.f));
+    commandList->clearTextureFloat(texture.color, kFirstLevel, nvrhi::Color(0.f, 0.f, 0.f, 1.f));
     commandList->clearDepthStencilTexture(texture.depth, nvrhi::AllSubresources, true, Render::kSceneDepthFar, false,
                                           0);
     // What this camera sees, in the buffers every view's lit pass and sky read.
@@ -1083,8 +1136,9 @@ void SceneRenderer::DrawTextureView(nvrhi::ICommandList *commandList, Passes::Sc
 
     if (texture.picture != texture.color)
     {
-        commandList->resolveTexture(texture.picture, nvrhi::AllSubresources, texture.color, nvrhi::AllSubresources);
+        commandList->resolveTexture(texture.picture, kFirstLevel, texture.color, kFirstLevel);
     }
+    _pictureMips.Build(commandList, texture.mips);
     // The scene reads it through the bindless table, which tracks no states.
     commandList->setTextureState(texture.picture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     commandList->commitBarriers();

@@ -244,13 +244,10 @@ bool SkyPass::BuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
     pipelineDesc.renderState.depthStencilState.depthFunc = nvrhi::ComparisonFunc::Equal;
 
-    _pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-    if (_pipeline == nullptr)
-    {
-        Core::Log::Error("SkyPass: failed to create the sky pipeline.");
-        return false;
-    }
-    return true;
+    _pipelineDesc = pipelineDesc;
+    _pipelines.Clear();
+    _built = _pipelines.For(_device, _pipelineDesc, framebufferInfo) != nullptr;
+    return _built;
 }
 
 bool SkyPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
@@ -265,7 +262,9 @@ bool SkyPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraPosition,
                    const SkySun &sun, const SkyMoon &moon, const SkySettings &settings)
 {
-    if (!IsValid())
+    nvrhi::IGraphicsPipeline *pipeline =
+        IsValid() ? _pipelines.For(_device, _pipelineDesc, frame.framebuffer->getFramebufferInfo()) : nullptr;
+    if (pipeline == nullptr)
     {
         return;
     }
@@ -279,7 +278,7 @@ void SkyPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, co
 
     SkyConstants constants = MakeSkyConstants(glm::inverse(viewProjection), cameraPosition, sun, moon, settings);
     constants.fog = _fog;
-    Submit(frame.commandList, frame.framebuffer, _pipeline,
+    Submit(frame.commandList, frame.framebuffer, pipeline,
            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)), constants,
            _fogVolumes);
 }

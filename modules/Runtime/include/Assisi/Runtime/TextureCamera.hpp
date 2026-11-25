@@ -29,6 +29,10 @@ namespace Assisi::Runtime
 /// pixels a side.
 inline constexpr uint32_t kDefaultTextureCameraSide = 512;
 
+/// @brief A texture camera's MSAA samples a pixel when nothing says otherwise:
+/// smooth edges on a screen seen up close, at a small cost for a small picture.
+inline constexpr uint32_t kDefaultTextureCameraSamples = 4;
+
 /// @brief When a TextureCamera draws its picture. A camera that doesn't draw
 /// on a frame leaves its last picture on its surfaces.
 AENUM()
@@ -64,12 +68,21 @@ struct TextureCamera
     /// The picture's size, in pixels.
     AFIELD(min = 1) uint32_t width = kDefaultTextureCameraSide;
     AFIELD(min = 1) uint32_t height = kDefaultTextureCameraSide;
+    /// MSAA samples a pixel, whatever the game's own anti-aliasing: 1 for
+    /// none, up to 8. A count that isn't a power of two takes the one below,
+    /// and one past what the GPU can do takes the most it can.
+    AFIELD(min = 1, max = 8) uint32_t samples = kDefaultTextureCameraSamples;
     /// When it draws.
     AFIELD() TextureCameraUpdate update = TextureCameraUpdate::WhileSeen;
     /// Whether a WhileOn camera is drawing, which SwitchTextureCamera sets. A
     /// level can place one switched off.
     AFIELD() bool on = true;
 };
+
+/// @brief The MSAA samples a texture camera asking @p asked draws with on a
+/// GPU that does at most @p most: a power of two from 1 to 8, the one at or
+/// below what it asked, and no more than the GPU does.
+[[nodiscard]] uint32_t TextureCameraSamples(uint32_t asked, uint32_t most);
 
 /// @brief Asks a WhenAsked TextureCamera for one picture. Put on by
 /// RequestTextureCameraPicture and taken off by the renderer when it draws.

@@ -18,6 +18,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ComputeShader.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
+#include <Assisi/Render/SampleCountPipelines.hpp>
 #include <Assisi/Render/WaterFrame.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -180,7 +181,7 @@ public:
     /// it changes format or sample count. Nothing is drawn until it has.
     [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
 
-    [[nodiscard]] bool IsValid() const { return _pipeline != nullptr; }
+    [[nodiscard]] bool IsValid() const { return _built; }
 
     /// @brief Brings every body of @p frame to @p seconds on the shared clock.
     /// @return false if a body's textures failed to allocate; nothing is then
@@ -242,7 +243,10 @@ private:
     nvrhi::ShaderHandle _vertexShader;
     nvrhi::ShaderHandle _pixelShader;
     nvrhi::BindingLayoutHandle _drawLayout;
-    nvrhi::GraphicsPipelineHandle _pipeline;
+    // The surface's pipeline, built for each sample count a view draws at:
+    // the main view's at the game's MSAA setting, a texture camera's at its own.
+    nvrhi::GraphicsPipelineDesc _pipelineDesc;
+    SampleCountPipelines _pipelines{"WaterRenderer"};
     nvrhi::SamplerHandle _sampler;
     nvrhi::BufferHandle _constants;
     nvrhi::BufferHandle _patchIndices;
@@ -254,6 +258,8 @@ private:
     nvrhi::TextureHandle _scratch23;
 
     std::unordered_map<uint64_t, Field> _fields;
+    /// Whether the surface's pipeline built for the scene target.
+    bool _built = false;
 };
 
 } // namespace Assisi::Render

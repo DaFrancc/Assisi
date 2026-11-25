@@ -140,6 +140,7 @@
         },
         "TextureCamera": {
           "height": 200,
+          "samples": 1,
           "width": 320
         },
         "Transform": {

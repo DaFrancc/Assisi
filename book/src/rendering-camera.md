@@ -160,6 +160,7 @@ You need two components, both in `<Assisi/Runtime/TextureCamera.hpp>`:
 | `TextureCamera` field | Meaning |
 |---|---|
 | `width`, `height` | The picture's size, in pixels. Default 512 by 512. Match its shape to the surface's, or the picture is stretched. |
+| `samples` | How many samples each pixel takes for anti-aliasing (MSAA), whatever the game's own anti-aliasing setting: 1 for none, 2, 4 or 8. Default 4. More samples smooth the picture's edges and cost more. |
 | `update` | When it draws: see the table below. Default `WhileSeen`. |
 | `on` | Whether a `WhileOn` camera is drawing. Default on. |
 
@@ -230,6 +231,9 @@ A few things to know:
   show everywhere.
 - **Where nothing is drawn, the picture is black**, such as the sky in a level
   with neither a `Skybox` nor a `Fog`.
+- **The picture stays smooth at any size on screen.** Each time the camera
+  draws, smaller copies of the picture are made too (**mipmaps**), and a
+  surface far away shows a smaller copy, so it doesn't shimmer.
 - **Changing `width` or `height`** makes the camera draw once at the new size,
   whatever its `update` says, since the new picture holds nothing yet.
 - **It isn't a mirror.** The picture is what the camera sees from where it

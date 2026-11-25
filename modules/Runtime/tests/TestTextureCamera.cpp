@@ -189,6 +189,18 @@ TEST_CASE("A surface is left out of the view of the camera it shows, and only th
     CHECK_FALSE(Runtime::LeftOutOfView(scene, mirror, mesh, ECS::InstanceId{}, ECS::NullEntity));
 }
 
+TEST_CASE("A camera's MSAA samples are a power of two from 1 to 8, within what the GPU does")
+{
+    CHECK(Runtime::TextureCameraSamples(4u, 8u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(1u, 8u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(0u, 8u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(6u, 8u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(16u, 64u) == 8u);
+    CHECK(Runtime::TextureCameraSamples(8u, 4u) == 4u);
+    CHECK(Runtime::TextureCameraSamples(4u, 1u) == 1u);
+    CHECK(Runtime::TextureCameraSamples(4u, 0u) == 1u);
+}
+
 TEST_CASE("Switching a camera the way it already is changes nothing")
 {
     ECS::Scene scene;

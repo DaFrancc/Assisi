@@ -1,6 +1,8 @@
 /* Copyright (c) 2026 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/TextureCamera.hpp>
 
+#include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <limits>
 
@@ -11,6 +13,10 @@ namespace
 
 /// A surface showing a camera that is not among the candidates.
 constexpr uint32_t kNoCandidate = std::numeric_limits<uint32_t>::max();
+
+/// The most MSAA samples a texture camera draws with, as for the game's own
+/// setting: past 8, edges look no smoother and each sample still costs memory.
+constexpr uint32_t kMostTextureCameraSamples = 8u;
 
 /// Whether @p camera draws whether or not anything shows it.
 bool DrawsRegardless(const TextureCameraCandidate &camera)
@@ -98,6 +104,11 @@ void Place(Choice &choice, uint32_t camera, std::vector<ECS::Entity> &order)
 }
 
 } // namespace
+
+uint32_t TextureCameraSamples(uint32_t asked, uint32_t most)
+{
+    return std::bit_floor(std::clamp(asked, 1u, std::clamp(most, 1u, kMostTextureCameraSamples)));
+}
 
 void SwitchTextureCamera(ECS::Scene &scene, ECS::Entity camera, TextureCameraSwitch to)
 {

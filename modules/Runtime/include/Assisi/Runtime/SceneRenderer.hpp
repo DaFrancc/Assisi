@@ -26,6 +26,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/FogVolume.hpp>
 #include <Assisi/Render/FogVolumeBuffers.hpp>
+#include <Assisi/Render/PictureMips.hpp>
 #include <Assisi/Render/PostProcessSettings.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/ShadowDiagnostics.hpp>
@@ -523,18 +524,22 @@ private:
     struct TextureView
     {
         std::unique_ptr<SceneView> view{};
-        /// Drawn into, in the scene target's format and sample count, so every
-        /// pipeline built for the main view's targets draws here too.
+        /// Drawn into, in the scene target's format at the camera's own sample
+        /// count.
         nvrhi::TextureHandle color{};
         nvrhi::TextureHandle depth{};
-        /// What surfaces show, one sample a pixel: the colour target itself
-        /// when the scene draws without MSAA, which is resolved into it
-        /// otherwise.
+        /// What surfaces show, one sample a pixel, with its smaller levels:
+        /// the colour target itself, its first level drawn into, when the
+        /// camera draws without MSAA, and resolved into otherwise.
         nvrhi::TextureHandle picture{};
         nvrhi::FramebufferHandle framebuffer{};
+        /// The draws that make the picture's smaller levels.
+        Render::PictureMips::Chain mips{};
         ECS::Entity camera = ECS::NullEntity;
         uint32_t width = 0;
         uint32_t height = 0;
+        /// MSAA samples a pixel, as TextureCameraSamples gave them.
+        uint32_t samples = 1;
         /// The picture's lent slot in the asset cache's bindless table.
         uint32_t slot = 0;
         /// Whether the picture has been cleared since it was made, so a surface
@@ -574,12 +579,19 @@ private:
     /// size, and retire those whose camera went.
     void KeepTextureViews(ECS::Scene &scene);
 
-    /// @brief Make @p texture's targets at its size, like the scene target's,
-    /// and its picture with a lent slot unless it already has one: a picture is
-    /// the same whether the scene draws with MSAA or not, so it outlives a
-    /// change of the targets, and a camera keeps showing its last picture.
-    /// False, logged, when they cannot be made.
+    /// @brief Make @p texture's targets at its size and sample count, in the
+    /// scene target's format, and its picture with a lent slot unless it
+    /// already has one: a picture is the same whatever the sample count, so it
+    /// outlives a change of the targets, and a camera keeps showing its last
+    /// picture. False, logged, when they cannot be made.
     [[nodiscard]] bool MakeTextureTargets(TextureView &texture);
+
+    /// @brief Rebuild @p texture's pipelines for its targets, after their
+    /// format or sample count changed.
+    void RetargetTextureView(TextureView &texture);
+
+    /// @brief Targets like the scene target's, at @p samples a pixel.
+    [[nodiscard]] nvrhi::FramebufferInfo TextureTargets(uint32_t samples) const;
 
     /// @brief Take @p texture away, its picture kept lent for the frames in
     /// flight that may read it.
@@ -643,8 +655,12 @@ private:
     // Every body any view sees, when the texture views see some the main view
     // does not.
     Render::WaterFrame _wavesFrame;
+    // Draws every texture camera's picture's smaller levels.
+    Render::PictureMips _pictureMips;
     // Counts Render calls, which a retired texture view waits out.
     uint64_t _renderCount = 0;
+    // The most MSAA samples this GPU draws a texture camera with.
+    uint32_t _mostSamples = 1;
     // The frame's passes, in the order their declarations fix, and what they
     // hand one another. Behind a pointer so this header need not include the
     // generated one.

@@ -295,11 +295,12 @@ if (ASSISI_BUILD_TESTS)
   endforeach()
 
   # Levels pictured again with 4x multisampling, which only it draws: cutout
-  # edges smoothed by alpha-to-coverage, and water blended into every sample
-  # with its coloured second output. Their accepted pictures are kept apart
-  # from the default run's, which are named after the same levels.
+  # edges smoothed by alpha-to-coverage, water blended into every sample with
+  # its coloured second output, and texture cameras drawing at sample counts
+  # other than the screen's. Their accepted pictures are kept apart from the
+  # default run's, which are named after the same levels.
   file(WRITE "${_gpu_dir}/msaa.json" "{\"antiAliasing\": {\"mode\": \"msaa\", \"msaaSamples\": 4}}\n")
-  foreach (_name IN ITEMS FoliageCheck WaterCheck)
+  foreach (_name IN ITEMS FoliageCheck WaterCheck CameraFeaturesCheck)
     add_test(NAME Gpu-${_name}-Msaa
       COMMAND Assisi-GameEditor -l "levels/${_name}.alvl" --no-editor-visuals --vulkan-validation
               --capture ${_gpu_frames} --capture-warmup ${_gpu_warmup_frames} --capture-size ${_gpu_size}

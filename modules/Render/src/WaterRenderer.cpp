@@ -273,13 +273,10 @@ bool WaterRenderer::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInf
     blend.destBlend = nvrhi::BlendFactor::Src1Color;
     blend.srcBlendAlpha = nvrhi::BlendFactor::One;
     blend.destBlendAlpha = nvrhi::BlendFactor::Src1Alpha;
-    _pipeline = _device->createGraphicsPipeline(desc, framebufferInfo);
-    if (_pipeline == nullptr)
-    {
-        Core::Log::Error("WaterRenderer: the surface pipeline failed to build.");
-        return false;
-    }
-    return true;
+    _pipelineDesc = desc;
+    _pipelines.Clear();
+    _built = _pipelines.For(_device, _pipelineDesc, framebufferInfo) != nullptr;
+    return _built;
 }
 
 bool WaterRenderer::CreatePatch()
@@ -484,6 +481,11 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
     {
         return;
     }
+    nvrhi::IGraphicsPipeline *pipeline = _pipelines.For(_device, _pipelineDesc, target.framebuffer->getFramebufferInfo());
+    if (pipeline == nullptr)
+    {
+        return;
+    }
     if (!EnsureNodeCapacity(frame.nodes.size()))
     {
         Core::Log::Warn("WaterRenderer: the patch buffer failed to allocate.");
@@ -524,7 +526,7 @@ void WaterRenderer::Draw(const RenderFrame &target, const WaterFrame &frame, con
         commandList->writeBuffer(_constants, &constants, sizeof(constants));
 
         nvrhi::GraphicsState state;
-        state.pipeline = _pipeline;
+        state.pipeline = pipeline;
         state.framebuffer = target.framebuffer;
         state.addBindingSet(view.frameBindings);
         state.addBindingSet(field.drawSet);
