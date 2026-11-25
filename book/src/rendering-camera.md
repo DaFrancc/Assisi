@@ -115,7 +115,7 @@ A camera's `Transform` moves with the fixed step, and between steps the camera
 is drawn where the blend between them puts it. To move the view every frame
 without moving anything the game simulates, for head bob, a screen shake or a
 look of your own that follows the mouse between steps, give the camera a
-**`CameraDrawPose`** and set it each frame:
+**`DrawPose`** (in `<Assisi/ECS/DrawPose.hpp>`) and set it each frame:
 
 | Field | Meaning |
 |---|---|
@@ -123,22 +123,27 @@ look of your own that follows the mouse between steps, give the camera a
 | `offset` | Added to where the camera stands, in the world, in metres. |
 
 ```cpp
-// In an Update system: bob the view while keeping the way the camera faces.
+// In an Update system: bob the view of a camera with no parent, keeping the
+// way it faces.
 using namespace Assisi;
 
-const ECS::WorldMatrix &world = *scene.Get<ECS::WorldMatrix>(camera);
-Runtime::CameraDrawPose *pose = scene.GetMut<Runtime::CameraDrawPose>(camera);
+ECS::DrawPose *pose = scene.GetMut<ECS::DrawPose>(camera);
 if (pose == nullptr)
 {
-    pose = scene.Add<Runtime::CameraDrawPose>(camera);
+    pose = scene.Add<ECS::DrawPose>(camera);
 }
-pose->rotation = glm::quat_cast(glm::mat3(world.inCell));
+pose->rotation = scene.Get<ECS::Transform>(camera)->rotation;
 pose->offset = glm::vec3{0.f, 0.02f * std::sin(bobPhase), 0.f};
 ```
 
 Only the drawing changes. The `Transform`, what the game simulates and what is
 sent over the network stay as they are. Remove the component to draw the camera
 as its `Transform` has it again. It is never saved with a level.
+
+Everything attached to the camera with a `Parent` is drawn under its draw pose,
+so it turns with the view every frame: a weapon or arms held in front of the
+camera, a flashlight, or another camera, such as a rifle scope's. `DrawPose`
+works on any entity, not only cameras.
 
 The first-person template uses it for its look: its `LookAhead` system draws
 your player's camera turned as far as the mouse has moved, every frame, before

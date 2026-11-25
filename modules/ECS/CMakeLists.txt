@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-ECS)
 target_sources(Assisi-ECS
   PUBLIC
     "include/Assisi/ECS/BlueprintMember.hpp"
+    "include/Assisi/ECS/DrawPose.hpp"
     "include/Assisi/ECS/Entity.hpp"
     "include/Assisi/ECS/EntityRef.hpp"
     "include/Assisi/ECS/Hierarchy.hpp"
@@ -44,6 +45,7 @@ assisi_reflect(
   TARGET Assisi-ECS
   HEADERS
     include/Assisi/ECS/BlueprintMember.hpp
+    include/Assisi/ECS/DrawPose.hpp
     include/Assisi/ECS/Hierarchy.hpp
     include/Assisi/ECS/ParentFrame.hpp
     include/Assisi/ECS/RenderOffset.hpp

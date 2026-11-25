@@ -18,7 +18,8 @@
 /// The fixed step runs at a set rate, so a view turned only there would turn
 /// in steps on a faster screen. LookAhead draws this machine's player's view
 /// turned on by the mouse movement no step has used yet, every frame, through
-/// the camera's CameraDrawPose. Only the drawing turns; the step still does
+/// the camera's DrawPose, so whatever hangs from the camera, such as a held
+/// weapon, turns with the view. Only the drawing turns; the step still does
 /// the real turning.
 ///
 /// To change how far the view tilts, set Look::maxPitchDegrees on the

@@ -3,6 +3,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/ParentFrame.hpp>
+#include <Assisi/ECS/DrawPose.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/TransformPose.hpp>
@@ -96,6 +97,18 @@ glm::quat BlendRotation(const glm::quat &from, glm::quat to, float alpha)
         to = -to;
     }
     return glm::normalize(from * (1.f - alpha) + to * alpha);
+}
+
+/// Gives @p world the rotation @p pose draws with, keeping its scale on each
+/// axis, and moves it by the pose's offset.
+void ApplyDrawPose(glm::mat4 &world, const DrawPose &pose)
+{
+    const glm::mat3 turn = glm::mat3_cast(pose.rotation);
+    for (glm::length_t column = 0; column < 3; ++column)
+    {
+        world[column] = glm::vec4(turn[column] * glm::length(glm::vec3(world[column])), 0.f);
+    }
+    world[3] += glm::vec4(pose.offset, 0.f);
 }
 
 /// Turns @p world by @p offset about its own position, then moves it.
@@ -244,12 +257,13 @@ struct Propagation
             scene.ChangedSince<Transform>(lastTick, changed);
             scene.ChangedSince<Parent>(lastTick, changed);
             scene.ChangedSince<ParentFrame>(lastTick, changed);
-            // Removing Parent, ParentFrame or RenderOffset stamps nothing; the
-            // removal log is what says it happened. A log that no longer reaches
-            // back far enough redraws everything.
+            // Removing Parent, ParentFrame, DrawPose or RenderOffset stamps
+            // nothing; the removal log is what says it happened. A log that no
+            // longer reaches back far enough redraws everything.
             std::vector<Entity> unposed;
             const bool complete = scene.RemovedSince<Parent>(lastTick, changed) &&
                                   scene.RemovedSince<ParentFrame>(lastTick, changed) &&
+                                  scene.RemovedSince<DrawPose>(lastTick, changed) &&
                                   scene.RemovedSince<RenderOffset>(lastTick, changed) &&
                                   scene.RemovedSince<Transform>(lastTick, unposed);
             if (!complete)
@@ -275,6 +289,12 @@ struct Propagation
             {
                 MarkDirty(entry.entity);
             }
+        }
+        // Drawn ahead of their Transforms, which may be set again any frame.
+        for (auto [entity, pose] : scene.Query<DrawPose>())
+        {
+            (void)pose;
+            MarkDirty(entity);
         }
         for (auto [entity, offset] : scene.Query<RenderOffset>())
         {
@@ -375,6 +395,11 @@ struct Propagation
             {
                 const ParentFrame *frame = scene.Get<ParentFrame>(e);
                 drawn = ChildMatrix(frame != nullptr ? FramedParent(*parentWorld, *frame) : *parentWorld, local);
+            }
+            if (const DrawPose *pose = scene.Get<DrawPose>(e); pose != nullptr)
+            {
+                ApplyDrawPose(drawn.inCell, *pose);
+                MoveIntoOwnCell(drawn);
             }
             if (const RenderOffset *offset = scene.Get<RenderOffset>(e); offset != nullptr)
             {

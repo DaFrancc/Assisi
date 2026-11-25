@@ -10,6 +10,7 @@
 
 #include <Assisi/App/PlayerComponents.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/DrawPose.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -129,7 +130,7 @@ void LookSystem(Assisi::App::SystemContext &ctx)
 
 void LookAheadSystem(Assisi::App::SystemContext &ctx)
 {
-    using Assisi::Runtime::CameraDrawPose;
+    using Assisi::ECS::DrawPose;
 
     Assisi::ECS::Scene &scene = ctx.world.scene;
     for (auto [character, controls, look, rig, local] :
@@ -143,13 +144,13 @@ void LookAheadSystem(Assisi::App::SystemContext &ctx)
         }
         const glm::quat drawn =
             Looked(StepRotation(scene, rig.camera), controls.lookYaw, controls.lookPitch, look.maxPitchDegrees);
-        if (CameraDrawPose *pose = scene.GetMut<CameraDrawPose>(rig.camera))
+        if (DrawPose *pose = scene.GetMut<DrawPose>(rig.camera))
         {
             pose->rotation = drawn;
         }
         else
         {
-            (void)scene.Add<CameraDrawPose>(rig.camera, CameraDrawPose{.rotation = drawn, .offset = glm::vec3{0.f}});
+            (void)scene.Add<DrawPose>(rig.camera, DrawPose{.rotation = drawn, .offset = glm::vec3{0.f}});
         }
     }
 
@@ -159,14 +160,14 @@ void LookAheadSystem(Assisi::App::SystemContext &ctx)
     std::vector<Assisi::ECS::Entity> stale;
     for (auto [character, rig] : scene.Query<ViewRig>())
     {
-        if (!scene.Has<Assisi::App::LocalPlayer>(character) && scene.Has<CameraDrawPose>(rig.camera))
+        if (!scene.Has<Assisi::App::LocalPlayer>(character) && scene.Has<DrawPose>(rig.camera))
         {
             stale.push_back(rig.camera);
         }
     }
     for (const Assisi::ECS::Entity camera : stale)
     {
-        (void)scene.Remove<CameraDrawPose>(camera);
+        (void)scene.Remove<DrawPose>(camera);
     }
 }
 

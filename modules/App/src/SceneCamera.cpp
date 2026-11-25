@@ -39,14 +39,12 @@ std::optional<SceneView> ActiveSceneCamera(ECS::Scene &scene)
             break;
         }
 
-        ECS::WorldMatrix world = *scene.Get<ECS::WorldMatrix>(entity);
-        if (const Runtime::CameraDrawPose *drawn = scene.Get<Runtime::CameraDrawPose>(entity))
-        {
-            // Where it stands stays blended, so moving is as smooth as before.
-            world.inCell = glm::translate(glm::mat4(1.f), glm::vec3(world.inCell[3]) + drawn->offset) *
-                           glm::mat4_cast(drawn->rotation);
-        }
-        found = SceneView{.world = world, .pose = *transform, .camera = sceneCamera, .entity = entity};
+        // As drawn: a DrawPose is already in it, applied by the transform pass
+        // so whatever hangs from the camera turns with it.
+        found = SceneView{.world = *scene.Get<ECS::WorldMatrix>(entity),
+                          .pose = *transform,
+                          .camera = sceneCamera,
+                          .entity = entity};
     }
 
     if (found)

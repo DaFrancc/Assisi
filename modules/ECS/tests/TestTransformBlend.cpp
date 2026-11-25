@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include <Assisi/ECS/DrawPose.hpp>
 #include <Assisi/ECS/Hierarchy.hpp>
 #include <Assisi/ECS/RenderOffset.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -407,6 +408,50 @@ TEST_CASE("TransformBlend: removing a render offset draws the entity back where 
     tick = PropagateTransforms(scene, tick);
 
     CHECK(Drawn(scene, e).y == 0.f);
+}
+
+TEST_CASE("TransformBlend: a draw pose turns the drawn pose ahead of the Transform, and children turn with it")
+{
+    // A camera with something held a metre in front of it.
+    ECS::Scene scene;
+    const ECS::Entity eye = Spawn(scene, {0.f, 2.f, 0.f});
+    const ECS::Entity held = Spawn(scene, {0.f, 0.f, -1.f});
+    REQUIRE(scene.Add(held, Parent{.parent = eye}) != nullptr);
+    uint64_t tick = PropagateTransforms(scene, 0);
+    REQUIRE(Drawn(scene, held).z == doctest::Approx(-1.f));
+
+    REQUIRE(scene.Add(eye, ECS::DrawPose{.rotation = kQuarterTurn, .offset = {0.f, 0.5f, 0.f}}) != nullptr);
+    tick = PropagateTransforms(scene, tick);
+
+    // A quarter turn left about +Y takes -Z to -X.
+    CHECK(Drawn(scene, eye).y == doctest::Approx(2.5f));
+    CHECK(Drawn(scene, held).x == doctest::Approx(-1.f));
+    CHECK(Drawn(scene, held).y == doctest::Approx(2.5f));
+    CHECK(Drawn(scene, held).z == doctest::Approx(0.f).epsilon(1e-5));
+    // Drawing only: the simulation pose is untouched.
+    CHECK(scene.Get<Transform>(eye)->rotation == glm::quat(1.f, 0.f, 0.f, 0.f));
+    CHECK(scene.Get<Transform>(eye)->position.y == 2.0);
+}
+
+TEST_CASE("TransformBlend: a draw pose set again each frame redraws its children, and removing it draws them back")
+{
+    ECS::Scene scene;
+    const ECS::Entity eye = Spawn(scene, {0.f, 0.f, 0.f});
+    const ECS::Entity held = Spawn(scene, {0.f, 0.f, -1.f});
+    REQUIRE(scene.Add(held, Parent{.parent = eye}) != nullptr);
+    REQUIRE(scene.Add(eye, ECS::DrawPose{}) != nullptr);
+    uint64_t tick = PropagateTransforms(scene, 0);
+    REQUIRE(Drawn(scene, held).z == doctest::Approx(-1.f));
+
+    // Written the way a look written each frame is, with no Transform moving.
+    scene.GetMut<ECS::DrawPose>(eye)->rotation = kQuarterTurn;
+    tick = PropagateTransforms(scene, tick);
+    CHECK(Drawn(scene, held).x == doctest::Approx(-1.f));
+
+    REQUIRE(scene.Remove<ECS::DrawPose>(eye) == ECS::RemoveResult::Removed);
+    tick = PropagateTransforms(scene, tick);
+    CHECK(Drawn(scene, held).z == doctest::Approx(-1.f));
+    CHECK(Drawn(scene, held).x == doctest::Approx(0.f).epsilon(1e-5));
 }
 
 TEST_CASE("PropagateTransforms: a pass over an unchanged scene resolves nothing")
