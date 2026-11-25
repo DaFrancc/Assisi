@@ -510,6 +510,7 @@ bool ControlHolds(BindingUse use, const FieldMeta &field)
     case BindingUse::Length:
     case BindingUse::SpriteName:
     case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
@@ -542,6 +543,8 @@ std::optional<bool> AttributeTakes(BindingUse use, const FieldMeta &field)
         return field.type == FieldType::String || field.type == FieldType::InternedString;
     case BindingUse::Texture:
         return field.type == FieldType::AssetId;
+    case BindingUse::Offset:
+        return field.type == FieldType::Vec2;
     case BindingUse::Text:
     case BindingUse::Bool:
     case BindingUse::Toggle:
@@ -584,7 +587,8 @@ std::string NameAt(const FieldMeta &field, const std::byte *at)
 
 /// How a file writes each BoundAttribute, in its order.
 constexpr std::array<std::string_view, static_cast<std::size_t>(BoundAttribute::Count_)> kAttributeNames{
-    "background", "border_color", "text_color", "tint", "width", "height", "background_image", "sprite", "texture"};
+    "background", "border_color", "text_color", "tint", "width", "height", "background_image", "sprite", "texture",
+    "float_offset"};
 
 } // namespace
 
@@ -620,6 +624,8 @@ BindingUse AttributeUse(BoundAttribute attribute)
     case BoundAttribute::BackgroundImage:
     case BoundAttribute::Sprite:
         return BindingUse::SpriteName;
+    case BoundAttribute::FloatOffset:
+        return BindingUse::Offset;
     case BoundAttribute::Texture:
     case BoundAttribute::Count_:
         break;
@@ -645,6 +651,8 @@ std::optional<StyleProperty> PropertyOf(BoundAttribute attribute)
         return StyleProperty::Height;
     case BoundAttribute::BackgroundImage:
         return StyleProperty::BackgroundImage;
+    case BoundAttribute::FloatOffset:
+        return StyleProperty::FloatOffset;
     case BoundAttribute::Sprite:
     case BoundAttribute::Texture:
     case BoundAttribute::Count_:
@@ -712,7 +720,8 @@ std::string_view ToString(BindingError error) noexcept
         return "reads a registered source through a context, and a source is on no entity";
     case BindingError::WrongAttribute:
         return "binds a field its attribute cannot take: a colour takes a colour, a width or a height a number, a "
-               "sprite or a background_image a string naming sheet:name, and a texture an AssetId";
+               "sprite or a background_image a string naming sheet:name, a texture an AssetId, and a float_offset "
+               "a vec2";
     case BindingError::Count_:
         break;
     }
@@ -854,6 +863,7 @@ std::expected<FieldBinding, BindingError> ResolveBinding(const BindingSource &so
     case BindingUse::Length:
     case BindingUse::SpriteName:
     case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
@@ -974,6 +984,7 @@ std::optional<WidgetValue> ReadControlField(const FieldBinding &binding, const v
     case BindingUse::Length:
     case BindingUse::SpriteName:
     case BindingUse::Texture:
+    case BindingUse::Offset:
     case BindingUse::Count_:
         break;
     }
@@ -994,6 +1005,8 @@ AttributeValue ReadAttributeField(const FieldBinding &binding, const void *owner
         return NameAt(field, at);
     case BindingUse::Texture:
         return ReadAt<Core::AssetId>(at);
+    case BindingUse::Offset:
+        return ReadAt<glm::vec2>(at);
     case BindingUse::Text:
     case BindingUse::Bool:
     case BindingUse::Toggle:

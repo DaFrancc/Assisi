@@ -415,7 +415,7 @@ void ApplyBindings(Screen &screen, NodeId id, const ScreenDocument &document, co
     for (const AttributeBinding &attribute : node.boundAttributes)
     {
         const std::expected<void, BindingError> bound =
-            screen.BindAttribute(id, attribute.attribute, document.Text(attribute.binding), attribute.size);
+            screen.BindAttribute(id, attribute.attribute, document.Text(attribute.binding), attribute.length);
         ASSISI_ASSERT(bound.has_value(), "a binding Resolve passed was refused on the screen it built");
     }
 }

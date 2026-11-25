@@ -148,11 +148,12 @@ enum class ScreenVerb : uint8_t
 ASTRUCT()
 struct AttributeBinding
 {
-    /// For a width or height, the size it becomes, whose value the field
-    /// replaces: the unit and the limits written after the binding. Kept here
-    /// rather than in the node's style, which shows what the node would have
-    /// unbound until the binding first reads. Unused for other attributes.
-    AFIELD() Sizing size = Sizing::Fixed(Px(0.f));
+    /// What was written after the binding, with the field's value to go in
+    /// place of its own: a width's or height's unit and limits, or a float
+    /// offset's unit, which both axes share. Kept here rather than in the
+    /// node's style, which shows what the node would have unbound until the
+    /// binding first reads. Unused for other attributes.
+    AFIELD() Sizing length = Sizing::Fixed(Px(0.f));
     /// The binding alone, as written, such as `{Team.colour}`.
     AFIELD() Core::PooledString binding;
     AFIELD() BoundAttribute attribute = BoundAttribute::Background;

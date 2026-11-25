@@ -83,9 +83,12 @@ ScreenDocument Everything()
     panel.style.shadowBlur = Vh(1.f);
     panel.style.shadowSpread = Percent(-4.f);
     panel.boundAttributes = {
-        AttributeBinding{.size = Sizing{.value = Em(0.f), .min = Px(4.f), .max = Vw(30.f), .kind = SizingKind::Fixed},
+        AttributeBinding{.length = Sizing{.value = Em(0.f), .min = Px(4.f), .max = Vw(30.f), .kind = SizingKind::Fixed},
                          .binding = document.AddText("{Gauge.fill}"),
-                         .attribute = BoundAttribute::Height}};
+                         .attribute = BoundAttribute::Height},
+        AttributeBinding{.length = Sizing::Fixed(Percent(0.f)),
+                         .binding = document.AddText("{Gauge.aim}"),
+                         .attribute = BoundAttribute::FloatOffset}};
     panel.style.textSize = Em(1.5f);
     panel.written = PropertyBit(StyleProperty::Gap) | PropertyBit(StyleProperty::BorderColor);
     panel.tokens = {TokenUse{.token = InternedString{"surface"}, .property = StyleProperty::BorderColor}};

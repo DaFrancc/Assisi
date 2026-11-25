@@ -801,28 +801,63 @@ std::expected<void, MarkupError> ApplyTexture(const Walk &walk, ScreenNode &node
     return {};
 }
 
-/// What stands for a bound size's value while what follows its binding is read
-/// as a length is: a number, so the unit after it and the limits read as they
-/// do in `width="50% max 400"`.
-constexpr std::string_view kBoundSizeStandIn = "0";
+/// What stands for a bound length's value while what follows its binding is
+/// read as a length is: a number, so the unit after it and a size's limits read
+/// as they do in `width="50% max 400"`.
+constexpr std::string_view kBoundLengthStandIn = "0";
+
+/// Whether a binding on @p bound can be followed by a unit: a size's, then its
+/// limits, or a float offset's.
+bool TakesUnit(BoundAttribute bound)
+{
+    return bound == BoundAttribute::Width || bound == BoundAttribute::Height || bound == BoundAttribute::FloatOffset;
+}
+
+/// The length the field's value goes into, from @p after, which @p attribute
+/// writes after its binding on @p bound: a unit then min and max for a size,
+/// and a unit alone for a float offset, whose axes share it.
+std::expected<Sizing, MarkupError> ReadAfterBinding(BoundAttribute bound, const MarkupAttribute &attribute,
+                                                    const std::string &after)
+{
+    const std::string written = std::string{kBoundLengthStandIn} + after;
+    if (bound == BoundAttribute::FloatOffset)
+    {
+        if (const std::optional<Length> unit = ParseLength(written))
+        {
+            return Sizing::Fixed(*unit);
+        }
+        return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
+                                  "' after its binding, and only a unit, such as %, can follow one, which both "
+                                  "axes take."));
+    }
+    if (const std::optional<Sizing> sizing = ParseSizing(written))
+    {
+        return *sizing;
+    }
+    return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
+                              "' after its binding, and only a unit, such as %, then min and "
+                              "max can follow one, as they follow a length."));
+}
 
 /// `background="{Team.colour}"`, `width="{Bar.fill}% max 400"` and the other
 /// attributes a binding can drive: the binding kept beside the node, with the
-/// unit and limits of a bound size.
+/// unit and limits of a bound size or the unit of a bound float offset.
 std::expected<void, MarkupError> ApplyAttributeBinding(Walk &walk, ScreenNode &node, BoundAttribute bound,
                                                        const MarkupAttribute &attribute)
 {
-    const bool size = bound == BoundAttribute::Width || bound == BoundAttribute::Height;
+    const bool unit = TakesUnit(bound);
     MarkupAttribute binding = attribute;
     std::string after;
-    if (size)
+    if (unit)
     {
         const std::size_t close = attribute.value.find(kBindingClose);
         if (!attribute.value.starts_with(kBindingOpen) || close == std::string::npos)
         {
+            const std::string_view example =
+                bound == BoundAttribute::FloatOffset ? "{Marker.screen}%" : "{Bar.fill}% max 400";
             return std::unexpected(At(attribute, "'" + attribute.name +
-                                      "' holds a binding, which comes first, such as " + attribute.name +
-                                      "=\"{Bar.fill}% max 400\"."));
+                                      "' holds a binding, which comes first, such as " + attribute.name + "=\"" +
+                                      std::string{example} + "\"."));
         }
         binding.value = attribute.value.substr(0, close + 1);
         after = attribute.value.substr(close + 1);
@@ -841,17 +876,15 @@ std::expected<void, MarkupError> ApplyAttributeBinding(Walk &walk, ScreenNode &n
     {
         return std::unexpected(handle.error());
     }
-    AttributeBinding kept{.size = Sizing::Fixed(Px(0.f)), .binding = *handle, .attribute = bound};
-    if (size)
+    AttributeBinding kept{.length = Sizing::Fixed(Px(0.f)), .binding = *handle, .attribute = bound};
+    if (unit)
     {
-        const std::optional<Sizing> sizing = ParseSizing(std::string{kBoundSizeStandIn} + after);
-        if (!sizing)
+        const std::expected<Sizing, MarkupError> length = ReadAfterBinding(bound, attribute, after);
+        if (!length)
         {
-            return std::unexpected(At(attribute, "'" + attribute.name + "' holds '" + after +
-                                      "' after its binding, and only a unit, such as %, then min and "
-                                      "max can follow one, as they follow a length."));
+            return std::unexpected(length.error());
         }
-        kept.size = *sizing;
+        kept.length = *length;
     }
     // Not written until the binding reads, so a named style shows until then,
     // even over what a control's own call writes.
