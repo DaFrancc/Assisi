@@ -15,7 +15,9 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Frustum.hpp>
+#include <Assisi/Render/PictureLevels.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
 #include <cstdint>
@@ -82,6 +84,52 @@ struct TextureCamera
     /// A camera whose surfaces are all off screen draws at its full size.
     AFIELD() bool followScreenSize = true;
 };
+
+/// @brief How far a PictureVignette's picture stays clear from its centre when
+/// nothing says otherwise, in picture heights: with the default softness the
+/// dark band just reaches a square picture's edges.
+inline constexpr float kDefaultVignetteRadius = 0.4f;
+
+/// @brief How wide a PictureVignette's fade is when nothing says otherwise, in
+/// picture heights.
+inline constexpr float kDefaultVignetteSoftness = 0.1f;
+
+/// @brief Darkens a TextureCamera's picture toward its edge, as a rifle
+/// scope's view darkens when the eye is off the scope's axis.
+///
+/// The picture stays clear inside a circle around `centre`, fades over
+/// `softness` past `radius`, and beyond is darkened by `strength`. Distances
+/// are in picture heights, so the circle stays round on a wide picture. A game
+/// sets it from a system each frame, such as moving the centre opposite to
+/// where the eye is, and the surfaces show the change that same frame, even
+/// when the camera doesn't draw: only the picture's darkening is redone then.
+///
+/// Saved with its level. Not sent: each machine darkens its own picture.
+ACOMP(requires = {TextureCamera})
+struct PictureVignette
+{
+    /// The clear circle's middle, in the picture's own coordinates: 0 to 1
+    /// across and down from its top-left corner.
+    AFIELD() glm::vec2 centre{0.5f, 0.5f};
+    /// How far from the centre the picture stays clear.
+    AFIELD(min = 0) float radius = kDefaultVignetteRadius;
+    /// How wide the fade from clear to dark is, past the radius.
+    AFIELD(min = 0) float softness = kDefaultVignetteSoftness;
+    /// How dark it gets beyond the fade: 0 for no darkening, 1 for black.
+    AFIELD(min = 0, max = 1) float strength = 1.f;
+};
+
+/// @brief The darkening @p camera's picture is drawn with: none without a
+/// PictureVignette, and its fields kept within their ranges with one.
+[[nodiscard]] Render::Vignette PictureVignetteOf(const ECS::Scene &scene, ECS::Entity camera);
+
+/// @brief Whether a picture's darkening is redone this frame without the
+/// camera drawing: when the camera doesn't draw (@p drawing false), it
+/// @p holdsDrawing to darken, and the darkening it wants, @p wanted, isn't
+/// the one its picture has, @p shown. A camera that draws darkens its new
+/// picture anyway.
+[[nodiscard]] bool ShadePictureAgain(bool drawing, bool holdsDrawing, const Render::Vignette &wanted,
+                                     const Render::Vignette &shown);
 
 /// @brief How many steps a texture camera's drawn size is chosen in: its full
 /// size, or a whole number of these fractions of it.

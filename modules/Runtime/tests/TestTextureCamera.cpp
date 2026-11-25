@@ -257,3 +257,38 @@ TEST_CASE("Switching a camera the way it already is changes nothing")
     Runtime::RequestTextureCameraPicture(scene, camera);
     CHECK(scene.Has<Runtime::TextureCameraRequest>(camera));
 }
+
+TEST_CASE("A camera's vignette is none without a PictureVignette, and its fields within range with one")
+{
+    ECS::Scene scene;
+    const ECS::Entity camera = scene.Create();
+    (void)scene.Add(camera, Runtime::Camera{});
+    (void)scene.Add(camera, Runtime::TextureCamera{});
+    CHECK(Runtime::PictureVignetteOf(scene, camera).strength == 0.f);
+
+    (void)scene.Add(camera, Runtime::PictureVignette{.centre = glm::vec2(0.25f, 0.75f),
+                                                     .radius = 0.3f,
+                                                     .softness = -1.f,
+                                                     .strength = 2.f});
+    const Render::Vignette vignette = Runtime::PictureVignetteOf(scene, camera);
+    CHECK(vignette.centre == glm::vec2(0.25f, 0.75f));
+    CHECK(vignette.radius == 0.3f);
+    CHECK(vignette.softness == 0.f);
+    CHECK(vignette.strength == 1.f);
+}
+
+TEST_CASE("A picture not drawn this frame is shaded again when its vignette changed, and only then")
+{
+    const Render::Vignette none{};
+    const Render::Vignette dark{.centre = glm::vec2(0.4f, 0.5f), .radius = 0.3f, .softness = 0.1f, .strength = 1.f};
+    const Render::Vignette moved{.centre = glm::vec2(0.6f, 0.5f), .radius = 0.3f, .softness = 0.1f, .strength = 1.f};
+
+    // Resting with something drawn: a change shows this frame.
+    CHECK(Runtime::ShadePictureAgain(false, true, moved, dark));
+    CHECK(Runtime::ShadePictureAgain(false, true, none, dark));
+    CHECK(Runtime::ShadePictureAgain(false, true, dark, none));
+    // Unchanged, drawing anyway, or nothing drawn yet to shade.
+    CHECK_FALSE(Runtime::ShadePictureAgain(false, true, dark, dark));
+    CHECK_FALSE(Runtime::ShadePictureAgain(true, true, moved, dark));
+    CHECK_FALSE(Runtime::ShadePictureAgain(false, false, moved, dark));
+}

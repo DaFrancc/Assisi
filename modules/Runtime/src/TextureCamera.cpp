@@ -106,6 +106,25 @@ void Place(Choice &choice, uint32_t camera, std::vector<ECS::Entity> &order)
 
 } // namespace
 
+Render::Vignette PictureVignetteOf(const ECS::Scene &scene, ECS::Entity camera)
+{
+    const PictureVignette *const held = scene.Get<PictureVignette>(camera);
+    if (held == nullptr)
+    {
+        return Render::Vignette{};
+    }
+    return Render::Vignette{.centre = held->centre,
+                            .radius = std::max(held->radius, 0.f),
+                            .softness = std::max(held->softness, 0.f),
+                            .strength = std::clamp(held->strength, 0.f, 1.f)};
+}
+
+bool ShadePictureAgain(bool drawing, bool holdsDrawing, const Render::Vignette &wanted,
+                       const Render::Vignette &shown)
+{
+    return !drawing && holdsDrawing && wanted != shown;
+}
+
 uint32_t TextureCameraSamples(uint32_t asked, uint32_t most)
 {
     return std::bit_floor(std::clamp(asked, 1u, std::clamp(most, 1u, kMostTextureCameraSamples)));

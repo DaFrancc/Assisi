@@ -98,6 +98,12 @@
           "isActive": false,
           "nearZ": 0.10000000149011612
         },
+        "PictureVignette": {
+          "centre": [0.3, 0.6],
+          "radius": 0.3,
+          "softness": 0.15,
+          "strength": 0.9
+        },
         "TextureCamera": {
           "height": 200,
           "width": 320

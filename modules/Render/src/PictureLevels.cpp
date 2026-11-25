@@ -17,6 +17,10 @@ namespace
 /// without blending in the pixel past its edge is half a pixel short of it.
 constexpr float kHalfPixel = 0.5f;
 
+/// The narrowest fade a vignette draws with, in picture heights: a hard edge
+/// to the eye, and the shader never divides by zero.
+constexpr float kLeastVignetteSoftness = 1e-4f;
+
 } // namespace
 
 uint32_t PictureMipCount(uint32_t width, uint32_t height)
@@ -106,14 +110,14 @@ PictureLevels::Chain PictureLevels::Prepare(nvrhi::ITexture *picture, nvrhi::ITe
 }
 
 void PictureLevels::Build(nvrhi::ICommandList *commandList, const Chain &chain, uint32_t drawnWidth,
-                          uint32_t drawnHeight) const
+                          uint32_t drawnHeight, const Vignette &vignette) const
 {
     if (chain.levels.empty())
     {
         return;
     }
     // The first level reads the drawn part of a texture its own size, and
-    // stops half a pixel inside that part's far edges.
+    // stops half a pixel inside that part's far edges. It alone is darkened.
     const Level &first = chain.levels.front();
     const float width = static_cast<float>(first.width);
     const float height = static_cast<float>(first.height);
@@ -123,7 +127,13 @@ void PictureLevels::Build(nvrhi::ICommandList *commandList, const Chain &chain, 
          Constants{.scaleX = drawnX / width,
                    .scaleY = drawnY / height,
                    .mostX = (drawnX - kHalfPixel) / width,
-                   .mostY = (drawnY - kHalfPixel) / height});
+                   .mostY = (drawnY - kHalfPixel) / height,
+                   .centreX = vignette.centre.x,
+                   .centreY = vignette.centre.y,
+                   .radius = std::max(vignette.radius, 0.f),
+                   .softness = std::max(vignette.softness, kLeastVignetteSoftness),
+                   .strength = std::clamp(vignette.strength, 0.f, 1.f),
+                   .aspect = width / height});
     for (std::size_t level = 1; level < chain.levels.size(); ++level)
     {
         Draw(commandList, chain.levels[level], Constants{});

@@ -252,6 +252,69 @@ The editor draws texture cameras while you edit, too. The sandbox level,
 `levels/Test.alvl`, has a security screen beside the monitor that shows a
 camera watching the player.
 
+### Darkening the picture's edge
+
+Look through a real rifle scope with your eye a little off to one side, and
+the edge of the view goes dark on that side. To do this, add a
+**`PictureVignette`** to the entity with the `TextureCamera`. This darkening
+is called a **vignette**. The picture stays clear inside a circle and goes dark
+outside it.
+
+| `PictureVignette` field | Meaning |
+|---|---|
+| `centre` | The middle of the clear circle, in the picture's own coordinates: `0, 0` is its top-left corner and `1, 1` its bottom-right. Default `0.5, 0.5`, the middle. |
+| `radius` | How far from the centre the picture stays clear. Default 0.4. |
+| `softness` | How wide the fade from clear to dark is, past the radius. Default 0.1. |
+| `strength` | How dark it gets past the fade: 0 is no darkening, 1 is black. Default 1. |
+
+`radius` and `softness` are measured in picture heights, so the clear part is
+a circle even on a wide picture. With the defaults, a square picture is dark
+just at its edges.
+
+Change the fields from a system's update, and the surface shows the change in
+the same frame. This works even on a frame when the camera doesn't draw: the
+engine darkens its last picture again, which costs far less than drawing it.
+
+This system makes the clear circle slide away from the side the player's eye is
+on, the way a scope does:
+
+```cpp
+using namespace Assisi;
+
+void ScopeShadowSystem(App::SystemContext &ctx)
+{
+    ECS::Scene &scene = ctx.world.scene;
+    const std::optional<App::SceneView> view = App::ActiveSceneCamera(scene);
+    if (!view)
+    {
+        return;
+    }
+    const glm::dvec3 eye = ECS::WorldPositionOf(view->world);
+    for (auto [entity, surface, world] : scene.Query<Runtime::CameraSurface, ECS::WorldMatrix>())
+    {
+        Runtime::PictureVignette *vignette = scene.GetMut<Runtime::PictureVignette>(surface.camera);
+        if (vignette == nullptr)
+        {
+            continue;
+        }
+        // The eye, seen from the middle of the scope's glass.
+        const glm::dvec3 middle = ECS::WorldPositionOf(world);
+        const glm::mat4 glass = ECS::MatrixFrom(world, middle);
+        const glm::vec3 toEye = glm::vec3(eye - middle);
+        const float right = glm::dot(toEye, glm::normalize(glm::vec3(glass[0])));
+        const float up = glm::dot(toEye, glm::normalize(glm::vec3(glass[1])));
+        const float out = std::abs(glm::dot(toEye, glm::normalize(glm::vec3(glass[2]))));
+        // Eye to the right: the clear part moves left. Eye above: it moves
+        // down, because the picture's coordinates run downward.
+        const float gain = 0.25f / std::max(out, 0.01f);
+        vignette->centre = glm::vec2(0.5f - right * gain, 0.5f + up * gain);
+    }
+}
+```
+
+The sandbox level runs a system like this one, `PictureFollowsEye` in
+`apps/game/src`. Walk around the security screen and watch the dark edge move.
+
 ## Making a camera cheaper
 
 Every camera can leave features out of what it draws. This matters most for
