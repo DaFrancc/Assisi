@@ -35,7 +35,7 @@ void SceneRenderer::ForgetKeptShadows()
     // they were when it was drawn, and nothing about a still scene would ever
     // redraw it. The selector only remembers the tiles' sizes; the tiles
     // themselves are the pass's.
-    _graph->passes.sunShadow.cadence.Forget();
+    _main->_passes->passes.sunShadow.cadence.Forget();
     _graph->passes.shadowAtlas.selector.Forget();
     _graph->passes.shadowAtlas.atlas.ForgetKeptTiles();
 }
@@ -139,7 +139,7 @@ void SceneRenderer::BuildShadowDiagnostics()
     }
     _shadowDiagnostics.Clear();
     Passes::ShadowAtlasPass &atlas = _graph->passes.shadowAtlas;
-    const Passes::SunShadowPass &sun = _graph->passes.sunShadow;
+    const Passes::SunShadowPass &sun = _main->_passes->passes.sunShadow;
 
     // An inactive pass returns before it scores anything, so the candidate list
     // is empty — but the lights are still placed, and how many want a shadow is

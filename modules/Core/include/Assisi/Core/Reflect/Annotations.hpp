@@ -262,6 +262,13 @@
 /// reach through Reads<> and Writes<> like everything else.
 #define APASSIMPORTS(...)
 
+/// APASSVIEWIMPORTS() — marks the struct of references to what each view of a
+/// graph owns for itself: the objects a per-view pass uses that must not be
+/// shared between views, such as state kept from one frame to the next or a
+/// target sized to the view. In a per-view pass, a type listed here is the
+/// view's own; a pass run once a frame cannot reach it.
+#define APASSVIEWIMPORTS(...)
+
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
 /// enum must be defined in the same header as the component(s) that use it, and

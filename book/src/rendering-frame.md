@@ -38,6 +38,11 @@ The name in brackets after each pass is what it is called in a profiler capture
 (see [Looking at rendering problems](rendering-debugging.md#the-profiler)).
 Passes 2 to 16 draw the scene, so a capture shows them inside `scene`.
 
+Passes 2 to 6 are the world's: they come out the same whichever camera looks,
+so they run once a frame. Passes 7 to 16 depend on the camera, and run for each
+view after the world's (see
+[Once a frame or once per view](render-passes.md#once-a-frame-or-once-per-view)).
+
 ### 1. Clear (`clear-targets`)
 
 Fills the picture with `clearColor` from `game.json`, and empties the **depth
@@ -51,14 +56,7 @@ so every later pass draws the posed mesh. Only runs for entities with a
 `SkinnedMesh`; its cost grows with how many vertices they have. See
 [Animation](animation.md).
 
-### 3. Light grid rebuild (`cluster-rebuild`)
-
-Rebuilds the grid of **clusters** that point and spot lights are sorted into
-(see [What lights cost](rendering-lights.md#what-lights-cost)). It only runs on
-a frame when the window changes size or the active camera's `fovDegrees`,
-`nearZ` or `farZ` change.
-
-### 4. Clouds (`clouds`)
+### 3. Clouds (`clouds`)
 
 Draws the level's clouds into a small map of the sky above the horizon, which
 the sky and the sky reflections read, and into a map of their shadow, which the
@@ -68,7 +66,7 @@ with clouds also draws the noise they are made from, once.
 
 - **Changed by:** the `clouds` settings; `Clouds`, `Skybox`, `TimeOfDay`.
 
-### 5. Sky reflections (`sky-probe`)
+### 4. Sky reflections (`sky-probe`)
 
 Draws the sky into the reflection probe, the six pictures shiny surfaces
 reflect. It runs only when the sun or moon has moved more than the **Rebake
@@ -77,41 +75,61 @@ only with sky reflections on.
 
 - **Changed by:** the `environment` settings; `Skybox`, `TimeOfDay`.
 
-### 6. Sun shadows (`shadow-cascades`)
-
-Draws the sun's shadow **cascades**: the shadow-casting meshes in each one, as
-seen from the sun. Cascades in which nothing changed are kept from the last
-frame; moving meshes are drawn over a kept cascade on their own. Its cost
-grows with the number of cascades redrawn and the meshes in each. See
-[Shadows](rendering-shadows.md).
-
-- **Changed by:** the `shadows.sun` settings; `DirectionalLight.castsShadows`;
-  `MeshRenderer.castsShadows`; anything moving in the sun.
-
-### 7. Spot and point light shadows (`shadow-atlas`)
+### 5. Spot and point light shadows (`shadow-atlas`)
 
 Draws the shadow maps of the spot and point lights that need it into the shadow
 atlas, up to the redraw budget. Lights whose surroundings are still keep their
-maps and cost nothing. A point light costs six times a spot light.
+maps and cost nothing. A point light costs six times a spot light. Every view
+shares the atlas.
 
 - **Changed by:** the `shadows.local` and `shadows.selection` settings; each
   light's `castsShadows`, `radius`, `shadowPriority` and `shadowAlwaysOn`;
   `MeshRenderer.castsShadows`; anything moving near a shadowed light.
 
-### 8. Light sorting (`lighting`)
+### 6. Water's waves (`water-waves`)
+
+Moves the waves of each [`Ocean` and `Lake`](rendering-water.md) in view on to
+this frame's time. Its cost is the same whatever the screen's size, once for
+each body in view; a body out of view costs nothing, and a level with no water
+runs no pass at all. The first frame a body comes into view also works out its
+waves' starting sizes, once.
+
+- **Changed by:** the number of `Ocean`s and `Lake`s in view; the `water`
+  setting.
+
+### 7. Light grid rebuild (`cluster-rebuild`)
+
+Rebuilds the grid of **clusters** that point and spot lights are sorted into
+(see [What lights cost](rendering-lights.md#what-lights-cost)). It only runs on
+a frame when the window changes size or the active camera's `fovDegrees`,
+`nearZ` or `farZ` change.
+
+### 8. Sun shadows (`shadow-cascades`)
+
+Draws the sun's shadow **cascades**: the shadow-casting meshes in each one, as
+seen from the sun. The cascades are fitted to what the camera sees, so each view
+has its own. Cascades in which nothing changed are kept from the last frame;
+moving meshes are drawn over a kept cascade on their own. Its cost grows with
+the number of cascades redrawn and the meshes in each. See
+[Shadows](rendering-shadows.md).
+
+- **Changed by:** the `shadows.sun` settings; `DirectionalLight.castsShadows`;
+  `MeshRenderer.castsShadows`; anything moving in the sun.
+
+### 9. Light sorting (`lighting`)
 
 Sends the frame's lights to the graphics card and sorts every point and spot
 light into the clusters it reaches, so that each pixel later checks only the
 lights near it. Small; its cost grows with the number of lights.
 
-### 9. Frame constants (`mesh-constants`)
+### 10. Frame constants (`mesh-constants`)
 
 Gathers what the passes so far made, the shadow maps, the sky reflections and
 the clouds' shadow, and sends the graphics card the camera, the fog and
 everything else every mesh is drawn with this frame. Tiny and the same in
 every level.
 
-### 10. Depth prepass (`cull-dispatch`, `depth-prepass`)
+### 11. Depth prepass (`cull-dispatch`, `depth-prepass`)
 
 Draws every solid mesh in view, but only how far away each pixel is, with no
 lighting or colour. The lit pass then shades each pixel once, for the surface
@@ -128,7 +146,7 @@ first picks what is in view and at which detail level, timed as
 - **Changed by:** the number of meshes and triangles in view; masked materials,
   which cost more.
 
-### 11. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
+### 12. Ambient occlusion (`scene-distance`, `ssao-occlusion`, `ssao-blur`)
 
 Finds the creases and corners on screen from the prepass's depth, and works
 out how much to darken the ambient light in them. Three passes over the whole
@@ -136,7 +154,7 @@ screen. Off by default.
 
 - **Changed by:** the `ambientOcclusion` settings; the resolution.
 
-### 12. Lit pass (`draw-scene`)
+### 13. Lit pass (`draw-scene`)
 
 Draws every solid mesh in view again, this time working out the colour of each pixel:
 it reads the material's maps, adds the light of every directional light and of
@@ -150,7 +168,7 @@ each pixel, and the shadow filter.
   the number of directional lights; the shadow `filter` and contact hardening;
   every material; a `Fog`.
 
-### 13. Sky (`sky`)
+### 14. Sky (`sky`)
 
 Draws the sky into every pixel that nothing else covered. Only in a level with
 a sky, or a foggy level with none, where it fills those pixels with the fog's
@@ -158,17 +176,6 @@ colour. With fog on, it draws the horizon's colour below the horizon instead of
 the ground's. Its cost grows with how much sky is on screen.
 
 - **Changed by:** `Skybox`; `Fog`; the resolution.
-
-### 14. Water's waves (`water-waves`)
-
-Moves the waves of each [`Ocean` and `Lake`](rendering-water.md) in view on to
-this frame's time. Its cost is the same whatever the screen's size, once for
-each body in view; a body out of view costs nothing, and a level with no water
-runs no pass at all. The first frame a body comes into view also works out its
-waves' starting sizes, once.
-
-- **Changed by:** the number of `Ocean`s and `Lake`s in view; the `water`
-  setting.
 
 ### 15. Water (`draw-water`)
 

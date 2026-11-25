@@ -119,6 +119,80 @@ class OrderTest(unittest.TestCase):
         self.assertIn("once per view", str(caught.exception))
 
 
+VIEW_IMPORTS = (
+    "APASSVIEWIMPORTS()\n"
+    "struct TestViewImports\n"
+    "{\n"
+    "    Service &service;\n"
+    "    Own &own;\n"
+    "};\n")
+
+
+def a_view_pass(struct, name, record, extra=''):
+    """One APASS struct recorded per view, with @p record after the view."""
+    args = f'name = "{name}"' + (f', {extra}' if extra else '')
+    return (f"APASS({args})\n"
+            f"struct {struct}\n"
+            "{\n"
+            f"    void Record(Recorder &rec, const TestFrame &frame, const ViewFrame &view{record});\n"
+            "};\n")
+
+
+def view_graph(*passes):
+    text = reflect_parser.strip_comments("namespace Game {\n" + IMPORTS + VIEW_IMPORTS + ''.join(passes) + "}\n")
+    found, imported = reflect_passes.parse_passes(text, Path("include/Game/T.hpp"), "Test")
+    ordered = reflect_passes.order_passes(found, imported)
+    produced = [t for p in ordered if not p.view for t in p.write_keys if not reflect_passes._is_import(t, imported)]
+    view_produced = [t for p in ordered if p.view for t in p.write_keys if not reflect_passes._is_import(t, imported)]
+    return reflect_passes.Graph(prefix="Test", passes=ordered, imports=imported, produced=produced,
+                                namespaces=["Game"], header="include/Game/T.hpp", view_imports=imported.view,
+                                view_produced=view_produced)
+
+
+class ViewTest(unittest.TestCase):
+    def test_every_frame_pass_records_before_any_view_pass(self):
+        graph = view_graph(a_view_pass("VPass", "v", ", Writes<Y> out"), a_pass("FPass", "f", ", Writes<X> out"))
+        self.assertEqual(names(graph.passes), ["f", "v"])
+
+    def test_a_frame_pass_ordered_after_a_view_pass_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            view_graph(a_view_pass("VPass", "v", ""), a_pass("FPass", "f", "", 'after = "v"'))
+        self.assertIn("f runs once a frame and must come after v", str(caught.exception))
+
+    def test_a_frame_pass_cannot_reach_what_each_view_owns(self):
+        with self.assertRaises(ValueError) as caught:
+            view_graph(a_view_pass("VPass", "v", ", Writes<Own> out"), a_pass("FPass", "f", ", Writes<Own> out"))
+        self.assertIn("f runs once a frame and uses Own, which each view owns", str(caught.exception))
+
+    def test_a_type_shared_and_owned_is_the_worlds_once_a_frame_and_the_views_per_view(self):
+        graph = view_graph(a_pass("FPass", "f", ", Writes<Service> out"),
+                           a_view_pass("VPass", "v", ", Writes<Service> out"))
+        source = reflect_passes.render_source(graph, "Game/T.generated.hpp")
+        self.assertIn("Render::Writes<Service>{imports.service}", source)
+        self.assertIn("Render::Writes<Service>{viewImports.service}", source)
+
+    def test_a_frame_and_a_view_writer_of_one_shared_object_need_no_stated_order(self):
+        graph = view_graph(a_view_pass("VPass", "v", ", Writes<Target> out"), a_pass("FPass", "f", ", Writes<Target> out"))
+        self.assertEqual(names(graph.passes), ["f", "v"])
+
+    def test_a_view_walks_its_own_passes_and_what_they_produce(self):
+        graph = view_graph(a_pass("FPass", "f", ", Writes<X> out"),
+                           a_view_pass("VPass", "v", ", Reads<X> in, Writes<Y> out"),
+                           a_view_pass("WPass", "w", ", Reads<Y> in"))
+        source = reflect_passes.render_source(graph, "Game/T.generated.hpp")
+        run_view = source.index("TestPassGraph::RunView(")
+        self.assertIn("passes.f.Record(", source[:run_view])
+        self.assertIn("viewPasses.passes.v.Record(", source[run_view:])
+        self.assertIn("Render::Reads<X>{produced.x}", source[run_view:])
+        self.assertIn("Render::Writes<Y>{viewPasses.produced.y}", source[run_view:])
+        self.assertIn("viewPasses.produced.y = {};", source[run_view:])
+        header = reflect_passes.render_header(graph, "Game/T.hpp")
+        self.assertIn("class TestViewPasses", header)
+        self.assertIn("VPass v;", header[header.index("struct TestViewPassSet"):])
+        self.assertIn("Y y;", header[header.index("struct TestViewProduced"):])
+        self.assertIn("void RunFrame(", header)
+
+
 class ShapeTest(unittest.TestCase):
     def refused(self, *passes):
         with self.assertRaises(ValueError) as caught:

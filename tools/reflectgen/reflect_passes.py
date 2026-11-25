@@ -36,6 +36,8 @@ _APASS_RE = re.compile(r'\bAPASS\s*\((?P<args>[^)]*)\)\s*struct\s+(?P<struct>\w+
 _APASS_TOKEN_RE = re.compile(r'\bAPASS\s*\(')
 _IMPORTS_RE = re.compile(r'\bAPASSIMPORTS\s*\(\s*\)\s*struct\s+(?P<struct>\w+)\s*\{')
 _IMPORTS_TOKEN_RE = re.compile(r'\bAPASSIMPORTS\s*\(')
+_VIEW_IMPORTS_RE = re.compile(r'\bAPASSVIEWIMPORTS\s*\(\s*\)\s*struct\s+(?P<struct>\w+)\s*\{')
+_VIEW_IMPORTS_TOKEN_RE = re.compile(r'\bAPASSVIEWIMPORTS\s*\(')
 _DEFINE_LINE_RE = re.compile(r'\s*#\s*define\s*$')
 # Record, declared and not defined in the struct, returning void or bool.
 _RECORD_RE = re.compile(r'\b(?P<ret>void|bool)\s+Record\s*\((?P<params>[^)]*)\)\s*;')
@@ -51,6 +53,10 @@ _APASS_FLAGS = {'base', 'untimed'}
 
 # The view a per-view pass is recorded for. Its frame type is the graph's.
 _VIEW_FRAME = 'ViewFrame'
+
+# What a per-view pass's resource is called inside the graph when the type is
+# one each view owns, so the view's copy and the world's are told apart.
+_VIEW_KEY = 'view:'
 
 
 @dataclass
@@ -71,6 +77,10 @@ class PassInfo:
     namespaces: list
     header: str
     line: int
+    # reads and writes as the graph tells resources apart: a type each view
+    # owns, read by a per-view pass, carries _VIEW_KEY.
+    read_keys: list = field(default_factory=list)
+    write_keys: list = field(default_factory=list)
 
     @property
     def member(self) -> str:
@@ -85,6 +95,9 @@ class ImportsInfo:
     """The APASSIMPORTS struct: each shared object's type and member."""
     struct: str
     members: dict = field(default_factory=dict)   # type -> member name
+    # The APASSVIEWIMPORTS struct, on the world's imports only: what each view
+    # owns. None on a view's own.
+    view: Optional['ImportsInfo'] = None
 
 
 @dataclass
@@ -93,9 +106,21 @@ class Graph:
     prefix: str
     passes: list               # PassInfo, in run order
     imports: ImportsInfo
-    produced: list             # produced resource types, in first-writer order
+    produced: list             # resources the frame's passes produce, in first-writer order
     namespaces: list
     header: str
+    # What each view owns, and the resources its passes produce: empty for a
+    # graph with no per-view pass.
+    view_imports: ImportsInfo = field(default_factory=lambda: ImportsInfo(struct=''))
+    view_produced: list = field(default_factory=list)
+
+    @property
+    def frame_passes(self) -> list:
+        return [p for p in self.passes if not p.view]
+
+    @property
+    def view_passes(self) -> list:
+        return [p for p in self.passes if p.view]
 
 
 def _member_of(type_name: str) -> str:
@@ -291,16 +316,31 @@ def parse_passes(text: str, path: Path, prefix: str) -> tuple:
                 f"reflectgen reads, so the pass would never run. Write it as APASS(...) struct Name {{ ... }}; "
                 f"with no base class.")
 
-    imports_matches = list(_IMPORTS_RE.finditer(text))
-    imports_tokens = [t for t in _IMPORTS_TOKEN_RE.finditer(text) if not _is_macro_definition(text, t.start())]
-    if len(imports_matches) != len(imports_tokens):
-        raise ValueError(f"{path.name}: an APASSIMPORTS is not followed by a struct reflectgen reads: "
-                         f"APASSIMPORTS() struct Name {{ Type &member; ... }};")
-    if len(imports_matches) > 1:
-        raise ValueError(f"{path.name}: one graph has one APASSIMPORTS struct, and this header has several.")
+    imports = _parse_imports(text, path, _IMPORTS_RE, _IMPORTS_TOKEN_RE, 'APASSIMPORTS')
+    view_imports = _parse_imports(text, path, _VIEW_IMPORTS_RE, _VIEW_IMPORTS_TOKEN_RE, 'APASSVIEWIMPORTS')
+    if view_imports.members and not any(p.view for p in passes):
+        raise ValueError(f"{path.name}: {view_imports.struct} lists what each view owns, and no pass is "
+                         f"recorded per view.")
+    for p in passes:
+        p.read_keys = [_key_of(t, p, imports, view_imports) for t in p.reads]
+        p.write_keys = [_key_of(t, p, imports, view_imports) for t in p.writes]
+    imports.view = view_imports
+    return passes, imports
+
+
+def _parse_imports(text: str, path: Path, struct_re, token_re, macro: str) -> ImportsInfo:
+    """The one struct @p macro marks, if the header has it: each shared
+    object's type and member."""
+    matches = list(struct_re.finditer(text))
+    tokens = [t for t in token_re.finditer(text) if not _is_macro_definition(text, t.start())]
+    if len(matches) != len(tokens):
+        raise ValueError(f"{path.name}: an {macro} is not followed by a struct reflectgen reads: "
+                         f"{macro}() struct Name {{ Type &member; ... }};")
+    if len(matches) > 1:
+        raise ValueError(f"{path.name}: one graph has one {macro} struct, and this header has several.")
     imports = ImportsInfo(struct='')
-    if imports_matches:
-        match = imports_matches[0]
+    if matches:
+        match = matches[0]
         imports.struct = match.group('struct')
         body, _ = _struct_body(text, match.end() - 1)
         for statement in body.split(';'):
@@ -315,7 +355,27 @@ def parse_passes(text: str, path: Path, prefix: str) -> tuple:
             if member.group('type') in imports.members:
                 raise ValueError(f"{path.name}: {imports.struct} holds {member.group('type')} twice.")
             imports.members[member.group('type')] = member.group('name')
-    return passes, imports
+    return imports
+
+
+def _key_of(t: str, p: PassInfo, imports: ImportsInfo, view_imports: ImportsInfo) -> str:
+    """How the graph names @p t as @p p uses it: the view's own copy when @p p
+    is recorded per view and each view owns one, else the type itself."""
+    if t not in view_imports.members:
+        return t
+    if p.view:
+        return _VIEW_KEY + t
+    if t in imports.members:
+        return t
+    raise ValueError(
+        f"{p.name} runs once a frame and uses {t}, which each view owns for itself "
+        f"({view_imports.struct}). With two views there would be two, and nothing to say which it means.")
+
+
+def _is_import(key: str, imports: ImportsInfo) -> bool:
+    """Whether @p key is an object the graph's owner shares, the world's or a
+    view's, rather than one a pass produces."""
+    return key in imports.members or key.startswith(_VIEW_KEY)
 
 
 def _edges(passes: list, imports: ImportsInfo) -> tuple:
@@ -325,18 +385,18 @@ def _edges(passes: list, imports: ImportsInfo) -> tuple:
     writers: dict = {}
     readers: dict = {}
     for p in passes:
-        for t in p.writes:
+        for t in p.write_keys:
             writers.setdefault(t, []).append(p)
-        for t in p.reads:
+        for t in p.read_keys:
             readers.setdefault(t, []).append(p)
 
     for t, rs in readers.items():
-        if t not in writers and t not in imports.members:
+        if t not in writers and not _is_import(t, imports):
             raise ValueError(
                 f"{rs[0].name} reads {t}, which no pass writes. A resource reaches a pass from the pass "
                 f"that writes it, or from {imports.struct or 'the imports struct'} when its owner shares it.")
     for t, ws in writers.items():
-        if t not in imports.members and len(ws) > 1:
+        if not _is_import(t, imports) and len(ws) > 1:
             raise ValueError(
                 f"{t} is written by {' and '.join(w.name for w in ws)}. A resource the passes produce has "
                 f"one writer, so turning that pass off can empty it without erasing another's work: "
@@ -434,26 +494,38 @@ def order_passes(passes: list, imports: ImportsInfo) -> list:
         for m in successors[n]:
             reach[n] |= {m} | reach[m]
     for t, ws in writers.items():
-        if t not in imports.members:
+        if not _is_import(t, imports):
             continue
         for i, a in enumerate(ws):
             for b in ws[i + 1:]:
+                # A frame pass and a view pass are ordered already: the
+                # frame's passes all record before the views'.
+                if a.view != b.view:
+                    continue
                 if b.name not in reach[a.name] and a.name not in reach[b.name]:
                     raise ValueError(
-                        f"{a.name} and {b.name} both write {t}, and nothing orders them. Say which goes "
-                        f"first with after = \"...\" or before = \"...\".")
+                        f"{a.name} and {b.name} both write {t.removeprefix(_VIEW_KEY)}, and nothing orders "
+                        f"them. Say which goes first with after = \"...\" or before = \"...\".")
 
     by_name = {p.name: p for p in passes}
     for p in passes:
         if p.view:
             continue
-        for t in p.reads:
+        for t in p.read_keys:
             for w in writers.get(t, []):
-                if w.view and t not in imports.members:
+                if w.view and not _is_import(t, imports):
                     raise ValueError(
                         f"{p.name} runs once a frame but reads {t}, which {w.name} writes once per view. "
                         f"With two views there would be two, and nothing to say which it means.")
-    return [by_name[n] for n in sorted(names, key=position.get)]
+    # Every pass run once a frame records before any view's: the views come
+    # after the frame's work, each in turn.
+    for (a, b), why in edges.items():
+        if by_name[a].view and not by_name[b].view:
+            raise ValueError(
+                f"{b} runs once a frame and must come after {a}, which runs once per view ({why}). "
+                f"The frame's passes all record before the views'.")
+    in_order = [by_name[n] for n in sorted(names, key=position.get)]
+    return [p for p in in_order if not p.view] + [p for p in in_order if p.view]
 
 
 def build_graph(header: Path, prefix: str) -> Graph:
@@ -466,17 +538,27 @@ def build_graph(header: Path, prefix: str) -> Graph:
         raise ValueError(f"{header.name}: every pass of one graph is declared in the same namespace.")
     ordered = order_passes(passes, imports)
     produced: list = []
+    view_produced: list = []
     for p in ordered:
-        for t in p.writes:
-            if t not in imports.members and t not in produced:
-                produced.append(t)
+        for t in p.write_keys:
+            into = view_produced if p.view else produced
+            if not _is_import(t, imports) and t not in into:
+                into.append(t)
     return Graph(prefix=prefix, passes=ordered, imports=imports, produced=produced,
-                 namespaces=list(passes[0].namespaces), header=str(header))
+                 namespaces=list(passes[0].namespaces), header=str(header),
+                 view_imports=imports.view or ImportsInfo(struct=''), view_produced=view_produced)
 
 
 def _resource_ref(t: str, graph: Graph) -> str:
+    """Where the walk finds the resource the graph calls @p t: the world's
+    imports, the view's, what the frame's passes produced, or what this view's
+    produced."""
     if t in graph.imports.members:
         return f"imports.{graph.imports.members[t]}"
+    if t.startswith(_VIEW_KEY):
+        return f"viewImports.{graph.view_imports.members[t.removeprefix(_VIEW_KEY)]}"
+    if t in graph.view_produced:
+        return f"viewPasses.produced.{_member_of(t)}"
     return f"produced.{_member_of(t)}"
 
 
@@ -496,15 +578,130 @@ def _record_type(p: PassInfo, prefix: str) -> str:
 
 
 def _run_params(graph: Graph) -> str:
-    """Run's parameters: the view only for a graph with a pass recorded per view."""
-    params = (f"{graph.imports.struct} &imports, nvrhi::ICommandList *commandList, "
-              f"const {graph.prefix}Frame &frame")
-    if any(p.view for p in graph.passes):
-        params += f", const {_VIEW_FRAME} &view"
-    return params
+    """Run's parameters, or RunFrame's in a graph with views."""
+    return (f"{graph.imports.struct} &imports, nvrhi::ICommandList *commandList, "
+            f"const {graph.prefix}Frame &frame")
+
+
+def _run_view_params(graph: Graph) -> str:
+    """RunView's parameters: the view's own passes and imports, then the frame
+    and the view."""
+    g = graph.prefix
+    params = f"{g}ViewPasses &viewPasses, {graph.imports.struct} &imports, "
+    if graph.view_imports.struct:
+        params += f"{graph.view_imports.struct} &viewImports, "
+    return params + f"nvrhi::ICommandList *commandList, const {g}Frame &frame, const {_VIEW_FRAME} &view"
+
+
+def _timer_count(passes: list) -> int:
+    return sum(len(p.timers) for p in passes if not p.untimed)
+
+
+def _render_view_header(graph: Graph, include: str) -> str:
+    """The header of a graph with passes recorded per view: the frame's passes
+    on the graph, and each view's in an object of its own, kept by whoever
+    owns the view."""
+    g = graph.prefix
+    ns = '::'.join(graph.namespaces)
+    lines = [
+        f"/* Generated by reflectgen from {include}. Do not edit. */",
+        "#pragma once",
+        "",
+        f"#include <{include}>",
+        "",
+        "#include <nvrhi/nvrhi.h>",
+        "",
+        "#include <cstdint>",
+        "",
+        f"namespace {ns}",
+        "{",
+        "",
+        f"/// One of each {g} pass recorded once a frame, in the order they run.",
+        f"struct {g}PassSet",
+        "{",
+    ]
+    lines += [f"    {p.struct} {p.member};" for p in graph.frame_passes]
+    lines += [
+        "};",
+        "",
+        f"/// What the {g} passes recorded once a frame produce, each written by one pass and empty while it is off.",
+        f"struct {g}Produced",
+        "{",
+    ]
+    lines += [f"    {t} {_member_of(t)};" for t in graph.produced]
+    lines += [
+        "};",
+        "",
+        f"/// One of each {g} pass recorded per view, in the order they run.",
+        f"struct {g}ViewPassSet",
+        "{",
+    ]
+    lines += [f"    {p.struct} {p.member};" for p in graph.view_passes]
+    lines += [
+        "};",
+        "",
+        f"/// What one view's {g} passes produce, each written by one pass and empty while it is off.",
+        f"struct {g}ViewProduced",
+        "{",
+    ]
+    lines += [f"    {t} {_member_of(t)};" for t in graph.view_produced]
+    lines += [
+        "};",
+        "",
+        f"/// The GPU timers the frame's {g} passes and one view's can open.",
+        f"inline constexpr std::uint32_t k{g}PassTimerCount = {_timer_count(graph.passes)};",
+        "",
+        f"class {g}PassGraph;",
+        "",
+        f"/// One view's own {g} passes and what they produce. Kept from frame to frame by",
+        "/// whoever owns the view, so what a pass remembers belongs to that view alone.",
+        f"class {g}ViewPasses",
+        "{",
+        "public:",
+        f"    {g}ViewPassSet passes;",
+        f"    {g}ViewProduced produced;",
+        "",
+        "private:",
+        f"    friend class {g}PassGraph;",
+        f"    bool _usable[{len(graph.view_passes)}] = {{}};",
+        "};",
+        "",
+        f"/// The {g} passes, recorded in the order their declarations fix: the frame's",
+        "/// once, then each view's in turn.",
+        f"class {g}PassGraph",
+        "{",
+        "public:",
+        "    /// Each frame pass's Initialize, then its OnTargetsChanged with @p targets. A",
+        "    /// pass whose Initialize fails stays off.",
+        f"    void Initialize(const {g}PassInit &init, const nvrhi::FramebufferInfo &targets);",
+        "    /// Each frame pass's OnTargetsChanged, for a scene target of a new format or sample count.",
+        "    void OnTargetsChanged(const nvrhi::FramebufferInfo &targets);",
+        "    /// Each of a view's passes' Initialize, then its OnTargetsChanged with @p targets.",
+        f"    void InitializeView({g}ViewPasses &viewPasses, const {g}PassInit &init,",
+        "                        const nvrhi::FramebufferInfo &targets);",
+        "    /// Each of a view's passes' OnTargetsChanged.",
+        f"    void OnViewTargetsChanged({g}ViewPasses &viewPasses, const nvrhi::FramebufferInfo &targets);",
+        "    /// Record every pass run once a frame, in order, into @p commandList.",
+        f"    void RunFrame({_run_params(graph)});",
+        "    /// Record one view's passes, in order, into @p commandList, after RunFrame.",
+        f"    void RunView({_run_view_params(graph)});",
+        "",
+        f"    {g}PassSet passes;",
+        f"    {g}Produced produced;",
+        "",
+        "private:",
+        f"    bool _usable[{len(graph.frame_passes)}] = {{}};",
+        "};",
+        "",
+        f"}} // namespace {ns}",
+        "",
+    ]
+    return '\n'.join(lines)
 
 
 def render_header(graph: Graph, include: str) -> str:
+    if graph.view_passes:
+        return _render_view_header(graph, include)
     g = graph.prefix
     ns = '::'.join(graph.namespaces)
     timer_count = sum(len(p.timers) for p in graph.passes if not p.untimed)
@@ -568,7 +765,6 @@ def render_header(graph: Graph, include: str) -> str:
 def render_source(graph: Graph, generated_header: str) -> str:
     g = graph.prefix
     ns = '::'.join(graph.namespaces)
-    frame_args = lambda p: 'frame, view' if p.view else 'frame'
     frame_types = lambda p: f'{g}Frame, {_VIEW_FRAME}' if p.view else f'{g}Frame'
     out = [
         f"/* Generated by reflectgen from {graph.header.split('include/')[-1]}. Do not edit. */",
@@ -615,65 +811,101 @@ def render_source(graph: Graph, generated_header: str) -> str:
             ]
     out += ["} // namespace", ""]
 
-    out += [
-        f"void {g}PassGraph::Initialize(const {g}PassInit &init, const nvrhi::FramebufferInfo &targets)",
-        "{",
-    ]
-    for i, p in enumerate(graph.passes):
-        out.append(f"    _usable[{i}] = Render::PassInitialize(passes.{p.member}, init);")
-    out += ["    OnTargetsChanged(targets);", "}", ""]
-
-    out += [f"void {g}PassGraph::OnTargetsChanged(const nvrhi::FramebufferInfo &targets)", "{"]
-    for i, p in enumerate(graph.passes):
-        out.append(f"    _usable[{i}] = _usable[{i}] && Render::PassOnTargetsChanged(passes.{p.member}, targets);")
-    out += ["}", ""]
-
-    out += [f"void {g}PassGraph::Run({_run_params(graph)})", "{"]
-    for i, p in enumerate(graph.passes):
-        produced_outputs = [t for t in p.writes if t not in graph.imports.members]
-
-        def off(indent: str, member: str = p.member, outputs: list = produced_outputs) -> list:
-            """A pass that is off releases what it holds and empties what it produced."""
-            return ([f"{indent}Render::PassRelease(passes.{member});"] +
-                    [f"{indent}produced.{_member_of(t)} = {{}};" for t in outputs])
-
-        summary = []
-        if p.reads:
-            summary.append(f"reads {', '.join(p.reads)}")
-        if p.writes:
-            summary.append(f"writes {', '.join(p.writes)}")
-        out.append(f"    // {p.name} ({'per view' if p.view else 'per frame'}){': ' + '; '.join(summary) if summary else ''}")
-        args = []
-        if p.recorder:
-            args.append('rec')
-        args.append(frame_args(p))
-        if p.reads:
-            args.append(f"Render::Reads<{', '.join(p.reads)}>{{{', '.join(_resource_ref(t, graph) for t in p.reads)}}}")
-        if p.writes:
-            args.append(f"Render::Writes<{', '.join(p.writes)}>{{{', '.join(_resource_ref(t, graph) for t in p.writes)}}}")
-        call = f"passes.{p.member}.Record({', '.join(args)})"
-        if p.untimed:
-            timing = 'Untimed'
-        elif p.base and len(p.timers) == 1:
-            timing = 'Eager'
-        else:
-            timing = 'Lazy'
-        out += [
-            "    {",
-            f"        ASSISI_PROFILE_SCOPE(\"{p.name}\");",
-            f"        if (_usable[{i}] && Render::PassWanted(passes.{p.member}, {frame_args(p)}))",
-            "        {",
-            f"            Render::Recorder rec{{commandList, k{p.struct}Timers, Render::RecorderTiming::{timing}}};",
-        ]
-        if p.returns_bool:
-            out += [f"            if (!{call})", "            {"] + off("                ") + ["            }"]
-        else:
-            if not p.recorder:
-                out.append("            (void)rec;")
-            out.append(f"            {call};")
-        out += ["        }", "        else", "        {"] + off("            ") + ["        }", "    }"]
-    out += ["}", "", f"}} // namespace {ns}", ""]
+    if graph.view_passes:
+        out += _render_view_walks(graph)
+    else:
+        out += _render_hooks(graph, graph.passes, "Initialize", "OnTargetsChanged", "passes", "_usable", "")
+        out += [f"void {g}PassGraph::Run({_run_params(graph)})", "{"]
+        for i, p in enumerate(graph.passes):
+            out += _walk_block(graph, p, f"passes.{p.member}", f"_usable[{i}]")
+        out += ["}", ""]
+    out += [f"}} // namespace {ns}", ""]
     return '\n'.join(out)
+
+
+def _render_hooks(graph: Graph, passes: list, initialize: str, targets_changed: str, set_ref: str, usable: str,
+                  view_param: str) -> list:
+    """Initialize and OnTargetsChanged over @p passes, which live in @p set_ref
+    and are switched on in @p usable; @p view_param is the view's parameter
+    for a view's hooks, empty for the frame's."""
+    g = graph.prefix
+    out = [f"void {g}PassGraph::{initialize}({view_param}const {g}PassInit &init, const nvrhi::FramebufferInfo &targets)",
+           "{"]
+    for i, p in enumerate(passes):
+        out.append(f"    {usable}[{i}] = Render::PassInitialize({set_ref}.{p.member}, init);")
+    view_arg = 'viewPasses, ' if view_param else ''
+    out += [f"    {targets_changed}({view_arg}targets);", "}", ""]
+    out += [f"void {g}PassGraph::{targets_changed}({view_param}const nvrhi::FramebufferInfo &targets)", "{"]
+    for i, p in enumerate(passes):
+        out.append(f"    {usable}[{i}] = {usable}[{i}] && Render::PassOnTargetsChanged({set_ref}.{p.member}, targets);")
+    out += ["}", ""]
+    return out
+
+
+def _render_view_walks(graph: Graph) -> list:
+    """A graph with views: the frame's hooks and walk, then a view's."""
+    g = graph.prefix
+    out = _render_hooks(graph, graph.frame_passes, "Initialize", "OnTargetsChanged", "passes", "_usable", "")
+    out += _render_hooks(graph, graph.view_passes, "InitializeView", "OnViewTargetsChanged", "viewPasses.passes",
+                         "viewPasses._usable", f"{g}ViewPasses &viewPasses, ")
+    out += [f"void {g}PassGraph::RunFrame({_run_params(graph)})", "{"]
+    for i, p in enumerate(graph.frame_passes):
+        out += _walk_block(graph, p, f"passes.{p.member}", f"_usable[{i}]")
+    out += ["}", ""]
+    out += [f"void {g}PassGraph::RunView({_run_view_params(graph)})", "{"]
+    for i, p in enumerate(graph.view_passes):
+        out += _walk_block(graph, p, f"viewPasses.passes.{p.member}", f"viewPasses._usable[{i}]")
+    out += ["}", ""]
+    return out
+
+
+def _walk_block(graph: Graph, p: PassInfo, pass_ref: str, usable: str) -> list:
+    """The walk's recording of @p p, held at @p pass_ref and switched on at
+    @p usable: recorded when wanted, released and its outputs emptied when off."""
+    frame_args = 'frame, view' if p.view else 'frame'
+    produced_outputs = [t for t in p.write_keys if not _is_import(t, graph.imports)]
+
+    def off(indent: str) -> list:
+        """A pass that is off releases what it holds and empties what it produced."""
+        return ([f"{indent}Render::PassRelease({pass_ref});"] +
+                [f"{indent}{_resource_ref(t, graph)} = {{}};" for t in produced_outputs])
+
+    summary = []
+    if p.reads:
+        summary.append(f"reads {', '.join(p.reads)}")
+    if p.writes:
+        summary.append(f"writes {', '.join(p.writes)}")
+    out = [f"    // {p.name} ({'per view' if p.view else 'per frame'}){': ' + '; '.join(summary) if summary else ''}"]
+    args = []
+    if p.recorder:
+        args.append('rec')
+    args.append(frame_args)
+    if p.reads:
+        args.append(f"Render::Reads<{', '.join(p.reads)}>{{{', '.join(_resource_ref(t, graph) for t in p.read_keys)}}}")
+    if p.writes:
+        args.append(f"Render::Writes<{', '.join(p.writes)}>{{{', '.join(_resource_ref(t, graph) for t in p.write_keys)}}}")
+    call = f"{pass_ref}.Record({', '.join(args)})"
+    if p.untimed:
+        timing = 'Untimed'
+    elif p.base and len(p.timers) == 1:
+        timing = 'Eager'
+    else:
+        timing = 'Lazy'
+    out += [
+        "    {",
+        f"        ASSISI_PROFILE_SCOPE(\"{p.name}\");",
+        f"        if ({usable} && Render::PassWanted({pass_ref}, {frame_args}))",
+        "        {",
+        f"            Render::Recorder rec{{commandList, k{p.struct}Timers, Render::RecorderTiming::{timing}}};",
+    ]
+    if p.returns_bool:
+        out += [f"            if (!{call})", "            {"] + off("                ") + ["            }"]
+    else:
+        if not p.recorder:
+            out.append("            (void)rec;")
+        out.append(f"            {call};")
+    out += ["        }", "        else", "        {"] + off("            ") + ["        }", "    }"]
+    return out
 
 
 def write_if_changed(path: Path, text: str) -> None:
