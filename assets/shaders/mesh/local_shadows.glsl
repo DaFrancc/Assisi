@@ -231,9 +231,11 @@ float LocalVisibility(uint viewIndex, ShadowSurface surface, float axisDepth)
     float sinTheta  = sqrt(max(1.0 - surface.NdotL * surface.NdotL, 0.0));
     vec3  biasedPos = surface.position + surface.normal * (view.params.y * axisDepth * sinTheta);
 
+    // The views take positions measured from the camera the shadow maps are
+    // measured from; for that camera's own view the move is by zero.
+    vec4 clip = view.viewProjection * vec4(biasedPos - uFrame.shadowEye.xyz, 1.0);
     // Behind the light or outside the frustum this view recorded: nothing is
     // known, so lit.
-    vec4 clip = view.viewProjection * vec4(biasedPos, 1.0);
     if (clip.w <= 0.0)
     {
         return 1.0;

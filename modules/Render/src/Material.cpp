@@ -4,6 +4,22 @@
 namespace Assisi::Render
 {
 
+Geometry::MaterialData ShownMaterialSource(const Geometry::MaterialData &base, SurfaceLook look)
+{
+    Geometry::MaterialData shown = base;
+    if (look == SurfaceLook::Light)
+    {
+        // The texture's light through an emissive factor of one, over a body
+        // that adds nothing of its own.
+        shown.BaseColorFactor = {0.f, 0.f, 0.f, 1.f};
+        shown.MetallicFactor = 0.f;
+        shown.SpecularWeight = 0.f;
+        shown.EmissiveFactor = {1.f, 1.f, 1.f};
+        shown.Alpha = Geometry::AlphaMode::Opaque;
+    }
+    return shown;
+}
+
 void Material::Create(nvrhi::IDevice * /*device*/, uint32_t id, const Geometry::MaterialData &source,
                       const MaterialTextures &textures)
 {

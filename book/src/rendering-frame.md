@@ -38,10 +38,14 @@ The name in brackets after each pass is what it is called in a profiler capture
 (see [Looking at rendering problems](rendering-debugging.md#the-profiler)).
 Passes 2 to 16 draw the scene, so a capture shows them inside `scene`.
 
-Passes 2 to 6 are the world's: they come out the same whichever camera looks,
-so they run once a frame. Passes 7 to 16 depend on the camera, and run for each
+Passes 2 to 7 are the world's: they come out the same whichever camera looks,
+so they run once a frame. Passes 8 to 16 depend on the camera, and run for each
 view after the world's (see
 [Once a frame or once per view](render-passes.md#once-a-frame-or-once-per-view)).
+Each [texture camera](rendering-camera.md#showing-a-camera-on-a-surface) that
+draws this frame runs them into its picture first, inside `texture-camera` in a
+capture, and the main camera runs them last. Passes 17 and 18 run only for the
+main camera.
 
 ### 1. Clear (`clear-targets`)
 
@@ -75,7 +79,20 @@ only with sky reflections on.
 
 - **Changed by:** the `environment` settings; `Skybox`, `TimeOfDay`.
 
-### 5. Spot and point light shadows (`shadow-atlas`)
+### 5. Sun shadows (`shadow-cascades`)
+
+Draws the sun's shadow **cascades**: the shadow-casting meshes in each one, as
+seen from the sun. The cascades are fitted to what the main camera sees, and
+every view shares them, so another camera gets no sun shadow where they don't
+reach. Cascades in which nothing changed are kept from the last frame; moving
+meshes are drawn over a kept cascade on their own. Its cost grows with the
+number of cascades redrawn and the meshes in each. See
+[Shadows](rendering-shadows.md).
+
+- **Changed by:** the `shadows.sun` settings; `DirectionalLight.castsShadows`;
+  `MeshRenderer.castsShadows`; anything moving in the sun.
+
+### 6. Spot and point light shadows (`shadow-atlas`)
 
 Draws the shadow maps of the spot and point lights that need it into the shadow
 atlas, up to the redraw budget. Lights whose surroundings are still keep their
@@ -86,7 +103,7 @@ shares the atlas.
   light's `castsShadows`, `radius`, `shadowPriority` and `shadowAlwaysOn`;
   `MeshRenderer.castsShadows`; anything moving near a shadowed light.
 
-### 6. Water's waves (`water-waves`)
+### 7. Water's waves (`water-waves`)
 
 Moves the waves of each [`Ocean` and `Lake`](rendering-water.md) in view on to
 this frame's time. Its cost is the same whatever the screen's size, once for
@@ -97,24 +114,12 @@ waves' starting sizes, once.
 - **Changed by:** the number of `Ocean`s and `Lake`s in view; the `water`
   setting.
 
-### 7. Light grid rebuild (`cluster-rebuild`)
+### 8. Light grid rebuild (`cluster-rebuild`)
 
 Rebuilds the grid of **clusters** that point and spot lights are sorted into
 (see [What lights cost](rendering-lights.md#what-lights-cost)). It only runs on
 a frame when the window changes size or the active camera's `fovDegrees`,
 `nearZ` or `farZ` change.
-
-### 8. Sun shadows (`shadow-cascades`)
-
-Draws the sun's shadow **cascades**: the shadow-casting meshes in each one, as
-seen from the sun. The cascades are fitted to what the camera sees, so each view
-has its own. Cascades in which nothing changed are kept from the last frame;
-moving meshes are drawn over a kept cascade on their own. Its cost grows with
-the number of cascades redrawn and the meshes in each. See
-[Shadows](rendering-shadows.md).
-
-- **Changed by:** the `shadows.sun` settings; `DirectionalLight.castsShadows`;
-  `MeshRenderer.castsShadows`; anything moving in the sun.
 
 ### 9. Light sorting (`lighting`)
 

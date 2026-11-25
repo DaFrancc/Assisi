@@ -12,6 +12,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/SceneFwd.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
@@ -31,6 +32,8 @@ class CullTableBuilder;
 
 namespace Assisi::Runtime
 {
+
+struct MeshRenderer;
 
 /// @brief What one DrawScene call produced and consumed: how much geometry
 /// survived culling and how far the indirect submission collapsed it (stage E).
@@ -107,6 +110,10 @@ struct DrawSceneParams
     /// The blueprint instance the camera belongs to: an entity of the same
     /// instance whose MeshRenderer is hiddenFromOwnCamera is not drawn. Invalid hides nothing.
     Assisi::ECS::InstanceId viewerInstance;
+    /// The texture camera this view draws for, whose CameraSurfaces are not
+    /// drawn, so a surface never reads the picture being drawn. None leaves
+    /// out none.
+    Assisi::ECS::Entity textureCamera = Assisi::ECS::NullEntity;
 
     /// Filled with the see-through submeshes in view, farthest first, for
     /// MeshPass::SubmitBlended to draw once the solid scene and the sky are
@@ -133,6 +140,13 @@ struct DrawSceneParams
 ///
 /// @return Drawn/culled counts and the submission's state-change tally.
 DrawStats DrawScene(const DrawSceneParams &params);
+
+/// @brief Whether @p entity's mesh is left out of a view: hidden from its own
+/// camera and in @p viewerInstance, or a CameraSurface showing
+/// @p textureCamera, the texture camera the view draws for.
+[[nodiscard]] bool LeftOutOfView(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity,
+                                 const MeshRenderer &meshRenderer, Assisi::ECS::InstanceId viewerInstance,
+                                 Assisi::ECS::Entity textureCamera);
 
 /// @brief The submesh run @p mesh draws at level @p level.
 ///

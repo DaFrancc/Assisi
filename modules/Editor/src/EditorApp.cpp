@@ -1002,7 +1002,8 @@ void EditorApp::SetupScene()
                                      .camera = _camera,
                                      .bindlessLayout = _assetCache.BindlessLayout(),
                                      .bindlessTable = _assetCache.BindlessTable(),
-                                     .materialTable = _assetCache.MaterialTableBuffer()}))
+                                     .materialTable = _assetCache.MaterialTableBuffer(),
+                                     .assetCache = &_assetCache}))
     {
         RequestClose();
         return;

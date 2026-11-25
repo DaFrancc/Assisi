@@ -17,6 +17,7 @@
 #include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/SkinnedMeshPose.hpp>
+#include <Assisi/Runtime/TextureCamera.hpp>
 
 namespace Assisi::Runtime
 {
@@ -36,18 +37,6 @@ namespace
 /// path's cull, then the draws, which are the depth prepass.
 constexpr const char *kCullTimer = "cull-dispatch";
 constexpr const char *kPrepassTimer = "depth-prepass";
-
-/// Whether @p entity's mesh is left out for its own camera, of @p viewerInstance.
-bool HiddenFromViewer(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity, const MeshRenderer &meshRenderer,
-                      Assisi::ECS::InstanceId viewerInstance)
-{
-    if (!meshRenderer.hiddenFromOwnCamera || !viewerInstance.IsValid())
-    {
-        return false;
-    }
-    const Assisi::ECS::BlueprintMember *member = scene.Get<Assisi::ECS::BlueprintMember>(entity);
-    return member != nullptr && member->instanceId == viewerInstance;
-}
 
 /// The see-through draw of @p mesh's submesh @p submeshIndex, whose object's
 /// centre is @p distance from the camera.
@@ -139,7 +128,8 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
         {
             const glm::mat4 world = Assisi::ECS::MatrixFrom(worldMatrix, params.origin);
             const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
-            if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
+            if (mesh == nullptr ||
+                LeftOutOfView(scene, entity, meshRenderer, params.viewerInstance, params.textureCamera))
             {
                 continue;
             }
@@ -243,7 +233,8 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
         {
             const glm::mat4 world = Assisi::ECS::MatrixFrom(worldMatrix, params.origin);
             const Assisi::Render::MeshBuffer *mesh = DrawnMesh(meshRenderer, scene.Get<SkinnedPose>(entity));
-            if (mesh == nullptr || HiddenFromViewer(scene, entity, meshRenderer, params.viewerInstance))
+            if (mesh == nullptr ||
+                LeftOutOfView(scene, entity, meshRenderer, params.viewerInstance, params.textureCamera))
             {
                 continue;
             }
@@ -361,6 +352,26 @@ DrawStats DrawAndGather(const DrawSceneParams &params)
     return stats;
 }
 } // namespace
+
+bool LeftOutOfView(const Assisi::ECS::Scene &scene, Assisi::ECS::Entity entity, const MeshRenderer &meshRenderer,
+                   Assisi::ECS::InstanceId viewerInstance, Assisi::ECS::Entity textureCamera)
+{
+    // Looked up only in a texture camera's view, so the main view pays nothing.
+    if (textureCamera != Assisi::ECS::NullEntity)
+    {
+        const CameraSurface *surface = scene.Get<CameraSurface>(entity);
+        if (surface != nullptr && surface->camera == textureCamera)
+        {
+            return true;
+        }
+    }
+    if (!meshRenderer.hiddenFromOwnCamera || !viewerInstance.IsValid())
+    {
+        return false;
+    }
+    const Assisi::ECS::BlueprintMember *member = scene.Get<Assisi::ECS::BlueprintMember>(entity);
+    return member != nullptr && member->instanceId == viewerInstance;
+}
 
 DrawStats DrawScene(const DrawSceneParams &params)
 {

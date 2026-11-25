@@ -95,8 +95,8 @@ struct ViewFrame
     glm::mat4 view{1.f};
     /// The camera measured from the lit pass's origin: its rotation alone.
     glm::mat4 cameraInView{1.f};
-    /// The camera measured from the shadow origin, which its cascades are
-    /// fitted from.
+    /// The camera measured from the shadow origin: where it stands in the
+    /// shadow maps. The main camera's cascades are fitted from its own.
     glm::mat4 cameraInShadow{1.f};
     /// The lit pass's origin: the camera.
     glm::dvec3 viewOrigin{0.0};
@@ -115,6 +115,9 @@ struct ViewFrame
     /// The blueprint instance the camera belongs to, whose own hidden meshes it
     /// does not draw.
     ECS::InstanceId viewerInstance;
+    /// The texture camera this view draws for, whose own surfaces it leaves
+    /// out; none for the main view.
+    ECS::Entity textureCamera = ECS::NullEntity;
     /// Whether the water reads the scene's distance this view, which then
     /// runs whether or not ambient occlusion does.
     bool waterReadsDistance = false;
@@ -140,6 +143,9 @@ struct SceneFrame
     /// Casters moving this frame, and those whose shadows changed sides.
     std::span<const Render::ShadowMover> dynamicCasters;
     std::span<const Render::ShadowMover> casterInvalidations;
+    /// The water whose waves are brought up to time: every body any view
+    /// sees this frame.
+    const Render::WaterFrame *waves = nullptr;
     /// The time the water's waves are drawn at on the shared clock.
     double waterSeconds = 0.0;
     std::optional<LightingSystem::ShadowSun> shadowSun;
@@ -247,16 +253,17 @@ struct SkyProbePass
     bool failed = false;
 };
 
-/// @brief Fits the sun's cascades to the view's camera and redraws the ones
-/// whose depth went stale. Per view, since each camera's cascades cover what it
-/// sees; the depth it keeps between frames is that view's.
+/// @brief Fits the sun's cascades to the main camera and redraws the ones whose
+/// depth went stale. Once a frame: every view samples the main camera's
+/// cascades, so a second camera costs no shadow maps of its own and sees no sun
+/// shadow where they do not reach.
 APASS(name = "shadow-cascades")
 struct SunShadowPass
 {
     bool Initialize(const ScenePassInit &init);
     bool Wanted(const SceneFrame &frame) const;
     void Release();
-    bool Record(Recorder &rec, const SceneFrame &frame, const ViewFrame &view, Reads<PosedVertices> in,
+    bool Record(Recorder &rec, const SceneFrame &frame, Reads<PosedVertices> in,
                 Writes<SunShadows, ShadowDepthRenderer, ShadowCasterMobility, LodSelector> out);
 
     Render::ShadowPass shadowPass;
@@ -278,7 +285,7 @@ struct SunShadowPass
 
 /// @brief Chooses which spot and point lights hold atlas tiles, and draws the
 /// faces that need it. Once a frame: every view samples the same tiles.
-APASS(name = "shadow-atlas")
+APASS(name = "shadow-atlas", after = "shadow-cascades")
 struct ShadowAtlasPass
 {
     bool Initialize(const ScenePassInit &init);

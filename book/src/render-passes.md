@@ -259,16 +259,16 @@ frame.
 
 Some of the scene's work belongs to the world and is the same whichever camera
 looks at it: posing skinned meshes, drawing the clouds, the shadows of spot and
-point lights. Other work depends on the camera: which meshes are in view, the
-sun's shadow cascades, which are fitted to what the camera sees, and the lit
-image itself.
+point lights, and the sun's shadow cascades, which every view shares. Other work
+depends on the camera: which meshes are in view, the grid the lights are sorted
+into, and the lit image itself.
 
 A scene pass whose `Record` takes `const ViewFrame &view` runs **once per
 view**; one without it runs **once a frame**. Every pass that runs once a frame
 records first, then each view's passes in turn, in the same order.
 
 Each view keeps its own copy of its passes, so what a pass remembers from one
-frame to the next, such as which cascades still hold the right depth, belongs to
+frame to the next, such as the camera lens its light grid was built for, belongs to
 that view alone. The objects a view owns for itself are listed in
 `SceneViewImports`, marked `APASSVIEWIMPORTS()`, and the ones the world shares in
 `SceneImports`. List an object in `SceneViewImports` when it keeps something
@@ -316,7 +316,7 @@ doesn't show up in a capture.
 | Two passes write a shared resource in no fixed order | `pp-resolve and tint both write SceneHdr, and nothing orders them.` |
 | The passes need each other in a circle | `the passes cannot be ordered, because each of these must come before the next:` and then each step of the circle |
 | `after` or `before` names no pass | `sky is ordered against 'draw-scnee', which no pass is named.` |
-| A pass that runs once a frame must wait for one that runs per view | `shadow-atlas runs once a frame and must come after shadow-cascades, which runs once per view (...)` |
+| A pass that runs once a frame must wait for one that runs per view | `water-waves runs once a frame and must come after draw-scene, which runs once per view (...)` |
 | A pass that runs once a frame uses what each view owns | `clouds runs once a frame and uses MeshCuller, which each view owns for itself (SceneViewImports).` |
 | Two passes share a name | `two passes are named 'tint': TintPass and RedPass.` |
 | `Record`'s parameters are out of order, or one isn't a pass's | The error names the parameter and lists the order they go in |

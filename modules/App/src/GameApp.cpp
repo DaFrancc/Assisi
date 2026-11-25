@@ -488,7 +488,8 @@ bool GameApp::SetupRenderer()
                                      .camera = _fallbackCamera,
                                      .bindlessLayout = _assetCache.BindlessLayout(),
                                      .bindlessTable = _assetCache.BindlessTable(),
-                                     .materialTable = _assetCache.MaterialTableBuffer()}))
+                                     .materialTable = _assetCache.MaterialTableBuffer(),
+                                     .assetCache = &_assetCache}))
     {
         Core::Log::Error("Game: the scene render path failed to build; there is nothing to draw with.");
         return false;

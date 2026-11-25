@@ -716,6 +716,76 @@
     },
     {
       "components": {
+        "CameraSurface": {
+          "camera": "SecurityCamera",
+          "materialSlot": 0
+        },
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "cb24f705-7483-4972-84f5-7cba7e06b664",
+              "path": "materials/crt_case.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [-2.6, 1.6, -1.5],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.6, 1.0, 0.05]
+        }
+      },
+      "name": "SecurityScreen"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "castsShadows": true,
+          "materialOverrides": [
+            {
+              "guid": "cb24f705-7483-4972-84f5-7cba7e06b664",
+              "path": "materials/crt_case.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [-2.6, 1.6, -1.58],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.75, 1.15, 0.1]
+        }
+      },
+      "name": "SecurityScreenFrame"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": false,
+          "nearZ": 0.10000000149011612
+        },
+        "TextureCamera": {
+          "height": 320,
+          "width": 512
+        },
+        "Transform": {
+          "position": [0.0, 3.5, 6.0],
+          "rotation": [0.9903702735900879, -0.13846425712108612, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      },
+      "name": "SecurityCamera"
+    },
+    {
+      "components": {
         "Collider": {
           "channel": 0,
           "collidesWith": "All",

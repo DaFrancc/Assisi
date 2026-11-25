@@ -109,6 +109,14 @@ struct MeshPassFrameConstants
     /// The clouds' shadow on the ground (see CloudShadowConstants); area.w is
     /// zero without one, and the shader then reads no map.
     CloudShadowConstants cloudShadow;
+    /// The camera the frame's shadow maps are measured from, measured from this
+    /// view's origin: xyz = its position, w = 1 when it is another view's
+    /// camera. The shader then picks a pixel's cascade by its distance along
+    /// that camera's shadowEyeForward (xyz) rather than by its own view depth,
+    /// and moves the pixel to it before a spot or point light's lookup. All
+    /// zero for the view whose camera it is.
+    glm::vec4 shadowEye{0.f};
+    glm::vec4 shadowEyeForward{0.f};
 };
 
 // std140, not std430 — this is a uniform block. The two agree on everything this
@@ -141,6 +149,8 @@ ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowViewProjection, shadowCasca
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fog, shadowViewProjection);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, fogVolumes, fog);
 ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, cloudShadow, fogVolumes);
-ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, cloudShadow);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowEye, cloudShadow);
+ASSISI_GPU_FIELD_AFTER(MeshPassFrameConstants, shadowEyeForward, shadowEye);
+ASSISI_GPU_NO_TAIL_PADDING(MeshPassFrameConstants, shadowEyeForward);
 
 } // namespace Assisi::Render

@@ -96,6 +96,18 @@ public:
     /// Whatever Gather() collected, plus whatever SetShadowView() stamped since.
     void Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view);
 
+    /// @brief Take @p source's last Gather() as this frame's lights, measured
+    /// from a view origin @p shift away from its own: each row's position is
+    /// @p source's plus @p shift, which is @p source's view origin minus this
+    /// one's.
+    ///
+    /// For a second camera in the same frame, which lights the same world: the
+    /// scene is walked once, and every view lights with the same set, the one
+    /// nearest the main camera when there are more than the buffers hold. Every
+    /// row starts holding no shadow tile, as after a Gather, for the shadow
+    /// pass to stamp again.
+    void ShareFrom(const LightingSystem &source, const glm::vec3 &shift);
+
     /// @brief Gather then Upload, for a caller with no shadow pass between them.
     void Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view);
 
@@ -207,6 +219,12 @@ public:
     {
         return std::span<const ShadowCaster>(_dirShadowFlags).first(_dirLightCount);
     }
+    /// @}
+
+    /// @name The rows the next Upload() sends, as the shaders will read them
+    /// @{
+    [[nodiscard]] std::span<const Assisi::Render::PointLightGPU> PointLights() const { return _pointLights; }
+    [[nodiscard]] std::span<const Assisi::Render::SpotLightGPU> SpotLights() const { return _spotLights; }
     /// @}
 
     const Assisi::Render::ClusterGrid &Grid() const { return _grid; }

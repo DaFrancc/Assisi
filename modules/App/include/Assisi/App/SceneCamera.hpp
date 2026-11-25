@@ -53,6 +53,9 @@ struct SceneView
 /// between fixed steps, and nothing simulated or sent changes. Every other
 /// camera is drawn as propagated. Nothing here knows about players.
 ///
+/// A camera with a Runtime::TextureCamera is never the one looked through: it
+/// draws into its picture.
+///
 /// Two active cameras warn and the first found wins. Which one that is depends
 /// on entity order, so it is arbitrary — said out loud rather than picked in
 /// silence, because the symptom otherwise is a view through a camera nobody

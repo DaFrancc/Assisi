@@ -257,6 +257,18 @@ ShadowProbe ProbeCascade(uint cascade, ShadowSurface surface)
     return probe;
 }
 
+// The pixel's distance along the camera the cascades were fitted to, which is
+// what their splits measure: this view's own depth, unless they belong to
+// another view's camera.
+float CascadeDepth()
+{
+    if (uFrame.shadowEye.w == 0.0)
+    {
+        return abs(vViewZ);
+    }
+    return abs(dot(vWorldPos - uFrame.shadowEye.xyz, uFrame.shadowEyeForward.xyz));
+}
+
 // The cascade covering @p viewDepth: the number of splits at or below it,
 // counted without a break so the loop stays uniform.
 uint SelectCascade(float viewDepth)
@@ -274,7 +286,7 @@ uint SelectCascade(float viewDepth)
 float SunVisibility(uint cascade, ShadowSurface surface)
 {
     uint  cascadeCount = uFrame.shadowCounts.x;
-    float viewDepth    = abs(vViewZ);
+    float viewDepth    = CascadeDepth();
 
     // Past the last cascade the blend band has already faded to lit.
     if (viewDepth >= uFrame.shadowCascade[cascadeCount - 1u].x)

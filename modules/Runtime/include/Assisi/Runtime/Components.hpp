@@ -101,14 +101,15 @@ struct MeshRenderer
 };
 
 /// @brief A texture an engine system draws, shown by one material slot of this
-///        entity's MeshRenderer as its base colour and its glow, such as the
-///        screen a monitor shows.
+///        entity's MeshRenderer, such as the screen a monitor shows or a
+///        camera's picture on a scope.
 ///
 /// Put on and taken off by that system, which resolves the entity's assets
-/// again when it does; never saved or sent. The slot keeps the rest of its
-/// material, how strongly it glows included, so the author of the mesh's
-/// material decides how bright the picture is. A primitive mesh has one slot,
-/// slot 0.
+/// again when it does; never saved or sent. A screen shows as the slot's base
+/// colour and glow, and keeps the rest of its material, how strongly it glows
+/// included, so the author of the mesh's material decides how bright the
+/// picture is. A camera's picture shows as light at the brightness the camera
+/// saw. A primitive mesh has one slot, slot 0.
 ACOMP(transient)
 struct SurfaceTexture
 {
@@ -117,6 +118,8 @@ struct SurfaceTexture
     /// The texture's slot in the asset cache's bindless table, one it lent
     /// (Render::AssetCache::LendTextureSlot).
     AFIELD() uint32_t textureSlot = 0;
+    /// How the slot shows it.
+    Assisi::Render::SurfaceLook look = Assisi::Render::SurfaceLook::Screen;
 };
 
 /// @brief The SkinnedMesh::boundMeshId of a component no skeleton is bound to.

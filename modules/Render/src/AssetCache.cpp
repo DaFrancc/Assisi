@@ -485,9 +485,9 @@ void AssetCache::ReturnTextureSlot(uint32_t slot)
     }
 }
 
-const Material *AssetCache::ResolveShownMaterial(const Material &base, uint32_t textureSlot)
+const Material *AssetCache::ResolveShownMaterial(const Material &base, uint32_t textureSlot, SurfaceLook look)
 {
-    const ShownKey key{.base = base.Id(), .slot = textureSlot};
+    const ShownKey key{.base = base.Id(), .slot = textureSlot, .look = look};
     if (const std::unordered_map<ShownKey, Material, ShownKeyHash>::const_iterator found = _shownMaterials.find(key);
         found != _shownMaterials.end())
     {
@@ -497,7 +497,7 @@ const Material *AssetCache::ResolveShownMaterial(const Material &base, uint32_t 
     textures.baseColor = textureSlot;
     textures.emissive = textureSlot;
     Material &shown = _shownMaterials[key];
-    shown.Create(_device, MintMaterialId(), base.Source(), textures);
+    shown.Create(_device, MintMaterialId(), ShownMaterialSource(base.Source(), look), textures);
     WriteMaterialToTable(shown);
     return &shown;
 }
@@ -631,7 +631,7 @@ bool AssetCache::UpdateMaterialFactors(const Core::AssetId &id, const Geometry::
         if (key.base == material.Id())
         {
             const MaterialTextures shownTextures = shown.Textures();
-            shown.Create(_device, shown.Id(), data, shownTextures);
+            shown.Create(_device, shown.Id(), ShownMaterialSource(data, key.look), shownTextures);
             WriteMaterialToTable(shown);
         }
     }

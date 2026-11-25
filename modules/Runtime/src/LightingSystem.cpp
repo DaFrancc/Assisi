@@ -293,6 +293,32 @@ void LightingSystem::Gather(Assisi::ECS::Scene &scene, const CelestialLight *cel
     _dirLightCount = std::min(static_cast<uint32_t>(_dirLights.size()), Render::ClusterGrid::kMaxDirLights);
 }
 
+void LightingSystem::ShareFrom(const LightingSystem &source, const glm::vec3 &shift)
+{
+    // Assigned, so each array keeps the capacity it already has.
+    _pointLights = source._pointLights;
+    _spotLights = source._spotLights;
+    _dirLights = source._dirLights;
+    _pointShadowFlags = source._pointShadowFlags;
+    _spotShadowFlags = source._spotShadowFlags;
+    _dirShadowFlags = source._dirShadowFlags;
+    _shadowSpots = source._shadowSpots;
+    _shadowPoints = source._shadowPoints;
+    _dirLightCount = source._dirLightCount;
+
+    const glm::vec4 moved(shift, 0.f);
+    for (Render::PointLightGPU &light : _pointLights)
+    {
+        light.positionRadius += moved;
+        light.shadowView.x = Render::kNoShadowView;
+    }
+    for (Render::SpotLightGPU &light : _spotLights)
+    {
+        light.positionRadius += moved;
+        light.shadowView = Render::kNoShadowView;
+    }
+}
+
 void LightingSystem::Upload(nvrhi::ICommandList *commandList, const glm::mat4 &view)
 {
     // CPU-side this is three buffer uploads plus a dispatch record, so it is

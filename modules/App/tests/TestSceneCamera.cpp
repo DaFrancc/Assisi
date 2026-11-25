@@ -13,6 +13,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/TextureCamera.hpp>
 
 #include "LogCapture.hpp"
 
@@ -105,6 +106,23 @@ TEST_CASE("ActiveSceneCamera says so when two cameras are active")
     REQUIRE(view.has_value());
     CHECK(glm::vec3(view->pose.position) == kCameraPosition); // the first, not the last
     CHECK(log.Mentions("more than one Camera is marked active"));
+}
+
+TEST_CASE("ActiveSceneCamera never looks through a texture camera, active or not")
+{
+    // Made first, so it would be the first found.
+    const Assisi::Tests::LogCapture log;
+    Assisi::ECS::Scene scene;
+    const Assisi::ECS::Entity scope = AddCamera(scene, /*active=*/ true, glm::vec3{-1.f, -2.f, -3.f});
+    (void)scene.Add(scope, Assisi::Runtime::TextureCamera{});
+    AddCamera(scene, /*active=*/ true, kCameraPosition);
+    (void)Assisi::ECS::PropagateTransforms(scene, 0);
+
+    const std::optional<SceneView> view = ActiveSceneCamera(scene);
+
+    REQUIRE(view.has_value());
+    CHECK(glm::vec3(view->pose.position) == kCameraPosition);
+    CHECK_FALSE(log.Mentions("more than one Camera is marked active"));
 }
 
 TEST_CASE("A camera with a draw pose is drawn turned and moved by it, and its Transform is left alone")
